@@ -27,6 +27,7 @@
  * a fake disk. The real wiring is `createExportSupervisor` at the bottom.
  */
 
+import { exportPluginJob } from './ipc/nativePlugins';
 import { app, BrowserWindow, dialog, type IpcMainInvokeEvent, type WebContents } from 'electron';
 import path from 'node:path';
 import { existsSync } from 'node:fs';
@@ -826,6 +827,8 @@ function createEngineLauncher(root: string): EngineLauncher {
     ffmpegPath: () => resolveFfmpegBinary({ vars: process.env, resourcesPath: process.resourcesPath ?? '', platform: process.platform, exists: existsSync }),
     workDirFor: (id: string) => path.join(root, id, 'engine'),
     log: (m: string) => console.log(`[export/engine] ${m}`),
+    // Plugin effects render in exports with the editor's installed plugins.
+    plugins: () => exportPluginJob({ dir: () => path.join(app.getPath('userData'), 'native-plugins') }),
   };
   const probe = new EncoderProbe({ bin: deps.ffmpegPath });
   return {

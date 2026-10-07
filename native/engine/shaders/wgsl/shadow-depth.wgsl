@@ -22,13 +22,13 @@ fn vs(@location(0) pos : vec2<f32>) -> VOut {
 }
 
 fn packShadowDepth(d : f32) -> vec4<f32> {
-  // Clamped just SHORT of 1: fract(1.0) is 0, so an exact 1 would pack as
-  // (0,0,0) and decode as the NEAREST possible caster — the far plane reading
-  // as "everything is occluded", which is the whole frame going black.
+  // AE parity 4.3: float depth into an rgba16float target — r the distance at
+  // half precision, g the remainder × 4096, about 24 bits in all (the
+  // receivers' unpackShadowDepth). Clamped just short of 1 so the far plane
+  // never reads as an occluder.
   let c = clamp(d, 0.0, 0.9999847);
-  var e = fract(c * vec3<f32>(1.0, 255.0, 65025.0));
-  e = e - vec3<f32>(e.y, e.z, 0.0) * (1.0 / 255.0);
-  return vec4<f32>(e, 1.0);
+  let hi = unpack2x16float(pack2x16float(vec2<f32>(c, 0.0))).x;
+  return vec4<f32>(hi, (c - hi) * 4096.0, 0.0, 1.0);
 }
 
 @fragment

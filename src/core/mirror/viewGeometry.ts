@@ -185,6 +185,32 @@ export function transform3DOf(rec: PushedLayer | undefined): {
   return { x: l[0]!, y: l[1]!, z: l[2]!, rotationX: l[3]!, rotationY: l[4]!, rotation: l[5]!, scaleX: l[6]!, scaleY: l[7]!, scaleZ: l[8]! };
 }
 
+/**
+ * What a 3D layer's gizmo needs beyond its local values: the parent chain's
+ * world matrix (empty = none) and its Orientation — so the gizmo sits at the
+ * layer's WORLD position, points along its real local axes, and a drag writes
+ * parent-space values (as camera and light handles already do).
+ */
+export interface GizmoFrame {
+  parent: readonly number[];
+  orientation: { x: number; y: number; z: number };
+  /** The layer's position in the world (its local position lifted through `parent`). */
+  world: Vec3;
+}
+
+export function gizmoFrameOf(rec: PushedLayer | undefined): GizmoFrame | null {
+  const s = rec?.scene;
+  const l = s?.role === 'layer' ? s.local : undefined;
+  if (!s || !l || l.length < 9) return null;
+  const local = { x: l[0]!, y: l[1]!, z: l[2]! };
+  const parent = s.parent.length === 16 ? s.parent : [];
+  return {
+    parent,
+    orientation: l.length >= 12 ? { x: l[9]!, y: l[10]!, z: l[11]! } : { x: 0, y: 0, z: 0 },
+    world: parent.length === 16 ? Matrix4Math.transformPoint(parent as Matrix4, local) : local,
+  };
+}
+
 // ── Device handles (deviceHandles.ts over the push) ─────────────────────────
 
 /** Which of a device's two draggable points this is. */

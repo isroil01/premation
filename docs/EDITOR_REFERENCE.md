@@ -61,7 +61,7 @@ rediscovered in git history and believed a second time.
 
 | Registry | Count | Source of truth |
 |---|---|---|
-| Effects | 206 | `src/core/effects/effects.ts` → `EffectType` |
+| Effects | 212 | `src/core/effects/effects.ts` → `EffectType` |
 | Blend modes | 38 | `src/core/effects/blendMode.ts` → `LayerBlendMode` |
 | Layer styles | 10 | `layerStyles.ts` → `LAYER_STYLE_LABEL` + `BACKDROP_STYLES` |
 | Path operators | 9 | `src/core/scene/pathOps.ts` → `PathOpType` (less `none`) |
@@ -70,7 +70,7 @@ rediscovered in git history and believed a second time.
 | Canvas tools | 23 | `packages/workspace/src/tools/builtin.ts` |
 | AI tools | 65 | `packages/ai-tools/src/tools/{read,write,craft,compose}.ts` |
 | Export formats | 18 | `renderSpec.ts` → `VideoFormat` + `exportManager.ts` → `ExportFormat` / `DataExportFormat` |
-| Stores | 79 | `src/stores/*.ts` |
+| Stores | 82 | `src/stores/*.ts` |
 | Packages | 13 | `packages/*` |
 
 <!-- /FEATURE-COUNTS -->
@@ -91,7 +91,7 @@ style would have left this table wrong with every test still green.
 ```
 Electron main ── IPC ──▶ renderer (React 19 + Vite)
                           │
-                          ├── src/stores/*        79 Zustand stores
+                          ├── src/stores/*        82 Zustand stores
                           ├── src/core/*          41 subsystems (effects, scene, rig, text…)
                           └── packages/*          13 workspace packages
                                 ├── scene       scene graph + components
@@ -445,6 +445,32 @@ off a card in both forms (the shadow-map pass and the projected caster copy):
 it composites through its own offscreen rather than the depth pass, and a
 projected copy of a composition draws nothing through that path.
 
+**AE parity step 5** (2026-10-07, docs/AE_PARITY_PLAN.md §5; GPU items in
+docs/VERIFY_ON_TEST_MACHINE.md). **Colour**: Lumetri has Curves (RGB and per
+channel), Hue vs Sat / Hue / Luma and Luma vs Sat, the three colour wheels,
+Faded Film, Split Toning, HSL Secondary (with Show Mask) and Vignette; Levels
+works per channel (alpha too); Hue/Saturation has its six colour ranges and
+Colorize (`effects/effect_color.cpp`; the curve editor's tone / hue / luma
+variants). **Keying**: Keylight 1.2's View, Screen Pre-blur, Clip Rollback and
+Inside / Outside masks; Advanced Spill Suppressor, Key Cleaner and Remove Grain
+(`effects/keying_more_kernels.cpp`). **Precision**: all of the
+above run as float passes on the GPU effect route — `lumetri-grade` (with the
+Hue / Luma vs curves in a data texture), `alpha-levels`, `hue-sat-ranges`,
+`advanced-spill` (Standard votes green / blue on the GPU), `keylight-ex` and
+`matte-view`, Key Cleaner / Remove Grain / Refine Matte through
+`matte-ops.wgsl`, `field-warp` (Mesh Warp, Liquify) and `reshape-tps`; the
+8-bit CPU kernels remain for layers the route cannot take (a precomp container, a Canvas2D-only effect in the same stack). **Masks**:
+Properties ▸ Masks (the mask cards moved out of the Effects panel), Layer ▸
+Mask (New Mask Ctrl+Shift+N, Mode, Inverted Ctrl+Shift+I, Remove Mask, Remove
+All Masks, Smart Mask Interpolation…, Track Mask…), Smart Mask Interpolation
+(polar about the centroid, vertex matching, Keyframe Rate) and Track Mask's
+whole-mask methods (Position … Perspective). **Deformation**: Puppet on video
+layers; a Liquify brush (Warp, Turbulence, Twirl, Pucker, Bloat, Shift Pixels,
+Reconstruction) painting a displacement field; Mesh Warp with 1–31 rows and
+columns and draggable vertices; Reshape (one mask morphed to another, TPS).
+**Properties** gained Crop (a rectangle mask named "Crop", edge insets and
+feather), Paint and Puppet sections.
+
 ### Motion blur
 Shutter angle, shutter **phase**, and **adaptive sampling** — all three.
 Shutter samples read the layer's clip map WITHOUT its frame rounding
@@ -595,6 +621,48 @@ material, with texture transforms baked into UVs and tangents taken from
 derivatives. An external `.gltf` now imports **with its sidecar files**, and
 refuses by NAMING the ones it could not find rather than importing a hole.
 **File ▸ Import 3D Model** is the explicit entry point beside the drop target.
+
+**AE parity step 4** (2026-10-07, docs/AE_PARITY_PLAN.md §4; GPU items in
+docs/VERIFY_ON_TEST_MACHINE.md):
+- *Styles and effects on every 3D surface* — extrusions, primitives and glTF
+  meshes keep their layer styles and effects (uv surface effects follow the
+  mesh's UVs); motion blur, advanced blend modes, track mattes and glass no
+  longer push a layer off the depth path (it is drawn offscreen against the
+  run's depth and composited in place).
+- *Shadows*: every shadow-casting light is mapped (four float shadow maps),
+  casters in other runs cast, floors receive, the environment light's key
+  direction casts; **Comp Settings ▸ Ground Shadows** draws a shadow catcher
+  under the scene. The per-light "shadow map" switch is gone (automatic).
+- *Environment*: an HDR / EXR sky lights through band-2 SH and a float
+  prefiltered atlas without taking a light slot; **Show environment** draws
+  it as the backdrop (**Background blur**); **Source layer** makes a comp or
+  video layer the live, animated environment.
+- *Materials on meshes*: transparency, IOR, reflection and Phong metal on
+  models and primitives; a comp with no lights lights models with the
+  default rig.
+- *Fog* (**Comp Settings ▸ Fog**: linear / exponential / exponential², colour,
+  start / end or density, max opacity) and **Material ▸ Reflect Layers**
+  (a floor mirrors the layers above it, two reflectors per frame).
+- *Model import*: **File ▸ Import 3D Model** and the Assets panel take .glb,
+  .gltf (+ .bin / textures; Draco, meshopt, KTX2, KHR_mesh_quantization,
+  KHR_materials_*), .obj (+ .mtl), .fbx and .usda / .usdz. In the desktop
+  app the engine's `modelImport` job writes one plain .glb into `Models/`
+  beside the project, the .glb becomes a `model` project item and the layer
+  tree references it (`modelAsset`) — no data: URL in the document. Without
+  disk paths (browser build) a glTF still packs into the document; the other
+  formats need the desktop app. Vertex colours and alphaMode render.
+- *Gizmo*: one gizmo for several 3D layers (each moves by the same world
+  delta, turns in place, scales by the same factors); Universal mode has a
+  scale cube on each arm (axis-projected: drag along the arm as drawn);
+  rotation modes add a white view-facing ring (turns about the view axis)
+  and a free trackball inside it; **Shift** snaps to 10 px / 15° / 10 %;
+  type a number while dragging (px, degrees or percent), **Enter** commits,
+  **Esc** cancels; **Shift+Alt+1…4** = Universal / Position / Rotation /
+  Scale; the Rotate tool (**W**) shows the rotation gizmo; **Pan Behind
+  (Y)** drags the anchor point in 3D while the layer stays put. Clicking
+  where 3D layers overlap selects the nearer one (depth-aware picking). The
+  **view cube** is bigger, has all six faces, a home button, and drags to
+  orbit.
 
 **The 3D gizmo and the DOF focus plane work in every pane** (2026-09-01/02) —
 2-up and 4-up secondary views are no longer view-only. The focus plane is drawn
@@ -991,8 +1059,8 @@ output.
 
 ### Tier 2 — ceilings on visual density
 
-**Effect breadth: 206 effects vs AE's 400+.** The raw count misleads in both
-directions — nobody uses 400, and the 206 effects present are properly
+**Effect breadth: 212 effects vs AE's 400+.** The raw count misleads in both
+directions — nobody uses 400, and the 212 effects present are properly
 parameterised (Levels, Curves, Channel Mixer, Keylight with
 despill/choke/softness). What matters is the missing *classes*, not the delta:
 no 3D Stroke, no Form/Plexus, no Element 3D. The dense, expensive-looking AE
@@ -1005,7 +1073,7 @@ written against this document inherited. And the missing *classes* named "no
 volumetric light rays (Shine)" and "no optical-flare system worth the name":
 `light-rays`, `lens-flare`, `light-sweep` and `beam` all ship, each with a
 registry def, a Canvas2D reference, a Generate entry, and (as of 2026-08-14) a
-GPU shader. The count is now phrased as "206 effects" rather than as a bare
+GPU shader. The count is now phrased as "212 effects" rather than as a bare
 figure specifically so that `docPropagatedCounts.test.ts` can check it.
 
 **Variable-width mask feather LANDED** (2026-08-20). `MaskPoint` gained an
@@ -2217,7 +2285,7 @@ needing a 39-entry allow-list is one that gets silenced the first time it fires.
 The cost of the narrowness is that an oblique phrasing still escapes, and §4's
 did — "Effect breadth: 73 vs AE's 400+" puts no noun after the number. That was
 rewritten into the checkable form rather than the regex being widened to chase
-it. Prose stating a count should say "206 effects".
+it. Prose stating a count should say "212 effects".
 
 Ledger table ROWS in this section are exempt, structurally rather than by a list
 of phrases: quoting a superseded number is what a corrections ledger is for, and
@@ -2822,7 +2890,7 @@ drawn under the sprites at their projected positions.
 
 ### Built 2026-09-15 — AE's stroke-like paint effects
 
-Two effects, `EffectType` 204 → **206 effects**, and two upgrades — all four
+Two effects, `EffectType` 204 → **206**, and two upgrades — all four
 lay a round brush along the layer's MASKS, which `buildSnapshot` now resolves
 per frame as the whole stack (`maskPathsMeta` / `maskPathsXY`, mask order,
 closed flag, mode, inversion; `packMaskPaths` in `strokePaint.ts`), so tracked
@@ -2891,7 +2959,7 @@ Quality (4/6/8 octaves).
 
 ### Built 2026-09-07 — effects round seven, and a miscount inside the counter
 
-Eighteen effects, taking `EffectType` from 183 to 201 (Deep Glow and Energy Beam, 2026-09-08, make it **203**; Plexus, 2026-09-09, **204**; Stroke and Scribble, 2026-09-15, **206 effects**). Fifteen ship
+Eighteen effects, taking `EffectType` from 183 to 201 (Deep Glow and Energy Beam, 2026-09-08, make it **203**; Plexus, 2026-09-09, **204**; Stroke and Scribble, 2026-09-15, **206**; Refine Soft / Hard Matte, 2026-10-06, **208**; Advanced Spill Suppressor, Key Cleaner, Remove Grain and Reshape, 2026-10-07, **212 effects**). Fifteen ship
 as a GPU shader in both dialects plus a retained Canvas2D kernel, which is the
 shape every port since round six has held; three ship as per-channel transfer
 tables and no shader at all.

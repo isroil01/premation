@@ -29,6 +29,16 @@ class MapLayerSource {
   MapLayerSource(MapLayerSource&&) = delete;
   MapLayerSource& operator=(MapLayerSource&&) = delete;
   virtual TexRef map_layer(PassContext& ctx, const ById& byId, std::string_view mapLayerId, std::string_view selfId) = 0;
+  /// AE parity 4.2: composite a 3D-run layer that needs its own compositing
+  /// step (a track matte, an advanced blend / Preserve Transparency, glass, a
+  /// backdrop blur) onto `out`, from images already drawn in 3D — `predrawn`
+  /// holds the layer (and its matte source) by id. False = not handled; the
+  /// caller lays the layer's image over the run as is.
+  virtual bool composite_special_3d(PassContext& /*ctx*/, const api::Renderable& /*r*/,
+                                    const std::unordered_map<std::string, TexRef>& /*predrawn*/, std::string_view /*out*/,
+                                    const ById& /*byId*/) {
+    return false;
+  }
 };
 
 /// The buffer a chain runs in when it is NOT screen space (the 3D route: layer

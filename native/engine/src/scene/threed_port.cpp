@@ -37,6 +37,9 @@ using js::Json;
 
 namespace {
 
+/// AE parity 4.3: shadow-mapped lights per run (threed.cpp kShadowSlots).
+constexpr int kMappedShadowLights = 4;
+
 /// buildSnapshot CAMERA_MOTION_PROPS.
 constexpr std::array<std::string_view, 12> kCameraMotionProps = {
     "x", "y", "z", "focalLength", "orbitYaw", "orbitPitch", "poiX", "poiY", "poiZ",
@@ -294,6 +297,11 @@ xf::Camera Scene3D::camera_from_node(const doc::Node& n, const std::function<std
 }
 
 void Scene3D::setup(const std::vector<const doc::Node*>& nodes) {
+  // Composition ▸ 3D ▸ "Show sky as backdrop" (AE parity 4.4).
+  const auto compShowsSky = [this] {
+    const Json* rec = c_.d.comp(comp_.rootId);
+    return rec != nullptr && rec->at("showSkyBackdrop").is_bool() && rec->at("showSkyBackdrop").b();
+  };
   ortho_ = ortho_view_of(comp_.camera3dMode);
   const bool custom = !ortho_ && comp_.customViewCamera.has_value();
   viewCam_ = ortho_ ? nullptr : view_camera_node(nodes);
@@ -323,7 +331,10 @@ void Scene3D::setup(const std::vector<const doc::Node*>& nodes) {
       if (!n->visible || !h_.live3d(n->id)) continue;
       const LightProps lt = read_node_light(*n);
       if (!lt.shadows || lt.type == "ambient" || lt.type == "environment") continue;
-      if (lt.shadowMap && mapped < 2) {
+      // AE parity 4.3: every shadow-casting light takes a shadow MAP (up to
+      // four per run) — geometry-aware, so a floor or any surface at any angle
+      // receives it. Only lights past the fourth fall back to projected copies.
+      if (mapped < kMappedShadowLights) {
         ++mapped;
         hasShadowMapLight_ = true;
         continue;
@@ -379,6 +390,7 @@ void Scene3D::setup(const std::vector<const doc::Node*>& nodes) {
 
   // Scene lights in world space.
   if (!comp_.draft3d) {
+    int mappedLights = 0;
     for (const doc::Node* n : nodes) {
       if (n->kind() != "light") continue;
       if (!n->visible || !h_.live3d(n->id)) continue;
@@ -398,21 +410,32 @@ void Scene3D::setup(const std::vector<const doc::Node*>& nodes) {
         er.intensity = std::max(0.0, (envIntensity / 100) * envRefl);
         er.rotationDeg = envRot;
         er.nodeId = n->id;
-        envReflect_ = std::move(er);
+        er.lightGain = std::max(0.0, envIntensity / 100);
+        er.visible = lt.envVisible || compShowsSky();
+        er.skyBlur = lt.envSkyBlur / 100;
+        er.layerId = lt.envLayer;
+        er.shadows = lt.shadows;
+        er.shadowDarkness = av.get("shadowDarkness").value_or(lt.shadowDarkness) / 100;
+        er.shadowSoftness = av.get("shadowSoftness").value_or(lt.shadowSoftness);
         const std::string sky = lt.envPreset.is_string() ? lt.envPreset.str() : "studio";
         auto rig = environment_rig_for(sky, envIntensity, envRot);
-        if (!rig) {
+        if (rig) {
+          er.sh = preset_sh(sky);
+        } else {
           // An image sky (env_asset.cpp): its SH, or the default preset where the TS falls back.
           std::string why;
           if (const auto ea = environment_asset(c_.d, sky, why)) {
             rig = environment_rig(ea->sh, envIntensity, envRot);
+            er.sh = ea->sh;
           } else if (why.empty()) {
             rig = environment_rig_for("studio", envIntensity, envRot);
+            er.sh = preset_sh("studio");
           } else {
             unported_.emplace_back(n->id, "environment light from an image (asset:) sky (" + why + ")");
             continue;
           }
         }
+        envReflect_ = std::move(er);
         for (const EnvRigLight& rl : *rig) {
           SceneLight s = scene_light_of(lt);
           s.color = rl.color;
@@ -420,6 +443,7 @@ void Scene3D::setup(const std::vector<const doc::Node*>& nodes) {
           s.shadows = false;
           s.shadowMap = false;
           s.falloff = "none";
+          s.fromEnv = true;  // CPU shading only: the GPU lights the probe from its SH (AE parity 4.4)
           if (rl.ambient) {
             s.type = "ambient";
             s.poi = std::nullopt;
@@ -439,6 +463,10 @@ void Scene3D::setup(const std::vector<const doc::Node*>& nodes) {
         continue;
       }
       SceneLight r = scene_light_of(lt);
+      if (lt.shadows && lt.type != "ambient" && mappedLights < kMappedShadowLights) {
+        r.shadowMap = true;  // AE parity 4.3 (see the cast-shadow pass above)
+        ++mappedLights;
+      }
       r.intensity = av.get("intensity").value_or(lt.intensity);
       r.radius = av.get("radius").value_or(lt.radius);
       r.angle = node_light_aim_deg(*n, lt);
@@ -572,11 +600,12 @@ void Scene3D::shade(const Layer3D& s, RLayer& l) {
   if (mat.transparency > 0) sh.transparency = mat.transparency / 100;
   if (mat.transparencyRolloff > 0) sh.transparency_rolloff = mat.transparencyRolloff / 100;
   if (mat.ior != 1.52) sh.ior = mat.ior;
+  if (mat.reflectsLayers && mat.reflectionIntensity > 0) sh.layer_reflections = true;  // AE parity 4.8
   l.shade3d = std::move(sh);
 }
 
-std::function<std::array<double, 6>(double, double)> Scene3D::matrix_at(const doc::Node& n, const Values& a, double baseX,
-                                                                         double baseY, double baseRot, const Layer3D& s) {
+std::function<Scene3D::MotionPose(double, double)> Scene3D::matrix_at(const doc::Node& n, const Values& a, double baseX,
+                                                                      double baseY, double baseRot, const Layer3D& s) {
   if (!s.is3d) return {};
   const double localX = a.get("x").value_or(baseX);
   const double localY = a.get("y").value_or(baseY);
@@ -601,10 +630,11 @@ std::function<std::array<double, 6>(double, double)> Scene3D::matrix_at(const do
       const xf::Camera fixed = it->second;
       proj = [fixed](xf::Vec3 p) { return xf::project_point(p, fixed); };
     }
-    return affine_at(s, s.ownX + (sample("x", ti).value_or(localX) - localX), s.ownY + (sample("y", ti).value_or(localY) - localY),
-                     sample("z", ti).value_or(s.z3), rX, rY, s.ownRot + (sample("rotation", ti).value_or(localRot) - localRot), sX, sY,
-                     s.scaleZ, proj ? &proj : nullptr)
-        .matrix;
+    const Affine af = affine_at(s, s.ownX + (sample("x", ti).value_or(localX) - localX),
+                                s.ownY + (sample("y", ti).value_or(localY) - localY), sample("z", ti).value_or(s.z3), rX, rY,
+                                s.ownRot + (sample("rotation", ti).value_or(localRot) - localRot), sX, sY, s.scaleZ,
+                                proj ? &proj : nullptr);
+    return MotionPose{af.matrix, to_arr(af.world)};
   };
 }
 
@@ -734,6 +764,8 @@ std::string_view role_name(api::RenderMeshRole r) {
 }
 
 /// The shade3d of a lit mesh carrier (one-sided: its faces bound a volume).
+/// AE parity 4.5: the same Material Options a lit quad takes — Phong metal,
+/// reflection intensity / sharpness / rolloff, transparency and IOR.
 api::RenderShade3D mesh_shade(const Material& m) {
   api::RenderShade3D s;
   s.specular = m.specular / 100;
@@ -741,14 +773,16 @@ api::RenderShade3D mesh_shade(const Material& m) {
   s.one_sided = true;
   s.ambient = m.ambient;
   s.diffuse = m.diffuse;
-  if (m.shading == "pbr") {
-    s.roughness = m.roughness / 100;
-    s.metal = m.metal / 100;
-  }
-  if (m.shading == "toon") {
-    s.toon_bands = m.toonBands;
-    s.metal = m.metal / 100;
-  }
+  if (m.metal > 0) s.metal = m.metal / 100;
+  if (m.shading == "pbr") s.roughness = m.roughness / 100;
+  if (m.shading == "toon") s.toon_bands = m.toonBands;
+  if (m.reflectionIntensity != 100) s.reflection_intensity = m.reflectionIntensity / 100;
+  if (m.reflectionSharpness > 0) s.reflection_sharpness = m.reflectionSharpness / 100;
+  if (m.reflectionRolloff > 0) s.reflection_rolloff = m.reflectionRolloff / 100;
+  if (m.transparency > 0) s.transparency = m.transparency / 100;
+  if (m.transparencyRolloff > 0) s.transparency_rolloff = m.transparencyRolloff / 100;
+  if (m.ior != 1.52) s.ior = m.ior;
+  if (m.reflectsLayers && m.reflectionIntensity > 0) s.layer_reflections = true;
   return s;
 }
 
@@ -757,7 +791,7 @@ void scrub_carrier(RLayer& c) {
   c.matte = std::nullopt;
   c.isMatteSource = false;
   c.isAdjustment = false;
-  c.motionSamples.clear();
+  // Motion samples stay (AE parity 4.2): the depth path blurs the mesh.
   c.deformedMesh = std::nullopt;
   c.glass = std::nullopt;
   c.backdropBlur = std::nullopt;
@@ -958,15 +992,23 @@ void Scene3D::finish_layer(const doc::Node& n, const Values& a, Layer3D& s, RLay
     const bool spatialFx = std::ranges::any_of(layer.effects, [](const Json& e) {
       return fx_enabled(e) && !is_dof(e) && !is_color_type(type_of(e)) && !is_lut_type(type_of(e));
     });
-    const bool meshBlockedByFx = spatialFx && !complexOutline;
-    const bool meshBlockedByStyles = !faceStyles.empty() && !complexOutline;
+    // AE parity 4.1: effects and layer styles no longer push an extrusion off
+    // the mesh. The front face (the layer quad, or the cap of a complex outline
+    // whose front is styled) carries the whole stack; a mesh that carries the
+    // layer's content (a media back cap) runs the stack on that surface in the
+    // renderer (threed.cpp, RenderMeshSurface::layer); bare walls take the
+    // colour effects.
+    constexpr bool meshBlockedByFx = false;
+    constexpr bool meshBlockedByStyles = false;
     const bool styledFront = complexOutline && (spatialFx || !faceStyles.empty());
     const bool meshOwnsFront = complexOutline && meshBevel > 0 && !perCharText && !styledFront;
     std::vector<Json> meshEffects;
-    if (styledFront) {
-      for (const Json& e : layer.effects) {
-        if (fx_enabled(e) && (is_dof(e) || is_color_type(type_of(e)) || is_lut_type(type_of(e)))) meshEffects.push_back(e);
-      }
+    std::vector<Json> colourEffects;
+    for (const Json& e : layer.effects) {
+      if (fx_enabled(e) && !is_dof(e) && (is_color_type(type_of(e)) || is_lut_type(type_of(e)))) colourEffects.push_back(e);
+    }
+    if (styledFront || !complexOutline) {
+      meshEffects = colourEffects;
     } else {
       meshEffects = layer.effects;
     }
@@ -981,7 +1023,7 @@ void Scene3D::finish_layer(const doc::Node& n, const Values& a, Layer3D& s, RLay
         pg.bevel = meshBevel;
         pg.bevelStyle = bevel_profile_of(tp.at("bevelStyle").is_string() ? tp.at("bevelStyle").str() : "angular");
         pg.holeBevelScale = holeBevelScale;
-        pg.effects = meshEffects;
+        pg.effects = colourEffects;
         pg.faceMats = faceMats;
         pg.wallFill = wallFill;
         pg.lit = extLit;
@@ -1063,13 +1105,19 @@ void Scene3D::finish_layer(const doc::Node& n, const Values& a, Layer3D& s, RLay
         }
         if (!dispWhy.empty()) report("height-map displacement (" + dispWhy + ")");
         const bool carriesContent = isMedia || hasFrontCap;
+        data->geometry.surface = api::RenderMeshSurface::layer;
+        data->geometry.surface_width = layerW;
+        data->geometry.surface_height = layerH;
         RLayer carrier;
         if (carriesContent) {
           carrier = layer;
           scrub_carrier(carrier);
-          carrier.effects = meshEffects;
+          // The content surface takes the stack: the renderer runs it in layer
+          // space and textures the caps with the result (AE parity 4.1).
+          carrier.effects = styledFront ? meshEffects : layer.effects;
+          std::erase_if(carrier.effects, [](const Json& e) { return !fx_enabled(e) || is_dof(e); });
         } else {
-          carrier.effects = meshEffects;
+          carrier.effects = colourEffects;  // bare walls: the colour effects only
           carrier.kind = LayerKind::shape;
           carrier.primitive = "rect";
           carrier.blend = layer.blend;
@@ -1196,6 +1244,16 @@ void Scene3D::finish_layer(const doc::Node& n, const Values& a, Layer3D& s, RLay
         extrude::Options eo;
         eo.bevel = meshBevel;
         eo.cornerRadius = ellipse ? 0 : layer.cornerRadius;
+        if (!ellipse && layer.cornerRadii) eo.cornerRadii = layer.cornerRadii;  // keep independent corners
+        if (!ellipse && layer.cornerRadiusScale) {
+          // The same layer-px radius the front quad draws (extrusion_mesh.cpp).
+          const auto& cs = *layer.cornerRadiusScale;
+          const double k = std::sqrt(std::max(1e-6, cs[0]) * std::max(1e-6, cs[1]));
+          eo.cornerRadius /= k;
+          if (eo.cornerRadii) {
+            for (double& v : *eo.cornerRadii) v /= k;
+          }
+        }
         const bool gradientWalls = layer.fillPaint.is_object() && layer.fillPaint.at("type").is_string() && layer.fillPaint.at("type").str() != "solid";
         eo.wallSegments = gradientWalls ? extrude::kGradientWallSegments : 1;
         const extrude::Geometry geom = extrude::extrusion_geometry(layerW, layerH, s.extrusionDepth, ellipse, extrude::kEllipseWallSegments, eo);
@@ -1277,7 +1335,9 @@ void Scene3D::finish_layer(const doc::Node& n, const Values& a, Layer3D& s, RLay
     }
     if (entry != nullptr) {
       const Material& mMat = s.mat;
-      const bool mLit = mMat.acceptsLights && !sceneLights_.empty();
+      // AE parity 4.5: a model in a comp with no lights takes the default rig, as an extrusion does.
+      const bool mLit = mMat.acceptsLights && (!sceneLights_.empty() || !formRig_.empty());
+      if (mLit && sceneLights_.empty()) formRigUsed_ = true;
       // Morph, then skin (the glTF order; model_deform.cpp). Each stage swaps in
       // deformed vertices under a weight- / pose-hashed key; an unresolvable
       // skin pose falls back to the morphed or rigid bind pose.
@@ -1329,17 +1389,20 @@ void Scene3D::finish_layer(const doc::Node& n, const Values& a, Layer3D& s, RLay
       data->ranges.push_back(std::move(r));
       model_pbr_maps(*entry, modelKey, layer.id, *data);
       RLayer m = layer;
+      // AE parity 4.1: the whole stack (layer styles included) runs on the
+      // model's surface in its UV space (threed.cpp, RenderMeshSurface::uv).
       std::vector<Json> meshFx;
       for (const Json& e : layer.effects) {
-        if (fx_enabled(e) && (is_color_type(type_of(e)) || is_lut_type(type_of(e)))) meshFx.push_back(e);
+        if (fx_enabled(e) && !is_dof(e)) meshFx.push_back(e);
       }
+      data->geometry.surface = api::RenderMeshSurface::uv;
       scrub_carrier(m);
       m.effects = std::move(meshFx);
       m.extrudedMesh = std::move(data);
       // The base-colour texture: the session object URL in `src` is dead in a
       // saved document (modelHydrate repoints it); the engine reads the image
       // out of the model instead.
-      if (textured) m.src = gltf::image_src(modelKey, *entry->textureImage);
+      if (textured) m.src = gltf::image_src(modelKey, *entry->textureImage, entry->alphaMode);
       if (mLit) {
         m.lighting = std::array<double, 3>{1, 1, 1};
         m.shade3d = mesh_shade(mMat);
@@ -1349,7 +1412,9 @@ void Scene3D::finish_layer(const doc::Node& n, const Values& a, Layer3D& s, RLay
   } else if (primKey) {
     if (const auto pm = primitive_mesh_for_key(*primKey)) {
       const Material& mMat = s.mat;
-      const bool mLit = mMat.acceptsLights && !sceneLights_.empty();
+      // AE parity 4.5: a model in a comp with no lights takes the default rig, as an extrusion does.
+      const bool mLit = mMat.acceptsLights && (!sceneLights_.empty() || !formRig_.empty());
+      if (mLit && sceneLights_.empty()) formRigUsed_ = true;
       std::string dispWhy;
       const auto disp = displaced_carrier_for(c_.d, pm->key, pm->vertices, pm->indices, mMat, dispWhy);
       if (!dispWhy.empty()) report("height-map displacement (" + dispWhy + ")");
@@ -1368,10 +1433,13 @@ void Scene3D::finish_layer(const doc::Node& n, const Values& a, Layer3D& s, RLay
       r.gain = 1;
       data->ranges.push_back(std::move(r));
       RLayer m = layer;
+      // AE parity 4.1: the whole stack (layer styles included) runs on the
+      // model's surface in its UV space (threed.cpp, RenderMeshSurface::uv).
       std::vector<Json> meshFx;
       for (const Json& e : layer.effects) {
-        if (fx_enabled(e) && (is_color_type(type_of(e)) || is_lut_type(type_of(e)))) meshFx.push_back(e);
+        if (fx_enabled(e) && !is_dof(e)) meshFx.push_back(e);
       }
+      data->geometry.surface = api::RenderMeshSurface::uv;
       scrub_carrier(m);
       m.effects = std::move(meshFx);
       m.extrudedMesh = std::move(data);
@@ -1776,16 +1844,27 @@ void Scene3D::emit(Snapshot& s, const std::vector<RLayer>& layers) const {
   }
   s.camera3d = std::move(cam);
   const std::vector<SceneLight>& shipped = !sceneLights_.empty() ? sceneLights_ : formRigUsed_ ? formRig_ : sceneLights_;
-  if (!shipped.empty()) s.lights3d = to_shader_lights(shipped);
-  if (envReflect_ && envReflect_->intensity > 0) {
-    // environmentSpecularMap(sky): the prefiltered atlas (memoised on the sky).
-    const std::string sky = envReflect_->sky.is_string() ? envReflect_->sky.str() : "studio";
-    std::optional<EnvSpecularMap> spec = environment_specular_map(sky);
+  {
+    // An environment probe's derived rig lights the CPU's per-quad shading
+    // only; the GPU lights it from the probe's SH (AE parity 4.4), so the rig
+    // never takes light slots.
+    std::vector<SceneLight> gpu;
+    gpu.reserve(shipped.size());
+    for (const SceneLight& l : shipped) {
+      if (!l.fromEnv || !envReflect_) gpu.push_back(l);
+    }
+    if (!gpu.empty()) s.lights3d = to_shader_lights(gpu);
+  }
+  if (envReflect_) {
+    const EnvReflect& er = *envReflect_;
+    // The reflection atlas: HDR (linear half floats, AE parity 4.4) — the
+    // preset's, the image sky's, or the default preset's while it cannot load.
+    const std::string sky = er.sky.is_string() ? er.sky.str() : "studio";
+    std::optional<EnvSpecularMap> spec = environment_hdr_map(sky);
     if (!spec) {
-      // An image sky: its own atlas, or the default preset's while it cannot load (the TS's fallback).
       std::string why;
       const auto ea = environment_asset(c_.d, sky, why);
-      spec = ea ? std::optional<EnvSpecularMap>(ea->specular) : environment_specular_map("studio");
+      spec = ea ? std::optional<EnvSpecularMap>(ea->hdr.data.empty() ? ea->specular : ea->hdr) : environment_hdr_map("studio");
     }
     if (const auto& map = spec) {
       api::RenderEnvMap em;
@@ -1794,10 +1873,89 @@ void Scene3D::emit(Snapshot& s, const std::vector<RLayer>& layers) const {
       em.height = map->height;
       em.levels = map->levels;
       em.scale = map->scale;
+      // One copy per frame of a 512 × 256 × 5 half-float atlas (5 MB): the
+      // renderer uploads it once by id and samples the cached texture after.
       em.data = map->data;
-      em.intensity = envReflect_->intensity;
-      em.rotation_deg = envReflect_->rotationDeg;
+      em.format = map->half ? api::RenderTextureFormat::rgba16float : api::RenderTextureFormat::rgba8unorm;
+      em.intensity = er.intensity;
+      em.rotation_deg = er.rotationDeg;
+      // Image-based diffuse: irradiance SH × the band weights (A0 1, A1 2/3,
+      // A2 1/4 — env_light.cpp's E/π) × the light's intensity.
+      constexpr std::array<double, 9> kBand = {1.0, 2.0 / 3.0, 2.0 / 3.0, 2.0 / 3.0, 0.25, 0.25, 0.25, 0.25, 0.25};
+      em.sh.resize(27);
+      for (std::size_t k = 0; k < 9; ++k) {
+        for (std::size_t c = 0; c < 3; ++c) em.sh[k * 3 + c] = static_cast<double>(er.sh[k * 3 + c]) * kBand[k] * er.lightGain;
+      }
+      em.visible_sky = er.visible;
+      em.sky_blur = er.skyBlur;
+      em.sky_intensity = er.lightGain;
+      // A live comp / footage layer drives the environment (AE 26.2 animated
+      // environment): the renderer prefilters its texture each frame. A hidden
+      // layer renders nothing — hide the source with Opacity 0.
+      if (!er.layerId.empty()) {
+        const auto it = std::ranges::find_if(layers, [&](const RLayer& l) { return l.id == er.layerId; });
+        if (it != layers.end()) {
+          if (it->precompLayers && !it->precompLayers->empty()) em.texture_key = "precomp:" + it->id;
+          else if (it->kind == LayerKind::video || it->kind == LayerKind::image) em.texture_key = "asset:" + it->id;
+        }
+      }
+      // The environment's key shadow: from the probe's band-1 direction (the
+      // brightest side of the sky), rotated with the environment.
+      if (er.shadows && er.shadowDarkness > 0) {
+        const auto lum = [&](std::size_t k) {
+          return 0.2126 * er.sh[k * 3] + 0.7152 * er.sh[k * 3 + 1] + 0.0722 * er.sh[k * 3 + 2];
+        };
+        double dx = lum(3);
+        double dy = lum(1);
+        double dz = lum(2);
+        const double len = std::sqrt(dx * dx + dy * dy + dz * dz);
+        const double l0 = std::max(1e-6, lum(0));
+        if (len > 1e-6) {
+          const double a = er.rotationDeg * kDeg;
+          const double rx = dx * std::cos(a) + dz * std::sin(a);
+          const double rz = -dx * std::sin(a) + dz * std::cos(a);
+          dx = rx / len;
+          dy /= len;
+          dz = rz / len;
+          em.shadow_dir = {-dx, -dy, -dz};  // light travels from the bright side
+          // How much of the irradiance the key carries: a near-uniform sky casts almost nothing.
+          em.shadow_darkness = std::max(0.0, std::min(1.0, er.shadowDarkness * std::min(0.85, len / (l0 * 1.2))));
+          em.shadow_softness = std::max(1.0, er.shadowSoftness * 4);
+        }
+      }
       s.envMap = std::move(em);
+    }
+  }
+  if (const Json* rec = c_.d.comp(comp_.rootId)) {
+    // AE parity 4.8: Composition ▸ 3D ▸ Fog.
+    const Json& fog = rec->at("fog");
+    if (fog.is_object() && fog.at("enabled").is_bool() && fog.at("enabled").b()) {
+      const auto num = [&fog](std::string_view k, double fb) { return fog.at(k).is_number() ? fog.at(k).num() : fb; };
+      api::RenderFog f;
+      const std::string mode = fog.at("mode").is_string() ? fog.at("mode").str() : "linear";
+      f.mode = mode == "exponential" ? api::RenderFogMode::exponential
+               : mode == "exponential2" ? api::RenderFogMode::exponential2
+                                        : api::RenderFogMode::linear;
+      const Rgba c = color_from_hex(fog.at("color").is_string() ? fog.at("color").str() : "#c8d0d8");
+      f.color.r = c.r;
+      f.color.g = c.g;
+      f.color.b = c.b;
+      f.color.a = 1;
+      f.start = std::max(0.0, num("start", 1000));
+      f.end = std::max(f.start + 1, num("end", 6000));
+      f.density = std::max(0.0, num("density", 0.5));
+      f.max_opacity = std::max(0.0, std::min(1.0, num("maxOpacity", 100) / 100));
+      s.fog = f;
+    }
+    // AE parity 4.3: Composition ▸ 3D ▸ Ground shadows — a shadow catcher at the ground level.
+    const Json& gs = rec->at("groundShadows");
+    if (gs.is_object() && gs.at("enabled").is_bool() && gs.at("enabled").b()) {
+      api::RenderShadowCatcher cc;
+      const Json& gl = rec->at("groundLevel");
+      cc.y = comp_.height + (gl.is_number() && std::isfinite(gl.num()) ? gl.num() : 0);
+      cc.opacity = std::max(0.0, std::min(1.0, (gs.at("opacity").is_number() ? gs.at("opacity").num() : 60) / 100));
+      cc.size = std::max(comp_.width, comp_.height) * 4;
+      s.shadowCatcher = cc;
     }
   }
   if (const Json* rec = c_.d.comp(comp_.rootId)) {

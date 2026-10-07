@@ -28,7 +28,7 @@ import { useActiveCompSize, useMirrorRevisionFrame } from '@hooks/useMirrorFrame
 import { useRetainTrees } from '@hooks/useMirror';
 import { documentMirror } from '@stores/documentMirror';
 import { canBe3DLayer } from '@core/mirror/layerKinds';
-import { transform3DOf } from '@core/mirror/viewGeometry';
+import { gizmoFrameOf, toParentSpace, transform3DOf, type GizmoFrame } from '@core/mirror/viewGeometry';
 import type { Gizmo3DNodeUpdate, Transform3DValues } from '@core/workspace/ports';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { beginViewportGesture, endViewportGesture } from '@core/workspace/viewportGesture';
@@ -39,7 +39,9 @@ import { trackValueCommands } from './viewportEdits';
 import { useSceneRefGeometry } from './useSceneRefGeometry';
 import type { RenderView } from '@core/workspace/renderView';
 import { Project3D, type Vec3 } from '@motion/scene';
-import { Gizmo3D, pointLines, type GizmoHandleType, type RenderedGizmo3D, type SnapLine, type SnapPointTarget } from '@motion/workspace';
+import { Gizmo3D, Gizmo3DMath, pointLines, type GizmoHandleType, type RenderedGizmo3D, type SnapLine, type SnapPointTarget } from '@motion/workspace';
+import { useUIStore } from '@stores/uiStore';
+import { readTrack } from '@core/mirror/selection';
 import { snapActive, snapGizmoTranslate } from './gizmo3dSnap';
 import { isSceneCameraView } from '@core/scene/cameraViewMode';
 
@@ -56,13 +58,31 @@ export interface DragState3D {
   /** Pointer-down position mapped into composition space. */
   startMouseComp: { x: number; y: number };
   mouseScreen: { x: number; y: number };
+  /** A value typed while dragging (AE parity 4.6): '' = none; px, degrees or percent by handle. */
+  typed: string;
+  /** Pan Behind (Y): a position drag moves the anchor point (the pivot), the layer stays. */
+  pivot: boolean;
+  /** Scale handles: the arm's on-screen direction (unit) and the handle's distance from the centre, comp px. */
+  scaleAxis?: { dir: { x: number; y: number }; dist: number };
   initialNodeStates?: Array<{
     id: string;
     pos: Vec3;
+    /** The layer's world position at grab time; a move adds the delta here, then maps it into `parent`'s space. */
+    world: Vec3;
+    parent: readonly number[];
     rot: { rotX: number; rotY: number; rotZ: number };
     scale: { scaleX: number; scaleY: number; scaleZ: number };
+    /** Orientation (degrees): with `parent`, what the trackball turns the rotation inside. */
+    orientation: { x: number; y: number; z: number };
+    /** Anchor point at grab time (Pan Behind edits it). */
+    anchor: { x: number; y: number; z: number };
   }>;
 }
+
+/** Increments while Shift is held (AE parity 4.6): world px, degrees, scale factor. */
+const SNAP_MOVE = 10;
+const SNAP_DEG = 15;
+const SNAP_SCALE = 0.1;
 
 /** Identity view — the fallback while a pane's camera does not exist yet. */
 const IDENTITY_VIEW: RenderView = { scale: 1, offsetX: 0, offsetY: 0 };
@@ -91,7 +111,14 @@ export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, option
   // A drag writes through the selected layers' property trees: keep them loaded.
   useRetainTrees(selectedIds);
 
-  const gizmoState = useGuidesStore((s) => s.gizmo3dState);
+  const pickedGizmo = useGuidesStore((s) => s.gizmo3dState);
+  // AE: the Rotation tool (W) shows the rotation gizmo on a 3D layer, Pan
+  // Behind (Y) the position gizmo — which then moves the pivot.
+  const activeTool = useUIStore((s) => s.activeTool);
+  const pivotMode = activeTool === 'pan-behind';
+  const gizmoState = activeTool === 'rotate' ? 'rotation' : pivotMode ? 'position' : pickedGizmo;
+  const pivotModeRef = useRef(pivotMode);
+  pivotModeRef.current = pivotMode;
   const axisMode = useGuidesStore((s) => s.gizmo3dAxisMode);
   const mainMode = useGuidesStore((s) => s.camera3dMode);
   // The view this instance draws for: a pane's own mode when it passes one.
@@ -171,8 +198,8 @@ export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, option
       const layer = mirror.layer(id);
       return canBe3DLayer(layer) && layer?.switches.threeD === true;
     })
-    .map((id) => ({ id, tv: transform3DOf(recordOf(id)) }))
-    .filter((n): n is { id: string; tv: Transform3DValues } => n.tv !== null);
+    .map((id) => ({ id, tv: transform3DOf(recordOf(id)), frame: gizmoFrameOf(recordOf(id)) }))
+    .filter((n): n is { id: string; tv: Transform3DValues; frame: GizmoFrame } => n.tv !== null && n.frame !== null);
 
   const is3D = selected3DNodes.length > 0;
   const singleId = selectedIds.length === 1 ? selectedIds[0] : (selected3DNodes[0]?.id ?? null);
@@ -182,14 +209,15 @@ export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, option
   let firstRot = { rotX: 0, rotY: 0, rotZ: 0 };
   let firstScale = { scaleX: 1, scaleY: 1, scaleZ: 1 };
 
-  selected3DNodes.forEach(({ tv }, idx) => {
+  selected3DNodes.forEach(({ tv, frame }, idx) => {
     // SAMPLED at the frame (animated tracks win) — the renderer draws the
     // sampled value, so anchoring the gizmo on static base props desynced it
-    // off any keyframed layer (Bug: gizmo/object desync).
+    // off any keyframed layer (Bug: gizmo/object desync). The WORLD position:
+    // a parented layer's local x/y/z is in its parent's space.
 
-    sumX += tv.x;
-    sumY += tv.y;
-    sumZ += tv.z;
+    sumX += frame.world.x;
+    sumY += frame.world.y;
+    sumZ += frame.world.z;
 
     if (idx === 0) {
       firstRot = { rotX: tv.rotationX, rotY: tv.rotationY, rotZ: tv.rotation };
@@ -206,6 +234,11 @@ export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, option
 
   const nodeRotation = firstRot;
   const nodeScale = firstScale;
+  // The first layer's frame (parent chain + Orientation) orients the Local axes.
+  const firstFrame = selected3DNodes[0]?.frame;
+  const localFrame = firstFrame ? { parent: firstFrame.parent, orientation: firstFrame.orientation } : undefined;
+  const localFrameRef = useRef(localFrame);
+  localFrameRef.current = localFrame;
 
   // Camera / ortho axis / scene gizmos come from the SHARED resolver, which the
   // read-only inspection panes use too — one resolution path, so the panes and
@@ -265,7 +298,7 @@ export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, option
       nodeRotation,
       camera,
       orthoView,
-      { gizmoState, axisMode, gizmoLengthPx: 85 / viewScale },
+      { gizmoState, axisMode, gizmoLengthPx: 85 / viewScale, frame: localFrame },
       compWidth,
       compHeight,
     );
@@ -336,197 +369,270 @@ export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, option
       return hit ? hit.pos : moved;
     };
 
+    /** The live drag: recompute every selected layer's values from the drag-start state. */
+    const applyDrag = (dragState: DragState3D, stagePt: { x: number; y: number }, compPt: { x: number; y: number }, mods: { shift: boolean; snapToggle: boolean; event: PointerEvent | null }): void => {
+      const ray = Project3D.unprojectScreenRay(compPt.x, compPt.y, camera, orthoView, compWidth, compHeight);
+      const basis = Gizmo3D.getGizmoBasis(axisMode, dragState.startRot3D, camera, localFrameRef.current);
+      const typed = Gizmo3DMath.typedValue(dragState.typed);
+
+      let newPos = { ...dragState.startPos3D };
+      const newRot = { ...dragState.startRot3D };
+      const newScale = { ...dragState.startScale3D };
+      /** A world-axis turn every layer takes in place (view ring, trackball). */
+      let worldTurn: { axis: Vec3; angleRad: number } | null = null;
+
+      const handle = dragState.handle;
+
+      if (handle === 'pos_x' || handle === 'pos_y' || handle === 'pos_z') {
+        const axisDir = handle === 'pos_x' ? basis.x : handle === 'pos_y' ? basis.y : basis.z;
+        // Ray/axis intersection is SINGULAR when the axis points at the camera:
+        // `closestPointRayAxis` divides by `a*c - b*b`, which goes to 0, and
+        // returns tAxis = 0 — so dragging the Z arrow in a front view (the
+        // default view, where basis.z faces the viewer) did precisely nothing.
+        // Fall back to vertical screen travel, AE-style: drag up pushes the
+        // layer along +axis, away from the camera.
+        const axisEntry = renderedGizmoRef.current?.axes.find((a) => a.type === handle);
+        let tAxis: number;
+        if (typed !== null) {
+          tAxis = typed;
+        } else if (axisEntry?.degenerate) {
+          const viewScale = readViewRef.current().scale || 1;
+          tAxis = -(stagePt.y - dragState.startMouseScreen.y) / viewScale;
+        } else {
+          tAxis = Project3D.closestPointRayAxis(ray, dragState.startPos3D, axisDir).tAxis;
+        }
+        if (mods.shift && typed === null) tAxis = Gizmo3DMath.snapIncrement(tAxis, SNAP_MOVE);
+        newPos = {
+          x: dragState.startPos3D.x + axisDir.x * tAxis,
+          y: dragState.startPos3D.y + axisDir.y * tAxis,
+          z: dragState.startPos3D.z + axisDir.z * tAxis,
+        };
+        // An axis pointing at the camera has no screen line to snap along.
+        if (!axisEntry?.degenerate && typed === null && !mods.shift && mods.event) {
+          newPos = snapTranslate('axis', newPos, axisDir, dragState.startPos3D, mods.event);
+        }
+      } else if (handle === 'plane_xy' || handle === 'plane_xz' || handle === 'plane_yz') {
+        const normal = handle === 'plane_xy' ? basis.z : handle === 'plane_xz' ? basis.y : basis.x;
+        const hit = Project3D.intersectRayPlane(ray, dragState.startPos3D, normal);
+        if (hit) {
+          if (mods.shift) {
+            // Increment-snap the move along the plane's two axes.
+            const u = handle === 'plane_yz' ? basis.y : basis.x;
+            const v = handle === 'plane_xy' ? basis.y : basis.z;
+            const d = { x: hit.x - dragState.startPos3D.x, y: hit.y - dragState.startPos3D.y, z: hit.z - dragState.startPos3D.z };
+            const du = Gizmo3DMath.snapIncrement(d.x * u.x + d.y * u.y + d.z * u.z, SNAP_MOVE);
+            const dv = Gizmo3DMath.snapIncrement(d.x * v.x + d.y * v.y + d.z * v.z, SNAP_MOVE);
+            newPos = {
+              x: dragState.startPos3D.x + u.x * du + v.x * dv,
+              y: dragState.startPos3D.y + u.y * du + v.y * dv,
+              z: dragState.startPos3D.z + u.z * du + v.z * dv,
+            };
+          } else {
+            newPos = mods.event ? snapTranslate('plane', hit, normal, dragState.startPos3D, mods.event) : hit;
+          }
+        }
+      } else if (handle === 'rot_x' || handle === 'rot_y' || handle === 'rot_z') {
+        // Delta rotation relative to the grab point:
+        //   rot_z — true relative angle around the gizmo centre (comp space);
+        //   rot_x / rot_y — the pointer ray against the ring's plane.
+        let deltaDeg = 0;
+        if (handle === 'rot_z') {
+          deltaDeg = screenAngleDeg(dragState, compPt);
+        } else {
+          // rot_x / rot_y: TRUE arc-following, like rot_z above — intersect
+          // the pointer ray with the ring's plane at grab time and now, and
+          // take the angle between the two hits about the centre in the
+          // plane's own basis. The travel mapping survives as the fallback
+          // when the ring is edge-on (the plane intersection degenerates there).
+          const axis = handle === 'rot_x' ? basis.x : basis.y;
+          const u = handle === 'rot_x' ? basis.y : basis.z;
+          const v = handle === 'rot_x' ? basis.z : basis.x;
+          const edgeOn =
+            Math.abs(ray.direction.x * axis.x + ray.direction.y * axis.y + ray.direction.z * axis.z) < 0.08;
+          const ray0 = Project3D.unprojectScreenRay(
+            dragState.startMouseComp.x, dragState.startMouseComp.y,
+            camera, orthoView, compWidth, compHeight,
+          );
+          const hitNow = edgeOn ? null : Project3D.intersectRayPlane(ray, dragState.startPos3D, axis);
+          const hit0 = edgeOn ? null : Project3D.intersectRayPlane(ray0, dragState.startPos3D, axis);
+          if (hitNow && hit0) {
+            const C = dragState.startPos3D;
+            const ang = (p: Vec3): number => Math.atan2(
+              (p.x - C.x) * v.x + (p.y - C.y) * v.y + (p.z - C.z) * v.z,
+              (p.x - C.x) * u.x + (p.y - C.y) * u.y + (p.z - C.z) * u.z,
+            );
+            deltaDeg = ((ang(hitNow) - ang(hit0)) * 180) / Math.PI;
+            if (deltaDeg > 180) deltaDeg -= 360;
+            if (deltaDeg < -180) deltaDeg += 360;
+          } else if (handle === 'rot_x') {
+            deltaDeg = -(stagePt.y - dragState.startMouseScreen.y) * 0.5;
+          } else {
+            deltaDeg = (stagePt.x - dragState.startMouseScreen.x) * 0.5;
+          }
+        }
+        if (typed !== null) deltaDeg = typed;
+        // Shift snaps rotation to 15° increments (AE standard)
+        else if (mods.shift) deltaDeg = Gizmo3DMath.snapIncrement(deltaDeg, SNAP_DEG);
+
+        if (handle === 'rot_x') newRot.rotX = dragState.startRot3D.rotX + deltaDeg;
+        else if (handle === 'rot_y') newRot.rotY = dragState.startRot3D.rotY + deltaDeg;
+        else newRot.rotZ = dragState.startRot3D.rotZ + deltaDeg;
+      } else if (handle === 'rot_outer') {
+        // The view-facing ring: about the view axis, by the angle swept round the centre.
+        let deltaDeg = typed ?? screenAngleDeg(dragState, compPt);
+        if (typed === null && mods.shift) deltaDeg = Gizmo3DMath.snapIncrement(deltaDeg, SNAP_DEG);
+        const view = Gizmo3D.getGizmoBasis('view', dragState.startRot3D, camera);
+        worldTurn = { axis: view.z, angleRad: (deltaDeg * Math.PI) / 180 };
+      } else if (handle === 'rot_free') {
+        // Free trackball: the pointer's travel turns about the view's up / right axes.
+        const view = Gizmo3D.getGizmoBasis('view', dragState.startRot3D, camera);
+        const t = Gizmo3DMath.trackballRotation(stagePt.x - dragState.startMouseScreen.x, stagePt.y - dragState.startMouseScreen.y, view.x, view.y);
+        worldTurn = mods.shift
+          ? { axis: t.axis, angleRad: (Gizmo3DMath.snapIncrement((t.angleRad * 180) / Math.PI, SNAP_DEG) * Math.PI) / 180 }
+          : t;
+      } else if (handle === 'scale_x' || handle === 'scale_y' || handle === 'scale_z') {
+        // Axis-projected: travel along the arm AS DRAWN on screen, so a handle
+        // that points down-left grows when dragged down-left (AE parity 4.6).
+        const dir = dragState.scaleAxis?.dir ?? { x: handle === 'scale_x' ? 1 : 0, y: handle === 'scale_x' ? 0 : -1 };
+        const dist = dragState.scaleAxis?.dist ?? 60;
+        let factor = typed !== null
+          ? typed / 100
+          : Gizmo3DMath.axisScaleFactor(compPt.x - dragState.startMouseComp.x, compPt.y - dragState.startMouseComp.y, dir, dist);
+        if (typed === null && mods.shift) factor = Math.max(SNAP_SCALE, Gizmo3DMath.snapIncrement(factor, SNAP_SCALE));
+        if (handle === 'scale_x') newScale.scaleX = dragState.startScale3D.scaleX * factor;
+        if (handle === 'scale_y') newScale.scaleY = dragState.startScale3D.scaleY * factor;
+        if (handle === 'scale_z') newScale.scaleZ = dragState.startScale3D.scaleZ * factor;
+      } else if (handle === 'scale_center') {
+        // Uniform: up-right grows, down-left shrinks, 1% per px.
+        const dxPx = stagePt.x - dragState.startMouseScreen.x;
+        const dyPx = stagePt.y - dragState.startMouseScreen.y;
+        let factor = typed !== null ? typed / 100 : Math.max(0.01, 1 + ((dxPx - dyPx) / 2) * 0.01);
+        if (typed === null && mods.shift) factor = Math.max(SNAP_SCALE, Gizmo3DMath.snapIncrement(factor, SNAP_SCALE));
+        newScale.scaleX = dragState.startScale3D.scaleX * factor;
+        newScale.scaleY = dragState.startScale3D.scaleY * factor;
+        newScale.scaleZ = dragState.startScale3D.scaleZ * factor;
+      }
+
+      const deltaX = newPos.x - dragState.startPos3D.x;
+      const deltaY = newPos.y - dragState.startPos3D.y;
+      const deltaZ = newPos.z - dragState.startPos3D.z;
+
+      const deltaRotX = newRot.rotX - dragState.startRot3D.rotX;
+      const deltaRotY = newRot.rotY - dragState.startRot3D.rotY;
+      const deltaRotZ = newRot.rotZ - dragState.startRot3D.rotZ;
+
+      // Per-axis factors. A single factor derived from scaleX made `scale_y` a
+      // no-op: that handle only changes scaleY, so the X ratio stayed 1 and the
+      // update below multiplied both axes by 1.
+      const scaleFactorX = newScale.scaleX / Math.max(0.001, dragState.startScale3D.scaleX);
+      const scaleFactorY = newScale.scaleY / Math.max(0.001, dragState.startScale3D.scaleY);
+      const scaleFactorZ = newScale.scaleZ / Math.max(0.001, dragState.startScale3D.scaleZ);
+
+      // Apply to all selected 3D nodes by the viewport's dual write rule:
+      // props with a lit stopwatch (or Auto-Keyframe on) key at the playhead —
+      // a base-only write is invisible on keyframed layers because the
+      // renderer samples the track first — and static props write the base.
+      // One undo entry per drag (the engine gesture opened on press).
+      // Only the handle's own props: a position drag must not touch (and
+      // possibly keyframe) rotation or scale tracks, and vice versa.
+      // Several layers: each moves by the same world delta, turns in place by
+      // the same amount and scales by the same factors (AE's multi-layer gizmo).
+      const isPosHandle = handle.startsWith('pos_') || handle.startsWith('plane_');
+      const isScaleHandle = handle.startsWith('scale_');
+      const updates: Gizmo3DNodeUpdate[] = (dragState.initialNodeStates ?? []).map((st) => {
+        const values: Record<string, number> = {};
+        if (isPosHandle) {
+          // The move is a WORLD delta; a parented layer stores parent-space values.
+          Object.assign(values, toParentSpace(st.parent, { x: st.world.x + deltaX, y: st.world.y + deltaY, z: st.world.z + deltaZ }));
+          if (dragState.pivot) {
+            // Pan Behind: the anchor follows in the layer's own space, so the
+            // layer stays put while its pivot (and the gizmo) moves.
+            const { anchorDelta } = Gizmo3DMath.pivotEdit(
+              { x: deltaX, y: deltaY, z: deltaZ },
+              { parent: st.parent, orientation: st.orientation },
+              st.rot,
+              { x: st.scale.scaleX, y: st.scale.scaleY, z: st.scale.scaleZ },
+            );
+            values.anchorX = st.anchor.x + anchorDelta.x;
+            values.anchorY = st.anchor.y + anchorDelta.y;
+            values.anchorZ = st.anchor.z + anchorDelta.z;
+          }
+        }
+        if (handle === 'rot_x') values.rotationX = st.rot.rotX + deltaRotX;
+        if (handle === 'rot_y') values.rotationY = st.rot.rotY + deltaRotY;
+        if (handle === 'rot_z') values.rotation = st.rot.rotZ + deltaRotZ;
+        if (worldTurn) {
+          const r = Gizmo3DMath.rotateEulerAboutWorldAxis(st.rot, { parent: st.parent, orientation: st.orientation }, worldTurn.axis, worldTurn.angleRad);
+          values.rotationX = r.rotX;
+          values.rotationY = r.rotY;
+          values.rotation = r.rotZ;
+        }
+        // Each axis only from a handle that changes it: writing an unchanged
+        // value alongside would put a keyframe on a track the drag never
+        // touched under Auto-Keyframe.
+        if (isScaleHandle && (handle === 'scale_x' || handle === 'scale_center')) values.scaleX = st.scale.scaleX * scaleFactorX;
+        if (isScaleHandle && (handle === 'scale_y' || handle === 'scale_center')) values.scaleY = st.scale.scaleY * scaleFactorY;
+        if (isScaleHandle && (handle === 'scale_z' || handle === 'scale_center')) values.scaleZ = st.scale.scaleZ * scaleFactorZ;
+        return { id: st.id, values: values as Gizmo3DNodeUpdate['values'] };
+      });
+      // The dual path as commands: a property with a lit stopwatch (or any
+      // while Auto-Keyframe is on) keys at the playhead, the rest take the
+      // value. Absolute (drag-start state + this move), latest wins.
+      const s = useProjectStore.getState();
+      const cmds = trackValueCommands(
+        updates.map((u) => ({ nodeId: u.id, values: u.values as Record<string, number> })),
+        { seconds: s.tabs[s.activeTabId ?? '']?.time ?? 0, autoKeyframe: usePreferenceStore.getState().timelineAutoKeyframe },
+      );
+      // null: a node the engine does not address (not a composition's layer,
+      // or a member with no API property) — nothing the API can record.
+      if (cmds) gestureRef.current?.send(cmds);
+
+      // Live truth into the ref; the React mirror (which the measurement
+      // HUD renders from) syncs at most once per frame.
+      const first = updates[0]?.values as Record<string, number> | undefined;
+      dragRef.current = {
+        ...dragState,
+        currentPos3D: newPos,
+        currentRot3D: worldTurn && first
+          ? { rotX: first.rotationX ?? newRot.rotX, rotY: first.rotationY ?? newRot.rotY, rotZ: first.rotation ?? newRot.rotZ }
+          : newRot,
+        currentScale3D: newScale,
+        mouseScreen: stagePt,
+      };
+      if (dragHudRaf.current === null) {
+        dragHudRaf.current = requestAnimationFrame(() => {
+          dragHudRaf.current = null;
+          setDragState(dragRef.current);
+        });
+      }
+    };
+
+    /** The angle (degrees, -180…180) swept round the gizmo centre since the grab, comp space. */
+    const screenAngleDeg = (dragState: DragState3D, compPt: { x: number; y: number }): number => {
+      const center = renderedGizmoRef.current
+        ? { x: renderedGizmoRef.current.centerScreen.x, y: renderedGizmoRef.current.centerScreen.y }
+        : { x: dragState.startPos3D.x, y: dragState.startPos3D.y };
+      const a0 = Math.atan2(dragState.startMouseComp.y - center.y, dragState.startMouseComp.x - center.x);
+      const a1 = Math.atan2(compPt.y - center.y, compPt.x - center.x);
+      let deltaDeg = ((a1 - a0) * 180) / Math.PI;
+      if (deltaDeg > 180) deltaDeg -= 360;
+      if (deltaDeg < -180) deltaDeg += 360;
+      return deltaDeg;
+    };
+
+    /** The last pointer position and modifiers, so a typed key can re-run the drag. */
+    const lastPointer = { stage: { x: 0, y: 0 }, comp: { x: 0, y: 0 }, shift: false };
+
     const onPointerMove = (e: PointerEvent) => {
       const stagePt = getStageLocal(e);
       const compPt = getCompLocal(stagePt);
 
       const dragState = dragRef.current;
       if (dragState && dragState.active) {
-        // Drag in progress — calculate updated 3D transform
-        const ray = Project3D.unprojectScreenRay(compPt.x, compPt.y, camera, orthoView, compWidth, compHeight);
-        const basis = Gizmo3D.getGizmoBasis(axisMode, dragState.startRot3D, camera);
-
-        let newPos = { ...dragState.startPos3D };
-        const newRot = { ...dragState.startRot3D };
-        const newScale = { ...dragState.startScale3D };
-
-        const handle = dragState.handle;
-
-        if (handle === 'pos_x' || handle === 'pos_y' || handle === 'pos_z') {
-          const axisDir = handle === 'pos_x' ? basis.x : handle === 'pos_y' ? basis.y : basis.z;
-          // Ray/axis intersection is SINGULAR when the axis points at the camera:
-          // `closestPointRayAxis` divides by `a*c - b*b`, which goes to 0, and
-          // returns tAxis = 0 — so dragging the Z arrow in a front view (the
-          // default view, where basis.z faces the viewer) did precisely nothing.
-          // Fall back to vertical screen travel, AE-style: drag up pushes the
-          // layer along +axis, away from the camera.
-          const axisEntry = renderedGizmoRef.current?.axes.find((a) => a.type === handle);
-          let tAxis: number;
-          if (axisEntry?.degenerate) {
-            const viewScale = readViewRef.current().scale || 1;
-            tAxis = -(stagePt.y - dragState.startMouseScreen.y) / viewScale;
-          } else {
-            tAxis = Project3D.closestPointRayAxis(ray, dragState.startPos3D, axisDir).tAxis;
-          }
-          newPos = {
-            x: dragState.startPos3D.x + axisDir.x * tAxis,
-            y: dragState.startPos3D.y + axisDir.y * tAxis,
-            z: dragState.startPos3D.z + axisDir.z * tAxis,
-          };
-          // An axis pointing at the camera has no screen line to snap along.
-          if (!axisEntry?.degenerate) newPos = snapTranslate('axis', newPos, axisDir, dragState.startPos3D, e);
-        } else if (handle === 'plane_xy' || handle === 'plane_xz' || handle === 'plane_yz') {
-          const normal = handle === 'plane_xy' ? basis.z : handle === 'plane_xz' ? basis.y : basis.x;
-          const hit = Project3D.intersectRayPlane(ray, dragState.startPos3D, normal);
-          if (hit) newPos = snapTranslate('plane', hit, normal, dragState.startPos3D, e);
-        } else if (handle === 'rot_x' || handle === 'rot_y' || handle === 'rot_z') {
-          // Delta rotation relative to the grab point:
-          //   rot_z — true relative angle around the gizmo centre (comp space);
-          //   rot_x / rot_y — vertical / horizontal mouse travel mapped to degrees.
-          let deltaDeg = 0;
-          if (handle === 'rot_z') {
-            const center = renderedGizmoRef.current
-              ? { x: renderedGizmoRef.current.centerScreen.x, y: renderedGizmoRef.current.centerScreen.y }
-              : { x: dragState.startPos3D.x, y: dragState.startPos3D.y };
-            const a0 = Math.atan2(dragState.startMouseComp.y - center.y, dragState.startMouseComp.x - center.x);
-            const a1 = Math.atan2(compPt.y - center.y, compPt.x - center.x);
-            deltaDeg = ((a1 - a0) * 180) / Math.PI;
-            if (deltaDeg > 180) deltaDeg -= 360;
-            if (deltaDeg < -180) deltaDeg += 360;
-          } else {
-            // rot_x / rot_y: TRUE arc-following, like rot_z above — intersect
-            // the pointer ray with the ring's plane at grab time and now, and
-            // take the angle between the two hits about the centre in the
-            // plane's own basis. The old raw mouse-travel × 0.5°/px neither
-            // followed the ring under the cursor nor scaled with zoom. The
-            // travel mapping survives as the fallback when the ring is
-            // edge-on (the plane intersection degenerates there).
-            const axis = handle === 'rot_x' ? basis.x : basis.y;
-            const u = handle === 'rot_x' ? basis.y : basis.z;
-            const v = handle === 'rot_x' ? basis.z : basis.x;
-            const edgeOn =
-              Math.abs(ray.direction.x * axis.x + ray.direction.y * axis.y + ray.direction.z * axis.z) < 0.08;
-            const ray0 = Project3D.unprojectScreenRay(
-              dragState.startMouseComp.x, dragState.startMouseComp.y,
-              camera, orthoView, compWidth, compHeight,
-            );
-            const hitNow = edgeOn ? null : Project3D.intersectRayPlane(ray, dragState.startPos3D, axis);
-            const hit0 = edgeOn ? null : Project3D.intersectRayPlane(ray0, dragState.startPos3D, axis);
-            if (hitNow && hit0) {
-              const C = dragState.startPos3D;
-              const ang = (p: Vec3): number => Math.atan2(
-                (p.x - C.x) * v.x + (p.y - C.y) * v.y + (p.z - C.z) * v.z,
-                (p.x - C.x) * u.x + (p.y - C.y) * u.y + (p.z - C.z) * u.z,
-              );
-              deltaDeg = ((ang(hitNow) - ang(hit0)) * 180) / Math.PI;
-              if (deltaDeg > 180) deltaDeg -= 360;
-              if (deltaDeg < -180) deltaDeg += 360;
-            } else if (handle === 'rot_x') {
-              deltaDeg = -(stagePt.y - dragState.startMouseScreen.y) * 0.5;
-            } else {
-              deltaDeg = (stagePt.x - dragState.startMouseScreen.x) * 0.5;
-            }
-          }
-
-          // Shift key snaps rotation to 15° increments (AE standard)
-          if (e.shiftKey) {
-            deltaDeg = Math.round(deltaDeg / 15) * 15;
-          }
-
-          if (handle === 'rot_x') newRot.rotX = dragState.startRot3D.rotX + deltaDeg;
-          else if (handle === 'rot_y') newRot.rotY = dragState.startRot3D.rotY + deltaDeg;
-          else newRot.rotZ = dragState.startRot3D.rotZ + deltaDeg;
-        } else if (handle === 'scale_x' || handle === 'scale_y' || handle === 'scale_z' || handle === 'scale_center') {
-          // Each handle follows the axis it points along. Every scale handle used
-          // to read `stagePt.x` only, so the VERTICAL Y-scale handle grew when you
-          // dragged sideways and ignored vertical motion entirely. The Z cube
-          // reads vertical travel (its arrow leans toward the viewer, so "up =
-          // bigger" is the only direction that always exists on screen); it was
-          // drawn-but-dead before scaleZ was plumbed through the ports.
-          const dxPx = stagePt.x - dragState.startMouseScreen.x;
-          const dyPx = stagePt.y - dragState.startMouseScreen.y;
-          const travel =
-            handle === 'scale_y' || handle === 'scale_z' ? -dyPx
-            : handle === 'scale_center' ? (dxPx - dyPx) / 2
-            : dxPx;
-          const factor = Math.max(0.05, 1 + travel * 0.01);
-          if (handle === 'scale_x' || handle === 'scale_center') newScale.scaleX = dragState.startScale3D.scaleX * factor;
-          if (handle === 'scale_y' || handle === 'scale_center') newScale.scaleY = dragState.startScale3D.scaleY * factor;
-          if (handle === 'scale_z') newScale.scaleZ = dragState.startScale3D.scaleZ * factor;
-        }
-
-        const deltaX = newPos.x - dragState.startPos3D.x;
-        const deltaY = newPos.y - dragState.startPos3D.y;
-        const deltaZ = newPos.z - dragState.startPos3D.z;
-
-        const deltaRotX = newRot.rotX - dragState.startRot3D.rotX;
-        const deltaRotY = newRot.rotY - dragState.startRot3D.rotY;
-        const deltaRotZ = newRot.rotZ - dragState.startRot3D.rotZ;
-
-        // Per-axis factors. A single factor derived from scaleX made `scale_y` a
-        // no-op: that handle only changes scaleY, so the X ratio stayed 1 and the
-        // update below multiplied both axes by 1.
-        const scaleFactorX = newScale.scaleX / Math.max(0.001, dragState.startScale3D.scaleX);
-        const scaleFactorY = newScale.scaleY / Math.max(0.001, dragState.startScale3D.scaleY);
-        const scaleFactorZ = newScale.scaleZ / Math.max(0.001, dragState.startScale3D.scaleZ);
-
-        // Apply to all selected 3D nodes by the viewport's dual write rule:
-        // props with a lit stopwatch (or Auto-Keyframe on) key at the playhead —
-        // a base-only write is invisible on keyframed layers because the
-        // renderer samples the track first — and static props write the base.
-        // One undo entry per drag (the engine gesture opened on press).
-        // Only the handle's own props: a position drag must not touch (and
-        // possibly keyframe) rotation or scale tracks, and vice versa.
-        const isPosHandle = handle.startsWith('pos_') || handle.startsWith('plane_');
-        const isRotHandle = handle.startsWith('rot_');
-        const isScaleHandle = handle.startsWith('scale_');
-        const updates: Gizmo3DNodeUpdate[] = (dragState.initialNodeStates ?? []).map((st) => ({
-          id: st.id,
-          values: {
-            ...(isPosHandle
-              ? { x: st.pos.x + deltaX, y: st.pos.y + deltaY, z: st.pos.z + deltaZ }
-              : {}),
-            ...(isRotHandle && handle === 'rot_x' ? { rotationX: st.rot.rotX + deltaRotX } : {}),
-            ...(isRotHandle && handle === 'rot_y' ? { rotationY: st.rot.rotY + deltaRotY } : {}),
-            ...(isRotHandle && (handle === 'rot_z' || handle === 'rot_outer')
-              ? { rotation: st.rot.rotZ + deltaRotZ }
-              : {}),
-            // Z scale only from ITS handle, and X/Y only from theirs: writing
-            // an unchanged scaleZ:1 (or scaleX) alongside would put a keyframe
-            // on a track the drag never touched under Auto-Keyframe.
-            ...(isScaleHandle && handle !== 'scale_z'
-              ? { scaleX: st.scale.scaleX * scaleFactorX, scaleY: st.scale.scaleY * scaleFactorY }
-              : {}),
-            ...(handle === 'scale_z' ? { scaleZ: st.scale.scaleZ * scaleFactorZ } : {}),
-          },
-        }));
-        // The dual path as commands: a property with a lit stopwatch (or any
-        // while Auto-Keyframe is on) keys at the playhead, the rest take the
-        // value. Absolute (drag-start state + this move), latest wins.
-        const s = useProjectStore.getState();
-        const cmds = trackValueCommands(
-          updates.map((u) => ({ nodeId: u.id, values: u.values as Record<string, number> })),
-          { seconds: s.tabs[s.activeTabId ?? '']?.time ?? 0, autoKeyframe: usePreferenceStore.getState().timelineAutoKeyframe },
-        );
-        // null: a node the engine does not address (not a composition's layer,
-        // or a member with no API property) — nothing the API can record.
-        if (cmds) gestureRef.current?.send(cmds);
-
-        // Live truth into the ref; the React mirror (which the measurement
-        // HUD renders from) syncs at most once per frame.
-        dragRef.current = {
-          ...dragState,
-          currentPos3D: newPos,
-          currentRot3D: newRot,
-          currentScale3D: newScale,
-          mouseScreen: stagePt,
-        };
-        if (dragHudRaf.current === null) {
-          dragHudRaf.current = requestAnimationFrame(() => {
-            dragHudRaf.current = null;
-            setDragState(dragRef.current);
-          });
-        }
+        lastPointer.stage = stagePt;
+        lastPointer.comp = compPt;
+        lastPointer.shift = e.shiftKey;
+        applyDrag(dragState, stagePt, compPt, { shift: e.shiftKey, snapToggle: e.ctrlKey || e.metaKey, event: e });
         return;
       }
 
@@ -535,6 +641,52 @@ export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, option
         const hit = Gizmo3D.hitTestGizmo3D(compPt, renderedGizmoRef.current, hitTolerance());
         setHoverHandle(hit);
       }
+    };
+
+    /**
+     * Keys while dragging (AE parity 4.6): digits, '.', '-' and Backspace type
+     * an exact value (px along the axis, degrees, or percent), Enter commits
+     * the drag, Escape cancels it (the engine reverts the gesture).
+     */
+    const onKeyDown = (e: KeyboardEvent): void => {
+      const dragState = dragRef.current;
+      if (!dragState?.active) return;
+      if (e.key === 'Escape' || e.key === 'Enter') {
+        e.preventDefault();
+        e.stopPropagation();
+        finishDrag(e.key === 'Enter');
+        return;
+      }
+      const next = Gizmo3DMath.typedValueKey(dragState.typed, e.key);
+      if (next === null) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const updated = { ...dragState, typed: next };
+      dragRef.current = updated;
+      applyDrag(updated, lastPointer.stage, lastPointer.comp, { shift: lastPointer.shift, snapToggle: false, event: null });
+    };
+
+    /** End the drag: commit (pointer up, Enter) or cancel (Escape). */
+    const finishDrag = (commit: boolean, pointerId?: number): void => {
+      if (pointerId !== undefined) {
+        try {
+          stage.releasePointerCapture(pointerId);
+        } catch {
+          /* best-effort */
+        }
+      }
+      endViewportGesture();
+      const g = gestureRef.current;
+      gestureRef.current = null;
+      void (commit ? g?.end() : g?.cancel());
+      endSnap();
+      dragRef.current = null;
+      if (dragHudRaf.current !== null) {
+        cancelAnimationFrame(dragHudRaf.current);
+        dragHudRaf.current = null;
+      }
+      setActiveHandle(null);
+      setDragState(null);
     };
 
     const onPointerDown = (e: PointerEvent) => {
@@ -568,14 +720,21 @@ export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, option
         // Nodes are re-fetched at event time so the anchor is never a stale
         // render-closure value.
         const initialNodeStates = selected3DNodes
-          .map((n) => ({ id: n.id, tv: transform3DOf(recordOfRef.current(n.id)) }))
-          .filter((n): n is { id: string; tv: Transform3DValues } => n.tv !== null)
-          .map(({ id, tv }) => {
+          .map((n) => ({ id: n.id, tv: transform3DOf(recordOfRef.current(n.id)), frame: gizmoFrameOf(recordOfRef.current(n.id)) }))
+          .filter((n): n is { id: string; tv: Transform3DValues; frame: GizmoFrame } => n.tv !== null && n.frame !== null)
+          .map(({ id, tv, frame }) => {
+            const m = documentMirror();
+            const sec = useProjectStore.getState().tabs[useProjectStore.getState().activeTabId ?? '']?.time ?? 0;
+            const anchor = (track: string): number => readTrack(m, id, track, sec) ?? 0;
             return {
               id,
               pos: { x: tv.x, y: tv.y, z: tv.z },
+              world: frame.world,
+              parent: frame.parent,
               rot: { rotX: tv.rotationX, rotY: tv.rotationY, rotZ: tv.rotation },
               scale: { scaleX: tv.scaleX, scaleY: tv.scaleY, scaleZ: tv.scaleZ },
+              orientation: frame.orientation,
+              anchor: { x: anchor('anchorX'), y: anchor('anchorY'), z: anchor('anchorZ') },
             };
           });
         if (initialNodeStates.length === 0) return;
@@ -595,9 +754,9 @@ export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, option
         // Fresh centroid + first-node rot/scale (mirrors the render-path math).
         const n = initialNodeStates.length;
         const startPos: Vec3 = {
-          x: initialNodeStates.reduce((a, s) => a + s.pos.x, 0) / n,
-          y: initialNodeStates.reduce((a, s) => a + s.pos.y, 0) / n,
-          z: initialNodeStates.reduce((a, s) => a + s.pos.z, 0) / n,
+          x: initialNodeStates.reduce((a, s) => a + s.world.x, 0) / n,
+          y: initialNodeStates.reduce((a, s) => a + s.world.y, 0) / n,
+          z: initialNodeStates.reduce((a, s) => a + s.world.z, 0) / n,
         };
         const first = initialNodeStates[0]!;
         const startRot = { ...first.rot };
@@ -607,9 +766,25 @@ export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, option
         // preview must not serve the pre-drag frame while the layer moves.
         beginViewportGesture();
         void gestureRef.current?.end();
+        const pivot = pivotModeRef.current && (hit.startsWith('pos_') || hit.startsWith('plane_'));
         gestureRef.current = new GestureSession(
-          hit.startsWith('rot_') ? 'Rotate' : hit.startsWith('scale_') ? 'Scale' : 'Move',
+          pivot ? 'Move Anchor Point' : hit.startsWith('rot_') ? 'Rotate' : hit.startsWith('scale_') ? 'Scale' : 'Move',
         );
+        // A scale handle's arm on screen (axis-projected scale): the Universal
+        // cube, or the Scale gizmo's arm tip.
+        const g = renderedGizmoRef.current;
+        let scaleAxis: DragState3D['scaleAxis'];
+        if (hit === 'scale_x' || hit === 'scale_y' || hit === 'scale_z') {
+          const cube = g.scaleHandles.find((h) => h.type === hit);
+          const arm = g.axes.find((a) => a.type === hit);
+          if (cube) scaleAxis = { dir: cube.screenDir, dist: cube.screenDist };
+          else if (arm && arm.screenLen > 0) {
+            scaleAxis = {
+              dir: { x: (arm.endScreen.x - arm.startScreen.x) / arm.screenLen, y: (arm.endScreen.y - arm.startScreen.y) / arm.screenLen },
+              dist: arm.screenLen,
+            };
+          }
+        }
         setActiveHandle(hit);
         const start: DragState3D = {
           active: true,
@@ -623,32 +798,21 @@ export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, option
           startMouseScreen: stagePt,
           startMouseComp: compPt,
           mouseScreen: stagePt,
+          typed: '',
+          pivot,
+          ...(scaleAxis ? { scaleAxis } : {}),
           initialNodeStates,
         };
+        lastPointer.stage = stagePt;
+        lastPointer.comp = compPt;
+        lastPointer.shift = e.shiftKey;
         dragRef.current = start;
         setDragState(start);
       }
     };
 
     const onPointerUp = (e: PointerEvent) => {
-      if (dragRef.current && dragRef.current.active) {
-        try {
-          stage.releasePointerCapture(e.pointerId);
-        } catch {
-          /* best-effort */
-        }
-        endViewportGesture();
-        void gestureRef.current?.end();
-        gestureRef.current = null;
-        endSnap();
-        dragRef.current = null;
-        if (dragHudRaf.current !== null) {
-          cancelAnimationFrame(dragHudRaf.current);
-          dragHudRaf.current = null;
-        }
-        setActiveHandle(null);
-        setDragState(null);
-      }
+      if (dragRef.current && dragRef.current.active) finishDrag(true, e.pointerId);
     };
 
     // Capture phase on the STAGE (the overlay canvas' ancestor): the gizmo
@@ -659,11 +823,14 @@ export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, option
     stage.addEventListener('pointerdown', onPointerDown, { capture: true });
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
+    // Capture: typed values and Esc while dragging win over the shortcut manager.
+    window.addEventListener('keydown', onKeyDown, { capture: true });
 
     return () => {
       stage.removeEventListener('pointerdown', onPointerDown, { capture: true } as EventListenerOptions);
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('keydown', onKeyDown, { capture: true } as EventListenerOptions);
       // Rebinding (or unmounting) mid-drag must close the gesture transaction.
       if (dragRef.current) {
         endViewportGesture();
@@ -683,7 +850,7 @@ export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, option
     // `selectedIds` (not just `singleId`) because onPointerDown snapshots the
     // selection's nodes: a multi-select change that keeps the same primary id
     // must still rebind the closure.
-  }, [is3D, singleId, selectedIds, axisMode, mode, customViews, compWidth, compHeight, time]);
+  }, [is3D, singleId, selectedIds, axisMode, mode, customViews, compWidth, compHeight, time, gizmoState]);
 
   return {
     /** Looking THROUGH a scene camera (Active Camera / Camera N), not at the scene from outside. */
@@ -695,6 +862,7 @@ export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, option
     position3D,
     nodeRotation,
     nodeScale,
+    localFrame,
     camera,
     orthoView,
     compWidth,

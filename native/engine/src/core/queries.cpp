@@ -19,6 +19,7 @@
 #include "handlers_common.hpp"
 #include "handlers_comps.hpp"
 #include "handlers_layers.hpp"
+#include "handlers_misc.hpp"
 #include "item_facts.hpp"
 #include "handlers_native.hpp"
 #include "layer_geometry.hpp"
@@ -245,6 +246,7 @@ api::EffectInfo effect_info(const EffectDef& def) {
     for (const auto& o : p.options) pi.choices.push_back(o.label);
     pi.unit = p.unit.value_or("");
     pi.group = p.group.value_or("");
+    if (p.precision) pi.precision = static_cast<std::uint32_t>(std::max(0.0, *p.precision));
     e.params.push_back(std::move(pi));
   }
   e.supports_float = false;
@@ -740,6 +742,7 @@ struct Q {
       e.provider = ne->provider;
       e.gpu = ne->gpu;
       e.supports_float = ne->supportsFloat;
+      for (const auto& [key, label] : ne->actions) e.actions.push_back(api::EffectActionInfo{key, label});
       if (q.category.empty() || e.category == q.category) out.effects.push_back(std::move(e));
     }
     return query_result_for<api::ListEffects>(std::move(out));
@@ -1022,6 +1025,14 @@ struct Q {
     }
     out.time = map_layer_time(pc, q.layer, q.time, q.outward);
     return query_result_for<api::MapLayerTime>(std::move(out));
+  }
+  api::QueryResult operator()(const api::GetCameraSolve& q) const {
+    api::CameraSolveAnswer out;
+    out.solve = camera_solve_of(d, pc.view, q.layer);
+    return query_result_for<api::GetCameraSolve>(std::move(out));
+  }
+  api::QueryResult operator()(const api::GetLayerTrackers& q) const {
+    return query_result_for<api::GetLayerTrackers>(layer_trackers(d, pc.view, q.layer));
   }
   api::QueryResult operator()(const api::GetSourceSize& q) const {
     return query_result_for<api::GetSourceSize>(api::SourceSizes{source_sizes(d, q.layers)});

@@ -472,10 +472,14 @@ on an effect or mask path — one command, one inverse implementation.
 | `applyJobResult` | edit | Apply a finished `apply:false` job. Inverse: that entry. |
 | `setContentAwareFill` | edit | The layer's content-aware fill frames (the Content-Aware Fill job's result): the filled frame nearest the layer's time stands in for its footage; empty `frames` clears it. Inverse: the previous record. |
 | `setCaptions` | edit | Burn-in captions (`premation render --captions`, p4-round3): the comp's top-level caption layers (`__caption` on Text) are replaced by one centred text layer per cue, in/out = the cue; `style` JSON (`fontSizeRatio` 0.05, `fontWeight` 700, `fill` #ffffff, `bottomMarginRatio` 0.1). A cue that does not end after it starts is `invalidArgument`. One journal. The TS engine answers `unsupported`. |
-| `setPluginEnabled` | control | Session enable/disable (installation stays in the editor's plugin manager). |
+| `setPluginEnabled` | control | Session enable/disable of a native plugin; re-enabling retries a failed or quarantined one, and loads one started with `--plugin-disabled`. Electron persists the choice (`state.json`, docs/PLUGIN_STORE.md §4) and passes `--plugin-disabled` at the next start. |
+| `rescanPlugins` | control | Rescan the plugin folders and answer the plugin list; bundles installed since start load at once, already-loaded ones stay loaded until restart (docs/PLUGIN_STORE.md §5). `unsupported` without `--plugins`. |
+| `setLayerTrackers` | edit | AE parity 3.6: the layer's saved trackers (`fx.trackers`: point setup, attach points, analysed samples on the layer's own time axis); empty clears them. Inverse: the previous list. Read with `getLayerTrackers`. |
+| `setCameraSolve` | edit | AE parity 3.5: the footage layer's camera solve (`fx.cameraSolve`: solve-space camera per frame, scene points and their errors, the world mapping); absent `solve` clears it. Written by the `cameraTrack` job; read with `getCameraSolve`. |
+| `setLayerMatte` | edit | AE parity 3.2: per-frame cut-out pictures (`fx.alphaMatte`) — the video Object Matte's soft, refined, decontaminated subject — the nearest standing in for the footage as Content-Aware Fill frames do. Empty clears it. |
 | `setPluginData` | edit | Plugin data **in the document** (AE sequence data / arbitrary-data params) — today it is an in-memory LRU. Inverse: previous bytes. |
 
-**Engine jobs (2026-09-27, branch `engine-jobs`; C++ engine only — the TypeScript engine answers `startJob` `unsupported` and the UI then runs its page path).**
+**Engine jobs (2026-09-27, branch `engine-jobs`). The C++ engine is the only engine; there is no page path.**
 The C++ engine runs jobs itself (`native/engine/src/jobs`, the runner in
 `engine_core`: `jobs/job_runner`, `core/session_jobs.cpp`):
 
@@ -510,13 +514,39 @@ The C++ engine runs jobs itself (`native/engine/src/jobs`, the runner in
 | `proxy` | assets/proxy.ts (rule + ffmpeg args) | `setProxy` of the file written temp + rename under `Proxies/` ("Create Proxy") | `{path, width, height}` |
 | `render` | engineExport.ts + ffmpegEncodeArgs.ts | nothing (files delivered to each item's output path) | `{outputs}` |
 | `prerender` | — | `importFiles` of the rendered files ("Pre-render") | `{outputs}` |
-| `rotoBrush` | rotoBrush.ts | one "Roto Brush" mask, a path key per frame ("Roto Brush") | `{frames, keyframes}` |
+| `rotoBrush` | rotoBrush.ts | starts from `startMask` (the tool's SAM outline) or GrabCut from every prompt; every prompt rides the flow and re-seeds; one "Roto Brush" mask with a path key per frame, replacing the layer's previous "Roto Brush" masks in the same entry; the path is the matte's traced outline (a simple polygon, ≤ 128 points) ("Roto Brush") | `{frames, keyframes}` |
 | `contentAwareFill` | contentAwareFillVideo.ts | PNGs under `Content-Aware Fill/` + `setContentAwareFill` | `{frames, filledPixels}` |
 | `physicsBake` | bakeDynamics.ts (samplePhysicsTracks) over rigid_body.cpp | every enabled body of the composition seeds the renderer's solver (flatten order, authored pose; world gravity 0 / 1800, comp walls, 4 passes); each requested DYNAMIC body's position (and rotation for a spinning body) keyed per sampled frame, linear with the last key held, Douglas-Peucker thinned by `simplifyTolerance`; `layer/physics` set `enabled:false` ("Bake physics to keyframes") | `{layers, frames, tracks, keyframes}` |
 | `particleBake` | bakeDynamics.ts (sampleParticleLayers) over particle_port.cpp (`particles_at_frame`, birth index) | a "<emitter> Baked" null parented to the emitter; one ellipse / rectangle per particle (earliest born, `maxParticles` default 200) at its first-seen size in the start colour, keyed x / y / scale / opacity (a zero hold one frame outside its life); the emitter hidden ("Bake particles to layers"). The config is resolved per frame on the core thread (`JobDocContext.layerValues`: the emitter's `particle.<key>` tracks) | `{containerId, layerIds, seen, capped, particles, keyframes}` |
 | `autoReframe` | autoReframe.ts (saliency, reframePath) | a NEW composition holding the source as a precomp, the pan keyed on separated position ("Auto-reframe"); the source comp is rendered small by a child `--export` (PNG frames read through the OS still codec) | `{samples, cuts, keyframes, comp, layer}` |
 | `rigLogo` | scene/rigLogo.ts | one image / shape layer holding nothing: two puppet pins, "Anchor" (bottom centre) and "Wave" (top centre); anything else: the selection drawn alone together (`isolateLayers`) on a transparent comp by a child `--export`, cropped to its pixels + 4 px, `importBytes` (`derived`), an image layer "<name> (Rigged)" where it drew above the topmost selected layer, then the pins ("Rig Logo for Animation") | `{mode: 'self' \| 'rasterize', layer, item?, width?, height?}` |
 | `transcribe` | captions/transcribe.ts + electron/aiProxy.ts transcribeAudio | nothing (the caption commands build layers from the cues; `createCaptions` must be false). 2026-09-28: `comp`'s sound over `range` mixed by a child `--export` (`audioOnly`: the export's offline mix, no picture preflight), 16 kHz mono WAV, POSTed to OpenAI whisper-1 (`verbose_json`, segment + word timings) over the OS HTTP stack (WinHTTP / libcurl, no redirects). The key: `credential`, written into the request by Electron MAIN from its keystore as it passes (engineHost `transcribeCredential`); the page never has it, main logs the request without it, the engine drops it from its log and never persists or returns it. Errors carry aiProxy's code in `detail` (`{"code":"no_key" / "auth" / "rate_limit" / "network" / "silent" / "empty" …}`) | `{cues:[{start,end,text}], words:[…], language}` (composition seconds, cues de-overlapped) |
+| `modelImport` | — (AE parity 4.7; model_convert.hpp) | nothing — the editor imports the written .glb (`importFiles`, a `model` item) and lays its layers out referencing it | `{glb, name, warnings}` |
+
+`modelImport` (1720, `ModelImportJob {files, outputFolder, name?}`): `files[0]`
+is the model (.glb, .gltf, .obj, .fbx, .usda, .usdz), the rest its sidecars
+(.bin, .mtl, textures) resolved by relative path then bare name. The engine
+normalizes it into ONE plain glTF 2.0 binary (meshopt / Draco geometry and
+quantized attributes decoded to floats, KTX2 textures transcoded to PNG,
+sidecars embedded; OBJ / FBX / USD converted — model_convert.hpp) written
+temp + rename as `<outputFolder>/<name>.glb` under a free name (never over an
+earlier import). `outputFolder` '' = `Models/` beside the project, or the
+temp folder for an untitled one; `name` absent = the model's stem. Refusals:
+not a model extension / a binary USD crate / Draco or KTX2 in a build without
+the vcpkg codec (`invalidArgument`, the message names the alternative); a
+file that cannot be read or written (`io`). No document change.
+
+`trackMotion` mask tracking, `maskMethod` (1722, AE parity 5.4,
+`MaskTrackMethod`): `vertices` (the default — each vertex tracked as its own
+point, as before), or a whole-mask fit of the vertex tracks per frame —
+`position`, `positionRotation`, `positionScaleRotation` (similarity),
+`affine` or `perspective` (homography, 4+ vertices) — applied to the mask
+path at the start frame (jobs/mask_fit.cpp), keyed as one `addKeyframes`.
+
+Effect param type `data` (AE parity 5.5): a JSON array param the inspector
+does not draw (Mesh Warp `meshOffsets`, Liquify `field` / `fieldGrid`). It is
+written with `values.json(...)`; params flagged `px` scale every number in the
+array with the layer like any px param (bake_chain.cpp, effectCatalog.ts).
 
 The `autoTrace` COMMAND (§4.4) is this job run synchronously: the same
 prepare / work / result, applied inside the command's journal, answering the
@@ -1958,8 +1988,11 @@ field); both engines report them from the same stored keys.
   = reversed); absent = none. Footage and precomps keep reporting their live
   rate in `stretch`.
 - **`ItemInfo.mediaType`** (124, enum `MediaType {none, image, video,
-  audio}`): what a footage item's file holds (`none` for compositions,
-  folders, solids, placeholders). **`ItemInfo.alphaProbed` / `audioProbed`**
+  audio, model}`): what a footage item's file holds (`none` for compositions,
+  folders, solids, placeholders; `model` — AE parity 4.7 — a .glb / .gltf
+  imported by path, recorded without a decode probe; an imported model's root
+  layer names it as its `Model` component's `modelAsset`, so the document
+  carries the item id instead of a data: URL, and `layersUsingItem` counts it). **`ItemInfo.alphaProbed` / `audioProbed`**
   (125 / 126): the import probe answered alpha / an audio stream — `hasAlpha`
   / `hasAudio` false with these false means "never probed", not "no".
 - **`CompSettings.essentialProps`** (125): the Essential Properties the
@@ -2415,6 +2448,11 @@ from the struct's maximum + 800.
   (`layout/Inspector/bakeEdits.ts`). `dynamicsBakeNative.test` holds them to
   the TypeScript reference samplers on seeded cases. The C++ particle carries
   its birth index (`Particle.index`) for the bake's grouping.
+- **`getLayerTrackers {layer}`** (1090 → `LayerTrackers`): the trackers saved
+  on the layer (AE parity 3.6), sample times in composition time.
+- **`getCameraSolve {layer}`** (1091 → `CameraSolveAnswer`): the stored camera
+  solve, or none (AE parity 3.5); the viewer projects its points onto the
+  footage per frame.
 - **`getLayerFaces {layer, time}`** (1936 → `LayerFaces`): face picking's
   geometry (facePicking.ts `projectedFaces` before its projection) — an
   extruded 3D layer's faces in WORLD px from the frame builder's snapshot: the

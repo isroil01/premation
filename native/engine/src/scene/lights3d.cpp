@@ -75,6 +75,9 @@ LightProps read_node_light(const doc::Node& n) {
     if (is_environment_sky(p.at("envPreset"))) lt.envPreset = p.at("envPreset");
     lt.envRotation = num(p.at("envRotation"), lt.envRotation);
     lt.envReflections = num(p.at("envReflections"), lt.envReflections);
+    if (p.at("envVisible").is_bool()) lt.envVisible = p.at("envVisible").b();
+    lt.envSkyBlur = std::max(0.0, std::min(100.0, num(p.at("envSkyBlur"), lt.envSkyBlur)));
+    if (p.at("envLayer").is_string()) lt.envLayer = p.at("envLayer").str();
   }
   if (poiX || poiY || poiZ) lt.poi = std::array<double, 3>{poiX.value_or(0), poiY.value_or(0), poiZ.value_or(0)};
   return lt;

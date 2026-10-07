@@ -15,6 +15,7 @@ import {
   Gizmo3D,
   DimensionalGuides,
   type GizmoHandleType,
+  type GizmoLocalFrame,
   type RenderedGizmo3D,
   type SceneGizmo,
 } from '@motion/workspace';
@@ -32,6 +33,8 @@ export interface Gizmo3dOverlayProps {
   showGizmo: boolean;
   position3D: Vec3;
   nodeRotation: { rotX: number; rotY: number; rotZ: number };
+  /** The layer's parent chain + Orientation, for the Local axes (useGizmo3d). */
+  localFrame?: GizmoLocalFrame;
   nodeScale: { scaleX: number; scaleY: number; scaleZ: number };
   camera: Camera3D;
   orthoView: OrthoView | null;
@@ -63,6 +66,7 @@ export const Gizmo3dOverlay: React.FC<Gizmo3dOverlayProps> = ({
   showGizmo,
   position3D,
   nodeRotation,
+  localFrame,
   camera,
   orthoView,
   compWidth,
@@ -99,7 +103,7 @@ export const Gizmo3dOverlay: React.FC<Gizmo3dOverlayProps> = ({
     nodeRotation,
     camera,
     orthoView,
-    { gizmoState, axisMode, gizmoLengthPx: 85 / s },
+    { gizmoState, axisMode, gizmoLengthPx: 85 / s, frame: localFrame },
     compWidth,
     compHeight,
   );
@@ -265,6 +269,17 @@ export const Gizmo3dOverlay: React.FC<Gizmo3dOverlayProps> = ({
         style={{ display: showGizmo ? undefined : 'none' }}
         transform={`translate(${viewTransform.offsetX}, ${viewTransform.offsetY}) scale(${viewTransform.scale})`}
       >
+        {/* Free trackball (AE parity 4.6): a faint disc while hovered or dragged. */}
+        {renderedGizmo.trackball && (activeHandle === 'rot_free' || hoverHandle === 'rot_free') && (
+          <circle
+            cx={renderedGizmo.trackball.centerScreen.x}
+            cy={renderedGizmo.trackball.centerScreen.y}
+            r={renderedGizmo.trackball.radius}
+            style={{ fill: 'var(--color-overlay-text)' }}
+            fillOpacity={0.08}
+          />
+        )}
+
         {/* Planar Quad Handles */}
         {renderedGizmo.planes.map((plane) => {
           const isSelected = activeHandle === plane.type || hoverHandle === plane.type;
@@ -354,6 +369,25 @@ export const Gizmo3dOverlay: React.FC<Gizmo3dOverlayProps> = ({
           );
         })}
 
+        {/* Universal-mode per-axis scale cubes (AE parity 4.6) */}
+        {renderedGizmo.scaleHandles.map((h) => {
+          const isSelected = activeHandle === h.type || hoverHandle === h.type;
+          const half = (isSelected ? 5 : 4) / s;
+          return (
+            <rect
+              key={h.type}
+              x={h.screen.x - half}
+              y={h.screen.y - half}
+              width={half * 2}
+              height={half * 2}
+              fill={isSelected ? h.hoverColor : h.color}
+              stroke="var(--color-overlay-text)"
+              strokeWidth={1 / s}
+              rx={1 / s}
+            />
+          );
+        })}
+
         {/* Center Point / Uniform Scale handle */}
         <circle
           cx={renderedGizmo.centerScreen.x}
@@ -366,6 +400,36 @@ export const Gizmo3dOverlay: React.FC<Gizmo3dOverlayProps> = ({
       </g>
 
       {renderDimensionalGuides()}
+
+      {/* A value typed while dragging (AE parity 4.6): Enter commits, Esc cancels. */}
+      {dragState?.active && dragState.typed !== '' && (
+        <foreignObject
+          x={Gizmo3D.compToViewport(renderedGizmo.centerScreen, viewTransform).x + 16}
+          y={Gizmo3D.compToViewport(renderedGizmo.centerScreen, viewTransform).y + 16}
+          width={160}
+          height={28}
+          style={{ overflow: 'visible', pointerEvents: 'none' }}
+        >
+          <div
+            data-gizmo-typed=""
+            style={{
+              display: 'inline-block',
+              padding: '3px 8px',
+              borderRadius: '6px',
+              background: 'var(--color-overlay-panel-bg)',
+              border: '1px solid var(--color-overlay-panel-border)',
+              color: 'var(--color-overlay-text)',
+              fontSize: '11px',
+              fontWeight: 600,
+              fontVariantNumeric: 'tabular-nums',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {dragState.typed}
+            {dragState.handle.startsWith('rot_') ? '°' : dragState.handle.startsWith('scale_') ? '%' : ' px'}
+          </div>
+        </foreignObject>
+      )}
     </svg>
   );
 };

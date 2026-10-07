@@ -39,26 +39,31 @@ struct P2 {
   double x = 0, y = 0;
 };
 
-/// roundedRectOutline(w, h, r, arcSegments).
-std::vector<P2> rounded_rect_outline(double w, double h, double r, double arcSegments) {
+/// roundedRectOutline(w, h, r, arcSegments), with a radius per corner
+/// (TL, TR, BR, BL — extrude_mesh.hpp `rect_outline`'s order). Equal radii
+/// trace exactly the uniform outline.
+std::vector<P2> rounded_rect_outline(double w, double h, const std::array<double, 4>& r, double arcSegments) {
   const double a = w / 2;
   const double b = h / 2;
-  const double rr = std::max(0.0, std::min({r, a, b}));
   std::vector<P2> pts;
   const int n = static_cast<int>(std::max(1.0, std::floor(arcSegments)));
   struct Corner {
-    double cx, cy, from;
+    double sx, sy, from, r;
   };
-  const std::array<Corner, 4> corners = {Corner{a - rr, b - rr, 0}, Corner{-(a - rr), b - rr, 90}, Corner{-(a - rr), -(b - rr), 180},
-                                         Corner{a - rr, -(b - rr), 270}};
+  auto clampR = [&](double v) { return std::max(0.0, std::min({v, a, b})); };
+  // Walked from +x+y (BR) the way the uniform outline is.
+  const std::array<Corner, 4> corners = {Corner{1, 1, 0, clampR(r[2])}, Corner{-1, 1, 90, clampR(r[3])},
+                                         Corner{-1, -1, 180, clampR(r[0])}, Corner{1, -1, 270, clampR(r[1])}};
   for (const Corner& c : corners) {
-    if (rr <= 0) {
-      pts.push_back({c.cx, c.cy});
+    const double cx = c.sx * (a - c.r);
+    const double cy = c.sy * (b - c.r);
+    if (c.r <= 0) {
+      pts.push_back({cx, cy});
       continue;
     }
     for (int i = 0; i <= n; ++i) {
       const double ang = (c.from + ((90.0 * i) / n)) * kDeg;
-      pts.push_back({c.cx + (rr * mjs::cos(ang)), c.cy + (rr * mjs::sin(ang))});
+      pts.push_back({cx + (c.r * mjs::cos(ang)), cy + (c.r * mjs::sin(ang))});
     }
   }
   return pts;
@@ -102,10 +107,16 @@ Geometry extrusion_geometry(double w, double h, double d, bool ellipse, double s
   }
 
   // Rounded rect: extrude the OUTLINE (no bevel — a torus section is not a flat quad).
-  const double cr = std::max(0.0, std::min(opts.cornerRadius, std::min(w, h) / 2));
+  std::array<double, 4> radii = opts.cornerRadii.value_or(
+      std::array<double, 4>{opts.cornerRadius, opts.cornerRadius, opts.cornerRadius, opts.cornerRadius});
+  double cr = 0;
+  for (double& v : radii) {
+    v = std::max(0.0, std::min(v, std::min(w, h) / 2));
+    cr = std::max(cr, v);
+  }
   if (cr > 0) {
     g.faces.push_back(face(0, 0, d, 0, 0, 0, w, h, true, "back"));
-    const std::vector<P2> outline = rounded_rect_outline(w, h, cr, kRoundedCornerSegments);
+    const std::vector<P2> outline = rounded_rect_outline(w, h, radii, kRoundedCornerSegments);
     for (std::size_t i = 0; i < outline.size(); ++i) {
       const P2 p0 = outline[i];
       const P2 p1 = outline[(i + 1) % outline.size()];

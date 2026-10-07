@@ -502,6 +502,256 @@ ResultOf<api::SetContentAwareFill> handle(const api::SetContentAwareFill& c, HCt
   return {};
 }
 
+// ── saved trackers (AE parity 3.6) ──────────────────────────────────────
+//
+// `fx.trackers`: [{name, mode, kind, sourceWidth, sourceHeight, points:
+// [{feature:[x,y,w,h], search:[…], attach:[x,y], samples:[[t,x,y,c,coasted]…]}]}],
+// `t` on the layer's own time axis (keyframe time), so moving or retiming the
+// layer keeps the track on its frames.
+
+namespace {
+
+Json rect_json(const api::Rect& r) {
+  Json a = Json::array();
+  for (const double v : {r.x, r.y, r.width, r.height}) a.arr_mut().push_back(Json::number(v));
+  return a;
+}
+
+api::Rect rect_of(const Json& j) {
+  api::Rect r;
+  if (j.is_array() && j.arr().size() == 4) {
+    r.x = j.arr()[0].is_number() ? j.arr()[0].num() : 0;
+    r.y = j.arr()[1].is_number() ? j.arr()[1].num() : 0;
+    r.width = j.arr()[2].is_number() ? j.arr()[2].num() : 0;
+    r.height = j.arr()[3].is_number() ? j.arr()[3].num() : 0;
+  }
+  return r;
+}
+
+double num_at(const Json& a, std::size_t i) {
+  return a.is_array() && i < a.arr().size() && a.arr()[i].is_number() ? a.arr()[i].num() : 0;
+}
+
+bool finite_rect(const api::Rect& r) {
+  return std::isfinite(r.x) && std::isfinite(r.y) && std::isfinite(r.width) && std::isfinite(r.height);
+}
+
+}  // namespace
+
+ResultOf<api::SetLayerTrackers> handle(const api::SetLayerTrackers& c, HCtx& x) {
+  Document& d = x.d;
+  (void)require_layer(d, c.layer);
+  x.label = "Save Tracker";
+  if (c.trackers.empty()) {
+    sg_set_fx(d, c.layer, "trackers", Json());
+    return {};
+  }
+  Json list = Json::array();
+  for (std::size_t ti = 0; ti < c.trackers.size(); ++ti) {
+    const api::TrackerData& t = c.trackers[ti];
+    if (!std::isfinite(t.source_width) || !std::isfinite(t.source_height) || t.source_width < 0 || t.source_height < 0) {
+      fail(ErrorCode::invalid_argument, "tracker " + std::to_string(ti) + ": the source size must be finite and ≥ 0");
+    }
+    Json tj = Json::object();
+    tj.set("name", Json::string(t.name));
+    tj.set("mode", Json::string(t.mode));
+    tj.set("kind", Json::number(static_cast<double>(static_cast<std::uint32_t>(t.kind))));
+    tj.set("sourceWidth", Json::number(t.source_width));
+    tj.set("sourceHeight", Json::number(t.source_height));
+    Json points = Json::array();
+    for (std::size_t pi = 0; pi < t.points.size(); ++pi) {
+      const api::TrackerPointData& p = t.points[pi];
+      if (!finite_rect(p.feature) || !finite_rect(p.search) || !std::isfinite(p.attach.x) || !std::isfinite(p.attach.y)) {
+        fail(ErrorCode::invalid_argument, "tracker " + std::to_string(ti) + " point " + std::to_string(pi) + " is not finite");
+      }
+      Json pj = Json::object();
+      pj.set("feature", rect_json(p.feature));
+      pj.set("search", rect_json(p.search));
+      Json attach = Json::array();
+      attach.arr_mut().push_back(Json::number(p.attach.x));
+      attach.arr_mut().push_back(Json::number(p.attach.y));
+      pj.set("attach", std::move(attach));
+      Json samples = Json::array();
+      for (const api::TrackSampleRow& s : p.samples) {
+        if (!std::isfinite(s.x) || !std::isfinite(s.y) || !std::isfinite(s.confidence)) continue;
+        Json row = Json::array();
+        row.arr_mut().push_back(Json::number(comp_to_keyframe_time(d, x.view, c.layer, flicks_to_seconds(s.time))));
+        row.arr_mut().push_back(Json::number(s.x));
+        row.arr_mut().push_back(Json::number(s.y));
+        row.arr_mut().push_back(Json::number(s.confidence));
+        row.arr_mut().push_back(Json::number(s.coasted ? 1 : 0));
+        samples.arr_mut().push_back(std::move(row));
+      }
+      pj.set("samples", std::move(samples));
+      points.arr_mut().push_back(std::move(pj));
+    }
+    tj.set("points", std::move(points));
+    list.arr_mut().push_back(std::move(tj));
+  }
+  sg_set_fx(d, c.layer, "trackers", std::move(list));
+  return {};
+}
+
+api::LayerTrackers layer_trackers(const Document& d, const EditorView& view, std::string_view layer) {
+  const Node& n = require_layer(d, std::string(layer));
+  api::LayerTrackers out;
+  const Json& list = n.fx().at("trackers");
+  if (!list.is_array()) return out;
+  for (const Json& tj : list.arr()) {
+    if (!tj.is_object()) continue;
+    api::TrackerData t;
+    t.name = tj.at("name").is_string() ? tj.at("name").str() : std::string("Tracker");
+    t.mode = tj.at("mode").is_string() ? tj.at("mode").str() : std::string();
+    if (tj.at("kind").is_number() && tj.at("kind").num() >= 0) {
+      api::TrackKind k{};
+      if (api::from_u32(static_cast<std::uint32_t>(tj.at("kind").num()), k)) t.kind = k;
+    }
+    t.source_width = tj.at("sourceWidth").is_number() ? tj.at("sourceWidth").num() : 0;
+    t.source_height = tj.at("sourceHeight").is_number() ? tj.at("sourceHeight").num() : 0;
+    if (tj.at("points").is_array()) {
+      for (const Json& pj : tj.at("points").arr()) {
+        api::TrackerPointData p;
+        p.feature = rect_of(pj.at("feature"));
+        p.search = rect_of(pj.at("search"));
+        p.attach = api::Vec2{num_at(pj.at("attach"), 0), num_at(pj.at("attach"), 1)};
+        if (pj.at("samples").is_array()) {
+          for (const Json& row : pj.at("samples").arr()) {
+            api::TrackSampleRow s;
+            s.time = seconds_to_flicks(keyframe_to_comp_time(d, view, std::string(layer), num_at(row, 0)));
+            s.x = num_at(row, 1);
+            s.y = num_at(row, 2);
+            s.confidence = num_at(row, 3);
+            s.coasted = num_at(row, 4) != 0;
+            p.samples.push_back(s);
+          }
+        }
+        t.points.push_back(std::move(p));
+      }
+    }
+    out.trackers.push_back(std::move(t));
+  }
+  return out;
+}
+
+// ── camera solve and per-frame matte (AE parity 3.5 / 3.2) ──────────────
+
+namespace {
+
+Json vec3_json(const api::Vec3& v) {
+  Json a = Json::array();
+  for (const double c : {v.x, v.y, v.z}) a.arr_mut().push_back(Json::number(c));
+  return a;
+}
+api::Vec3 vec3_of(const Json& a) { return api::Vec3{num_at(a, 0), num_at(a, 1), num_at(a, 2)}; }
+Json nums_json(const std::vector<double>& v) {
+  Json a = Json::array();
+  for (const double c : v) a.arr_mut().push_back(Json::number(std::isfinite(c) ? c : 0));
+  return a;
+}
+std::vector<double> nums_of(const Json& a) {
+  std::vector<double> out;
+  if (!a.is_array()) return out;
+  for (const Json& v : a.arr()) out.push_back(v.is_number() ? v.num() : 0);
+  return out;
+}
+bool finite3(const api::Vec3& v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); }
+
+}  // namespace
+
+ResultOf<api::SetCameraSolve> handle(const api::SetCameraSolve& c, HCtx& x) {
+  Document& d = x.d;
+  (void)require_layer(d, c.layer);
+  x.label = "Camera Solve";
+  if (!c.solve) {
+    sg_set_fx(d, c.layer, "cameraSolve", Json());
+    return {};
+  }
+  const api::CameraSolveData& s = *c.solve;
+  if (!(s.focal > 0) || !std::isfinite(s.focal)) fail(ErrorCode::invalid_argument, "the solve's focal length must be > 0");
+  if (s.world_rotation.size() != 9) fail(ErrorCode::invalid_argument, "worldRotation is a 3×3 matrix (9 numbers)");
+  if (!finite3(s.world_origin) || !finite3(s.world_centroid) || !std::isfinite(s.world_scale)) {
+    fail(ErrorCode::invalid_argument, "the solve's world mapping is not finite");
+  }
+  Json j = Json::object();
+  j.set("camera", Json::string(s.camera));
+  j.set("focal", Json::number(s.focal));
+  j.set("sourceWidth", Json::number(s.source_width));
+  j.set("sourceHeight", Json::number(s.source_height));
+  Json frames = Json::array();
+  for (const api::CameraSolveFrame& f : s.frames) {
+    if (f.rotation.size() != 9 || !finite3(f.center)) fail(ErrorCode::invalid_argument, "a solve frame needs a 3×3 rotation and a finite centre");
+    Json fj = Json::object();
+    fj.set("t", Json::number(comp_to_keyframe_time(d, x.view, c.layer, flicks_to_seconds(f.time))));
+    fj.set("r", nums_json(f.rotation));
+    fj.set("c", vec3_json(f.center));
+    frames.arr_mut().push_back(std::move(fj));
+  }
+  j.set("frames", std::move(frames));
+  Json pts = Json::array();
+  for (const api::Vec3& p : s.points) pts.arr_mut().push_back(vec3_json(p));
+  j.set("points", std::move(pts));
+  j.set("pointErrors", nums_json(s.point_errors));
+  j.set("worldOrigin", vec3_json(s.world_origin));
+  j.set("worldScale", Json::number(s.world_scale));
+  j.set("worldRotation", nums_json(s.world_rotation));
+  j.set("worldCentroid", vec3_json(s.world_centroid));
+  sg_set_fx(d, c.layer, "cameraSolve", std::move(j));
+  return {};
+}
+
+std::optional<api::CameraSolveData> camera_solve_of(const Document& d, const EditorView& view, std::string_view layer) {
+  const Node& n = require_layer(d, std::string(layer));
+  const Json& j = n.fx().at("cameraSolve");
+  if (!j.is_object()) return std::nullopt;
+  api::CameraSolveData s;
+  s.camera = j.at("camera").is_string() ? j.at("camera").str() : std::string();
+  s.focal = j.at("focal").is_number() ? j.at("focal").num() : 0;
+  s.source_width = j.at("sourceWidth").is_number() ? j.at("sourceWidth").num() : 0;
+  s.source_height = j.at("sourceHeight").is_number() ? j.at("sourceHeight").num() : 0;
+  if (j.at("frames").is_array()) {
+    for (const Json& fj : j.at("frames").arr()) {
+      api::CameraSolveFrame f;
+      f.time = seconds_to_flicks(keyframe_to_comp_time(d, view, std::string(layer), fj.at("t").is_number() ? fj.at("t").num() : 0));
+      f.rotation = nums_of(fj.at("r"));
+      f.center = vec3_of(fj.at("c"));
+      s.frames.push_back(std::move(f));
+    }
+  }
+  if (j.at("points").is_array()) {
+    for (const Json& p : j.at("points").arr()) s.points.push_back(vec3_of(p));
+  }
+  s.point_errors = nums_of(j.at("pointErrors"));
+  s.world_origin = vec3_of(j.at("worldOrigin"));
+  s.world_scale = j.at("worldScale").is_number() ? j.at("worldScale").num() : 1;
+  s.world_rotation = nums_of(j.at("worldRotation"));
+  if (s.world_rotation.size() != 9) s.world_rotation = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+  s.world_centroid = vec3_of(j.at("worldCentroid"));
+  return s;
+}
+
+ResultOf<api::SetLayerMatte> handle(const api::SetLayerMatte& c, HCtx& x) {
+  Document& d = x.d;
+  (void)require_layer(d, c.layer);
+  x.label = "Object Matte";
+  if (c.frames.empty()) {
+    sg_set_fx(d, c.layer, "alphaMatte", Json());
+    return {};
+  }
+  Json frames = Json::array();
+  for (std::size_t i = 0; i < c.frames.size(); ++i) {
+    const api::ContentAwareFillFrame& f = c.frames[i];
+    if (f.src.empty()) fail(ErrorCode::invalid_argument, "matte frame " + std::to_string(i) + " has no picture");
+    Json fr = Json::object();
+    fr.set("t", Json::number(comp_to_keyframe_time(d, x.view, c.layer, flicks_to_seconds(f.time))));
+    fr.set("src", Json::string(f.src));
+    frames.arr_mut().push_back(std::move(fr));
+  }
+  Json record = Json::object();
+  record.set("frames", std::move(frames));
+  sg_set_fx(d, c.layer, "alphaMatte", std::move(record));
+  return {};
+}
+
 namespace {
 bool is_caption_node(const Node& n) {
   for (const Component& c : n.components) {

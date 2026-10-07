@@ -606,6 +606,34 @@
       }
     },
     {
+      "path": "material/reflectsLayers",
+      "key": "reflectsLayers",
+      "label": "Reflect Layers",
+      "type": "bool",
+      "default": false,
+      "store": {
+        "component": "Transform",
+        "key": "reflectsLayers"
+      },
+      "when": {
+        "threeD": true
+      },
+      "encode": [
+        [
+          false,
+          null
+        ],
+        [
+          true,
+          true
+        ],
+        [
+          false,
+          false
+        ]
+      ]
+    },
+    {
       "path": "geometry/bevelStyle",
       "key": "bevelStyle",
       "label": "Bevel Style",
@@ -832,6 +860,72 @@
       "store": {
         "component": "Transform",
         "key": "shadowMapSize"
+      },
+      "when": {
+        "kinds": [
+          "light"
+        ]
+      }
+    },
+    {
+      "path": "light/environmentVisible",
+      "key": "envVisible",
+      "label": "Show Environment",
+      "type": "bool",
+      "default": false,
+      "store": {
+        "component": "Transform",
+        "key": "envVisible"
+      },
+      "when": {
+        "kinds": [
+          "light"
+        ]
+      },
+      "encode": [
+        [
+          false,
+          null
+        ],
+        [
+          true,
+          true
+        ],
+        [
+          false,
+          false
+        ]
+      ]
+    },
+    {
+      "path": "light/environmentBlur",
+      "key": "envSkyBlur",
+      "label": "Environment Blur",
+      "type": "scalar",
+      "default": 0,
+      "min": 0,
+      "max": 100,
+      "clearAtDefault": true,
+      "store": {
+        "component": "Transform",
+        "key": "envSkyBlur"
+      },
+      "when": {
+        "kinds": [
+          "light"
+        ]
+      }
+    },
+    {
+      "path": "light/environmentLayer",
+      "key": "envLayer",
+      "label": "Environment Layer",
+      "type": "string",
+      "default": "",
+      "clearAtDefault": true,
+      "store": {
+        "component": "Transform",
+        "key": "envLayer"
       },
       "when": {
         "kinds": [

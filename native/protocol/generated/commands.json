@@ -780,6 +780,21 @@
     "type": "setOverlayGeometry"
   },
   {
+    "id": 1945,
+    "kind": "edit",
+    "type": "setLayerTrackers"
+  },
+  {
+    "id": 1946,
+    "kind": "edit",
+    "type": "setCameraSolve"
+  },
+  {
+    "id": 1947,
+    "kind": "edit",
+    "type": "setLayerMatte"
+  },
+  {
     "id": 850,
     "kind": "control",
     "type": "startJob"
@@ -808,6 +823,11 @@
     "id": 870,
     "kind": "control",
     "type": "setPluginEnabled"
+  },
+  {
+    "id": 872,
+    "kind": "control",
+    "type": "rescanPlugins"
   },
   {
     "id": 871,

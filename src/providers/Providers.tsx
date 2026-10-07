@@ -84,6 +84,7 @@ import { buildChoreographyCommands } from '@core/animation/choreographyCommands'
 import { buildBeatCommands } from '@core/audio/beatCommands';
 import { buildSpeedRampCommands } from './commands/speedRampCommands';
 import { buildLayerTimeCommands } from './commands/layerTimeCommands';
+import { buildMaskCommands } from './commands/maskCommands';
 import { buildExpressionCommands } from './commands/expressionCommands';
 import { buildLayerTransformCommands } from '@core/scene/layerTransformCommands';
 import { buildOpenLayerCommands } from '@layout/LayerViewer/openLayerCommands';
@@ -95,7 +96,7 @@ import { buildSmartAnimateCommands, installSmartAnimateCommandSync } from './com
 import { buildReframeCommands } from '@core/reframe/reframeCommands';
 import { buildIk3DCommands } from './commands/ikCommands';
 import { buildBakeCommands } from './commands/bakeCommands';
-import { importModelEdit } from '@layout/Assets/modelImportEdits';
+import { importModelSelection, modelImportMessage } from '@layout/Assets/modelImportEdits';
 import { buildAudioCommands } from '@layout/Inspector/audioCommands';
 import { type EasingPreset } from '@core/animation/keyframeAssistants';
 import { easingTargetKeyframes } from '@core/animation/easingSelection';
@@ -128,6 +129,7 @@ import { openPrecomposeDialog } from '@layout/Composition/PrecomposeDialog';
 import { openSolidSettings } from '@layout/Composition/LayerSettingsDialog';
 import { openCameraDialog, openLightDialog } from '@layout/Workspace/SceneInsertDialogs';
 import { runSceneEditDetection, type SceneEditMode } from '@core/tracking/sceneEditCommand';
+import { buildTrackingCommands } from '@layout/Inspector/trackMotion/trackingCommands';
 import { getWorkspaceManager } from '@core/layout/workspaceManager';
 import { compHas3DContent } from '@core/mirror/compLayers';
 import { componentPropValue } from '@core/mirror/componentProps';
@@ -393,8 +395,9 @@ export async function openAfterEffectsProjectFile(file: File): Promise<void> {
  * model is not a library asset, it becomes a LAYER TREE, and — the part the
  * asset door cannot express — a `.gltf` needs its `.bin` and its textures
  * selected WITH it. The picker is multi-select and accepts those sidecar types
- * for exactly that reason; `buildModelFiles` works out which of the chosen
- * files is the model and resolves the rest against it.
+ * for exactly that reason; `importModelSelection` works out which of the chosen
+ * files is the model, converts it (.obj / .fbx / .usd too) and resolves the
+ * rest against it.
  */
 async function pickAndImport3DModel(): Promise<void> {
   const files = await new Promise<File[]>((resolve) => {
@@ -404,7 +407,7 @@ async function pickAndImport3DModel(): Promise<void> {
     // .bin and the image types are the sidecars a .gltf points at; a user who
     // selects only the .gltf still gets a named, actionable error rather than
     // a silent half-import.
-    input.accept = '.glb,.gltf,.bin,image/png,image/jpeg,image/webp,model/gltf+json,model/gltf-binary';
+    input.accept = '.glb,.gltf,.bin,.obj,.mtl,.fbx,.usda,.usdz,.usd,image/png,image/jpeg,image/webp,image/ktx2,.tga,model/gltf+json,model/gltf-binary';
     input.addEventListener('change', () => resolve(Array.from(input.files ?? [])));
     // Chromium fires this on dismissal; without it the promise never settles
     // and the command looks like it hung.
@@ -412,32 +415,15 @@ async function pickAndImport3DModel(): Promise<void> {
     input.click();
   });
   if (files.length === 0) return;
-  const { buildModelFiles, MODEL_FILE_PATTERN } = await import('@core/scene/modelImport');
-  if (!files.some((f) => MODEL_FILE_PATTERN.test(f.name))) {
-    notify('Select a .glb or .gltf file (with its .bin and textures, if it has them).', 'warning');
-    return;
-  }
+  const jobId = 'model-import';
+  useUIStore.getState().startJob({ id: jobId, label: 'Importing 3D model…' });
   try {
-    const sources = await Promise.all(files.map(async (f) => ({
-        name: f.name,
-        // Present when the selection came from a folder drop; it is what lets
-        // `textures/albedo.png` resolve as the path it actually is.
-        ...((f as File & { webkitRelativePath?: string }).webkitRelativePath
-          ? { path: (f as File & { webkitRelativePath?: string }).webkitRelativePath }
-          : {}),
-        bytes: await f.arrayBuffer(),
-      })));
-    const result = await importModelEdit('Import 3D Model', (b, f) => buildModelFiles(b, f, sources));
-    if (!result) throw new Error('the engine did not take the model');
-    const clip = result.clip
-      ? ` · clip “${result.clip.name}” baked as keyframes (${result.clip.duration.toFixed(1)}s)`
-      : '';
-    notify(
-      result.warning ?? `Imported ${result.layerCount} layer${result.layerCount === 1 ? '' : 's'}${clip}`,
-      result.warning ? 'warning' : 'success',
-    );
+    const outcome = await importModelSelection(files, (fraction, message) => {
+      useUIStore.getState().updateJob(jobId, { progress: fraction, ...(message ? { label: message } : {}) });
+    });
+    useUIStore.getState().finishJob(jobId, { status: 'done', message: modelImportMessage(outcome).message });
   } catch (err) {
-    notify(`3D import failed: ${err instanceof Error ? err.message : String(err)}`, 'error');
+    useUIStore.getState().finishJob(jobId, { status: 'failed', message: `3D import failed: ${err instanceof Error ? err.message : String(err)}` });
   }
 }
 
@@ -503,6 +489,8 @@ function buildToolCommands(): ReadonlyArray<Command> {
     { tool: 'delete-vertex', label: 'Delete Vertex Tool' },
     { tool: 'convert-vertex', label: 'Convert Vertex Tool' },
     { tool: 'mask-feather', label: 'Mask Feather Tool' },
+    // Alt+W stays the viewport command's (viewportCommands.ts); this makes the toolbar button rebindable.
+    { tool: 'roto', label: 'Roto Brush & Object Matte Tool' },
   ];
   // Every tool used 'crosshair', so the palette/menus showed eleven identical
   // icons — give each tool its actual glyph.
@@ -1608,6 +1596,7 @@ export function buildStaticCommands(): ReadonlyArray<Command> {
     ...buildMergePathCommands(),
     ...buildPrimitive3DCommands(),
     ...buildSceneEditCommands(),
+    ...buildTrackingCommands(),
     ...buildWorkspaceCommands(),
     ...buildProjectCommands(),
     ...buildRigPresetCommands(),
@@ -1616,6 +1605,7 @@ export function buildStaticCommands(): ReadonlyArray<Command> {
     ...buildBeatCommands(),
     ...buildSpeedRampCommands(),
     ...buildLayerTimeCommands({ openTimeStretch: openTimeStretchDialog }),
+    ...buildMaskCommands(),
     ...buildExpressionCommands(),
     ...buildLayerTransformCommands({ openAutoOrient: openAutoOrientDialog, resetTransform: resetTransformEdit }),
     ...buildOpenLayerCommands(),
@@ -2703,6 +2693,7 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             { id: 'view.preview', panel: 'preview', label: 'Preview', icon: 'play' },
             { id: 'view.sourceMonitor', panel: 'sourceMonitor', label: 'Source Monitor', icon: 'tv' },
             { id: 'view.tracker', panel: 'tracker', label: 'Tracker', icon: 'crosshair' },
+            { id: 'view.contentAwareFill', panel: 'contentAwareFill', label: 'Content-Aware Fill', icon: 'magic-wand' },
             { id: 'view.rig', panel: 'rig', label: 'Rigging', icon: 'bone' },
             { id: 'view.effects', panel: 'effects', label: 'Effects', icon: 'magic-wand' },
             { id: 'view.motion', panel: 'motion', label: 'Graph Panel', icon: 'graph-value' },

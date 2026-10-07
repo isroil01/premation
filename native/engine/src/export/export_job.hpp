@@ -83,6 +83,13 @@ struct JobSpec {
   unsigned inFlight = 3;
   /// Mix the comp's audio (off: a video-only job, as a GIF).
   bool audio = true;
+  /// AE parity 2.10 — native plugin folders (Electron passes <userData>/native-plugins;
+  /// PREMATION_PLUGIN_PATH adds more), the plugins the user disabled, and the
+  /// verified revocation list file. The export starts its own plugin host over
+  /// them, so plugin effects render in exports exactly as in the viewport.
+  std::vector<std::string> pluginPaths;
+  std::vector<std::string> pluginDisabled;
+  std::string pluginRevoked;
   /// Output bits per channel. 8 = the raw pipe's rgba (byte-compatible with the
   /// Chromium path); 16 = rgba64le read from a half-float surface (engine only:
   /// ~11 significant bits near white, more toward black — binary16's mantissa).

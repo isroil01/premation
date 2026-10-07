@@ -14,6 +14,7 @@
 #include "scene_native_fx.hpp"
 #include "fxstate.hpp"
 #include "jsmath.hpp"
+#include "kernels.hpp"
 #include "lut_port.hpp"
 #include "scene_math.hpp"
 
@@ -83,6 +84,14 @@ bool is_color_effect(std::string_view t) {
 /// CPU pass expands the buffer and crops it back, so there is nothing to draw
 /// — the TS GPU path has no shader for it and draws the layer unchanged).
 bool is_gpu_identity(std::string_view t) { return t == "cc-repetile"; }
+
+/// AE parity 5.3: effects the GPU route draws through its own multi-pass
+/// entries (route_pass_entries below), past the TypeScript port's chain.
+bool is_route_pass_effect(std::string_view t) {
+  static constexpr std::array<std::string_view, 8> k = {"key-cleaner", "remove-grain", "refine-soft-matte", "refine-hard-matte",
+                                                        "reshape",     "mesh-warp",    "liquify",           "advanced-spill-suppressor"};
+  return std::ranges::find(k, t) != k.end();
+}
 
 bool is_temporal(std::string_view t) { return t == "echo" || t == "posterize-time" || t == "wide-time" || t == "force-motion-blur"; }
 
@@ -186,17 +195,95 @@ bool is_gpu_only_effect(std::string_view type) {
   return def != nullptr && def->gpuOnly;
 }
 
+/// AE parity 5.2: Advanced Spill Suppressor, Key Cleaner, Remove Grain, and
+/// Keylight with a view mode, pre-blur, clip rollback or a garbage mask.
+/// AE parity 5.5: Mesh Warp's variable mesh, Liquify's painted field and Reshape run in the CPU bake.
+bool deformation_needs_cpu(const Json& e) {
+  const std::string t = type_of(e);
+  if (t == "reshape") return true;
+  if (t != "mesh-warp" && t != "liquify") return false;
+  const Json p = doc::params_of(e);
+  const auto nonEmpty = [&](std::string_view k) { return p.at(k).is_array() && !p.at(k).arr().empty(); };
+  if (t == "liquify") return nonEmpty("field");
+  const auto num = [&](std::string_view k) { return p.at(k).is_number() ? motion::js::round(p.at(k).num()) : 3.0; };
+  return num("rows") != 3 || num("columns") != 3 || nonEmpty("meshOffsets");
+}
+
+bool keying_needs_cpu(const Json& e) {
+  const std::string t = type_of(e);
+  if (t == "advanced-spill-suppressor" || t == "key-cleaner" || t == "remove-grain") return true;
+  if (t != "keylight") return false;
+  const Json p = doc::params_of(e);
+  const auto num = [&](std::string_view k) { return p.at(k).is_number() ? p.at(k).num() : 0.0; };
+  const auto str = [&](std::string_view k) { return p.at(k).is_string() ? p.at(k).str() : std::string(); };
+  return motion::js::round(num("view")) != 0 || num("screenPreBlur") > 0 || num("clipRollback") > 0 || !str("insideMaskId").empty() ||
+         !str("outsideMaskId").empty();
+}
+
+/// `p[k]` as a number, `d` when absent (effect_color.cpp num_or).
+double num_or(const Json& p, std::string_view k, double d) { return p.at(k).is_number() ? p.at(k).num() : d; }
+
+/// AE parity 5.3: an effect's data texture key (curve tables, a mesh, a spline).
+std::string fx_data_key(const RLayer& l, const Json& e) {
+  std::string k = "fxdata:";
+  k += l.id;
+  k += ':';
+  k += e.at("id").is_string() ? e.at("id").str() : type_of(e);
+  return k;
+}
+
+/// AE parity 5.3: Lumetri's pixel stage as a lumetri-grade chain entry (the
+/// float twin of effect_color.cpp apply_lumetri_pixels; the Hue / Luma vs
+/// curves ride in its data texture, gpu_route_data_textures).
+std::optional<api::RenderEffect> lumetri_grade_entry(const Json& e, const RLayer& l) {
+  const Json p = doc::params_of(e);
+  std::array<bool, 4> curves{};
+  const bool bent = !lumetri_curves_for(e, curves).empty();
+  const double lw = std::max(1.0, l.width > 0 ? l.width : 1.0);
+  const double lh = std::max(1.0, l.height > 0 ? l.height : 1.0);
+  const double sat = num_or(p, "saturation", 100) / 100 * num_or(p, "creativeSaturation", 100) / 100;
+  const double vib = num_or(p, "vibrance", 0) / 100;
+  const bool hsl = p.at("hslEnable").is_bool() && p.at("hslEnable").b();
+  const double vAmount = num_or(p, "vignetteAmount", 0) / 100;
+  if (sat == 1 && vib == 0 && !hsl && vAmount == 0 && !bent) return std::nullopt;
+  const double vRound = num_or(p, "vignetteRoundness", 0) / 100;
+  const double aspect = lh / lw;
+  FxWriter w("lumetri-grade");
+  w.num("sat", sat).num("vib", vib).num("vAmount", vAmount).num("vRadius", 0.25 + num_or(p, "vignetteMidpoint", 50) / 100 * 1.1);
+  w.num("vExp", vRound < 0 ? 2 - vRound * 6 : 2).num("vFeather", std::max(0.01, num_or(p, "vignetteFeather", 50) / 100));
+  w.num("vAspect", vRound > 0 ? 1 + (aspect - 1) * vRound : 1).num("hsl", hsl ? 1 : 0);
+  w.num("hslHue", num_or(p, "hslHue", 0)).num("hslRange", num_or(p, "hslHueRange", 30)).num("hslHueSoft", num_or(p, "hslHueSoftness", 20));
+  w.num("hslSoft", num_or(p, "hslSoftness", 10) / 100);
+  w.num("satMin", num_or(p, "hslSatMin", 0) / 100).num("satMax", num_or(p, "hslSatMax", 100) / 100);
+  w.num("lumMin", num_or(p, "hslLumMin", 0) / 100).num("lumMax", num_or(p, "hslLumMax", 100) / 100);
+  w.num("temp", num_or(p, "hslTemperature", 0) / 100).num("tint", num_or(p, "hslTint", 0) / 100);
+  w.num("contrast", num_or(p, "hslContrast", 0) / 100).num("hslSat", num_or(p, "hslSaturation", 100) / 100);
+  w.num("showMask", hsl && p.at("hslShowMask").is_bool() && p.at("hslShowMask").b() ? 1 : 0);
+  w.num("lw", lw).num("lh", lh);
+  w.num("cSat", curves[0] ? 1 : 0).num("cHue", curves[1] ? 1 : 0).num("cLuma", curves[2] ? 1 : 0).num("cLumaSat", curves[3] ? 1 : 0);
+  if (bent) w.text("dataKey", fx_data_key(l, e));
+  return w.done();
+}
+
 bool effects_need_cpu_bake(const std::vector<Json>& effects) {
   return std::ranges::any_of(effects, [](const Json& e) {
     if (!effect_enabled(e)) return false;
     const std::string t = type_of(e);
     if (is_canvas2d_only(t)) return true;
+    // AE parity 3.2: the refine-matte effects run in the CPU bake only (a guided filter over the whole layer).
+    if (t == "refine-soft-matte" || t == "refine-hard-matte") return true;
+    // AE parity 5.1: a grade with cross-channel controls (Lumetri HSL / vignette, Levels alpha, Hue/Sat ranges).
+    if (color_grade_needs_pixels(e)) return true;
+    // AE parity 5.2: the keying cleanup effects and Keylight 1.2's extra controls are CPU pixel passes.
+    if (keying_needs_cpu(e)) return true;
+    if (deformation_needs_cpu(e)) return true;
     if (e.at("maskId").is_string() && !e.at("maskId").str().empty()) return true;
     const bool hasOpacity = e.at("opacity").is_number() && std::isfinite(e.at("opacity").num());
     if (hasOpacity && !gpu_blends_effect_opacity(t)) return true;
     // effectFollowsPath: Write-on's brush form (writeOnUsesBrush, read through paramsOf).
     if (t == "write-on") {
-      const Json& mode = doc::params_of(e).at("writeOnMode");
+      const Json params = doc::params_of(e);
+      const Json& mode = params.at("writeOnMode");
       if (mode.is_number() && motion::js::round(mode.num()) == 0) return true;
     }
     if (t != "beam-path") {
@@ -223,10 +310,10 @@ const char* effect_unported_reason(const Json& e) {
   if (is_temporal(t)) return nullptr;  // handled by the snapshot's time plumbing (or reported there)
   if (is_color_effect(t)) return nullptr;
   if (is_native_effect(t)) return nullptr;  // G1: native SDK plugins render in the chain (scene_native_fx.cpp)
-  // A JS / WGSL plugin effect: its shader, passes and params live in the page's
-  // plugin registry (registerEffects), not in the document — decision G2 keeps
-  // that system out of the engine (the native SDK, G1, is the engine's).
-  if (doc::registry().effect(t) == nullptr) return "plugin effects (JS/WGSL plugin system, not ported: G2)";
+  // An effect type the engine does not know: a native plugin that is not
+  // installed (or failed to load), or an old JS / WGSL plugin (G2). The effect
+  // stays in the document untouched and passes its input through.
+  if (doc::registry().effect(t) == nullptr) return "missing plugin — the effect passes through until it is installed";
   // A baked layer's chain runs in the raster (bake_chain.cpp): what it cannot
   // draw is reported there, per effect, with the raster.
   if (is_canvas2d_only(t)) return nullptr;
@@ -773,7 +860,9 @@ const char* gpu_effect_route_blocker(const RLayer& l) {
     const std::string t = type_of(e);
     if (is_canvas2d_only(t) && !gpu_draws_canvas_effect(l, e) && !gpu_overlay_effect(l, e)) return "a Canvas2D-only effect";
     if (is_temporal(t)) continue;  // the snapshot's time plumbing, baked or not
-    if (!is_native_effect(t) && doc::registry().effect(t) == nullptr) return "a plugin effect (G2)";
+    // AE parity 5.3: the cross-channel grades, the keying family and the painted /
+    // meshed deformations all have GPU passes (gpu_route_pixel_entries).
+    if (!is_native_effect(t) && doc::registry().effect(t) == nullptr) return "a missing plugin's effect";
     if (t != "beam-path" && !gpu_overlay_effect(l, e) && !(is_canvas2d_only(t) && gpu_draws_canvas_effect(l, e))) {
       const Json& pm = e.at("params").at("pathMaskId");
       if (pm.is_string() && !pm.str().empty()) return "a path-following effect";
@@ -783,7 +872,7 @@ const char* gpu_effect_route_blocker(const RLayer& l) {
     const bool grade = (is_color_effect(t) && t != "opacity") || is_lut_effect(t);
     const bool chained = is_ported_spatial(t) || is_more_spatial(t) || is_native_effect(t) || t == "apply-color-lut" ||
                          (is_canvas2d_only(t) && (gpu_draws_canvas_effect(l, e) || gpu_overlay_effect(l, e))) || grade ||
-                         is_gpu_identity(t);
+                         is_gpu_identity(t) || is_route_pass_effect(t);
     if (!chained) return "an effect with no GPU chain entry";
     // Effect Opacity and a mask scope blend the effect's entries back over its
     // input — any chain entry, one in place, several as a `blendSpan`
@@ -798,6 +887,244 @@ bool gpu_effect_route(const RLayer& l) {
   if (l.gpuEffects) return true;
   if (!layer_is_baked(l)) return false;  // nothing to route: the stack is on the GPU already
   return gpu_effect_route_blocker(l) == nullptr;
+}
+
+namespace {
+
+// ── AE parity 5.3: the GPU route's float passes for what used to bake ─────
+
+/// The layer box in layer px (`Math.max(1, layer.width || 1)`).
+double box_w(const RLayer& l) { return std::max(1.0, l.width > 0 ? l.width : 1.0); }
+double box_h(const RLayer& l) { return std::max(1.0, l.height > 0 ? l.height : 1.0); }
+
+/// The id of a layer mask named by `key`, when the layer has it.
+std::string layer_mask_id(const RLayer& l, const Json& p, std::string_view key) {
+  const Json& id = p.at(key);
+  if (!id.is_string() || id.str().empty() || !l.mask.is_object() || !l.mask.at("paths").is_array()) return {};
+  for (const Json& m : l.mask.at("paths").arr()) {
+    if (m.at("id").is_string() && m.at("id").str() == id.str()) return id.str();
+  }
+  return {};
+}
+
+/// Keylight 1.2's controls past the core key (keylight-ex).
+bool keylight_needs_ex(const Json& p) {
+  const auto num = [&](std::string_view k) { return p.at(k).is_number() ? p.at(k).num() : 0.0; };
+  const auto str = [&](std::string_view k) { return p.at(k).is_string() ? p.at(k).str() : std::string(); };
+  return motion::js::round(num("view")) == 4 || num("screenPreBlur") > 0 || num("clipRollback") > 0 || !str("insideMaskId").empty() ||
+         !str("outsideMaskId").empty();
+}
+
+/// Hue/Saturation's colour ranges / Colorize as one hue-sat-ranges entry (apply_hue_saturation_ranges).
+api::RenderEffect hue_sat_entry(const Json& e) {
+  const Json p = doc::params_of(e);
+  FxWriter w("hue-sat-ranges");
+  w.num("mh", num_or(p, "hue", 0)).num("ms", num_or(p, "saturation", 0) / 100).num("ml", num_or(p, "lightness", 0) / 100);
+  w.num("colorize", p.at("colorize").is_bool() && p.at("colorize").b() ? 1 : 0);
+  w.num("ch", num_or(p, "colorizeHue", 0)).num("cs", num_or(p, "colorizeSaturation", 25) / 100).num("cl", num_or(p, "colorizeLightness", 0) / 100);
+  static constexpr std::array<std::pair<std::string_view, double>, 6> kRanges{
+      {{"reds", 0}, {"yellows", 60}, {"greens", 120}, {"cyans", 180}, {"blues", 240}, {"magentas", 300}}};
+  for (std::size_t i = 0; i < kRanges.size(); ++i) {
+    const std::string k(kRanges[i].first);
+    const std::string r = "r" + std::to_string(i);
+    w.num(r + "h", num_or(p, k + "Hue", 0)).num(r + "s", num_or(p, k + "Saturation", 0) / 100).num(r + "l", num_or(p, k + "Lightness", 0) / 100);
+    w.num(r + "c", kRanges[i].second);
+  }
+  return w.done();
+}
+
+/// Levels' alpha channel after its LUT (levels_needs_pixels) as an alpha-levels entry.
+std::optional<api::RenderEffect> levels_alpha_entry(const Json& e) {
+  const Json p = doc::params_of(e);
+  const double ib = num_or(p, "alphaInputBlack", 0), iw = num_or(p, "alphaInputWhite", 255), g = num_or(p, "alphaGamma", 1);
+  const double ob = num_or(p, "alphaOutputBlack", 0), ow = num_or(p, "alphaOutputWhite", 255);
+  if (ib == 0 && iw == 255 && g == 1 && ob == 0 && ow == 255) return std::nullopt;
+  FxWriter w("alpha-levels");
+  w.num("inBlack", ib).num("span", std::max(1e-6, iw - ib)).num("invGamma", 1 / std::max(1e-3, g));
+  w.num("outBlack", ob).num("outWhite", ow);
+  return w.done();
+}
+
+/// A numeric array param.
+std::vector<double> numbers_of(const Json& v) {
+  std::vector<double> out;
+  if (!v.is_array()) return out;
+  for (const Json& x : v.arr()) out.push_back(x.is_number() ? x.num() : 0.0);
+  return out;
+}
+
+/// Mesh Warp's variable mesh: (cols, rows, offsets) when it is the one drawn (mesh_warp_fx).
+bool mesh_warp_grid_of(const Json& p, int& cols, int& rows, std::vector<double>& offs) {
+  const double r = p.at("rows").is_number() ? p.at("rows").num() : 3;
+  const double c = p.at("columns").is_number() ? p.at("columns").num() : 3;
+  offs = numbers_of(p.at("meshOffsets"));
+  if (motion::js::round(r) == 3 && motion::js::round(c) == 3 && offs.empty()) return false;
+  cols = std::clamp(static_cast<int>(motion::js::round(c)), 1, 31);
+  rows = std::clamp(static_cast<int>(motion::js::round(r)), 1, 31);
+  return true;
+}
+
+/// Liquify's painted field: (cols, rows, field) when there is one (liquify_fx).
+bool liquify_field_of(const Json& p, int& cols, int& rows, std::vector<double>& field) {
+  const std::vector<double> grid = numbers_of(p.at("fieldGrid"));
+  field = numbers_of(p.at("field"));
+  if (grid.size() < 2 || field.empty()) return false;
+  cols = static_cast<int>(motion::js::round(grid[0]));
+  rows = static_cast<int>(motion::js::round(grid[1]));
+  return true;
+}
+
+/// A displacement field the field-warp pass can draw (sizes match, not all zero).
+bool field_drawable(int cols, int rows, const std::vector<double>& f) {
+  return cols >= 1 && rows >= 1 && f.size() == static_cast<std::size_t>((cols + 1) * (rows + 1) * 2) &&
+         std::ranges::any_of(f, [](double v) { return v != 0; });
+}
+
+/// Reshape's spline, solved in units of the layer's longer side (reshape_fx's inputs).
+std::optional<effects::ReshapeTps> reshape_spline(const Json& p, double w, double h) {
+  const double si = p.at("sourceMaskIndex").is_number() ? p.at("sourceMaskIndex").num() : -1;
+  const double di = p.at("destinationMaskIndex").is_number() ? p.at("destinationMaskIndex").num() : -1;
+  if (si < 0 || di < 0 || si == di) return std::nullopt;
+  const std::vector<double> meta = numbers_of(p.at("maskPathsMeta"));
+  const std::vector<double> xy = numbers_of(p.at("maskPathsXY"));
+  std::size_t start = 0, srcStart = 0, srcCount = 0, dstStart = 0, dstCount = 0;
+  for (std::size_t m = 0; m * 4 + 3 < meta.size(); ++m) {
+    const auto count = static_cast<std::size_t>(meta[m * 4]);
+    if (static_cast<double>(m) == si) {
+      srcStart = start;
+      srcCount = count;
+    }
+    if (static_cast<double>(m) == di) {
+      dstStart = start;
+      dstCount = count;
+    }
+    start += count;
+  }
+  constexpr std::array<double, 8> kElastic{8, 4, 2, 1, 0.5, 0.2, 0.05, 0};
+  const double er = p.at("elasticity").is_number() ? motion::js::round(p.at("elasticity").num()) : 3;
+  const auto ei = static_cast<std::size_t>(std::clamp(er, 0.0, 7.0));
+  const double pct = p.at("percent").is_number() ? p.at("percent").num() / 100 : 0;
+  return effects::reshape_tps(xy, srcStart, srcCount, dstStart, dstCount, pct, kElastic.at(ei), w, h, std::max(w, h));
+}
+
+/// The pass entries of an effect the GPU route draws itself (is_route_pass_effect
+/// and Keylight's extras); false when the effect goes through effect_entries.
+bool route_pass_entries(const Json& e, const RLayer& l, std::vector<api::RenderEffect>& out) {
+  const std::string t = type_of(e);
+  const Json p = doc::params_of(e);
+  const double lw = box_w(l), lh = box_h(l);
+  const auto num = [&](std::string_view k, double d = 0) { return num_or(p, k, d); };
+  const auto flag = [&](std::string_view k, bool d) { return p.at(k).is_bool() ? p.at(k).b() : d; };
+  if (t == "keylight" && keylight_needs_ex(p)) {
+    // The core key's entry (effects_spatial_a.cpp), upgraded to keylight-ex.
+    const std::size_t at = out.size();
+    effect_entries(e, l, out);
+    if (out.size() == at || out[at].type != "keylight") return true;  // View ▸ Source: nothing drawn
+    api::RenderEffect& k = out[at];
+    k.type = "keylight-ex";
+    add_param(k, "preBlurPx", num("screenPreBlur"));
+    add_param(k, "rollbackPx", num("clipRollback"));
+    add_param(k, "intermediate", motion::js::round(num("view")) == 4 ? 1 : 0);
+    if (const std::string in = layer_mask_id(l, p, "insideMaskId"); !in.empty()) add_text(k, "insideMaskKey", scope_mask_key(l.id, in));
+    if (const std::string o = layer_mask_id(l, p, "outsideMaskId"); !o.empty()) add_text(k, "outsideMaskKey", scope_mask_key(l.id, o));
+    return true;
+  }
+  if (t == "key-cleaner") {
+    FxWriter w("key-cleaner");
+    w.num("radius", num("edgeRadius")).num("chatter", flag("reduceChatter", false) ? 1 : 0);
+    w.num("contrast", std::max(0.0, num("alphaContrast") / 100)).num("strength", std::clamp(num("strength") / 100, 0.0, 1.0));
+    w.num("lw", lw).num("lh", lh);
+    out.push_back(w.done());
+    return true;
+  }
+  if (t == "remove-grain") {
+    const double st = std::clamp(num("noiseReduction") / 100, 0.0, 1.0);
+    const double r = std::clamp(motion::js::round(num("radius")), 1.0, 8.0);
+    FxWriter w("remove-grain");
+    w.num("strength", st).num("radius", r).num("passes", std::clamp(motion::js::round(num("passes")), 1.0, 4.0));
+    // Range sigmas in 0..1 units (the CPU's are 0..255), the spatial sigma in px.
+    w.num("sigmaY", (2 + 28 * st * (1 - 0.8 * std::clamp(num("detail") / 100, 0.0, 1.0))) / 255);
+    w.num("sigmaC", (2 + 40 * st * std::clamp(num("chroma") / 100, 0.0, 1.0)) / 255);
+    w.num("sigmaS", std::max(0.5, r / 2.0)).num("showNoise", motion::js::round(num("viewingMode")) == 1 ? 1 : 0);
+    w.num("lw", lw).num("lh", lh);
+    out.push_back(w.done());
+    return true;
+  }
+  if (t == "refine-soft-matte" || t == "refine-hard-matte") {
+    const bool hard = t == "refine-hard-matte";
+    FxWriter w("refine-matte");
+    w.num("radius", static_cast<double>(std::lround(std::clamp(num("edgeRadius"), 0.0, 200.0)))).num("eps", hard ? 1e-4 : 2e-3);
+    w.num("smoothSigma", std::clamp(num("smooth"), 0.0, 100.0) / 3);
+    w.num("contrast", 1 + std::clamp(num("contrast"), 0.0, 100.0) / 100 * 9);
+    w.num("shift", std::clamp(num("shiftEdge"), -100.0, 100.0) / 100 * 0.45);
+    w.num("featherSigma", std::clamp(num("feather"), 0.0, 200.0) / 2);
+    const double dec = flag("decontaminateEdges", true) ? num("decontaminationAmount") : 0;
+    w.num("decontaminate", std::clamp(dec, 0.0, 100.0) / 100).num("bgSigma", std::max(4.0, std::min(lw, lh) / 80));
+    w.num("lw", lw).num("lh", lh);
+    out.push_back(w.done());
+    return true;
+  }
+  if (t == "reshape") {
+    if (!reshape_spline(p, lw, lh)) return true;  // nothing to morph
+    FxWriter w("reshape-tps");
+    w.text("dataKey", fx_data_key(l, e)).num("scale", std::max(lw, lh)).num("lw", lw).num("lh", lh);
+    const double bi = p.at("boundaryMaskIndex").is_number() ? p.at("boundaryMaskIndex").num() : -1;
+    if (const std::string b = layer_mask_id(l, p, "boundaryMaskId"); !b.empty() && bi >= 0) w.text("boundaryMaskKey", scope_mask_key(l.id, b));
+    out.push_back(w.done());
+    return true;
+  }
+  int cols = 0, rows = 0;
+  std::vector<double> f;
+  if (t == "mesh-warp" && mesh_warp_grid_of(p, cols, rows, f)) {
+    if (field_drawable(cols, rows, f)) {
+      out.push_back(FxWriter("field-warp").text("dataKey", fx_data_key(l, e)).num("cols", cols).num("rows", rows).num("amount", 1).num("lw", lw).num("lh", lh).done());
+    }
+    return true;
+  }
+  if (t == "liquify" && liquify_field_of(p, cols, rows, f)) {
+    // The painted field first, then the one placed brush (liquify_fx's order).
+    const double amount = p.at("distortionPercentage").is_number() ? num("distortionPercentage") / 100 : 1.0;
+    if (field_drawable(cols, rows, f) && amount != 0) {
+      out.push_back(
+          FxWriter("field-warp").text("dataKey", fx_data_key(l, e)).num("cols", cols).num("rows", rows).num("amount", amount).num("lw", lw).num("lh", lh).done());
+    }
+    effect_entries(e, l, out);
+    return true;
+  }
+  return false;
+}
+
+}  // namespace
+
+std::vector<std::pair<std::string, std::vector<float>>> gpu_route_data_textures(const RLayer& l) {
+  std::vector<std::pair<std::string, std::vector<float>>> out;
+  const double lw = box_w(l), lh = box_h(l);
+  for (const Json& e : l.effects) {
+    if (!effect_enabled(e)) continue;
+    const std::string t = type_of(e);
+    const Json p = doc::params_of(e);
+    std::vector<float> data;
+    int cols = 0, rows = 0;
+    std::vector<double> f;
+    if (t == "lumetri") {
+      std::array<bool, 4> present{};
+      data = lumetri_curves_for(e, present);
+    } else if ((t == "mesh-warp" && mesh_warp_grid_of(p, cols, rows, f)) || (t == "liquify" && liquify_field_of(p, cols, rows, f))) {
+      if (field_drawable(cols, rows, f)) data.assign(f.begin(), f.end());
+    } else if (t == "reshape") {
+      if (const auto tps = reshape_spline(p, lw, lh)) {
+        data.push_back(static_cast<float>(tps->from.size()));
+        for (const auto& q : tps->from) {
+          data.push_back(static_cast<float>(q[0]));
+          data.push_back(static_cast<float>(q[1]));
+        }
+        for (const double v : tps->bx) data.push_back(static_cast<float>(v));
+        for (const double v : tps->by) data.push_back(static_cast<float>(v));
+      }
+    }
+    if (!data.empty()) out.emplace_back(fx_data_key(l, e), std::move(data));
+  }
+  return out;
 }
 
 std::vector<api::RenderEffect> extract_gpu_route_effects(const RLayer& l) {
@@ -824,6 +1151,10 @@ std::vector<api::RenderEffect> extract_gpu_route_effects(const RLayer& l) {
       } else {
         effect_entries(e, l, out);  // classic line / path
       }
+    } else if (t == "hue-saturation" && color_grade_needs_pixels(e)) {
+      out.push_back(hue_sat_entry(e));  // AE parity 5.3: the ranges / Colorize replace the matrix
+    } else if (route_pass_entries(e, l, out)) {
+      // AE parity 5.3: drawn by the route's own passes
     } else if (is_color_effect(t) && t != "opacity") {
       M3 em{};
       std::array<double, 3> eo{};
@@ -839,6 +1170,12 @@ std::vector<api::RenderEffect> extract_gpu_route_effects(const RLayer& l) {
     } else if (is_lut_effect(t)) {
       out.push_back(FxWriter("channel-lut").text("lutKey", channel_lut_key(l.id, lutOrdinal)).done());
       ++lutOrdinal;
+      // AE parity 5.3: what a LUT cannot hold, after it (apply_color_grade's order).
+      if (t == "lumetri") {
+        if (auto grade = lumetri_grade_entry(e, l)) out.push_back(std::move(*grade));
+      } else if (t == "levels") {
+        if (auto alpha = levels_alpha_entry(e)) out.push_back(std::move(*alpha));
+      }
     } else if (is_canvas2d_only(t) && gpu_overlay_effect(l, e)) {
       // E4 round 2: the effect's drawing alone, landed with its composite
       // (compositeFor's code; 10 + PAINT_STYLE for a paint buffer).
@@ -876,20 +1213,37 @@ std::vector<api::RenderEffect> extract_gpu_route_effects(const RLayer& l) {
 
 std::vector<std::pair<std::string, Json>> gpu_route_scope_masks(const RLayer& l) {
   std::vector<std::pair<std::string, Json>> out;
-  for (const Json& e : l.effects) {
-    if (!effect_enabled(e)) continue;
-    const Json* scope = scope_path_of(l, e);
-    if (scope == nullptr) continue;
-    std::string key = scope_mask_key(l.id, scope->at("id").str());
-    if (std::ranges::any_of(out, [&](const auto& m) { return m.first == key; })) continue;
+  const auto push = [&](const Json& scope) {
+    std::string key = scope_mask_key(l.id, scope.at("id").str());
+    if (std::ranges::any_of(out, [&](const auto& m) { return m.first == key; })) return;
     // compositeBlend paints `{...path, mode: 'add'}` alone.
-    Json path = *scope;
+    Json path = scope;
     path.set("mode", Json::string("add"));
     Json paths = Json::array();
     paths.arr_mut().push_back(std::move(path));
     Json mask = Json::object();
     mask.set("paths", std::move(paths));
     out.emplace_back(std::move(key), std::move(mask));
+  };
+  /// AE parity 5.3: a mask an effect reads by id (Keylight's Inside / Outside, Reshape's Boundary).
+  const auto pushById = [&](const Json& e, std::string_view key) {
+    const Json params = doc::params_of(e);
+    const Json& id = params.at(key);
+    if (!id.is_string() || id.str().empty() || !l.mask.is_object() || !l.mask.at("paths").is_array()) return;
+    for (const Json& m : l.mask.at("paths").arr()) {
+      if (m.at("id").is_string() && m.at("id").str() == id.str()) push(m);
+    }
+  };
+  for (const Json& e : l.effects) {
+    if (!effect_enabled(e)) continue;
+    if (const Json* scope = scope_path_of(l, e)) push(*scope);
+    const std::string t = type_of(e);
+    if (t == "keylight") {
+      pushById(e, "insideMaskId");
+      pushById(e, "outsideMaskId");
+    } else if (t == "reshape") {
+      pushById(e, "boundaryMaskId");
+    }
   }
   return out;
 }

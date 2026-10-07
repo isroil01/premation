@@ -112,7 +112,6 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
   const [falloffDistRaw, setFalloffDist] = useComponentProp(nodeId, TRANSFORM, 'falloffDistance');
   const [darknessRaw, setDarkness] = useComponentProp(nodeId, TRANSFORM, 'shadowDarkness');
   const [diffusionRaw, setDiffusion] = useComponentProp(nodeId, TRANSFORM, 'shadowDiffusion');
-  const [shadowMapRaw, setShadowMap] = useComponentProp(nodeId, TRANSFORM, 'shadowMap');
   const [mapSizeRaw, setMapSize] = useComponentProp(nodeId, TRANSFORM, 'shadowMapSize');
   const [shadowBiasRaw, setShadowBias] = useComponentProp(nodeId, TRANSFORM, 'shadowBias');
   const [shadowSoftRaw, setShadowSoft] = useComponentProp(nodeId, TRANSFORM, 'shadowSoftness');
@@ -122,6 +121,10 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
   const [envPresetRaw, setEnvPreset] = useComponentProp(nodeId, TRANSFORM, 'envPreset');
   const [envRotationRaw, setEnvRotation] = useComponentProp(nodeId, TRANSFORM, 'envRotation');
   const [envReflRaw, setEnvRefl] = useComponentProp(nodeId, TRANSFORM, 'envReflections');
+  // AE parity 4.4: the visible sky, its blur, and a live layer source.
+  const [envVisibleRaw, setEnvVisible] = useComponentProp(nodeId, TRANSFORM, 'envVisible');
+  const [envSkyBlurRaw, setEnvSkyBlur] = useComponentProp(nodeId, TRANSFORM, 'envSkyBlur');
+  const [envLayerRaw, setEnvLayer] = useComponentProp(nodeId, TRANSFORM, 'envLayer');
   const { width: compWidth, height: compHeight } = useActiveCompSize();
   // The library, for the "Image…" sky. Selected as the whole array (a filtered
   // one would be a fresh reference on every store read, which re-renders
@@ -156,7 +159,6 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
   const diffusion = num(diffusionRaw, LIGHT_DEFAULTS.shadowDiffusion);
   const castsShadows = shadowsRaw === true || shadowsRaw === 1;
   const hasGlow = glowRaw === true || glowRaw === 1;
-  const shadowMap = shadowMapRaw === true || shadowMapRaw === 1;
   const mapSize = num(mapSizeRaw, LIGHT_DEFAULTS.shadowMapSize);
   const shadowBias = num(shadowBiasRaw, LIGHT_DEFAULTS.shadowBias);
   const shadowSoftness = num(shadowSoftRaw, LIGHT_DEFAULTS.shadowSoftness);
@@ -169,6 +171,14 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
   const envAssetMissing = !!envAssetId && !imageAssets.some((a) => a.id === envAssetId);
   const envRotation = num(envRotationRaw, 0);
   const envReflections = num(envReflRaw, LIGHT_DEFAULTS.envReflections);
+  const envVisible = envVisibleRaw === true;
+  const envSkyBlur = num(envSkyBlurRaw, 0);
+  const envLayer = typeof envLayerRaw === 'string' ? envLayerRaw : '';
+  // Layers that can drive the environment live: footage and compositions (equirectangular).
+  const envLayerChoices = compLayers.filter((l) => {
+    const k = uiKindOf(l);
+    return l.id !== nodeId && (k === 'video' || k === 'image' || k === 'comp');
+  });
   // A light is "targeted" (aimed in 3D) as soon as any POI component exists —
   // the same test readNodeLight applies.
   const hasPOI = [poiXRaw, poiYRaw, poiZRaw].some((v) => typeof v === 'number');
@@ -409,6 +419,65 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
             onStatic={(v) => setEnvRefl(v !== LIGHT_DEFAULTS.envReflections ? v : undefined)}
           />
         )}
+        {isEnv && (
+          <>
+            <div className={styles.popoverRow}>
+              <span className={styles.popoverLabel}>Show environment</span>
+              <Checkbox
+                checked={envVisible}
+                onChange={() => setEnvVisible(envVisible ? false : true)}
+                title="Draw the sky behind every layer of the composition, rotated with this light"
+              />
+            </div>
+            {envVisible && (
+              <div className={styles.popoverRow}>
+                <span className={styles.popoverLabel}>Background blur</span>
+                <ValueField
+                  value={envSkyBlur}
+                  min={0}
+                  max={100}
+                  step={1}
+                  unit="%"
+                  onChange={(v) => setEnvSkyBlur(v > 0 ? v : undefined)}
+                  aria-label="Environment background blur"
+                />
+              </div>
+            )}
+            <div className={styles.popoverRow}>
+              <span className={styles.popoverLabel}>Source layer</span>
+              <select
+                className={styles.select}
+                style={{ width: 150 }}
+                value={envLayer}
+                onChange={(e) => setEnvLayer(e.target.value || undefined)}
+                aria-label="Environment source layer"
+                title="A composition or footage layer (equirectangular) that drives the environment's reflections and sky live, frame by frame. Set its Opacity to 0 to hide it; a hidden layer renders nothing."
+              >
+                <option value="">Sky image (above)</option>
+                {envLayerChoices.map((l) => (
+                  <option key={l.id} value={l.id}>{l.name || l.id}</option>
+                ))}
+                {envLayer && !envLayerChoices.some((l) => l.id === envLayer) ? (
+                  <option value={envLayer}>(missing layer)</option>
+                ) : null}
+              </select>
+            </div>
+            <div className={styles.popoverRow}>
+              <span className={styles.popoverLabel}>Cast shadows</span>
+              <Checkbox
+                checked={castsShadows}
+                onChange={() => setShadows(castsShadows ? false : true)}
+                title="The environment's brightest direction casts a soft shadow map (the sky's key light)"
+              />
+            </div>
+            {castsShadows && (
+              <>
+                <KfRow nodeId={nodeId} prop="shadowDarkness" label="Shadow darkness" value={darkness} unit="%" min={0} max={100} onStatic={(v) => setDarkness(v)} />
+                <KfRow nodeId={nodeId} prop="shadowSoftness" label="Shadow softness" value={shadowSoftness} unit="tx" min={0} onStatic={(v) => setShadowSoft(v)} />
+              </>
+            )}
+          </>
+        )}
         {positional && (
           <KfRow nodeId={nodeId} prop="radius" label="Radius" value={radius} unit="px" min={1} onStatic={(v) => setRadius(v)} />
         )}
@@ -521,30 +590,16 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
             <KfRow nodeId={nodeId} prop="shadowDarkness" label="Shadow darkness" value={darkness} unit="%" min={0} max={100} onStatic={(v) => setDarkness(v)} />
             <KfRow nodeId={nodeId} prop="shadowDiffusion" label="Shadow diffusion" value={diffusion} unit="px" min={0} onStatic={(v) => setDiffusion(v)} />
             {/*
-              The two shadow techniques, as one switch rather than two features.
-
-              Off is a projected copy of the caster's silhouette on the nearest
-              accepting plane behind it: cheap, soft, and correct for one caster
-              over one flat surface. On rasterises the scene's casters from this
-              light into a depth map and samples it per fragment, which is what
-              buys a shadow that follows the receiver's own geometry, that an
-              object casts onto ITSELF, and that lands on more than one surface.
-
-              Turning it on SUPPRESSES this light's projected copy, so the two
-              never double up. It only reaches layers that render through the
-              depth-tested 3D path — Shadow diffusion above still shapes the
-              projected copy for everything else.
+              AE parity 4.3: every shadow-casting light renders a shadow MAP (up
+              to four per 3D run) — geometry-aware, landing on floors and any
+              surface at any angle, cast onto itself, across runs. Lights past
+              the fourth fall back to a projected copy of the caster's
+              silhouette, which Shadow diffusion above still shapes.
             */}
-            <div className={styles.popoverRow}>
-              <span className={styles.popoverLabel}>Shadow map</span>
-              <Checkbox
-                checked={shadowMap}
-                onChange={() => setShadowMap(shadowMap ? undefined : true)}
-                title="Rasterise this light's casters into a depth map instead of projecting a flat copy — geometry-aware shadows on 3D layers"
-              />
-            </div>
-            {shadowMap && (
-              <>
+            <p style={{ margin: '2px 0 6px', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
+              Shadows are depth-mapped (up to four lights per 3D scene); further lights project a soft copy.
+            </p>
+            <>
                 <div className={styles.popoverRow}>
                   <span className={styles.popoverLabel}>Map quality</span>
                   <select
@@ -568,8 +623,7 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
                     its caster. Both are visible, so this is a real control. */}
                 <KfRow nodeId={nodeId} prop="shadowBias" label="Shadow bias" value={shadowBias} unit="px" min={0} onStatic={(v) => setShadowBias(v)} />
                 <KfRow nodeId={nodeId} prop="shadowSoftness" label="Map softness" value={shadowSoftness} unit="tx" min={0} onStatic={(v) => setShadowSoft(v)} />
-              </>
-            )}
+            </>
           </>
         )}
         <p style={{ margin: '6px 0 0', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
@@ -580,7 +634,7 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
               : type === 'parallel'
                 ? 'A directional wash across the frame (like sunlight), brighter on the source side.'
                 : isEnv
-                  ? 'Image-based lighting: the sky — a preset, or any equirectangular image or HDRI from the library — is projected onto a spherical-harmonic probe and expanded into an ambient floor plus directional bounces, so 3D layers pick up its colour from every side. It is a low-frequency irradiance probe, not a reflection map. It has no position, no reach and casts no shadows — only the sky, its rotation and the intensity matter.'
+                  ? 'Image-based lighting: the sky — a preset, any equirectangular image or HDRI from the library, or a live composition / footage layer — lights 3D layers from every side through a spherical-harmonic probe, reflects in glossy surfaces from a prefiltered HDR map, can be shown behind the composition, and can cast a soft shadow from its brightest direction. It takes no light slots.'
                   : 'A point light brightening the layers beneath it (screen blend).'}
           {' '}Numeric parameters are keyframeable.
         </p>

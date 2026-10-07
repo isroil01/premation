@@ -47,6 +47,9 @@ struct DeformedMeshData {
 struct MotionSample {
   double x = 0, y = 0, rotation = 0, scaleX = 1, scaleY = 1, opacity = 1;
   std::optional<std::array<double, 6>> matrix;
+  /// AE parity 4.2: a 3D layer's world matrix at this sample (column-major), so
+  /// the renderer can draw the sample on the depth-tested path.
+  std::optional<std::array<double, 16>> world3d;
   /// A 3D comp card's projected corners at this sample (RenderLayer MotionSample.quad).
   std::optional<std::array<double, 8>> quad;
 };
@@ -57,6 +60,7 @@ struct PrecompScene3D {
   api::RenderCamera3D camera3d;
   std::vector<api::RenderLight3D> lights3d;
   std::optional<api::RenderEnvMap> envMap;
+  std::optional<api::RenderFog> fog;  ///< AE parity 4.8
 };
 
 /// TrackMatte (effects/matte.ts).
@@ -261,6 +265,8 @@ struct Snapshot {
   std::vector<api::RenderLight3D> lights3d;
   std::optional<api::RenderSsao> ssao;
   std::optional<api::RenderEnvMap> envMap;
+  std::optional<api::RenderFog> fog;                       ///< AE parity 4.8
+  std::optional<api::RenderShadowCatcher> shadowCatcher;   ///< AE parity 4.3
 };
 
 /// SnapshotComp (buildSnapshot.ts) — comp-level inputs.

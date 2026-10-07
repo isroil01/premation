@@ -34,6 +34,7 @@ struct State {
   NativeEffects::EnabledFn enabled;
   NativeEffects::ListFn list;
   NativeEffects::UiFn ui;
+  NativeEffects::ListFn rescan;
 };
 
 State& state() {
@@ -103,9 +104,27 @@ void NativeEffects::set_query_handlers(ListFn list, UiFn ui) {
   s.ui = std::move(ui);
 }
 
+void NativeEffects::set_rescan_handler(ListFn rescan) {
+  State& s = state();
+  const std::scoped_lock lock(s.handlerMutex);
+  s.rescan = std::move(rescan);
+}
+
 void NativeEffects::clear_handlers() {
   set_handlers({}, {}, {});
   set_query_handlers({}, {});
+  set_rescan_handler({});
+}
+
+std::optional<std::vector<api::PluginInfo>> NativeEffects::rescan() {
+  State& s = state();
+  ListFn fn;
+  {
+    const std::scoped_lock lock(s.handlerMutex);
+    fn = s.rescan;
+  }
+  if (!fn) return std::nullopt;
+  return fn();
 }
 
 std::optional<std::vector<std::uint8_t>> NativeEffects::created(std::string_view type) {

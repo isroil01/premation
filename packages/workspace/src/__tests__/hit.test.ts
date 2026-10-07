@@ -90,6 +90,23 @@ describe('HitTester', () => {
     expect(crossing).toContain('top');
   });
 
+  it('orders a run of overlapping 3D layers nearest-first, not by stacking (AE parity 4.6)', () => {
+    // `far` is above `near` in the stack, but `near` sits closer to the view
+    // where the pointer is; a 2D layer above the run still wins outright.
+    const s = new MemoryScene([
+      { id: 'near', bounds: R.rect(0, 0, 100, 100), zIndex: 1, pickDepth: () => 100 },
+      { id: 'far', bounds: R.rect(0, 0, 100, 100), zIndex: 2, pickDepth: () => 900 },
+      // Tilted: nearer than `near` on the left half only.
+      { id: 'tilted', bounds: R.rect(0, 0, 100, 100), zIndex: 3, pickDepth: (p) => (p.x < 50 ? 50 : 1000) },
+    ]);
+    const ht = new HitTester(s);
+    expect(ht.hitTestAll({ x: 25, y: 50 }).map((h) => h.node.id)).toEqual(['tilted', 'near', 'far']);
+    expect(ht.hitTestAll({ x: 75, y: 50 }).map((h) => h.node.id)).toEqual(['near', 'far', 'tilted']);
+    s.put({ id: 'flat', bounds: R.rect(0, 0, 100, 100), zIndex: 4 });
+    ht.rebuild();
+    expect(ht.hitTest({ x: 75, y: 50 })?.id).toBe('flat');
+  });
+
   it('rebuilds when the scene changes', () => {
     const s = scene();
     const ht = new HitTester(s);

@@ -101,6 +101,10 @@ struct Material {
   double transparency = 0;
   double transparencyRolloff = 0;
   double ior = 1.52;
+  /// AE parity 4.8: Reflect Layers — the surface mirrors the other 3D layers
+  /// of its run (scaled by the reflection options). Off by default: a planar
+  /// reflection is a render of the run per reflector.
+  bool reflectsLayers = false;
 };
 
 /// material.ts `readNodeMaterial(node, av)`: the Transform's stored props, the

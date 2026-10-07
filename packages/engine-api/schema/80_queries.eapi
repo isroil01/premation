@@ -388,6 +388,8 @@ struct EffectParamInfo {
   choices: string[] = 10;
   unit: string = 11;
   group: string = 12;
+  /// Decimal places for a number field (absent = the editor's default).
+  precision?: u32 = 13;
 }
 
 struct EffectInfo {
@@ -400,7 +402,10 @@ struct EffectInfo {
   params: EffectParamInfo[] = 6;
   supportsFloat: bool = 7;
   audio: bool = 8;
+  /// AE parity 2.9 — a native plugin effect's buttons (PR_PARAM_BUTTON): invokeEffectAction takes `key` as its action. Empty for builtins.
+  actions: EffectActionInfo[] = 9;
 }
+struct EffectActionInfo { key: string = 1; label: string = 2; }
 
 query listEffects = 1040 { category: string = 1; } -> EffectCatalog;
 /// Which group match names can be added under a parent path (the Add ▸ menus).
@@ -414,7 +419,8 @@ query listPlugins = 1086 {} -> PluginList;
 /// G1 — a native plugin effect's parameter UI at `time` (UPDATE_PARAMS_UI: which params are enabled, hidden or renamed for the current values). A builtin effect answers every param enabled and visible under its catalog name. `notFound` for no such layer or effect.
 query getEffectUi = 1087 { layer: LayerId = 1; effect: PropPath = 2; time?: Time = 3; } -> EffectUi;
 
-enum PluginStatus { loaded = 0; disabled = 1; failed = 2; quarantined = 3; }
+/// `revoked`: on the registry's signed revocation list (Electron passes it with `--revoked`); its code never runs.
+enum PluginStatus { loaded = 0; disabled = 1; failed = 2; quarantined = 3; revoked = 4; }
 
 struct PluginInfo {
   id: string = 1;

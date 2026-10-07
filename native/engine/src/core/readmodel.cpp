@@ -495,7 +495,7 @@ api::CompSettings comp_settings(const Document& d, std::string_view comp) {
   s.preserve_frame_rate = c.at("preserveFrameRate").is_bool() && c.at("preserveFrameRate").b();
   s.preserve_resolution = c.at("preserveResolution").is_bool() && c.at("preserveResolution").b();
   Json world = Json::object();
-  for (const char* k : {"defaultEnvPreset", "groundLevel", "showSkyBackdrop", "ssao"}) {
+  for (const char* k : {"defaultEnvPreset", "groundLevel", "showSkyBackdrop", "ssao", "fog", "groundShadows"}) {
     if (!c.at(k).is_undefined()) world.set(k, c.at(k));
   }
   if (!world.obj().empty()) s.world = stringify(world);
@@ -674,6 +674,7 @@ api::ItemInfo footage_info(const Json& a) {
   info.media_type = type == "image" ? api::MediaType::image
                   : type == "video" ? api::MediaType::video
                   : type == "audio" ? api::MediaType::audio
+                  : type == "model" ? api::MediaType::model
                                     : api::MediaType::none;
   info.alpha_probed = md.at("hasAlpha").is_bool();
   info.audio_probed = md.at("hasAudioTrack").is_bool();

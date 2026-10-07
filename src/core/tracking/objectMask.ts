@@ -52,6 +52,7 @@ export async function runObjectMaskPick(opts: {
     const out = requireEngineJob(await runEngineJob<{ contourPoints: number; engine?: string }>({
       kind: 'objectMatte',
       value: {
+        strokes: [],
         layer: opts.nodeId,
         range: { start: secondsToFlicks(time), duration: secondsToFlicks(1 / fps) },
         prompts: opts.point ? [opts.point] : [],

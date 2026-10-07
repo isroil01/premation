@@ -16,6 +16,7 @@
 #pragma once
 
 #include <array>
+#include <optional>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -84,11 +85,90 @@ struct Rgb {
 /// The `keylight` effect: `applyKeyData(data, {screenColor, balance, gain,
 /// clipBlack, clipWhite, despill})` then `chokeAlpha(choke)` then
 /// `softenAlpha(matteSoftness)` — the applyKeylight wrapper's sequence.
+/// keylight.ts's screen channels: the key's primary channel and the other two.
+struct KeyChannels {
+  std::size_t p, a, b;
+};
+[[nodiscard]] KeyChannels key_channels(double r, double g, double bl);
+/// `screenAmount`: how much of the screen colour a pixel holds (0..255 channels, balance 0..1).
+[[nodiscard]] double screen_amount(const std::array<double, 3>& px, const KeyChannels& ch, double balance);
+/// `clipMatte(v, black, white)`.
+[[nodiscard]] double clip_matte(double v, double black, double white);
+/// `softenAlpha(data, w, h, px)`.
+void soften_alpha(RgbaView img, double px, ThreadPool* pool);
+
 struct KeylightParams {
   Rgb screen;
   double balance, gain, clip_black, clip_white, despill, choke, matte_softness;
 };
 void keylight(RgbaView img, const KeylightParams& p, ThreadPool* pool);
+
+/// AE parity 5.2 — Keylight 1.2's controls past the core key.
+struct KeylightExtras {
+  /// 0 Final Result, 1 Source, 2 Screen Matte, 3 Status, 4 Intermediate Result.
+  int view = 0;
+  /// Screen Pre-blur: the matte is pulled from a box-blurred copy (px).
+  double preBlur = 0;
+  /// Clip Rollback: within this many px of the clipped matte's edge, the unclipped matte returns.
+  double rollback = 0;
+  /// Inside / Outside Mask coverage (w × h, 0..1; empty = none): forced opaque / transparent.
+  std::vector<float> inside, outside;
+  [[nodiscard]] bool neutral() const noexcept { return view == 0 && preBlur <= 0 && rollback <= 0 && inside.empty() && outside.empty(); }
+};
+/// Keylight with Keylight 1.2's view modes, pre-blur, clip rollback and inside / outside masks.
+void keylight_full(RgbaView img, const KeylightParams& p, const KeylightExtras& x, ThreadPool* pool);
+
+/// AE Advanced Spill Suppressor. `method` 0 Standard (the screen colour found
+/// in the frame), 1 Ultra (`key`, with tolerance / range / desaturate / colour
+/// and luma correction). All amounts 0..1.
+struct SpillParams {
+  int method = 0;
+  Rgb key{0, 255, 0};
+  double suppression = 1, tolerance = 0.5, desaturate = 0, spillRange = 0.5, colorCorrection = 0, lumaCorrection = 0;
+};
+void advanced_spill_suppressor(RgbaView img, const SpillParams& p, ThreadPool* pool);
+
+/// AE Key Cleaner: smooths and firms a key's soft edge (radius px, contrast 0..2,
+/// strength 0..1); Reduce Chatter medians the edge first.
+void key_cleaner(RgbaView img, double radius, bool reduceChatter, double contrast, double strength, ThreadPool* pool);
+
+/// AE Remove Grain: an edge-preserving (bilateral) filter in YCbCr — strength
+/// 0..1, radius px, passes, detail 0..1 (keeps fine luma texture), chroma
+/// 0..1; `showNoise` outputs the removed grain (×4 about mid grey).
+void remove_grain(RgbaView img, double strength, int radius, int passes, double detail, double chroma, bool showNoise,
+                  ThreadPool* pool);
+
+/// AE parity 5.5 — Mesh Warp over a `columns` × `rows` mesh: `offsets` holds
+/// (columns + 1) × (rows + 1) vertex offsets (flat x, y; layer px), bilinear
+/// between them. No-op on a size mismatch or an all-zero mesh.
+void mesh_warp_grid(RgbaView img, int columns, int rows, std::span<const double> offsets, ThreadPool* pool);
+/// AE parity 5.5 — Liquify's painted field: output p reads p − offset × `amount`
+/// (offsets on a (columns + 1) × (rows + 1) grid over the frame, layer px).
+void liquify_field(RgbaView img, int columns, int rows, std::span<const double> field, double amount, ThreadPool* pool);
+/// AE parity 5.5 — Reshape: the picture inside the source polygon (`xy` from
+/// pair `srcStart`, `srcCount` points) morphs toward the destination polygon by
+/// `percent` (0..1) through a thin-plate spline over the two outlines (the
+/// frame's edges hold still; `elasticity` ≥ 0 stiffens it). `boundary` (w × h
+/// coverage, empty = none) leaves everything outside it untouched. False when
+/// it could not solve (degenerate outlines).
+/// AE parity 5.3: Reshape's thin-plate spline, shared by the CPU kernel and
+/// the GPU route (the scene packs it into reshape-tps.wgsl's data texture).
+/// Coordinates are layer px divided by `scale` (1 = px; the GPU solves in units
+/// of the layer's longer side so float32 keeps the r² log r² terms). The map
+/// takes an output point p to the source point bx/by · [U(|p − from_i|²)…, 1, x, y].
+struct ReshapeTps {
+  std::vector<std::array<double, 2>> from;
+  std::vector<double> bx;  ///< from.size() + 3
+  std::vector<double> by;
+};
+[[nodiscard]] std::optional<ReshapeTps> reshape_tps(std::span<const double> xy, std::size_t srcStart, std::size_t srcCount,
+                                                    std::size_t dstStart, std::size_t dstCount, double percent, double elasticity,
+                                                    double w, double h, double scale);
+bool reshape(RgbaView img, std::span<const double> xy, std::size_t srcStart, std::size_t srcCount, std::size_t dstStart, std::size_t dstCount,
+             std::span<const float> boundary, double percent, double elasticity, ThreadPool* pool);
+
+/// The coverage (0..1, w × h) of polygon `count` points from `xy[2·start]`, even-odd, 4× vertical supersampling.
+[[nodiscard]] std::vector<float> polygon_coverage(std::span<const double> xy, std::size_t start, std::size_t count, int w, int h);
 /// `linearColorKeyData(data, key, colorMatchMode(matchOn), tolerance, softness, keepMatched)`.
 void linear_color_key(RgbaView img, const Rgb& key, double match_on, double tolerance, double softness,
                       bool keep_matched, ThreadPool* pool);
@@ -109,6 +189,12 @@ void extract_matte(RgbaView img, double channel, double black, double white, dou
 void spill_suppressor(RgbaView img, const Rgb& key, double amount, bool preserve_luma, ThreadPool* pool);
 /// `matteChokerData(src, w, h, spread, choke, softness, iterations)`.
 void matte_choker(RgbaView img, double spread, double choke, double softness, double iterations, ThreadPool* pool);
+/// Refine Soft Matte / Refine Hard Matte (AE parity 3.2): the alpha follows the
+/// picture's own edges within `edgeRadius` px (guided filter, `hard` = a tight
+/// regularisation for crisp edges), then Smooth (px), Contrast (%), Shift Edge
+/// (−100…100 %), Feather (px), and the edge colours decontaminated by `decontaminate` (0…100 %).
+void refine_matte(RgbaView img, double edgeRadius, double smooth, double contrast, double shiftEdge, double feather, double decontaminate,
+                  bool hard, ThreadPool* pool);
 
 // ── stylize.ts / colorEffects.ts ────────────────────────────────────────────
 /// `mosaicData(src, w, h, hBlocks, vBlocks, sharpColors)`.

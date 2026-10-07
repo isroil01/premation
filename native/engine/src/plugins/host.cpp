@@ -130,6 +130,8 @@ struct Plugin {
   std::recursive_mutex serial;
   bool gpu = false;
   bool userDisabled = false;
+  /// Disabled at start and never loaded: enabling it loads the bundle.
+  bool deferred = false;
 };
 
 struct Instance {
@@ -665,6 +667,10 @@ PluginHost::PluginHost(HostOptions options) : impl_(std::make_unique<Impl>(*this
         [this](std::string_view plugin, bool enabled) { return set_enabled(plugin, enabled); });
     doc::NativeEffects::set_query_handlers([this] { return plugin_infos(); },
                                            [this](const doc::NativeActionRequest& r) { return params_ui_for(r); });
+    doc::NativeEffects::set_rescan_handler([this] {
+      (void)scan();
+      return plugin_infos();
+    });
   }
 }
 
@@ -713,8 +719,30 @@ std::string_view to_string(PluginStatus s) noexcept {
     case PluginStatus::loaded: return "loaded";
     case PluginStatus::disabled: return "disabled";
     case PluginStatus::quarantined: return "quarantined";
+    case PluginStatus::revoked: return "revoked";
     default: return "failed";
   }
+}
+
+std::map<std::string, std::string, std::less<>> read_revoked_file(const fs::path& file) {
+  std::map<std::string, std::string, std::less<>> out;
+  std::ifstream f(file, std::ios::binary);
+  if (!f) {
+    PREMATION_LOG(warn, "plugin_revocations_unreadable").kv("file", file.string());
+    return out;
+  }
+  std::stringstream ss;
+  ss << f.rdbuf();
+  const auto parsed = js::parse(ss.str());
+  if (!parsed || !parsed->at("revoked").is_array()) {
+    PREMATION_LOG(warn, "plugin_revocations_malformed").kv("file", file.string());
+    return out;
+  }
+  for (const js::Json& e : parsed->at("revoked").arr()) {
+    if (!e.at("id").is_string() || e.at("id").str().empty()) continue;
+    out[e.at("id").str()] = e.at("reason").is_string() ? e.at("reason").str() : std::string();
+  }
+  return out;
 }
 
 // ── discovery + loading ──────────────────────────────────────────────────
@@ -751,7 +779,7 @@ void PluginHost::Impl::load_bundle(const fs::path& dir) {
     text = ss.str();
   }
   std::string err;
-  auto man = parse_manifest(text, platform_key(), err);
+  auto man = parse_manifest(text, platform_keys(), err);
   if (!man) {
     p->manifest.id = dir.filename().string();
     p->manifest.name = p->manifest.id;
@@ -769,6 +797,14 @@ void PluginHost::Impl::load_bundle(const fs::path& dir) {
   const std::string id = p->manifest.id;
   if (p->status == PluginStatus::failed && !p->error.empty()) {
     // stays failed (manifest)
+  } else if (const auto rv = options.revoked.find(id); rv != options.revoked.end()) {
+    p->status = PluginStatus::revoked;
+    p->error = rv->second.empty() ? std::string("revoked by the plugin registry") : "revoked: " + rv->second;
+  } else if (std::ranges::find(options.disabled, id) != options.disabled.end()) {
+    // Disabled by the user: listed, not loaded (no code of it runs).
+    p->status = PluginStatus::disabled;
+    p->userDisabled = true;
+    p->deferred = true;
   } else if (journal && journal->is_quarantined(id)) {
     p->status = PluginStatus::quarantined;
     for (const QuarantineEntry& q : journal->quarantined()) {
@@ -1060,6 +1096,7 @@ bool PluginHost::set_enabled(std::string_view pluginId, bool enabled) {
     }
   }
   if (p == nullptr) return false;
+  if (p->status == PluginStatus::revoked) return true;  // listed revoked; never runs
   if (!enabled) {
     p->userDisabled = true;
     if (p->status == PluginStatus::loaded) p->status = PluginStatus::disabled;
@@ -1071,14 +1108,16 @@ bool PluginHost::set_enabled(std::string_view pluginId, bool enabled) {
     const std::scoped_lock lock(m.failuresMutex);
     std::erase_if(m.failures, [&](const auto& kv) { return kv.second.pluginId == pluginId; });
   }
-  if (p->status == PluginStatus::disabled) {
+  if (p->status == PluginStatus::disabled && !p->deferred) {
     p->status = PluginStatus::loaded;
     doc::NativeEffects::set_available(pluginId, true);
     return true;
   }
-  if (p->status == PluginStatus::quarantined || p->status == PluginStatus::failed) {
-    // The user asks to try again: forget the quarantine and reload the bundle.
+  if (p->status == PluginStatus::quarantined || p->status == PluginStatus::failed || p->deferred) {
+    // The user asks to try again (or turns on a plugin disabled at start):
+    // forget the quarantine and the start-up disable, and reload the bundle.
     if (m.journal) m.journal->release(pluginId);
+    std::erase(m.options.disabled, std::string(pluginId));
     const fs::path dir = p->dir;
     {
       const std::unique_lock lock(m.pluginsMutex);
@@ -1831,6 +1870,7 @@ std::vector<api::PluginInfo> PluginHost::plugin_infos() const {
       case PluginStatus::loaded: i.status = api::PluginStatus::loaded; break;
       case PluginStatus::disabled: i.status = api::PluginStatus::disabled; break;
       case PluginStatus::quarantined: i.status = api::PluginStatus::quarantined; break;
+      case PluginStatus::revoked: i.status = api::PluginStatus::revoked; break;
       default: i.status = api::PluginStatus::failed; break;
     }
     i.error = std::move(r.error);

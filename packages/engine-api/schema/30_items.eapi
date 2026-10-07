@@ -5,7 +5,8 @@ family "Items";
 
 enum ItemKind { folder = 0; composition = 1; footage = 2; solid = 3; placeholder = 4; }
 /// B4 — what a footage item's file holds (ItemInfo.mediaType).
-enum MediaType { none = 0; image = 1; video = 2; audio = 3; }
+/// `model` (AE parity 4.7): a 3D model file (.glb) stored as a project asset; Model components reference it by item id.
+enum MediaType { none = 0; image = 1; video = 2; audio = 3; model = 4; }
 enum AlphaMode { auto = 0; ignore = 1; straight = 2; premultiplied = 3; }
 enum FieldOrder { progressive = 0; upperFirst = 1; lowerFirst = 2; }
 

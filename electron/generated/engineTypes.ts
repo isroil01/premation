@@ -214,13 +214,17 @@ export type ItemKind =
   | 'placeholder';
 export const ItemKindValues = ['folder', 'composition', 'footage', 'solid', 'placeholder'] as const;
 
-/** B4 — what a footage item's file holds (ItemInfo.mediaType). */
+/**
+ * B4 — what a footage item's file holds (ItemInfo.mediaType).
+ * `model` (AE parity 4.7): a 3D model file (.glb) stored as a project asset; Model components reference it by item id.
+ */
 export type MediaType =
   | 'none'
   | 'image'
   | 'video'
-  | 'audio';
-export const MediaTypeValues = ['none', 'image', 'video', 'audio'] as const;
+  | 'audio'
+  | 'model';
+export const MediaTypeValues = ['none', 'image', 'video', 'audio', 'model'] as const;
 
 export type AlphaMode =
   | 'auto'
@@ -440,20 +444,59 @@ export type OverlayKind =
   | 'scene3d';
 export const OverlayKindValues = ['transform', 'bounds', 'motionPath', 'rig', 'textBox', 'scene3d'] as const;
 
+/** `planarRegion` (AE parity 3.4, Mocha class): `points` 0–3 are a region of a flat surface (TL, TR, BR, BL), tracked as one homography per frame from every feature inside it (exclusions: `excludeMasks`); `points` 4–7, when given, are the SURFACE whose corners the result follows (else the region's). The result is four tracks (the surface corners), applied as a corner pin. */
 export type TrackKind =
   | 'position'
   | 'positionRotation'
   | 'positionRotationScale'
   | 'perspectiveCorner'
   | 'mask'
-  | 'planar';
-export const TrackKindValues = ['position', 'positionRotation', 'positionRotationScale', 'perspectiveCorner', 'mask', 'planar'] as const;
+  | 'planar'
+  | 'planarRegion';
+export const TrackKindValues = ['position', 'positionRotation', 'positionRotationScale', 'perspectiveCorner', 'mask', 'planar', 'planarRegion'] as const;
 
 export type TrackDirection =
   | 'forward'
   | 'backward'
   | 'both';
 export const TrackDirectionValues = ['forward', 'backward', 'both'] as const;
+
+/** AE parity 5.4 — how a `mask` track moves the mask: `vertices` (each vertex follows its own feature, the default) or AS ONE SHAPE by the transform fitted to every tracked point per frame (AE's Mask Tracker methods). */
+export type MaskTrackMethod =
+  | 'vertices'
+  | 'position'
+  | 'positionRotation'
+  | 'positionScaleRotation'
+  | 'affine'
+  | 'perspective';
+export const MaskTrackMethodValues = ['vertices', 'position', 'positionRotation', 'positionScaleRotation', 'affine', 'perspective'] as const;
+
+/** `method`: `position` (translate only), `positionRotation`, `positionRotationScale` (default). `smoothness` 0…100 (%). */
+export type StabilizeFraming =
+  | 'stabilizeOnly'
+  | 'stabilizeCrop'
+  | 'cropAutoScale';
+export const StabilizeFramingValues = ['stabilizeOnly', 'stabilizeCrop', 'cropAutoScale'] as const;
+
+/** AE parity 3.3: `outline` follows the face's outline as one mask; `detailed` adds masks for the eyes, brows and mouth and nulls for the eyes, pupils, nose tip, mouth corners and chin. */
+export type FaceTrackMode =
+  | 'outline'
+  | 'detailed';
+export const FaceTrackModeValues = ['outline', 'detailed'] as const;
+
+/** AE parity 3.5. `solve`: features found and tracked across `range` automatically, the camera and the scene's points solved (the focal length too unless `focalLength`, source px, is given); a "3D Tracker Camera" is keyed and the solve is stored on the layer (getCameraSolve) for the viewer's track points. `groundPlane`: the stored solve re-oriented so the plane through `points` (indices into the solve's points, ≥ 3) is the ground and their centre the origin; the camera re-keyed. `createLayers`: a layer of kind `create` placed on the plane through `points` (one point: a null / text at it), 3D, facing the camera side. */
+export type CameraTrackAction =
+  | 'solve'
+  | 'groundPlane'
+  | 'createLayers';
+export const CameraTrackActionValues = ['solve', 'groundPlane', 'createLayers'] as const;
+
+export type TrackPointLayer =
+  | 'text'
+  | 'solid'
+  | 'null'
+  | 'shadowCatcher';
+export const TrackPointLayerValues = ['text', 'solid', 'null', 'shadowCatcher'] as const;
 
 /** What a finished track is applied as (trackMotionActions.ts onApply / onApplyMesh / onCreateNullAndApply / onCreateNullsForPlanes / onSolveCamera). */
 export type TrackApplyMode =
@@ -466,6 +509,24 @@ export type TrackApplyMode =
   | 'nullsForPlanes'
   | 'cameraSolve';
 export const TrackApplyModeValues = ['follow', 'transform', 'corner', 'stabilize', 'meshWarp', 'createNull', 'nullsForPlanes', 'cameraSolve'] as const;
+
+/**
+ * Content-Aware Fill (contentAwareFillVideo.ts runContentAwareFill): the layer's masks at each frame of the range are the hole, filled by PatchMatch then carried by flow both ways; the filled frames are PNGs written to `outputFolder` (default: next to the project, `Content-Aware Fill/`) and attached with setContentAwareFill (the renderer shows the nearest filled frame over the footage).
+ * AE parity 3.7. `object`: synthesis (multi-scale PatchMatch) plus temporal propagation; `surface`: propagation, the rest a smooth membrane (no synthesis); `edgeBlend`: each frame a membrane from the hole's edge (no temporal).
+ */
+export type ContentAwareFillMode =
+  | 'object'
+  | 'surface'
+  | 'edgeBlend';
+export const ContentAwareFillModeValues = ['object', 'surface', 'edgeBlend'] as const;
+
+/** Lighting correction strength: the boundary mismatch spread across the hole. */
+export type ContentAwareLighting =
+  | 'off'
+  | 'subtle'
+  | 'moderate'
+  | 'strong';
+export const ContentAwareLightingValues = ['off', 'subtle', 'moderate', 'strong'] as const;
 
 /** B4 — what a layer holds of an SVG document (LayerInfo.svg). */
 export type SvgRole =
@@ -480,12 +541,14 @@ export type PropertyKind =
   | 'indexedGroup';
 export const PropertyKindValues = ['property', 'group', 'indexedGroup'] as const;
 
+/** `revoked`: on the registry's signed revocation list (Electron passes it with `--revoked`); its code never runs. */
 export type PluginStatus =
   | 'loaded'
   | 'disabled'
   | 'failed'
-  | 'quarantined';
-export const PluginStatusValues = ['loaded', 'disabled', 'failed', 'quarantined'] as const;
+  | 'quarantined'
+  | 'revoked';
+export const PluginStatusValues = ['loaded', 'disabled', 'failed', 'quarantined', 'revoked'] as const;
 
 export type HitMode =
   | 'topmost'
@@ -645,6 +708,22 @@ export type RenderGuideAxis =
   | 'x'
   | 'y';
 export const RenderGuideAxisValues = ['x', 'y'] as const;
+
+/**
+ * AE parity 4.1: where a mesh's effect chain runs — the layer's own box (an extrusion's caps) or the mesh's UV space
+ * (a primitive / model surface).
+ */
+export type RenderMeshSurface =
+  | 'layer'
+  | 'uv';
+export const RenderMeshSurfaceValues = ['layer', 'uv'] as const;
+
+/** AE parity 4.8: how fog thickens with distance from the camera. */
+export type RenderFogMode =
+  | 'linear'
+  | 'exponential'
+  | 'exponential2';
+export const RenderFogModeValues = ['linear', 'exponential', 'exponential2'] as const;
 
 /**
  * D3: a colour space by what After Effects offers (Project Settings ▸ Working Space, Interpret Footage ▸ Color, the
@@ -2802,7 +2881,7 @@ export interface TrackMotionJob {
   points: TrackPointSpec[];
   range: TimeRange;
   direction: TrackDirection;
-  /** Where to apply: a layer's transform, an effect point, a mask. Absent = keep as tracker data only. */
+  /** Where to apply: a layer's transform, an effect point (`effects/<id>/<param>`: the effect's `<param>X` / `<param>Y`, layer px from the layer's centre, kind `position`), a mask. Absent = keep as tracker data only. */
   applyTo?: PropRef;
   /** The time the points' positions are given at (layer pixels on that frame). Default: `range.start` for `forward`, the range's last frame for `backward`, the playhead clamped into the range for `both` (tracked outward from there, autoTrack.ts). */
   origin?: Time;
@@ -2812,13 +2891,18 @@ export interface TrackMotionJob {
   maxCoastFrames?: number;
   /** Long edge the footage is decoded at for the analysis (the TS analysis tier; default 960, 0 = full size). Points, sizes and the result stay in layer pixels. */
   analysisMaxEdge?: number;
-  /** Stabilize Motion (trackerStore mode `stabilize`, applyTrack.ts planStabilize): point 0's inverse motion written as position keys on the TRACKED layer; `applyTo` is not read. Kind `position` only. */
+  /** Stabilize Motion (trackerStore mode `stabilize`, applyTrack.ts planStabilize): point 0's inverse motion written as position keys on the TRACKED layer; `applyTo` is not read. Kind `position`; `positionRotation` / `positionRotationScale` (two points) also stabilize rotation / scale (AE parity 3.6). */
   stabilize: boolean;
   /** Kind `planar` (the corner mode's "Dense grid", planarFit.ts densifyQuad): the quad TL, TR, BR, BL (+ any points after it, kept) gains a `planarGrid`×`planarGrid` lattice of features inside it (default 5, 1…16) and the corner pin is the RANSAC plane over all of them. */
   planarGrid?: number;
+  /** One-click feature picking (AE parity 3.6, autoFeature.ts restored in the engine): `points[0]`'s feature centre is only a hint (its size, when given, the search radius). At the origin frame the engine picks the trackable feature nearest it (Shi-Tomasi strength × distinctness × proximity), sizes the feature window to the smallest that resolves it and the search window from the feature's own corroborated motion, and adds a companion feature on the same surface as point 1 (rotation / scale). The summary's `plan` reports the measurements; a region with nothing trackable fails `invalidArgument`. */
+  autoFeature?: boolean;
+  /** Kind `planarRegion`: masks of the layer (ids) whose area is never tracked (an occluder, a reflection), followed as they animate. */
+  excludeMasks: string[];
+  /** Kind `mask` (AE parity 5.4): absent = `vertices`. */
+  maskMethod?: MaskTrackMethod;
 }
 
-/** `method`: `position` (translate only), `positionRotation`, `positionRotationScale` (default). `smoothness` 0…100 (%). */
 export interface StabilizeJob {
   layer: LayerId;
   range: TimeRange;
@@ -2826,6 +2910,9 @@ export interface StabilizeJob {
   method: string;
   /** Long edge the footage is decoded at (the TS analysis tier; default 960, 0 = full size). The flow itself runs at most 480 px wide, as smoothStabilize.ts. */
   analysisMaxEdge?: number;
+  /** Framing (similarity variant): `stabilizeOnly` (default) keeps the moving borders; `stabilizeCrop` zooms every frame by the one factor the worst frame needs; `cropAutoScale` zooms each frame just enough, eased. Capped at `maxScale` % (default 150). */
+  framing?: StabilizeFraming;
+  maxScale?: number;
   /** smoothStabilize.ts `variant`: `similarity` (default — position / rotation / scale keys per `method`), `subspace` (a 4×4 grid of local similarities → Mesh Warp keys on the layer, subspaceWarp.ts), `rolling-shutter` (the subspace grid with the rows' readout shear repaired). */
   variant?: string;
 }
@@ -2866,7 +2953,7 @@ export interface ObjectMatteJob {
   range: TimeRange;
   prompts: Vec2[];
   backgroundPrompts: Vec2[];
-  /** The SAM encoder / decoder ONNX files (the page's bundled `models/object-matte/*` or the user's install). Empty = the engine's default search (PREMATION_SAM_DIR). */
+  /** The SAM encoder / decoder ONNX files. Empty (what the page sends) = the engine's default search: the model the user installed (PREMATION_SAM_USER_DIR, set by Electron main to <userData>/models/object-matte) when both files are there, else the bundled pair (PREMATION_SAM_DIR). */
   encoderModel: string;
   decoderModel: string;
   /** A drawn box prompt in layer pixels at `range.start` (objectMask.ts marquee). It wins over `prompts` / `backgroundPrompts` when both arrive: its centre is the foreground point, and nothing outside it (plus an 8% + 4 px margin) is kept. */
@@ -2877,6 +2964,58 @@ export interface ObjectMatteJob {
   feather?: number;
   /** Masks of `layer` (their ids, `masks/<id>`) removed in the same history entry as the new one is added — a re-segment replacing the tool's previous outline. */
   replaceMasks: string[];
+  /** AE parity 3.1 — video. Absent: one frame at `range.start` (the outline as before). Set: the subject is followed through `range` from `origin` (default `range.start`) forward, backward or both ways: each frame is segmented from prompts carried from the previous frame (the box and inner points of its matte, the flow-warped user prompts) plus every correction stroke on that frame. */
+  direction?: TrackDirection;
+  /** Correction strokes on any frame (layer px): foreground or background points at `time`. They re-seed propagation from that frame. */
+  strokes: ObjectMatteStroke[];
+  /** Video: also store the soft alpha matte of every frame (PNG next to the project, attached with setLayerMatte) — default true. The mask path is written either way. */
+  matte?: boolean;
+  /** Video: matte refinement (refine edge, decontaminate, motion blur, feather, choke, reduce chatter). */
+  refine?: MatteRefine;
+  /** Where the matte PNGs go; empty = next to the project, `Object Matte/<layer>/`. */
+  outputFolder?: string;
+  /** Video: the frame `prompts` / `box` are given at (default `range.start`). */
+  origin?: Time;
+}
+
+/** A correction stroke on one frame (AE parity 3.1). */
+export interface ObjectMatteStroke {
+  time: Time;
+  points: Vec2[];
+  background: boolean;
+}
+
+/** Matte refinement (AE parity 3.2; AE's Refine Edge / Refine Soft Matte): `edgeRadius` px of the band refined against the picture (hair), `decontaminate` 0–1 (edge colour from the background removed), `motionBlur` (matte blurred along the motion, `shutterAngle` degrees, default 180), `feather` px, `choke` −100…100 %, `reduceChatter` 0–100 % (temporal smoothing of the edge). */
+export interface MatteRefine {
+  edgeRadius: number;
+  decontaminate: number;
+  motionBlur: boolean;
+  shutterAngle: number;
+  feather: number;
+  choke: number;
+  reduceChatter: number;
+}
+
+/** Face tracking (AE parity 3.3): the face inside the layer's mask `mask` (its id; absent = the first mask) at `origin` (default: range start for forward, end for backward, the playhead for both), followed with a face landmark model (468 points) through `range`. `landmarkModel` empty = the model the user installed (PREMATION_FACE_USER_DIR) else the bundled one. */
+export interface FaceTrackJob {
+  layer: LayerId;
+  range: TimeRange;
+  direction: TrackDirection;
+  mode: FaceTrackMode;
+  mask?: string;
+  landmarkModel: string;
+  origin?: Time;
+}
+
+export interface CameraTrackJob {
+  layer: LayerId;
+  range: TimeRange;
+  action?: CameraTrackAction;
+  focalLength?: number;
+  analysisMaxEdge?: number;
+  maxFeatures?: number;
+  points: number[];
+  create?: TrackPointLayer;
 }
 
 /**
@@ -2948,6 +3087,19 @@ export interface RenderJob {
   items: RenderItemId[];
 }
 
+/**
+ * AE parity 4.7 — normalize a 3D model for import: a .glb / .gltf (with its sidecars, Draco / meshopt / quantized
+ * geometry, KTX2 textures), .obj (+ .mtl), .fbx, .usda or .usdz becomes ONE plain glTF 2.0 binary written (temp file
+ * + rename) into `outputFolder` as `<name>.glb`. `files[0]` is the model; the rest are the files it references,
+ * matched by relative path then by name. No document change: the result JSON is `{glb, name, warnings[]}` and the
+ * editor imports the .glb as a project asset (importFiles).
+ */
+export interface ModelImportJob {
+  files: string[];
+  outputFolder: string;
+  name?: string;
+}
+
 /** Pre-render (Pre-render / proxy creation) of compositions to files. */
 export interface PrerenderJob {
   comps: ItemId[];
@@ -2980,22 +3132,112 @@ export interface TrackApplyJob {
   sourceWidth: number;
   sourceHeight: number;
   nullMode?: TrackApplyMode;
+  /** `follow` onto an effect point of `target`: `effects/<id>/<param>` (AE parity 3.6). */
+  targetPath?: string;
+  /** `stabilize` with two tracks: also stabilize rotation, and scale (AE parity 3.6). */
+  stabilizeRotation?: boolean;
+  stabilizeScale?: boolean;
 }
 
-/** Roto Brush (rotoBrush.ts runRotoBrush): a GrabCut-class matte from the `seed` click (layer pixels at `range.start`, colour `tolerance` default 36), propagated frame to frame by block flow with a colour re-seed, as ONE "Roto Brush" mask with a path key per frame of the range (feather `feather` px, default 2). */
+/** A tracker saved on its layer (AE parity 3.6; AE's Motion Trackers group): the point setup and the analysed samples, so a track survives selecting another layer, saving and reopening. Samples are stored on the layer's own time axis and answered in composition time. */
+export interface TrackerPointData {
+  feature: Rect;
+  search: Rect;
+  attach: Vec2;
+  samples: TrackSampleRow[];
+}
+
+export interface TrackerData {
+  name: string;
+  mode: string;
+  kind: TrackKind;
+  sourceWidth: number;
+  sourceHeight: number;
+  points: TrackerPointData[];
+}
+
+export interface LayerTrackers {
+  trackers: TrackerData[];
+}
+
+/** Replace the layer's saved trackers (empty clears them). Inverse: the previous list. */
+export interface SetLayerTrackers {
+  layer: LayerId;
+  trackers: TrackerData[];
+}
+
+/** The layer's saved trackers, sample times in composition time. */
+export interface GetLayerTrackers {
+  layer: LayerId;
+}
+
+/** A camera solve stored on its footage layer (AE parity 3.5). `frames`: per solved frame the solve camera (world→camera `rotation`, row-major 3×3, and `center`) in the solve's own space; `points` the solved scene points there, `pointErrors` their reprojection error (px). World (composition) = `worldOrigin` + `worldScale` · `worldRotation` · (p − `worldCentroid`). `focal` is in source px. */
+export interface CameraSolveFrame {
+  time: Time;
+  rotation: number[];
+  center: Vec3;
+}
+
+export interface CameraSolveData {
+  camera: LayerId;
+  focal: number;
+  sourceWidth: number;
+  sourceHeight: number;
+  frames: CameraSolveFrame[];
+  points: Vec3[];
+  pointErrors: number[];
+  worldOrigin: Vec3;
+  worldScale: number;
+  worldRotation: number[];
+  worldCentroid: Vec3;
+}
+
+export interface CameraSolveAnswer {
+  solve?: CameraSolveData;
+}
+
+/** Store (or, without `solve`, clear) the layer's camera solve. Inverse: the previous one. */
+export interface SetCameraSolve {
+  layer: LayerId;
+  solve?: CameraSolveData;
+}
+
+export interface GetCameraSolve {
+  layer: LayerId;
+}
+
+/** A per-frame soft matte on a layer (AE parity 3.2; the video object matte job's result): each frame is the layer's CUT-OUT picture (straight RGBA: the refined, decontaminated subject over transparency), and the frame nearest the layer's time stands in for its footage, as Content-Aware Fill frames do. Empty `frames` clears it. Inverse: the previous record. */
+export interface SetLayerMatte {
+  layer: LayerId;
+  frames: ContentAwareFillFrame[];
+}
+
+/**
+ * Roto Brush (rotoBrush.ts runRotoBrush): a GrabCut-class matte from the `seed` click (layer pixels at `range.start`, colour `tolerance` default 36), propagated frame to frame by block flow with a colour re-seed, as ONE "Roto Brush" mask with a path key per frame of the range (feather `feather` px, default 2).
+ * Roto Brush propagation. The starting matte is `startMask` at `range.start` (the tool's SAM outline, a mask id of `layer`), else GrabCut from every foreground prompt. Every prompt (layer px, top-left origin) rides the flow from frame to frame and re-seeds the matte; background prompts keep their region out of the re-seed. `seed` is the prompt used when `prompts` is empty. The result is ONE "Roto Brush" mask with a path key per frame; `replaceMasks` and every other "Roto Brush" mask on the layer are removed in the same history entry.
+ */
 export interface RotoBrushJob {
   layer: LayerId;
   range: TimeRange;
   seed: Vec2;
   tolerance?: number;
   feather?: number;
+  prompts: Vec2[];
+  backgroundPrompts: Vec2[];
+  startMask?: string;
+  replaceMasks: string[];
 }
 
-/** Content-Aware Fill (contentAwareFillVideo.ts runContentAwareFill): the layer's masks at each frame of the range are the hole, filled by PatchMatch then carried by flow both ways; the filled frames are PNGs written to `outputFolder` (default: next to the project, `Content-Aware Fill/`) and attached with setContentAwareFill (the renderer shows the nearest filled frame over the footage). */
+/** The hole is the layer's masks as Béziers (mode `none` skipped, `subtract` cut out, `inverted` honoured), grown by `expansion` px. `references`: clean plates (PNG) painted for frames; each fills its frame and anchors propagation. `createReference`: fill only the frame at `range.start`, write `reference_<frame>.png` and apply nothing (the summary's `files` names it) — paint it, then pass it back in `references`. Any range: frames are filled in windows, each anchored on the previous window's last frame. */
 export interface ContentAwareFillJob {
   layer: LayerId;
   range: TimeRange;
   outputFolder: string;
+  mode?: ContentAwareFillMode;
+  lighting?: ContentAwareLighting;
+  references: ContentAwareFillFrame[];
+  expansion?: number;
+  createReference?: boolean;
 }
 
 /** Auto-reframe (autoReframe.ts autoReframeComposition): `comp` rendered small (160 px wide, 12 frames/s) by a child engine, saliency + shot cuts per frame (saliency.ts, sceneEditDetect.ts), a dead-zone / lag camera path (reframePath.ts); a NEW composition `width`×`height` holding `comp` as a precomp layer scaled to cover, with the pan keyed on its separated position. The source is untouched. */
@@ -3050,7 +3292,10 @@ export type JobSpec =
   | { kind: 'autoReframe'; value: AutoReframeJob }
   | { kind: 'rigLogo'; value: RigLogoJob }
   | { kind: 'physicsBake'; value: PhysicsBakeJob }
-  | { kind: 'particleBake'; value: ParticleBakeJob };
+  | { kind: 'particleBake'; value: ParticleBakeJob }
+  | { kind: 'cameraTrack'; value: CameraTrackJob }
+  | { kind: 'faceTrack'; value: FaceTrackJob }
+  | { kind: 'modelImport'; value: ModelImportJob };
 export type JobSpecKind = JobSpec['kind'];
 
 export interface StartJob {
@@ -3097,11 +3342,14 @@ export interface SetCaptions {
   style?: string;
 }
 
-/** Enable/disable an installed plugin for this session (install/uninstall stays in the editor's plugin manager). */
+/** Enable/disable an installed plugin for this session (install/uninstall stays in the editor's plugin manager; Electron persists the choice and passes `--plugin-disabled` at the next start). */
 export interface SetPluginEnabled {
   plugin: string;
   enabled: boolean;
 }
+
+/** AE parity 2.7 — rescan the plugin folders (`--plugins`, PREMATION_PLUGIN_PATH) after an install: new bundles load and their effects become available without a restart; plugins already loaded stay loaded until the engine restarts (a loaded module cannot be swapped under live instances). Returns every plugin afterwards, like listPlugins. */
+export interface RescanPlugins {}
 
 /** Store plugin data in the DOCUMENT (AE sequence data / arbitrary-data params). Undoable, saved with the project. */
 export interface SetPluginData {
@@ -3694,6 +3942,8 @@ export interface EffectParamInfo {
   choices: string[];
   unit: string;
   group: string;
+  /** Decimal places for a number field (absent = the editor's default). */
+  precision?: number;
 }
 
 export interface EffectInfo {
@@ -3706,6 +3956,13 @@ export interface EffectInfo {
   params: EffectParamInfo[];
   supportsFloat: boolean;
   audio: boolean;
+  /** AE parity 2.9 — a native plugin effect's buttons (PR_PARAM_BUTTON): invokeEffectAction takes `key` as its action. Empty for builtins. */
+  actions: EffectActionInfo[];
+}
+
+export interface EffectActionInfo {
+  key: string;
+  label: string;
 }
 
 export interface ListEffects {
@@ -4453,7 +4710,7 @@ export interface OverlayScene3D {
   position: number[];
   /** light: radius, cone, coneFeather, and the aim in degrees (lightAngle + the layer's world Z rotation) — what buildLightGizmo takes. */
   light: number[];
-  /** layer: the local transform sampled at the frame (sampleTransform3DAtPlayhead): x, y, z, rotationX, rotationY, rotation, scaleX, scaleY, scaleZ (stored units). */
+  /** layer: the local transform sampled at the frame (sampleTransform3DAtPlayhead): x, y, z, rotationX, rotationY, rotation, scaleX, scaleY, scaleZ, orientationX, orientationY, orientationZ (stored units; position in the parent's space — `parent` lifts it to the world). */
   local: number[];
   /** layer: the extrusion depth (animated winning, ≥ 0). */
   extrusion: number;
@@ -4568,6 +4825,11 @@ export interface RenderGlass {
 export interface RenderMotionSample {
   modelMatrix: number[];
   opacity: number;
+  /**
+   * AE parity 4.2: a 3D layer's sample as its own column-major 4×4 model (empty = a 2D sample), so motion blur stays
+   * on the depth-tested path.
+   */
+  model3d: number[];
 }
 
 export interface RenderAdjustment {
@@ -4636,6 +4898,16 @@ export interface RenderExtrudedMesh {
   indexFormat: RenderIndexFormat;
   ranges: RenderMeshRange[];
   pbr?: RenderPbrMaps;
+  /** AE parity 4.1: the space the renderable's effect chain runs in before it textures the mesh. */
+  surface: RenderMeshSurface;
+  /** The layer box (layer px) of a `layer` surface: the effect chain's canvas, centred on the mesh origin. */
+  surfaceWidth: number;
+  surfaceHeight: number;
+  /**
+   * AE parity 4.7: per-vertex colours (glTF COLOR_0), f32 LE rgba per vertex (linear), multiplied into the base
+   * colour; empty = white.
+   */
+  colors: Uint8Array;
 }
 
 export interface RenderShade3D {
@@ -4656,6 +4928,11 @@ export interface RenderShade3D {
   transparencyRolloff?: number;
   ior?: number;
   acceptsShadows?: boolean;
+  /**
+   * AE parity 4.8: this surface mirrors the other 3D layers of its run (planar reflection, scaled by
+   * reflectionIntensity / sharpness / rolloff).
+   */
+  layerReflections?: boolean;
 }
 
 export interface RenderThreeD {
@@ -4718,10 +4995,49 @@ export interface RenderEnvMap {
   height: number;
   levels: number;
   scale: number;
-  /** RGBA8. */
+  /** RGBA8 (sqrt-encoded) or, when `format` is rgba16float, linear half floats. */
   data: Uint8Array;
   intensity: number;
   rotationDeg: number;
+  /** AE parity 4.4 — image-based lighting that does not use light slots. */
+  format: RenderTextureFormat;
+  /**
+   * Irradiance as 9 SH coefficients × rgb (27 numbers, linear, already scaled by the light's intensity); empty =
+   * no diffuse IBL (the probe's derived light rig carries it).
+   */
+  sh: number[];
+  /** Draw the environment behind the 3D scene (a visible sky), at this blur 0..1 and gain. */
+  visibleSky: boolean;
+  skyBlur: number;
+  skyIntensity: number;
+  /** A live layer texture (a comp or video layer, equirectangular) in place of `data`: the animated environment. */
+  textureKey?: string;
+  /** Environment shadows: the probe's dominant direction (unit, light travel) casts a mapped shadow at this darkness. */
+  shadowDir: number[];
+  shadowDarkness: number;
+  shadowSoftness: number;
+}
+
+/** AE parity 4.8: distance fog / atmosphere over the 3D scene. */
+export interface RenderFog {
+  mode: RenderFogMode;
+  color: Color;
+  /** Linear: where fog starts and is complete (px from the camera). Exponential: density per 1000 px. */
+  start: number;
+  end: number;
+  density: number;
+  /** 0..1 — the most fog can hide (atmosphere that never fully whites out). */
+  maxOpacity: number;
+}
+
+/** AE parity 4.3: an invisible floor at the comp's ground level that only catches shadows. */
+export interface RenderShadowCatcher {
+  /** World y of the floor plane. */
+  y: number;
+  /** 0..1. */
+  opacity: number;
+  /** Half-extent of the catcher plane (px). */
+  size: number;
 }
 
 export interface RenderSsao {
@@ -4739,6 +5055,7 @@ export interface RenderPrecompFrame {
   /** A 3D composition card: children are in the comp's own pixels. */
   flatWidth?: number;
   flatHeight?: number;
+  fog?: RenderFog;
 }
 
 /** FrameScene `Renderable`. */
@@ -4794,6 +5111,8 @@ export interface RenderFrameScene {
   lights3d: RenderLight3D[];
   envMap?: RenderEnvMap;
   ssao?: RenderSsao;
+  fog?: RenderFog;
+  shadowCatcher?: RenderShadowCatcher;
 }
 
 /** One user guide (OverlayPass). */
@@ -5124,12 +5443,16 @@ export type Command =
   | ({ type: 'setViewportHiddenLayers' } & SetViewportHiddenLayers)
   | ({ type: 'setViewportFocus' } & SetViewportFocus)
   | ({ type: 'setOverlayGeometry' } & SetOverlayGeometry)
+  | ({ type: 'setLayerTrackers' } & SetLayerTrackers)
+  | ({ type: 'setCameraSolve' } & SetCameraSolve)
+  | ({ type: 'setLayerMatte' } & SetLayerMatte)
   | ({ type: 'startJob' } & StartJob)
   | ({ type: 'cancelJob' } & CancelJob)
   | ({ type: 'applyJobResult' } & ApplyJobResult)
   | ({ type: 'setContentAwareFill' } & SetContentAwareFill)
   | ({ type: 'setCaptions' } & SetCaptions)
   | ({ type: 'setPluginEnabled' } & SetPluginEnabled)
+  | ({ type: 'rescanPlugins' } & RescanPlugins)
   | ({ type: 'setPluginData' } & SetPluginData);
 export type CommandType = Command['type'];
 
@@ -5291,17 +5614,23 @@ export type CommandResult =
   | ({ type: 'setViewportHiddenLayers' } & Empty)
   | ({ type: 'setViewportFocus' } & Empty)
   | ({ type: 'setOverlayGeometry' } & Empty)
+  | ({ type: 'setLayerTrackers' } & Empty)
+  | ({ type: 'setCameraSolve' } & Empty)
+  | ({ type: 'setLayerMatte' } & Empty)
   | ({ type: 'startJob' } & JobRef)
   | ({ type: 'cancelJob' } & Empty)
   | ({ type: 'applyJobResult' } & ItemList)
   | ({ type: 'setContentAwareFill' } & Empty)
   | ({ type: 'setCaptions' } & LayerList)
   | ({ type: 'setPluginEnabled' } & Empty)
+  | ({ type: 'rescanPlugins' } & PluginList)
   | ({ type: 'setPluginData' } & Empty);
 export type CommandResultType = CommandResult['type'];
 
 /** Every query, keyed by its schema id. */
 export type Query =
+  | ({ type: 'getLayerTrackers' } & GetLayerTrackers)
+  | ({ type: 'getCameraSolve' } & GetCameraSolve)
   | ({ type: 'getDocument' } & GetDocument)
   | ({ type: 'exportDocument' } & ExportDocument)
   | ({ type: 'getComposition' } & GetComposition)
@@ -5358,6 +5687,8 @@ export type QueryType = Query['type'];
 
 /** The typed result of a query; same key as its query. */
 export type QueryResult =
+  | ({ type: 'getLayerTrackers' } & LayerTrackers)
+  | ({ type: 'getCameraSolve' } & CameraSolveAnswer)
   | ({ type: 'getDocument' } & DocumentSnapshot)
   | ({ type: 'exportDocument' } & ExportedDocument)
   | ({ type: 'getComposition' } & CompositionDetails)
@@ -5607,12 +5938,16 @@ export interface CommandArgs {
   setViewportHiddenLayers: SetViewportHiddenLayers;
   setViewportFocus: SetViewportFocus;
   setOverlayGeometry: SetOverlayGeometry;
+  setLayerTrackers: SetLayerTrackers;
+  setCameraSolve: SetCameraSolve;
+  setLayerMatte: SetLayerMatte;
   startJob: StartJob;
   cancelJob: CancelJob;
   applyJobResult: ApplyJobResult;
   setContentAwareFill: SetContentAwareFill;
   setCaptions: SetCaptions;
   setPluginEnabled: SetPluginEnabled;
+  rescanPlugins: RescanPlugins;
   setPluginData: SetPluginData;
 }
 
@@ -5774,17 +6109,23 @@ export interface CommandResults {
   setViewportHiddenLayers: Empty;
   setViewportFocus: Empty;
   setOverlayGeometry: Empty;
+  setLayerTrackers: Empty;
+  setCameraSolve: Empty;
+  setLayerMatte: Empty;
   startJob: JobRef;
   cancelJob: Empty;
   applyJobResult: ItemList;
   setContentAwareFill: Empty;
   setCaptions: LayerList;
   setPluginEnabled: Empty;
+  rescanPlugins: PluginList;
   setPluginData: Empty;
 }
 
 /** Arguments of each query, by name. */
 export interface QueryArgs {
+  getLayerTrackers: GetLayerTrackers;
+  getCameraSolve: GetCameraSolve;
   getDocument: GetDocument;
   exportDocument: ExportDocument;
   getComposition: GetComposition;
@@ -5841,6 +6182,8 @@ export interface QueryArgs {
 
 /** Result of each query, by name. */
 export interface QueryResults {
+  getLayerTrackers: LayerTrackers;
+  getCameraSolve: CameraSolveAnswer;
   getDocument: DocumentSnapshot;
   exportDocument: ExportedDocument;
   getComposition: CompositionDetails;

@@ -21,6 +21,17 @@ export type CliTaskRequest =
   | { kind: 'comps'; projectPath: string }
   | { kind: 'captions'; projectPath: string; outPath: string; comp?: string; language?: string };
 
+/** electron/nativePluginStore.ts InstallOutcome. */
+export type NativePluginInstallOutcome =
+  | { ok: true; id: string; version: string; restartNeeded: boolean }
+  | { ok: false; reason: string; code: 'size' | 'hash' | 'signature' | 'key-changed' | 'package' | 'io' | 'revoked' };
+
+/** electron/nativePluginStore.ts PluginStoreState. */
+export interface NativePluginStoreState {
+  plugins: Record<string, { version: string; publisherKey: string; enabled: boolean; installedAt: number; pending?: boolean }>;
+  uninstall: string[];
+}
+
 export interface CliRenderRequest {
   projectPath: string;
   comp?: string;
@@ -365,24 +376,27 @@ export interface MotionEditorApi {
     openBundleDir?(): Promise<string | null>;
   };
   /**
-   * Bundled Object Matte model files. Allowlisted names only — the main
-   * process maps a known filename to a path inside its own dist/, and answers
-   * null for anything else or for a build that shipped without the files.
+   * The user's Object Matte model, installed by MAIN into
+   * <userData>/models/object-matte where the engine's objectMatte job reads it
+   * (electron/objectMatteModel.ts). https-only, size-capped, no credentials;
+   * runs only when the user presses Install. Progress arrives on
+   * `onDownloadProgress`, correlated by the caller-minted `requestId`.
    */
+  /** Face Tracking's landmark model in <userData>/models/face-landmarks (electron/faceModel.ts). */
+  faceModel?: {
+    status(): Promise<{ url: string; bytes: number; installedAt: number } | null>;
+    install(request: { url: string; requestId: string }): Promise<{ ok: true; model: { url: string; bytes: number; installedAt: number } } | { ok: false; message: string }>;
+    remove(): Promise<boolean>;
+    cancelDownload(requestId: string): Promise<boolean>;
+    onDownloadProgress(handler: (event: unknown) => void): () => void;
+  };
   objectMatte?: {
-    read?(name: string): Promise<Uint8Array | null>;
-    /** file:// URL of an allowlisted asset the renderer must import() (the
-     *  ORT glue module) — null when the build shipped without it. */
-    url?(name: string): Promise<string | null>;
-    /**
-     * Fetch a user-chosen model URL from the MAIN process, where the page CSP
-     * does not apply. https-only, size-capped, no credentials attached; runs
-     * only when the user presses Install. Progress arrives on
-     * `onDownloadProgress` correlated by the caller-minted `requestId`.
-     */
-    download?(request: { url: string; requestId: string }): Promise<
-      { ok: true; bytes: Uint8Array } | { ok: false; message: string }
+    status?(): Promise<{ encoderUrl: string; decoderUrl: string; bytes: number; installedAt: number } | null>;
+    install?(request: { encoderUrl: string; decoderUrl: string; requestId: string }): Promise<
+      | { ok: true; model: { encoderUrl: string; decoderUrl: string; bytes: number; installedAt: number } }
+      | { ok: false; message: string }
     >;
+    remove?(): Promise<boolean>;
     cancelDownload?(requestId: string): Promise<boolean>;
     /** Progress pushes for every in-flight download; filter by requestId. */
     onDownloadProgress?(handler: (event: unknown) => void): () => void;
@@ -538,6 +552,14 @@ export interface MotionEditorApi {
     openNativeFolder?(): Promise<{ ok: boolean; path: string; error?: string }>;
     /** The folder's path, for the install steps. */
     nativeFolderPath?(): Promise<string>;
+    /** Download, verify and install from the plugin store (main does all of it). */
+    install?(req: { id: string; version: string; owner?: boolean }): Promise<NativePluginInstallOutcome>;
+    /** Queue an uninstall: disabled now, removed at the next start. */
+    uninstall?(id: string): Promise<NativePluginStoreState | null>;
+    /** Persist enabled / disabled across launches. */
+    setEnabled?(req: { id: string; enabled: boolean }): Promise<NativePluginStoreState | null>;
+    installed?(): Promise<NativePluginStoreState>;
+    host?: { platform: string; arch: string };
   };
   window?: {
     minimize?(): Promise<void>;

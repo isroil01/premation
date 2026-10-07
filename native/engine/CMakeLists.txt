@@ -562,6 +562,7 @@ add_library(engine_scene_core STATIC
   src/scene/readers.cpp  # the node readers (Color.fromHex for the light shading)
   src/scene/height_displacement.cpp  # heightDisplacement.ts (D2w 3D leftovers)
   src/scene/gltf_model.cpp  # gltf.ts parse + modelMesh.ts entries + the model registry
+  src/scene/media_paths.cpp  # file_url_path (shared with the texture feed)
   src/scene/styled_surface.cpp  # layerStyles.ts styledSurfaceFill (extrusion walls under overlays)
   src/scene/corner_pin.cpp  # cornerPin.ts + resolveCornerPin + Homography.ts
   src/scene/write_on_trail.cpp  # writeOnBrush.ts resolveWriteOnTrail (Write-on's dab history)
@@ -600,6 +601,8 @@ endif()
 # premation-plugins: list / render / crash-check plugins without an editor (tools/premation_plugins.cpp).
 add_executable(premation-plugins tools/premation_plugins.cpp)
 target_link_libraries(premation-plugins PRIVATE engine_plugins motion::options)
+# Part of the SDK release artifact (native/sdk/CMakeLists.txt, `--component sdk`).
+install(TARGETS premation-plugins RUNTIME DESTINATION bin COMPONENT sdk)
 if(MSVC)
   target_compile_definitions(premation-plugins PRIVATE _CRT_SECURE_NO_WARNINGS)  # sscanf / getenv in argument parsing
 endif()
@@ -860,7 +863,7 @@ else()
 endif()
 if(MOTION_BUILD_TESTS)
   add_executable(engine_raster_tests tests/test_raster.cpp tests/test_raster_text_core.cpp tests/test_paint_raster.cpp
-                 tests/test_svg_doc.cpp tests/test_font_catalog.cpp)
+                 tests/test_svg_doc.cpp tests/test_font_catalog.cpp tests/test_mask_feather.cpp)
   target_link_libraries(engine_raster_tests PRIVATE engine_raster_core engine_json motion::options Catch2::Catch2WithMain)
   target_compile_definitions(engine_raster_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
   if(TARGET engine_raster)
@@ -887,6 +890,8 @@ add_library(engine_effects STATIC
   src/effects/advanced_blur_kernels.cpp
   src/effects/color_kernels.cpp
   src/effects/keying_kernels.cpp
+  src/effects/keying_more_kernels.cpp
+  src/effects/warp_more_kernels.cpp
   src/effects/distort_kernels.cpp
   src/effects/auto_color_kernels.cpp
   src/effects/transition_kernels.cpp
@@ -932,7 +937,7 @@ if(MSVC)
 endif()
 
 if(MOTION_BUILD_TESTS)
-  add_executable(engine_effects_tests tests/test_effect_kernels.cpp tests/test_canvas_effects.cpp tests/test_effect_chain.cpp)
+  add_executable(engine_effects_tests tests/test_effect_kernels.cpp tests/test_canvas_effects.cpp tests/test_effect_chain.cpp tests/test_color_grade.cpp tests/test_keying_more.cpp tests/test_warp_more.cpp)
   target_link_libraries(engine_effects_tests PRIVATE engine_effect_chain engine_effects engine_canvas_effects engine_raster_core engine_json motion::options Catch2::Catch2WithMain)
   target_compile_definitions(engine_effects_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
   if(MSVC)
@@ -1228,16 +1233,23 @@ add_library(engine_jobs_core STATIC
   src/jobs/encode_args.cpp
   src/jobs/media_input.cpp
   src/jobs/tracking.cpp
+  src/jobs/track_feature.cpp
+  src/jobs/camera_track.cpp
+  src/jobs/planar_track.cpp
+  src/jobs/face_mesh.cpp
+  src/jobs/matte_refine.cpp
   src/jobs/stabilize.cpp
   src/jobs/track_apply.cpp
   src/jobs/track_plans.cpp
   src/jobs/track_walk.cpp
   src/jobs/mask_sampling.cpp
+  src/jobs/mask_fit.cpp
   src/jobs/camera_solve.cpp
   src/jobs/trace_bitmap.cpp
   src/jobs/sam_pipeline.cpp
   src/jobs/roto_matte.cpp
   src/jobs/content_aware.cpp
+  src/jobs/content_aware_fill.cpp
   src/jobs/reframe_path.cpp
   src/jobs/saliency.cpp
   src/jobs/reframe_analyse.cpp
@@ -1271,6 +1283,9 @@ if(FFMPEG_FOUND AND TARGET engine_audio)
     src/jobs/child_export.cpp
     src/jobs/kind_object_matte.cpp
     src/jobs/sam_ort_ffi.cpp
+    src/jobs/kind_camera_track.cpp
+    src/jobs/kind_face_track.cpp
+    src/jobs/face_ort_ffi.cpp
   )
   target_include_directories(engine_jobs SYSTEM PRIVATE ${FFMPEG_INCLUDE_DIRS})
   target_link_directories(engine_jobs PUBLIC ${FFMPEG_LIBRARY_DIRS})
@@ -1317,16 +1332,79 @@ else()
 endif()
 
 if(MOTION_BUILD_TESTS)
-  add_executable(engine_jobs_tests tests/test_jobs_audio.cpp tests/test_jobs_trace.cpp tests/test_jobs_tracking.cpp
+  add_executable(engine_jobs_tests tests/test_jobs_audio.cpp tests/test_jobs_trace.cpp tests/test_jobs_tracking.cpp tests/test_track_feature.cpp tests/test_camera_track.cpp tests/test_planar_track.cpp tests/test_matte_refine.cpp tests/test_face_mesh.cpp
                                  tests/test_jobs_round2.cpp tests/test_roto_matte.cpp tests/test_content_aware.cpp
                                  tests/test_reframe_path.cpp tests/test_saliency.cpp
                                  tests/test_reframe_analyse.cpp tests/test_job_retime.cpp
-                                 tests/test_transcribe.cpp)
+                                 tests/test_transcribe.cpp tests/test_mask_fit.cpp)
   target_link_libraries(engine_jobs_tests PRIVATE engine_jobs_core motion::options Catch2::Catch2WithMain)
   if(MSVC)
     target_compile_options(engine_jobs_tests PRIVATE /bigobj)
   endif()
   add_test(NAME engine_jobs_tests COMMAND engine_jobs_tests --reporter compact)
+endif()
+
+# ── 3D model import (AE parity 4.7; src/scene/model_*.cpp) ─────────────────
+#   engine_model   the normalizer: any model the editor imports → one plain GLB
+#                  (model_convert.hpp). GPU- and decode-free; the vendored
+#                  meshoptimizer decoder and ufbx (native/third_party, compiled
+#                  without the project's warning set — upstream code) plus,
+#                  when vcpkg provides them, Draco and libktx.
+enable_language(C)
+set(PREMATION_THIRD_PARTY ${CMAKE_CURRENT_SOURCE_DIR}/../third_party)
+add_library(premation_meshopt STATIC
+  ${PREMATION_THIRD_PARTY}/meshoptimizer/vertexcodec.cpp
+  ${PREMATION_THIRD_PARTY}/meshoptimizer/indexcodec.cpp
+  ${PREMATION_THIRD_PARTY}/meshoptimizer/vertexfilter.cpp)
+target_include_directories(premation_meshopt SYSTEM PUBLIC ${PREMATION_THIRD_PARTY}/meshoptimizer)
+target_compile_features(premation_meshopt PRIVATE cxx_std_20)
+add_library(premation_ufbx STATIC ${PREMATION_THIRD_PARTY}/ufbx/ufbx.c)
+target_include_directories(premation_ufbx SYSTEM PUBLIC ${PREMATION_THIRD_PARTY}/ufbx)
+set_target_properties(premation_meshopt premation_ufbx PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if(NOT MSVC)
+  target_compile_options(premation_ufbx PRIVATE -w)
+  target_compile_options(premation_meshopt PRIVATE -w)
+endif()
+
+add_library(engine_model STATIC
+  src/scene/model_convert.cpp
+  src/scene/model_obj.cpp
+  src/scene/model_usd.cpp
+  src/scene/model_import_files.cpp
+  src/scene/model_fbx_ffi.cpp
+  src/scene/meshopt_ffi.cpp
+  src/scene/model_codecs_none.cpp
+)
+target_include_directories(engine_model PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/scene)
+target_link_libraries(engine_model PUBLIC engine_core engine_export_core PRIVATE premation_meshopt premation_ufbx motion::options)
+find_package(draco CONFIG QUIET)
+if(draco_FOUND)
+  target_sources(engine_model PRIVATE src/scene/draco_ffi.cpp)
+  target_link_libraries(engine_model PRIVATE draco::draco)
+  target_compile_definitions(engine_model PRIVATE PREMATION_HAVE_DRACO=1)
+else()
+  message(STATUS "premation-engine: Draco not found — Draco-compressed glTF imports are refused with a message")
+endif()
+find_package(Ktx CONFIG QUIET)
+if(Ktx_FOUND)
+  target_sources(engine_model PRIVATE src/scene/ktx_ffi.cpp)
+  target_link_libraries(engine_model PRIVATE KTX::ktx)
+  target_compile_definitions(engine_model PRIVATE PREMATION_HAVE_KTX=1)
+else()
+  message(STATUS "premation-engine: libktx not found — KTX2 textures use their fallbacks or are refused")
+endif()
+if(MSVC)
+  target_compile_options(engine_model PRIVATE /bigobj)
+endif()
+if(TARGET engine_jobs)
+  target_sources(engine_jobs PRIVATE src/jobs/kind_model_import.cpp)
+  target_link_libraries(engine_jobs PUBLIC engine_model)
+endif()
+if(MOTION_BUILD_TESTS)
+  add_executable(engine_model_tests tests/test_model_convert.cpp)
+  target_link_libraries(engine_model_tests PRIVATE engine_model engine_scene_core premation_meshopt motion::options Catch2::Catch2WithMain)
+  target_compile_definitions(engine_model_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
+  add_test(NAME engine_model_tests COMMAND engine_model_tests --reporter compact)
 endif()
 
 # ASan on Windows: the runtime DLL (cmake/sanitizers.cmake) next to every engine

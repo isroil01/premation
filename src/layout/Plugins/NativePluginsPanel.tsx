@@ -1,24 +1,33 @@
 /**
- * The editor's Plugins panel — where the old Plugins (marketplace) tab lived,
- * but for the plugins 0.9 actually runs: native SDK plugins in the engine.
- * The same list as the dashboard's Plugins page, compact, with the folder
- * button; the full explanation and install steps are on that page.
+ * The editor's Plugins panel: what is installed, enable / disable / update /
+ * uninstall in place. Browsing the store and publishing live on the
+ * dashboard's Plugins page (more room); a plugin installed there is usable
+ * here at once (the engine rescans).
  */
 
+import { useNativePlugins } from '@hooks/useNativePlugins';
+import { useInstalledPlugins } from '@hooks/usePluginStore';
 import { NativePluginsList, OpenPluginsFolderButton } from './NativePluginsList';
 import styles from './NativePlugins.module.css';
 
 export function NativePluginsPanel(): JSX.Element {
+  const native = useNativePlugins();
+  const store = useInstalledPlugins(native.refresh);
   return (
     <div className={styles.panel}>
       <p className={styles.text}>
-        Native plugins run inside the engine. Install one by copying it into the plugins folder, then
-        restart Premation. Registry plugins aren&apos;t supported in 0.9 yet.
+        Plugins run inside the engine on this computer. Find more in the plugin store on the dashboard&apos;s
+        Plugins page.
       </p>
+      {store.message ? (
+        <span className={store.message.error ? styles.error : styles.message} role={store.message.error ? 'alert' : 'status'}>
+          {store.message.text}
+        </span>
+      ) : null}
       <div className={styles.toolbar}>
         <OpenPluginsFolderButton />
       </div>
-      <NativePluginsList compact />
+      <NativePluginsList compact store={store} native={native} />
     </div>
   );
 }

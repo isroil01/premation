@@ -2,14 +2,14 @@
  * Native SDK plugins, as the editor's Plugins page and panel see them.
  *
  * Premation 0.9 removed the JavaScript/WGSL plugin system and its registry
- * (G2). Native SDK plugins (docs/PLUGIN_SDK.md) still run — inside the C++
- * engine process — and are installed by hand: copy the plugin bundle into the
- * plugins folder (`<userData>/native-plugins`, see electron/ipc/nativePlugins.ts)
- * and restart. What the engine found there, loaded or not, is its own answer to
+ * (G2). Native SDK plugins (docs/PLUGIN_SDK.md) run inside the C++ engine
+ * process. They install from the plugin store (pluginStore.ts,
+ * docs/PLUGIN_STORE.md) or by hand into the plugins folder
+ * (`<userData>/native-plugins`, see electron/ipc/nativePlugins.ts). What the engine found there, loaded or not, is its own answer to
  * `listPlugins`; this module never keeps a second list.
  *
  * Also here: the one per-user preference these surfaces have — whether the
- * "registry plugins aren't supported yet" notice was dismissed. localStorage,
+ * plugin store notice was dismissed. localStorage,
  * every access wrapped (a sandboxed or full store must never break the page),
  * and never the project document.
  *
@@ -42,6 +42,7 @@ export function nativePluginStatusLabel(status: NativePlugin['status']): string 
     case 'disabled': return 'Disabled';
     case 'failed': return 'Failed';
     case 'quarantined': return 'Quarantined';
+    case 'revoked': return 'Revoked';
   }
 }
 
@@ -82,7 +83,7 @@ export async function nativePluginFolderPath(): Promise<string | null> {
 // ── The dismissible notice ─────────────────────────────────────────────────
 
 /** Versioned: a later notice about a later change gets a new key and shows again. */
-export const REGISTRY_NOTICE_KEY = 'premation.notice.registryPlugins.v0_9.dismissed';
+export const REGISTRY_NOTICE_KEY = 'premation.notice.pluginStore.v0_10.dismissed';
 
 const noticeListeners = new Set<() => void>();
 let noticeCache: boolean | null = null;

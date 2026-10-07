@@ -1,33 +1,11 @@
-import { useMemo, useState } from 'react';
-import { useSelectionStore } from '@stores/selectionStore';
-import { useMirrorLayer } from '@hooks/useMirror';
-import { useActiveCompLayers } from '@hooks/useMirrorFields';
-import { uiKindOf } from '@core/mirror/layerKinds';
+import { useFootageSource } from '@hooks/useFootageSource';
 import { TrackMotionSection } from './TrackMotionSection';
 import styles from './CharacterPanel.module.css';
 
-const isFootageKind = (kind: string | null): boolean => kind === 'video' || kind === 'image';
-
 export function TrackerPanel(): JSX.Element {
-  const selected = useSelectionStore((s) => s.ids);
-  // Every layer of the active composition (the mirror, B4): re-renders when
-  // the comp's stack or a listed layer's header changes.
-  const compLayers = useActiveCompLayers();
-
-  // Find all video layers in the current composition to offer as Motion Source
-  const videoLayers = useMemo(
-    () => compLayers.filter((l) => isFootageKind(uiKindOf(l))).map((l) => ({ id: l.id, name: l.name || l.id })),
-    [compLayers],
-  );
-
-  const [chosenSourceId, setChosenSourceId] = useState<string | null>(null);
-
-  // Determine active source layer: selected layer if video, or chosenSourceId, or first available video layer
-  const primarySelected = selected[0] ?? null;
-  const primaryLayer = useMirrorLayer(primarySelected);
-  const isPrimaryVideo = isFootageKind(uiKindOf(primaryLayer));
-
-  const activeSourceId = isPrimaryVideo ? primarySelected : (chosenSourceId ?? videoLayers[0]?.id ?? null);
+  // The selected footage layer, else the one chosen below, else the first.
+  const source = useFootageSource();
+  const activeSourceId = source.activeId;
 
   if (!activeSourceId) {
     return (
@@ -44,13 +22,14 @@ export function TrackerPanel(): JSX.Element {
       <div className={styles.col} style={{ marginBottom: 'var(--space-2)' }}>
         <span className={styles.sectionTitle}>Motion Source</span>
         <select
+          aria-label="Motion Source"
           value={activeSourceId}
-          onChange={(e) => setChosenSourceId(e.target.value)}
+          onChange={(e) => source.choose(e.target.value)}
           className={styles.fontSelect}
         >
-          {videoLayers.map((l) => (
+          {source.layers.map((l) => (
             <option key={l.id} value={l.id}>
-              {l.name} {l.id === primarySelected ? '(Selected)' : ''}
+              {l.name} {l.id === source.selectedId ? '(Selected)' : ''}
             </option>
           ))}
         </select>

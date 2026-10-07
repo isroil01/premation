@@ -81,11 +81,13 @@ export function isPaintableLayer(layer: Pick<LayerInfo, 'kind' | 'source' | 'gen
   return k !== null && PAINTABLE.has(k);
 }
 
-const RIGGABLE: ReadonlySet<SceneKind> = new Set(['shape', 'image']);
+const RIGGABLE: ReadonlySet<SceneKind> = new Set(['shape', 'image', 'video']);
 
 /**
  * Whether a layer can be rigged directly — the twin of `rigLogo.RIGGABLE_KINDS`
- * (shape and image; text and groups go through Rig Logo, the engine's rigLogo job).
+ * (shape, image and — AE parity 5.5 — video: the engine's rig mesh deforms the
+ * frame on screen, a full-frame grid since footage carries no alpha cut to
+ * trace; text and groups go through Rig Logo, the engine's rigLogo job).
  */
 export function isRiggableLayer(layer: Pick<LayerInfo, 'kind' | 'source'> | undefined): boolean {
   const k = uiKindOf(layer);

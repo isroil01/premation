@@ -33,6 +33,9 @@ export const MODE_LABELS: Record<TrackerMode, string> = {
   smooth: 'Smooth stabilize (dense)',
   corner: 'Planar / Corner pin',
   mask: 'Track mask',
+  planar: 'Planar tracker (surface)',
+  camera: '3D Camera Tracker',
+  face: 'Face tracking',
 };
 
 export const MODE_HINTS: Record<TrackerMode, string> = {
@@ -43,7 +46,10 @@ export const MODE_HINTS: Record<TrackerMode, string> = {
   smooth:
     'No points to place: dense optical flow measures the camera’s motion. Default = global similarity (Warp Stabilizer-class). Subspace / rolling-shutter variants bake a Mesh Warp lattice instead.',
   corner: 'Planar track: drag corners onto the plane (TL, TR, BR, BL). “Dense grid” tracks a feature lattice inside the quad and fits the plane by RANSAC, so partial occlusion cannot drag it. Track, then pin / mesh / Solve 3D Camera Tracker (SfM + bundle adjustment). Two+ quads → Create Nulls per Plane.',
-  mask: 'Tracks every vertex of this layer’s mask and writes mask keyframes — the mask follows the footage. Seed Matte / Segment (SAM-class) / Roto Brush use GrabCut + edge CRF (optional ONNX when registered).',
+  mask: 'Tracks every vertex of this layer’s mask and writes mask keyframes — the mask follows the footage. Seed Matte and Segment run the SAM model in the engine; Roto Brush propagates that matte through the shot.',
+  planar: 'Mocha-class planar tracking: drag the four corners around a flat, textured REGION (TL, TR, BR, BL). Everything inside it is tracked as one plane, so the corners can leave the frame or be covered. Exclude masks over occluders. Surface Adjust puts the insert’s corners anywhere on that plane. Apply as a corner pin.',
+  camera: 'Analyses the shot automatically: features across the frame, the camera’s path and lens, and the scene’s points. Then pick track points in the viewer to set the ground plane, or create a text, solid, null or shadow catcher on them.',
+  face: 'Draw a mask around the face first. Outline Only follows the face outline as a mask; Detailed Features adds masks for eyes, brows and mouth and nulls for the eyes, pupils, nose, mouth and chin.',
 };
 
 /**
@@ -54,7 +60,9 @@ export const MODE_HINTS: Record<TrackerMode, string> = {
  * wrong track, and that is precisely the case a number nobody reads would
  * fail to warn about.
  */
-export function qualityOf(plan: AutoPlanSummary): { level: 'good' | 'fair' | 'poor'; label: string } {
+export function qualityOf(plan: AutoPlanSummary): { level: 'good' | 'fair' | 'poor'; label: string } | null {
+  // Not measured: no verdict (a badge the engine did not earn is worse than none).
+  if (plan.distinctness === null) return null;
   if (plan.distinctness >= 0.6) return { level: 'good', label: 'Strong feature' };
   if (plan.distinctness >= 0.35) return { level: 'fair', label: 'Usable feature' };
   return { level: 'poor', label: 'Ambiguous feature' };

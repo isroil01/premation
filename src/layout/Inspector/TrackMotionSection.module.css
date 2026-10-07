@@ -250,3 +250,11 @@
     transition: none;
   }
 }
+
+/* Track ◀1 ◀◀ ◀▶ ▶▶ 1▶ (AE parity 3.6). */
+.trackRow {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 4px;
+}

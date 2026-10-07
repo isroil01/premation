@@ -120,15 +120,26 @@ const bridge = {
     openBundleDir: () => ipcRenderer.invoke('project:openBundleDir'),
   },
 
-  // Bundled Object Matte model files (allowlisted names only — see main.ts),
-  // plus the custom-model download that must run in main because the page CSP
-  // names no model host (electron/modelDownload.ts). The download attaches no
-  // credential and only ever runs on an explicit Install press.
+  // The user's Object Matte model: main downloads it into <userData> where the
+  // engine reads it (electron/objectMatteModel.ts). No credential attached; it
+  // runs only on an explicit Install press.
+  // Face Tracking's landmark model (electron/faceModel.ts), downloaded on first use.
+  faceModel: {
+    status: () => ipcRenderer.invoke('faceModel:status'),
+    install: (request: { url: string; requestId: string }) => ipcRenderer.invoke('faceModel:install', request),
+    remove: () => ipcRenderer.invoke('faceModel:remove'),
+    cancelDownload: (requestId: string) => ipcRenderer.invoke('objectMatte:cancelDownload', requestId),
+    onDownloadProgress: (handler: (event: unknown) => void) => {
+      const listener = (_e: unknown, payload: unknown): void => handler(payload);
+      ipcRenderer.on('faceModel:downloadProgress', listener);
+      return () => ipcRenderer.removeListener('faceModel:downloadProgress', listener);
+    },
+  },
   objectMatte: {
-    read: (name: string) => ipcRenderer.invoke('objectMatte:read', name),
-    url: (name: string) => ipcRenderer.invoke('objectMatte:url', name),
-    download: (request: { url: string; requestId: string }) =>
-      ipcRenderer.invoke('objectMatte:download', request),
+    status: () => ipcRenderer.invoke('objectMatte:status'),
+    install: (request: { encoderUrl: string; decoderUrl: string; requestId: string }) =>
+      ipcRenderer.invoke('objectMatte:install', request),
+    remove: () => ipcRenderer.invoke('objectMatte:remove'),
     cancelDownload: (requestId: string) => ipcRenderer.invoke('objectMatte:cancelDownload', requestId),
     onDownloadProgress: (handler: (event: unknown) => void) => {
       const listener = (_event: unknown, payload: unknown): void => handler(payload);
@@ -253,6 +264,13 @@ const bridge = {
   plugins: {
     openNativeFolder: () => ipcRenderer.invoke('plugins:openNativeFolder'),
     nativeFolderPath: () => ipcRenderer.invoke('plugins:nativeFolderPath'),
+    // The plugin store: main downloads, verifies and installs (docs/PLUGIN_STORE.md §4).
+    install: (req: { id: string; version: string; owner?: boolean }) => ipcRenderer.invoke('plugins:install', req),
+    uninstall: (id: string) => ipcRenderer.invoke('plugins:uninstall', id),
+    setEnabled: (req: { id: string; enabled: boolean }) => ipcRenderer.invoke('plugins:setEnabled', req),
+    installed: () => ipcRenderer.invoke('plugins:installed'),
+    /** Which binaries this machine loads (docs/PLUGIN_STORE.md §1): the store greys out the rest. */
+    host: { platform: process.platform, arch: process.arch },
   },
 
   popout: {

@@ -33,7 +33,9 @@
 #include "png_write.hpp"
 #include "zip_write.hpp"
 #include "model.hpp"
+#include "host.hpp"
 #include "native_scene.hpp"
+#include "render_glue.hpp"
 #include "project_open.hpp"
 #include "scene_finish.hpp"
 #include "scene_renderer.hpp"
@@ -330,7 +332,10 @@ std::unique_ptr<Built> build_frame(DocCopy& dc, const Plan& p, std::int64_t fram
     if (!e.layerId.empty()) r += " (" + e.layerId + ")";
     b->reasons.push_back(std::move(r));
   }
-  // Native plugins run in the viewport's host; the export job starts none.
+  // Native plugins: the export's own host renders them (run_export). Without
+  // one (no plugin folder given) a frame that needs a plugin is not exported
+  // with the effect silently missing.
+  if (plugins::PluginHost::active() != nullptr) return b;
   const std::function<bool(const std::vector<api::Renderable>&)> hasNative = [&](const std::vector<api::Renderable>& rs) {
     for (const auto& r : rs) {
       for (const auto& e : r.effects) {
@@ -632,6 +637,18 @@ bool parse_job(const Json& j, JobSpec& out, std::string& error) {
   if (!str("projectPath", out.projectPath, true) || !str("workDir", out.workDir, true)) return false;
   if (!j.at("comp").is_undefined() && !str("comp", out.comp, false)) return false;
   if (!j.at("fontsManifest").is_undefined() && !str("fontsManifest", out.fontsManifest, false)) return false;
+  if (!j.at("pluginRevoked").is_undefined() && !str("pluginRevoked", out.pluginRevoked, false)) return false;
+  for (const auto& [k, dst] : {std::pair<const char*, std::vector<std::string>*>{"plugins", &out.pluginPaths}, {"pluginDisabled", &out.pluginDisabled}}) {
+    const Json& v = j.at(k);
+    if (v.is_undefined()) continue;
+    if (!v.is_array()) {
+      error = std::string("job: \"") + k + "\" must be an array of strings";
+      return false;
+    }
+    for (const Json& e : v.arr()) {
+      if (e.is_string() && !e.str().empty()) dst->push_back(e.str());
+    }
+  }
   for (const auto& [k, dst] : {std::pair<const char*, std::optional<std::int64_t>*>{"startFrame", &out.startFrame}, {"endFrame", &out.endFrame}}) {
     const Json& v = j.at(k);
     if (v.is_undefined() || v.is_null()) continue;
@@ -770,6 +787,32 @@ int run_export(const std::string& jobPath) {
       if (renderer) renderer->set_effect_fields(sc::engine_gpu_effects());  // E4, with the view's gpuEffects
       gpuInitMs = ms_since(t0);
     });
+  }
+
+  // ── native plugins (AE parity 2.10) ──
+  // Before the project opens, so the document resolves plugin effect types;
+  // the same folders, disabled set and revocations as the editor's engine.
+  std::unique_ptr<plugins::PluginHost> pluginHost;
+  {
+    std::vector<std::filesystem::path> paths(job.pluginPaths.begin(), job.pluginPaths.end());
+    if (const char* env = std::getenv("PREMATION_PLUGIN_PATH")) {  // NOLINT(concurrency-mt-unsafe): read before any thread starts
+      std::string_view rest = env;
+      while (!rest.empty()) {
+        const std::size_t cut = rest.find(';');
+        if (cut != 0) paths.emplace_back(std::string(rest.substr(0, cut)));
+        if (cut == std::string_view::npos) break;
+        rest.remove_prefix(cut + 1);
+      }
+    }
+    if (!paths.empty()) {
+      plugins::HostOptions ho;
+      ho.searchPaths = std::move(paths);
+      ho.disabled = job.pluginDisabled;
+      if (!job.pluginRevoked.empty()) ho.revoked = plugins::read_revoked_file(job.pluginRevoked);
+      pluginHost = std::make_unique<plugins::PluginHost>(std::move(ho));
+      const auto recs = pluginHost->scan();
+      PREMATION_LOG(info, "export_plugins").kv("count", static_cast<std::uint64_t>(recs.size()));
+    }
   }
 
   // ── open + plan ──
@@ -951,6 +994,13 @@ int run_export(const std::string& jobPath) {
   textures.set_media(&mediaSystem, &mediaTex);
 #endif
   renderer->set_external_textures(&textures);
+  // `native-plugin` chain entries run through the export's plugin host (CPU or
+  // the plugin's GPU path on this device), as in the viewport (engine_frames.cpp).
+  std::unique_ptr<plugins::RenderGlue> pluginGlue;
+  if (pluginHost) {
+    pluginGlue = std::make_unique<plugins::RenderGlue>();
+    renderer->set_native_effects(pluginGlue.get());
+  }
   stats.gpuInitMs = gpuInitMs;
   stats.gpuWaitMs = ms_since(tGpu);
 

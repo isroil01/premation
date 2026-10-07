@@ -76,6 +76,303 @@ builds; ctest 15/15; every `*.native.test.*` suite on the full engine with
 the TypeScript engine went: 100 layers with effects at 1080p, 4K ProRes scrub
 latency, export fps against 0.8.5.
 
+## AE parity step 1 (2026-10-06, docs/AE_PARITY_PLAN.md) — needs the GPU box
+
+Written in a Linux cloud session with no GPU, no Dawn and no Skia: the
+headless engine, its native tests, `tsc`, lint and the jest suites ran there;
+the WGSL compiled with naga. Everything below did not run.
+
+- [ ] Build `windows-clang-cl-engine`: `render_graph/threed.cpp` (the
+      alpha-tested shadow / SSAO casters, `SHADOW_DEPTH_ALPHA_MATERIAL`),
+      `scene/snapshot_build.cpp`, `scene/threed_port.cpp`,
+      `scene/extrusion_mesh.cpp` and `jobs/kind_roto_brush.cpp` compiled only
+      against stubs or not at all.
+- [ ] Golden render tests (`packages/render-tests`, the native gate): the
+      `discard` added to `solid3d` / `textured3d*` / `masked-textured3d*`, the
+      new `shadow-depth-alpha` caster, the 3D corner-radius scale and the
+      variable mask feather all change pixels. Expect diffs only in scenes with
+      3D rounded rects, transparent 3D layers with shadows / SSAO, and
+      per-vertex feathered masks; rebless those after looking at them.
+- [ ] 3D corner radius: a 3D rounded rect pushed from z = 0 to z = −1500 and
+      to z = +600 keeps the same radius relative to its size; an extruded one's
+      walls meet the front face's rounded corners; a per-corner-radius
+      extrusion under a spatial effect (the face-plane fallback) keeps its
+      corners.
+- [ ] Alpha in 3D: a PNG with transparent corners in front of another 3D layer
+      no longer hides it in the corners; with a shadow-mapped light it casts
+      its silhouette, not a rectangle; with SSAO on, no dark square around it.
+- [ ] Variable mask feather: a mask with per-vertex feather draws a ramp that
+      widens and narrows along the outline (it used to draw a hard edge and
+      list "variable (per-vertex) mask feather" in layerErrors).
+- [ ] Roto Brush on real footage: paint strokes, propagate 60 frames — the mask
+      follows the outline with no zigzag spikes, the timeline shows ONE
+      "Roto Brush" mask (the SAM outline is replaced, not duplicated), and a
+      background stroke keeps its region out across the shot.
+- [ ] Object Matte model: Settings ▸ Object Matte ▸ Install writes the pair to
+      `<userData>/models/object-matte/`; the next Roto click uses it (rename
+      the bundled `resources/models/object-matte` away to prove it); Remove
+      falls back to the bundled pair with no restart.
+- [ ] 3D gizmo on a layer parented to a rotated, scaled null: the gizmo sits on
+      the layer, Local axes follow the parent and the layer's Orientation, and
+      a drag moves the layer under the cursor along the chosen axis.
+- [ ] A project with an effect from a plugin that is not installed opens with
+      one "Missing plugin …" notice, renders the layer unaffected, keeps the
+      effect after a save and reopen.
+
+## AE parity step 2 (2026-10-06, docs/PLUGIN_STORE.md) — needs the GPU box and real platforms
+
+Run in the same Linux session: the headless engine's plugin host tests
+(`engine_plugins_tests`, arch keys / `--plugin-disabled` / `--revoked` /
+rescan), `pluginStore.native.test.ts` on the headless engine, the SDK install
+plus `examples/plugin-ci` built against it and loaded, pack → sign →
+`installPackage` → `premation-plugins list`, and the motion-back unit tests
+(branch `ae-parity-plugin-store`). Not run:
+
+- [ ] Build `windows-clang-cl-engine`: `export/export_job.cpp` (the export
+      job's own plugin host and `RenderGlue`) needs Dawn and was not compiled.
+- [ ] Export a comp with a native plugin effect from the Render Queue and with
+      `premation render`: the effect is in the frames; with the plugin disabled
+      in Dashboard ▸ Plugins it passes through and the job names it.
+- [ ] Store install on Windows while the engine has the plugin loaded: the new
+      copy waits in `native-plugins/.pending/<id>`, the editor says it applies
+      at restart, the next start swaps it in. Uninstall removes the folder at
+      the next start.
+- [ ] macOS: an installed plugin loads with no Gatekeeper prompt
+      (`com.apple.quarantine` removed); a `macos-universal` binary loads on
+      arm64 and x64.
+- [ ] Install from the store with no restart: the effect appears in the
+      Effects panel under Plugins, its buttons work (one undo entry each), a
+      hidden / renamed param follows the plugin's `getEffectUi`.
+- [ ] Revocation: add the installed id to the signed list on staging → at the
+      next launch Dashboard ▸ Plugins shows it Revoked and its effects pass
+      through.
+- [ ] Server render of a project with a plugin effect is refused naming the
+      plugin.
+- [ ] motion-back on real Postgres + storage: migration
+      `20261006150000_native_plugin_packages` applies; a 200 MB native package
+      uploads (raw storage, 256 MB limit) and `packageUrl` downloads it within
+      10 minutes; publishing public from an unverified publisher answers 403
+      `publisher_not_verified`.
+- [ ] `.github/workflows/release.yml`: the `premation-sdk-<platform>.zip`
+      artifacts attach to the draft; `examples/plugin-ci` builds against them
+      on all three runners.
+
+## AE parity step 3 (2026-10-06) — needs the GPU box, ONNX Runtime and real footage
+
+Run in the Linux session: the headless engine and its suites (engine_jobs_tests:
+multi-scale fill, Bézier holes, fill modes, lighting, reference frames;
+feature picking and Warp Stabilizer framing; the camera solver on synthetic
+shots incl. the focal search; the planar tracker with an excluded occluder;
+the matte maths; face crop / smoothing; the refine-matte kernels' blessed
+fixture rows), `trackingRecords.native.test.ts`, tsc, lint and jest. The job
+kinds that decode footage (`kind_*`) and `face_ort_ffi.cpp` were COMPILED
+against ffmpeg headers but never linked or run (no engine_scene / ONNX Runtime
+here). Not run:
+
+- [ ] Build `windows-clang-cl-engine` with the vcpkg `engine` feature (ONNX
+      Runtime) and run engine_jobs_tests; the snapshot change (`alphaMatte`
+      frames stand in for footage, `scene/snapshot_build.cpp`) only compiled
+      against the stub-free scene here — run the golden render tests.
+- [ ] GPU execution providers (`ort_providers_ffi.hpp`): DirectML on Windows,
+      Core ML on macOS (headers present only where the runtime package has
+      them); `PREMATION_ORT_PROVIDER=cpu` forces the CPU. Time a 1080p Object
+      Matte frame on each.
+- [ ] Content-Aware Fill panel on real footage: Object / Surface / Edge Blend
+      over a 10 s shot (windows of 48 frames chain without a seam), lighting
+      correction on a shot with a brightness ramp, a painted reference frame
+      ("Create Reference Frame", paint, "Add Reference…").
+- [ ] Tracker: ◀1 ◀◀ ◀▶ ▶▶ 1▶ walks; drag a handle on a weak frame (the
+      confidence graph's shaded sample) and track on — the walk splices; the
+      track is saved on the layer (reopen the project, select the layer);
+      attach offset; Full resolution; apply to an effect point (Lens Flare
+      centre on another layer); Stabilize with Rotation + Scale (two points);
+      Warp Stabilizer framing Stabilize, Crop / Crop, Auto-scale.
+- [ ] One-click track on real footage shows the measured badge and ring; a
+      flat wall answers "Nothing trackable here".
+- [ ] Planar tracker (Mocha class) on a screen replacement: region over the
+      screen, an exclusion mask over a passing hand, Surface Adjust to the
+      screen's corners, apply to a precomp's Corner Pin; both directions.
+- [ ] 3D Camera Tracker on a handheld dolly shot: Analyze, the solved lens
+      against the known one, track points stay on the footage while scrubbing,
+      Set Ground Plane and Origin on floor points, Create Text / Solid / Null /
+      Shadow Catcher on selected points — they sit on the surface through the
+      shot; a pure pan answers the parallax message.
+- [ ] Face Tracking: install a MediaPipe Face Mesh ONNX export in Settings ▸
+      Face Tracking Model (no default URL is shipped — pick and verify the
+      official one), draw a mask round a face, Outline Only and Detailed
+      Features both ways; the masks and nulls follow; a face turned away ends
+      the walk with the earlier frames kept.
+- [ ] Object Matte (Roto tool, now on the toolbar): strokes at the playhead,
+      Propagate ◀ ◀▶ ▶ with SlimSAM; a correction stroke on a later frame
+      re-seeds from there; Edge radius on hair, Decontaminate on a green
+      edge, Motion Blur on a fast pan; the stored cut-out replaces the
+      footage (`setLayerMatte`) and the "Object Matte" outline keys follow.
+- [ ] Refine Soft Matte / Refine Hard Matte after Keylight: hair keeps detail,
+      edge colour loses the screen's tint (CPU bake path — check the frame
+      time at 1080p).
+- [ ] Animation ▸ Tracking menu items and Properties ▸ Track Motion open the
+      right mode for the selected footage.
+
+## AE parity step 4 (2026-10-07) — needs the GPU box and real models
+
+Run in the Linux session: the headless engine and ctest (13 suites; the D1 and
+undo parity fixtures re-blessed ONLY for the four new catalog fields —
+`material/reflectsLayers`, `light/environmentVisible`, `light/environmentBlur`,
+`light/environmentLayer` — so their known gaps stay at 9 and 227, the same as
+before this step), engine_model_tests (OBJ + MTL, meshopt + quantized glTF,
+.gltf sidecars, FBX through ufbx, USDA, USDZ, the job's file work), the glTF
+parity fixture (one answer changed on purpose: OPAQUE ignores base-colour
+alpha), tsc, lint (495 warnings, the baseline) and jest (the 4 known
+graphEditorTools.native failures). The render-graph code (`threed.cpp`,
+`composition_pass.cpp`, `device.cpp`) only passed `clang++ -fsyntax-only`
+against Dawn's generated headers, and the WGSL only `naga --validate` —
+nothing was drawn. `kind_model_import.cpp` (the job wrapper) only passed
+`-fsyntax-only`; its work (`import_model_files`) is tested. Not run:
+
+- [ ] Golden render tests (`packages/render-tests`) on the GPU box — every lit
+      3D shader changed (4 shadow slots, env SH, fog, layer reflections,
+      vertex colours); re-bless only what the items below explain.
+- [ ] 4.1 Styles and effects on extrusions, primitives and glTF meshes: a
+      Drop Shadow + Gaussian Blur on an extruded text, a Fill on a primitive
+      cube, Glow on a model (uv surface effects follow the mesh's UVs).
+- [ ] 4.2 A 3D layer with motion blur, an advanced blend mode (Overlay), a
+      track matte and a glass material each stays depth-tested with the
+      layers around it (no pop to 2D order).
+- [ ] 4.3 Shadows: a floor plane receives shadows; four shadow-casting lights
+      at once; casters in another 3D run still cast; an environment light with
+      Cast Shadows on throws its key-direction shadow; Ground Shadows (Comp
+      Settings) under a model.
+- [ ] 4.4 Environment: an .hdr / .exr environment lights a chrome sphere
+      without using a light slot; Show environment draws the sky (Background
+      blur); Source layer = a comp or a video layer animates the lighting and
+      reflections while playing.
+- [ ] 4.5 Mesh materials: transparency + IOR on a glass model, Reflection
+      Intensity on a chrome primitive, Phong metal; a comp with no lights shows
+      a model lit by the default rig, not flat.
+- [ ] 4.6 Gizmo: several 3D layers selected move / rotate / scale together;
+      the outer white ring turns about the view axis and dragging inside it
+      tumbles freely (trackball); Universal mode's per-axis scale cubes;
+      Shift = 10 px / 15° / 10 % increments; typing `45` while rotating then
+      Enter; Esc mid-drag restores the layer (one undo entry or none);
+      Shift+Alt+1…4 switch the gizmo; the Rotate tool (W) shows the rotation
+      gizmo; Pan Behind (Y) moves the anchor and the layer stays put (also on
+      a parented, oriented layer); clicking where two 3D layers overlap
+      selects the nearer one; the view cube is draggable to orbit (one undo
+      entry for a scene camera) and all six faces snap.
+- [ ] 4.7 Model import (desktop app): import an .obj + .mtl + textures, an
+      .fbx, a .usdz, a Draco + KTX2 .glb (vcpkg `draco` / `ktx` present: the
+      configure log names them; absent: the job refuses with the message
+      naming the alternative) — each lands as a `model` item in the Project
+      panel (`Models/<name>.glb` beside a saved project, temp folder for an
+      untitled one) and a layer tree that references it (`modelAsset`, no
+      data: URL in the saved file). Vertex colours, alphaMode MASK / BLEND,
+      and KHR_materials_unlit / transmission / ior render.
+- [ ] 4.8 Fog (Comp Settings ▸ Fog: linear / exponential / exponential²) fades
+      3D layers with distance, also inside a collapsed precomp; Reflect Layers
+      on a floor shows the layers above it mirrored.
+
+## AE parity step 5 (2026-10-07) — needs the GPU box
+
+Run in the Linux session: the headless engine and ctest (13 suites; the D1 and
+undo parity fixtures re-blessed ONLY for the catalog changes of this step —
+the new params of Lumetri, Levels, Hue/Saturation, Keylight, Mesh Warp and
+Liquify, and the new effects Advanced Spill Suppressor, Key Cleaner, Remove
+Grain and Reshape — so their known gaps stay at 9 and 227), engine_effects_tests
+(the CPU kernels: test_color_grade, test_keying_more, test_warp_more; the
+effect-chain parity unchanged), engine_jobs_tests (test_mask_fit), tsc, lint
+(495 warnings, the baseline), lint:engine-writes / -reads (0) and jest (the 4
+known graphEditorTools.native failures). The scene files (`effects_port.cpp`,
+`effects_spatial_a.cpp`, `lut_port.cpp`, `effect_handoff.cpp`,
+`bake_chain.cpp`), the render graph (`effect_chain.cpp`) and the tracker job
+(`kind_track_motion.cpp`) only passed `clang++ -fsyntax-only` with the
+engine's -Werror flags (engine_scene is not built without Dawn), and the three
+new WGSL shaders only `naga --validate`. The new GPU-route cases in
+`tests/test_gpu_effect_route.cpp` compile but were not linked or run. Not run:
+
+- [ ] Build engine_scene_tests and run `[ae5]` (test_gpu_effect_route.cpp):
+      Lumetri → channel-lut + lumetri-grade; Ultra spill → advanced-spill;
+      Keylight Screen Matte → keylight + matte-view; Source → nothing; the
+      CPU-only cases keep the bake.
+- [ ] Golden render tests (`packages/render-tests`): three new materials
+      (`lumetri-grade.wgsl`, `advanced-spill.wgsl`, `matte-view.wgsl`). Add
+      goldens for each and check them against the CPU bake of the same layer
+      (8-bit vs float: expect differences of a few levels, never a shift in
+      hue or matte).
+- [ ] 5.1 Lumetri on footage: Curves (RGB + per channel), the three colour
+      wheels, Faded Film, Split Toning, Hue vs Sat / Hue vs Hue / Hue vs Luma /
+      Luma vs Sat (CPU bake), HSL Secondary with Show Mask, Vignette
+      (Midpoint / Roundness / Feather). Per-channel Levels incl. alpha; Hue /
+      Saturation channel ranges and Colorize.
+- [ ] 5.2 Keylight on green-screen footage: each View (Final Result, Source,
+      Screen Matte, Status, Intermediate Result), Screen Pre-blur, Clip
+      Rollback, Inside / Outside masks. Advanced Spill Suppressor (Standard
+      and Ultra), Key Cleaner, Remove Grain (Final Output / Noise Samples).
+- [ ] 5.3 With the GPU effect route on: Lumetri without Hue vs curves, Ultra
+      spill and Keylight's Source / Screen Matte / Status views draw on the
+      GPU (no CPU bake in the viewport HUD) and match the bake; Corner Pin and
+      the fixed warps (Bulge, Twirl, Spherize, Ripple …) stay on the GPU chain.
+      (The rest moved to the GPU in the follow-up below.)
+- [ ] 5.4 Properties ▸ Masks (mode, feather, opacity, expansion, invert);
+      Layer ▸ Mask ▸ New Mask (Ctrl+Shift+N), Mode, Inverted (Ctrl+Shift+I),
+      Remove Mask / Remove All Masks; Smart Mask Interpolation between two
+      path keys; Track Mask with each Method (Position … Perspective) on
+      footage.
+- [ ] 5.5 Puppet pins on a video layer; the Liquify brush (each tool, size,
+      pressure, Reset Mesh) on an image; Mesh Warp with 5 × 7 and dragged
+      vertex handles; Reshape from one mask to another (Percent, Elasticity,
+      boundary mask).
+- [ ] 5.6 Properties ▸ Crop (insets, Edge Feather, Reset Crop) on image /
+      video / precomp; Properties ▸ Paint and ▸ Puppet sections.
+
+## AE parity 5.3 follow-up (2026-10-07) — the rest of the CPU-only effects on the GPU route
+
+What changed: every effect that still forced a layer onto the 8-bit CPU bake
+because of a step 5 control now has float passes on the GPU effect route —
+Lumetri's Hue vs Sat / Hue / Luma and Luma vs Sat (curve tables in a data
+texture read by `lumetri-grade`), Levels' alpha (`alpha-levels` after the
+LUT), Hue/Saturation's colour ranges and Colorize (`hue-sat-ranges`),
+Advanced Spill Suppressor ▸ Standard (a 64 × 64 green / blue vote drawn into
+one texel, then `advanced-spill`), Keylight's Screen Pre-blur / Clip Rollback /
+Inside and Outside masks / Intermediate Result (`keylight-ex`), Key Cleaner,
+Remove Grain, Refine Soft / Hard Matte (all through `matte-ops.wgsl`), Mesh
+Warp's variable mesh and Liquify's painted field (`field-warp`) and Reshape
+(the thin-plate spline solved in the scene, `reshape-tps`). Four scratch
+targets `fx-aux-0…3` are declared with the new `rgba16float-data` format:
+32-bit float where the device has float32-filterable + blendable, else 16-bit,
+whatever the project bit depth. Lumetri's vignette now measures the layer box
+(it measured the chain buffer before). The CPU kernels stay for layers the
+route cannot take (a precomp container, a Canvas2D-only effect in the stack).
+
+Run in the Linux session: ctest (all green but the two parity suites, still
+at 9 / 227 mismatches — no catalog change); engine_effects_tests (Reshape on
+the shared spline solver); the route cases `[ae5]` of
+`test_gpu_effect_route.cpp` linked by hand against the scene objects and run —
+all 118 assertions pass (the file's other cases were run the same way: the
+two Canvas2D overlay cases fail identically on HEAD in that partial link,
+which has no raster stack). Six WGSL files pass `naga --validate`; the render
+graph and scene files pass `clang++ -fsyntax-only` with the engine's warning
+flags. Nothing was drawn. Not run:
+
+- [ ] Build engine_scene_tests on the GPU box and run the whole
+      `test_gpu_effect_route.cpp`.
+- [ ] Golden render tests: new materials `matte-ops`, `hue-sat-ranges`,
+      `field-warp`, `reshape-tps`; changed `lumetri-grade` (curves, vignette
+      over the layer box) and `advanced-spill` (Standard). Add a golden per
+      effect and compare with the CPU bake of the same layer: expect a few
+      levels of difference (8-bit vs float), no shifted matte or hue.
+- [ ] With the GPU route on, none of these bake (viewport HUD): Lumetri with a
+      Hue vs Sat curve; Levels alpha; Hue/Saturation Colorize; Standard
+      spill on green and on blue screen (the vote picks the right one);
+      Keylight with pre-blur 5, rollback 10, an inside and an outside mask,
+      and View ▸ Intermediate Result; Key Cleaner with Reduce Chatter;
+      Remove Grain 2 passes and View ▸ Noise Samples; Refine Soft Matte and
+      Refine Hard Matte with decontamination; Mesh Warp 5 × 7 with dragged
+      vertices; Liquify after a few brush strokes; Reshape with a boundary
+      mask. Scrub each: no stalls (Refine Matte at radius 200 and Remove
+      Grain at radius 8 × 4 passes are the heaviest — note their frame times).
+- [ ] An 8-bit project: the same layers still look right (the scratch
+      targets are float regardless).
+
 ## Status on the Windows RTX 4060 box (2026-09-28)
 
 Built and run there after the `wip-stopped` merges: `windows-clang-cl-engine`

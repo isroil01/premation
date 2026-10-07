@@ -15,9 +15,40 @@
 #               fallback — needs Dawn's headers, so only with the `engine` feature
 
 add_library(premation_sdk INTERFACE)
-target_include_directories(premation_sdk INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(premation_sdk INTERFACE
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>)
 target_compile_features(premation_sdk INTERFACE cxx_std_20)
 add_library(premation::sdk ALIAS premation_sdk)
+
+# ── The SDK release artifact (AE parity 2.2, docs/PLUGIN_STORE.md) ──────────
+#   cmake --install <build> --component sdk --prefix premation-sdk
+# lays out what a plugin author downloads from a release:
+#   include/premation_sdk/*.h                   the headers
+#   lib/cmake/PremationSdk/                     find_package(PremationSdk) →
+#                                               premation::sdk + premation_add_plugin()
+#   bin/premation-plugins[.exe]                 list / render / crash-check a bundle
+#                                               (installed by engine/CMakeLists.txt)
+#   share/premation-sdk/{pack,sign}-plugin.mjs  package + sign for the store
+#   share/premation-sdk/samples/                the sample plugins (+ common/sample_util.hpp)
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
+set_target_properties(premation_sdk PROPERTIES EXPORT_NAME sdk)
+install(TARGETS premation_sdk EXPORT PremationSdkTargets COMPONENT sdk)
+install(DIRECTORY include/premation_sdk DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT sdk)
+install(EXPORT PremationSdkTargets NAMESPACE premation:: DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/PremationSdk COMPONENT sdk)
+file(READ include/premation_sdk/pr_types.h _pr_types)
+string(REGEX MATCH "#define PR_SDK_VERSION_MAJOR +([0-9]+)" _ ${_pr_types})
+set(_sdk_major ${CMAKE_MATCH_1})
+string(REGEX MATCH "#define PR_SDK_VERSION_MINOR +([0-9]+)" _ ${_pr_types})
+set(_sdk_minor ${CMAKE_MATCH_1})
+write_basic_package_version_file(${CMAKE_CURRENT_BINARY_DIR}/PremationSdkConfigVersion.cmake
+  VERSION ${_sdk_major}.${_sdk_minor} COMPATIBILITY SameMajorVersion ARCH_INDEPENDENT)
+install(FILES cmake/PremationSdkConfig.cmake ${CMAKE_CURRENT_BINARY_DIR}/PremationSdkConfigVersion.cmake
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/PremationSdk COMPONENT sdk)
+install(DIRECTORY samples/ DESTINATION ${CMAKE_INSTALL_DATADIR}/premation-sdk/samples COMPONENT sdk)
+install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/pack-plugin.mjs ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/sign-plugin.mjs
+  DESTINATION ${CMAKE_INSTALL_DATADIR}/premation-sdk COMPONENT sdk)
 
 set(PREMATION_PLUGIN_BUNDLES ${CMAKE_BINARY_DIR}/plugins CACHE INTERNAL "Where the sample plugin bundles are laid out")
 

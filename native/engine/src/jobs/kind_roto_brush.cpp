@@ -1,9 +1,14 @@
-// Job kind `rotoBrush` — Roto Brush (src/core/tracking/rotoBrush.ts runRotoBrush).
+// Job kind `rotoBrush` — Roto Brush propagation (src/core/tracking/rotoBrush.ts runRotoBrush).
 //
-// A GrabCut matte from the seed click on the layer's picture at range.start,
-// propagated frame to frame by block flow with a colour re-seed, written as
-// ONE "Roto Brush" mask with a path key on every frame of the range. The matte
-// arithmetic is roto_matte.cpp; this file is the footage read and the apply.
+// The starting matte is the tool's SAM outline (`startMask` at range.start),
+// else GrabCut from every foreground prompt. It is carried frame to frame by
+// block flow; every prompt rides the same flow and re-seeds the matte by
+// colour (background prompts keep their region out). The result is ONE
+// "Roto Brush" mask with a path key on every frame of the range, replacing
+// the layer's previous "Roto Brush" masks in the same history entry. The
+// matte arithmetic is roto_matte.cpp; this file is the footage read and the
+// apply.
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <memory>
@@ -12,6 +17,7 @@
 #include <vector>
 
 #include "fail.hpp"
+#include "fxstate.hpp"
 #include "job_apply_util.hpp"
 #include "job_inputs.hpp"
 #include "job_kinds.hpp"
@@ -75,8 +81,8 @@ std::string mask_group_of(const api::CommandResult& r) {
 
 class RotoBrushResult final : public JobResult {
  public:
-  RotoBrushResult(std::string layer, std::vector<RotoFrame> frames, double feather)
-      : layer_(std::move(layer)), frames_(std::move(frames)), feather_(feather) {}
+  RotoBrushResult(std::string layer, std::vector<RotoFrame> frames, double feather, std::vector<std::string> replace)
+      : layer_(std::move(layer)), frames_(std::move(frames)), feather_(feather), replace_(std::move(replace)) {}
 
   [[nodiscard]] std::string summary_json() const override {
     return "{\"frames\":" + std::to_string(frames_.size()) + ",\"keyframes\":" + std::to_string(frames_.size()) + "}";
@@ -86,6 +92,13 @@ class RotoBrushResult final : public JobResult {
 
   void apply(JobApply& a) const override {
     if (frames_.empty()) return;
+    // The tool's previous outline (the SAM matte this run started from, an
+    // earlier propagation) goes in the same entry: one "Roto Brush" mask.
+    if (!replace_.empty()) {
+      api::RemovePropertyGroups drop;
+      for (const std::string& id : replace_) drop.groups.push_back(api::PropRef{layer_, "masks/" + id});
+      (void)a.run(command(std::move(drop)));
+    }
     api::AddMask m;
     m.layer = layer_;
     m.path = frames_.front().path;
@@ -113,7 +126,23 @@ class RotoBrushResult final : public JobResult {
   std::string layer_;
   std::vector<RotoFrame> frames_;
   double feather_;
+  std::vector<std::string> replace_;
 };
+
+/// The mask `id`'s outline at `t` (layer-centred px), from the layer's masks
+/// (keyed: interpolated). Empty when the layer has no such mask.
+std::vector<roto::Pt> mask_outline_at(const doc::Node& node, const std::string& id, double t) {
+  const std::vector<doc::Json> anim = doc::read_node_mask_anim(node);
+  const std::optional<doc::Json> keyed = doc::interpolate_mask(anim, t);
+  const doc::Json mask = keyed ? *keyed : doc::get_node_mask(node);
+  std::vector<roto::Pt> out;
+  const doc::Json* path = doc::mask_path_by_id(mask, id);
+  if (path == nullptr || !path->at("points").is_array()) return out;
+  for (const doc::Json& pt : path->at("points").arr()) {
+    if (pt.at("x").is_number() && pt.at("y").is_number()) out.push_back(roto::Pt{pt.at("x").num(), pt.at("y").num()});
+  }
+  return out;
+}
 
 }  // namespace
 
@@ -138,12 +167,42 @@ PreparedJob prepare_roto_brush(const api::RotoBrushJob& spec, const JobDocContex
   if (first < 0) fail(ErrorCode::out_of_range, "the range starts before the composition", {.layer = spec.layer});
   if (last - first > 100'000) fail(ErrorCode::out_of_range, "range is too long to rotoscope", {.layer = spec.layer});
 
-  const double seedX = spec.seed.x;
-  const double seedY = spec.seed.y;
+  auto finite_pts = [&](const std::vector<api::Vec2>& in, const char* what) {
+    std::vector<roto::Pt> out;
+    for (const api::Vec2& p : in) {
+      if (!std::isfinite(p.x) || !std::isfinite(p.y)) fail(ErrorCode::invalid_argument, std::string(what) + " must be finite points", {.layer = spec.layer});
+      out.push_back(roto::Pt{p.x, p.y});
+    }
+    return out;
+  };
+  std::vector<roto::Pt> fgPrompts = finite_pts(spec.prompts, "prompts");
+  if (fgPrompts.empty()) fgPrompts.push_back(roto::Pt{spec.seed.x, spec.seed.y});
+  const std::vector<roto::Pt> bgPrompts = finite_pts(spec.background_prompts, "backgroundPrompts");
+
+  const doc::Node* node = ctx.doc.node(spec.layer);
+  if (node == nullptr) fail(ErrorCode::not_found, "no layer '" + spec.layer + "'", {.layer = spec.layer});
+  std::vector<roto::Pt> startOutline;
+  if (spec.start_mask && !spec.start_mask->empty()) {
+    startOutline = mask_outline_at(*node, *spec.start_mask, seconds_of(spec.range.start));
+    if (startOutline.size() < 3) fail(ErrorCode::not_found, "no mask '" + *spec.start_mask + "' to start from", {.layer = spec.layer});
+  }
+  // Every "Roto Brush" mask the layer has now, plus the ones the page names.
+  std::vector<std::string> replace = spec.replace_masks;
+  {
+    const doc::Json mask = doc::get_node_mask(*node);
+    if (mask.at("paths").is_array()) {
+      for (const doc::Json& p : mask.at("paths").arr()) {
+        if (p.at("id").is_string() && p.at("name").is_string() && p.at("name").str() == "Roto Brush") replace.push_back(p.at("id").str());
+      }
+    }
+    std::sort(replace.begin(), replace.end());
+    replace.erase(std::unique(replace.begin(), replace.end()), replace.end());
+  }
 
   PreparedJob job;
   job.kind = "rotoBrush";
-  job.work = [fl, tolerance, feather, fps, first, last, seedX, seedY](JobControl& control) -> std::unique_ptr<JobResult> {
+  job.work = [fl, tolerance, feather, fps, first, last, fgPrompts, bgPrompts, startOutline,
+              replace](JobControl& control) -> std::unique_ptr<JobResult> {
     std::string error;
     std::unique_ptr<FrameSource> src = open_frames(fl.file, 0, error);
     if (!src) fail(ErrorCode::decode, "cannot read '" + fl.file + "': " + error, {.layer = fl.layer});
@@ -163,21 +222,43 @@ PreparedJob prepare_roto_brush(const api::RotoBrushJob& spec, const JobDocContex
       if (!src->read(sf, img, error)) fail(ErrorCode::decode, "frame " + std::to_string(sf) + ": " + error, {.layer = fl.layer});
       return true;
     };
+    // Prompts are layer px (top-left origin); the matte is picture px.
+    auto seeds_of = [&](const std::vector<roto::Pt>& pts) {
+      std::vector<roto::Seed> out;
+      out.reserve(pts.size());
+      for (const roto::Pt& p : pts) out.push_back(roto::Seed{p.x / scaleX, p.y / scaleY, tolerance});
+      return out;
+    };
+    std::vector<roto::Seed> fgSeeds = seeds_of(fgPrompts);
+    std::vector<roto::Seed> bgSeeds = seeds_of(bgPrompts);
 
     RgbaImage img;
     if (!read_at(first, img)) {
       fail(ErrorCode::invalid_argument, "the layer has no picture at the start of the range", {.layer = fl.layer});
     }
-    roto::Seed seed;
-    seed.x = seedX / scaleX;
-    seed.y = seedY / scaleY;
-    seed.tolerance = tolerance;
-    roto::GrabCutOptions cut;
-    cut.unknownRadius = 8;
-    cut.iterations = 5;
-    cut.featherPx = feather;
-    roto::Matte mask = roto::grab_cut_matte(img.rgba, w, h, {seed}, cut);
-    mask = roto::refine_frame_matte(img.rgba, mask, w, h, feather, seed);
+    roto::Matte mask;
+    if (startOutline.size() >= 3) {
+      // The SAM outline the tool wrote: layer-centred px → picture px.
+      std::vector<roto::Pt> poly;
+      poly.reserve(startOutline.size());
+      for (const roto::Pt& p : startOutline) {
+        poly.push_back(roto::Pt{(p.x / layerW + 0.5) * static_cast<double>(w), (p.y / layerH + 0.5) * static_cast<double>(h)});
+      }
+      mask = roto::fill_polygon(poly, w, h);
+    } else {
+      roto::GrabCutOptions cut;
+      cut.unknownRadius = 8;
+      cut.iterations = 5;
+      cut.featherPx = feather;
+      mask = roto::grab_cut_matte(img.rgba, w, h, fgSeeds, cut);
+      if (!bgSeeds.empty()) {
+        const roto::Matte back = roto::flood_matte(img.rgba, w, h, bgSeeds);
+        for (std::size_t p = 0; p < mask.size() && p < back.size(); ++p) {
+          if (back[p] != 0) mask[p] = 0;
+        }
+      }
+      mask = roto::refine_frame_matte(img.rgba, mask, w, h, feather, fgSeeds);
+    }
     stabilize::FloatLuma prevLuma = stabilize::luma_255_of(img.rgba, w, h);
 
     const std::int64_t total = last - first + 1;
@@ -198,34 +279,20 @@ PreparedJob prepare_roto_brush(const api::RotoBrushJob& spec, const JobDocContex
       const stabilize::FloatLuma nextLuma = stabilize::luma_255_of(next.rgba, w, h);
       const scene::pixmo::FlowField flow = stabilize::compute_flow_f32(prevLuma, nextLuma, flowOpts);
       mask = roto::warp_matte(mask, w, h, flow, 1, 1);
-      double cx = 0;
-      double cy = 0;
-      int n = 0;
-      for (int y = 0; y < h; y += 4) {
-        for (int x = 0; x < w; x += 4) {
-          if (mask[static_cast<std::size_t>(y) * static_cast<std::size_t>(w) + static_cast<std::size_t>(x)] != 0) {
-            cx += x;
-            cy += y;
-            ++n;
-          }
-        }
+      roto::advect_seeds(fgSeeds, flow, w, h);
+      roto::advect_seeds(bgSeeds, flow, w, h);
+      const roto::Reseed reseed = roto::reseed_matte(next.rgba, mask, w, h, fgSeeds, bgSeeds, tolerance);
+      for (std::size_t p = 0; p < mask.size() && p < reseed.add.size(); ++p) {
+        if (reseed.add[p] != 0) mask[p] = 255;
       }
-      if (n > 0) {
-        cx /= n;
-        cy /= n;
-        const roto::Matte reseed = roto::flood_matte(next.rgba, w, h, {roto::Seed{cx, cy, tolerance}});
-        for (std::size_t p = 0; p < mask.size() && p < reseed.size(); ++p) {
-          if (reseed[p] != 0) mask[p] = 255;
-        }
-      }
-      mask = roto::refine_frame_matte(next.rgba, mask, w, h, feather, roto::Seed{cx, cy, tolerance});
+      if (!reseed.seeds.empty()) mask = roto::refine_frame_matte(next.rgba, mask, w, h, feather, reseed.seeds);
       prevLuma = nextLuma;
       img = std::move(next);
       const std::int64_t done = f - first + 1;
       control.progress(static_cast<double>(done) / static_cast<double>(total),
                        "Roto frame " + std::to_string(done) + " of " + std::to_string(total));
     }
-    return std::make_unique<RotoBrushResult>(fl.layer, std::move(frames), feather);
+    return std::make_unique<RotoBrushResult>(fl.layer, std::move(frames), feather, replace);
   };
   return job;
 }

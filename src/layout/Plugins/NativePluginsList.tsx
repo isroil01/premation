@@ -10,7 +10,9 @@
 import { useState } from 'react';
 import { Button } from '@components/Button';
 import { Icon } from '@components/Icon';
+import { Switch } from '@components/Switch';
 import { useNativePlugins } from '@hooks/useNativePlugins';
+import type { InstalledState } from '@hooks/usePluginStore';
 import {
   canOpenNativePluginFolder,
   nativePluginStatusLabel,
@@ -21,16 +23,47 @@ import styles from './NativePlugins.module.css';
 
 function statusClass(status: NativePlugin['status']): string | undefined {
   if (status === 'loaded') return styles.statusLoaded;
-  if (status === 'failed' || status === 'quarantined') return styles.statusFailed;
+  if (status === 'failed' || status === 'quarantined' || status === 'revoked') return styles.statusFailed;
   return styles.status;
 }
 
-export function NativePluginRows({ plugins }: { plugins: readonly NativePlugin[] }): JSX.Element {
+/** Enable, update, uninstall — for a plugin row, when the store is available. */
+function RowActions({ plugin, store }: { plugin: NativePlugin; store: InstalledState }): JSX.Element {
+  const mine = store.installed?.plugins[plugin.id];
+  const queued = store.installed?.uninstall.includes(plugin.id) ?? false;
+  const update = store.updates.get(plugin.id);
+  const busy = store.busy !== null;
+  if (queued) return <span className={styles.status}>Removed on restart</span>;
+  return (
+    <div className={styles.rowActions}>
+      {update ? (
+        <Button size="sm" variant="secondary" disabled={busy} onClick={() => void store.install(plugin.id, update.latestVersion)}>
+          Update to {update.latestVersion}
+        </Button>
+      ) : null}
+      {plugin.status !== 'revoked' ? (
+        <Switch
+          checked={plugin.status !== 'disabled'}
+          disabled={busy || plugin.status === 'failed'}
+          onChange={(e) => void store.setEnabled(plugin.id, e.currentTarget.checked)}
+          aria-label={`Enable ${plugin.name || plugin.id}`}
+        />
+      ) : null}
+      {mine ? (
+        <Button size="sm" variant="ghost" iconOnly icon={<Icon name="trash" size="sm" />} disabled={busy} onClick={() => void store.uninstall(plugin.id)}>
+          Uninstall {plugin.name || plugin.id}
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
+export function NativePluginRows({ plugins, store }: { plugins: readonly NativePlugin[]; store?: InstalledState }): JSX.Element {
   if (plugins.length === 0) {
     return (
       <div className={styles.empty} role="status">
         <strong>No native plugins installed</strong>
-        <span>Copy a plugin into the plugins folder, then restart Premation.</span>
+        <span>Install one from the plugin store, or copy a plugin into the plugins folder.</span>
       </div>
     );
   }
@@ -47,6 +80,7 @@ export function NativePluginRows({ plugins }: { plugins: readonly NativePlugin[]
             {p.error ? <span className={styles.rowError}>{p.error}</span> : null}
           </div>
           <span className={statusClass(p.status)}>{nativePluginStatusLabel(p.status)}</span>
+          {store ? <RowActions plugin={p} store={store} /> : null}
         </li>
       ))}
     </ul>
@@ -75,8 +109,18 @@ export function OpenPluginsFolderButton({ size = 'sm' }: { size?: 'sm' | 'md' })
   );
 }
 
-export function NativePluginsList({ compact = false }: { compact?: boolean }): JSX.Element {
-  const { plugins, error, loading, refresh } = useNativePlugins();
+export function NativePluginsList({
+  compact = false,
+  store,
+  native,
+}: {
+  compact?: boolean;
+  store?: InstalledState;
+  /** The engine list, when the owner already holds one (so an install refreshes both). */
+  native?: ReturnType<typeof useNativePlugins>;
+}): JSX.Element {
+  const own = useNativePlugins();
+  const { plugins, error, loading, refresh } = native ?? own;
   const body = (
     <>
       <div className={styles.toolbar}>
@@ -87,7 +131,10 @@ export function NativePluginsList({ compact = false }: { compact?: boolean }): J
           size="sm"
           leftIcon={<Icon name="refresh" size="sm" />}
           disabled={loading}
-          onClick={refresh}
+          onClick={() => {
+            refresh();
+            store?.refresh();
+          }}
         >
           {loading ? 'Checking…' : 'Refresh'}
         </Button>
@@ -95,7 +142,7 @@ export function NativePluginsList({ compact = false }: { compact?: boolean }): J
       {error ? (
         <span className={styles.error} role="alert">{error}</span>
       ) : plugins ? (
-        <NativePluginRows plugins={plugins} />
+        <NativePluginRows plugins={plugins} {...(store ? { store } : {})} />
       ) : (
         <span className={styles.text} role="status">Asking the engine…</span>
       )}

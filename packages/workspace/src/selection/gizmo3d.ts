@@ -8,9 +8,15 @@
  *   • Rotation-specific state (X, Y, Z rotation arcs & outer trackball ring)
  *
  * Supports Local, World, and View coordinate spaces.
+ *
+ * AE parity 4.6: Universal mode carries per-axis scale cubes on the arms
+ * (`scaleHandles`), and the rotation modes a view-facing outer ring
+ * (`rot_outer`, turns about the view axis) around a free trackball
+ * (`rot_free`, dragging anywhere inside the ring that is not another handle).
+ * The drag math lives in gizmo3dMath.ts.
  */
 
-import { Project3D, Matrix4Math, type Camera3D, type OrthoView, type Vec3 } from '@motion/scene';
+import { Project3D, Matrix4Math, type Camera3D, type Matrix4, type OrthoView, type Vec3 } from '@motion/scene';
 
 export type GizmoHandleType =
   | 'pos_x'
@@ -26,12 +32,26 @@ export type GizmoHandleType =
   | 'rot_x'
   | 'rot_y'
   | 'rot_z'
-  | 'rot_outer';
+  | 'rot_outer'
+  | 'rot_free';
 
 export interface Gizmo3DConfig {
   gizmoState: 'universal' | 'position' | 'scale' | 'rotation';
   axisMode: 'local' | 'world' | 'view';
   gizmoLengthPx: number; // Length of gizmo axis vectors in px on screen (~90px)
+  /** The layer's frame for the Local axes (parent chain + Orientation). */
+  frame?: GizmoLocalFrame;
+}
+
+/**
+ * What a layer's LOCAL axes sit in besides its own X/Y/Z Rotation: the parent
+ * chain's world matrix (column-major 4×4; empty = no parent) and the layer's
+ * Orientation (degrees). Without them a parented or oriented layer's Local
+ * gizmo pointed along the wrong axes.
+ */
+export interface GizmoLocalFrame {
+  parent?: readonly number[];
+  orientation?: { x: number; y: number; z: number };
 }
 
 export interface RenderedGizmoAxis {
@@ -72,11 +92,32 @@ export interface RenderedGizmoPlane {
   pointsScreen: Array<{ x: number; y: number }>;
 }
 
+/** A per-axis scale cube on a Universal-mode arm (AE parity 4.6). */
+export interface RenderedGizmoScaleHandle {
+  type: 'scale_x' | 'scale_y' | 'scale_z';
+  color: string;
+  hoverColor: string;
+  screen: { x: number; y: number };
+  /** Unit direction of the arm on screen (axis-projected scale), comp px. */
+  screenDir: { x: number; y: number };
+  /** Distance from the gizmo centre on screen, comp px. */
+  screenDist: number;
+}
+
+/** The view-facing outer ring and the free trackball inside it. */
+export interface RenderedGizmoTrackball {
+  centerScreen: { x: number; y: number };
+  /** The outer ring's radius on screen (comp px); inside it is the free trackball. */
+  radius: number;
+}
+
 export interface RenderedGizmo3D {
   centerScreen: { x: number; y: number; scale: number; depth: number };
   axes: RenderedGizmoAxis[];
   arcs: RenderedGizmoArc[];
   planes: RenderedGizmoPlane[];
+  scaleHandles: RenderedGizmoScaleHandle[];
+  trackball: RenderedGizmoTrackball | null;
   basisX: Vec3;
   basisY: Vec3;
   basisZ: Vec3;
@@ -162,6 +203,7 @@ export function getGizmoBasis(
   axisMode: 'local' | 'world' | 'view',
   nodeRotation: { rotX: number; rotY: number; rotZ: number },
   cam: Camera3D,
+  frame?: GizmoLocalFrame,
 ): { x: Vec3; y: Vec3; z: Vec3 } {
   if (!cam) cam = Project3D.defaultCamera(1920, 1080);
 
@@ -186,22 +228,30 @@ export function getGizmoBasis(
     };
   }
 
-  // Local space basis: apply layer's rotations (rotX, rotY, rotZ) to identity basis
-  const rx = nodeRotation.rotX * DEG;
-  const ry = nodeRotation.rotY * DEG;
-  const rz = nodeRotation.rotZ * DEG;
-
-  const M = Matrix4Math.compose({
+  // Local space basis: the parent chain's rotation, then Orientation, then the
+  // layer's X/Y/Z Rotation (AE's order), applied to the identity basis.
+  const rot = (x: number, y: number, z: number) => Matrix4Math.compose({
     position: { x: 0, y: 0, z: 0 },
-    rotation: { x: rx, y: ry, z: rz },
+    rotation: { x: x * DEG, y: y * DEG, z: z * DEG },
     scale: { x: 1, y: 1, z: 1 },
     anchor: { x: 0, y: 0, z: 0 },
   });
+  let M = rot(nodeRotation.rotX, nodeRotation.rotY, nodeRotation.rotZ);
+  const o = frame?.orientation;
+  if (o && (o.x !== 0 || o.y !== 0 || o.z !== 0)) M = Matrix4Math.multiply(rot(o.x, o.y, o.z), M);
+  const parent = frame?.parent && frame.parent.length === 16 ? (frame.parent as Matrix4) : null;
+  // The parent's scale is not an axis direction: normalise each axis.
+  const axis = (v: Vec3): Vec3 => {
+    const d = Matrix4Math.transformVector(M, v);
+    const w = parent ? Matrix4Math.transformVector(parent, d) : d;
+    const len = Math.hypot(w.x, w.y, w.z);
+    return len > 1e-12 ? { x: w.x / len, y: w.y / len, z: w.z / len } : d;
+  };
 
   return {
-    x: Matrix4Math.transformVector(M, { x: 1, y: 0, z: 0 }),
-    y: Matrix4Math.transformVector(M, { x: 0, y: 1, z: 0 }),
-    z: Matrix4Math.transformVector(M, { x: 0, y: 0, z: 1 }),
+    x: axis({ x: 1, y: 0, z: 0 }),
+    y: axis({ x: 0, y: 1, z: 0 }),
+    z: axis({ x: 0, y: 0, z: 1 }),
   };
 }
 
@@ -226,7 +276,7 @@ export function buildRenderedGizmo3D(
   const centerProj = project(position3D);
   const centerScreen = { x: centerProj.x, y: centerProj.y };
 
-  const basis = getGizmoBasis(config.axisMode, nodeRotation, cam);
+  const basis = getGizmoBasis(config.axisMode, nodeRotation, cam, config.frame);
 
   // Screen-constant arm length, computed PER AXIS.
   //
@@ -263,6 +313,8 @@ export function buildRenderedGizmo3D(
   const axes: RenderedGizmoAxis[] = [];
   const arcs: RenderedGizmoArc[] = [];
   const planes: RenderedGizmoPlane[] = [];
+  const scaleHandles: RenderedGizmoScaleHandle[] = [];
+  let trackball: RenderedGizmoTrackball | null = null;
 
   const isUniversal = config.gizmoState === 'universal';
   const isPos = config.gizmoState === 'position' || isUniversal;
@@ -306,6 +358,33 @@ export function buildRenderedGizmo3D(
         axis3DDir: item.dir,
         degenerate: !Number.isFinite(screenLen) || screenLen < MIN_AXIS_SCREEN_PX,
         screenLen: Number.isFinite(screenLen) ? screenLen : 0,
+      });
+    }
+
+    // Universal mode: a scale cube part-way along each visible arm, so every
+    // axis scales on its own without switching to the Scale gizmo (AE 4.6).
+    if (isUniversal) {
+      const SCALE_AT = 0.62;
+      const keys = [
+        { type: 'scale_x' as const, c: colors.x, hc: colors.hoverX },
+        { type: 'scale_y' as const, c: colors.y, hc: colors.hoverY },
+        { type: 'scale_z' as const, c: colors.z, hc: colors.hoverZ },
+      ];
+      axes.forEach((a, i) => {
+        if (a.degenerate) return;
+        const k = keys[i]!;
+        const dx = a.endScreen.x - centerScreen.x;
+        const dy = a.endScreen.y - centerScreen.y;
+        const len = Math.hypot(dx, dy);
+        if (!(len > 0)) return;
+        scaleHandles.push({
+          type: k.type,
+          color: k.c,
+          hoverColor: k.hc,
+          screen: { x: centerScreen.x + dx * SCALE_AT, y: centerScreen.y + dy * SCALE_AT },
+          screenDir: { x: dx / len, y: dy / len },
+          screenDist: len * SCALE_AT,
+        });
       });
     }
 
@@ -389,6 +468,32 @@ export function buildRenderedGizmo3D(
     arcs.push(mkArc('rot_y', basis.y, basis.x, basis.z, colors.y, colors.hoverY));
     // Z-rotation arc (normal = basis.z, circle in XY plane)
     arcs.push(mkArc('rot_z', basis.z, basis.x, basis.y, colors.z, colors.hoverZ));
+
+    // The view-facing outer ring (turns about the view axis) just outside the
+    // axis rings' silhouette, and the free trackball inside it. A screen
+    // circle: its radius is the largest projected ring extent plus a margin.
+    let extent = 0;
+    for (const a of arcs) {
+      for (const p of a.pointsScreen) extent = Math.max(extent, Math.hypot(p.x - centerScreen.x, p.y - centerScreen.y));
+    }
+    if (Number.isFinite(extent) && extent > 0) {
+      trackball = { centerScreen, radius: extent * 1.12 };
+      const ring: Array<{ x: number; y: number }> = [];
+      for (let i = 0; i <= segments; i++) {
+        const t = (i / segments) * Math.PI * 2;
+        ring.push({ x: centerScreen.x + Math.cos(t) * trackball.radius, y: centerScreen.y + Math.sin(t) * trackball.radius });
+      }
+      const fwd = getGizmoBasis('view', nodeRotation, cam).z;
+      arcs.push({
+        type: 'rot_outer',
+        color: 'rgba(255, 255, 255, 0.55)',
+        hoverColor: '#ffffff',
+        centerScreen,
+        radiusPx: trackball.radius,
+        axis3DNormal: fwd,
+        pointsScreen: ring,
+      });
+    }
   }
 
   return {
@@ -396,6 +501,8 @@ export function buildRenderedGizmo3D(
     axes,
     arcs,
     planes,
+    scaleHandles,
+    trackball,
     basisX: basis.x,
     basisY: basis.y,
     basisZ: basis.z,
@@ -449,7 +556,8 @@ export function hitTestGizmo3D(
   const LAYER_PLANE = 0;
   const LAYER_ARC = 1;
   const LAYER_AXIS = 2;
-  const LAYER_CENTRE = 3;
+  const LAYER_CENTRE = 4;
+  const LAYER_SCALE = 3;
   const TIE_EPS = 0.75;
 
   let best: { type: GizmoHandleType; dist: number; layer: number } | null = null;
@@ -511,5 +619,14 @@ export function hitTestGizmo3D(
     consider(arc.type, nearest, LAYER_ARC);
   }
 
-  return best === null ? null : (best as { type: GizmoHandleType }).type;
+  // Universal-mode scale cubes: small targets on the arms, above the arm itself.
+  for (const h of gizmo.scaleHandles ?? []) {
+    consider(h.type, Math.max(0, Math.hypot(mouseScreen.x - h.screen.x, mouseScreen.y - h.screen.y) - hitThresholdPx * 0.4), LAYER_SCALE);
+  }
+
+  if (best !== null) return (best as { type: GizmoHandleType }).type;
+  // Nothing else under the pointer, but inside the outer ring: the free trackball.
+  const tb = gizmo.trackball;
+  if (tb && Math.hypot(mouseScreen.x - tb.centerScreen.x, mouseScreen.y - tb.centerScreen.y) < tb.radius) return 'rot_free';
+  return null;
 }

@@ -41,7 +41,7 @@
  */
 
 import type { EngineClient, EngineResult, OpenProjectResult, ProjectFormat, SaveProjectResult } from '@motion/engine-api';
-import { dropRemovedPluginContent } from './removedPluginContent';
+import { findMissingPluginContent } from './missingPluginContent';
 
 /** What the session reads from the document mirror (DocumentMirror satisfies it). */
 export interface MirrorView {
@@ -100,8 +100,8 @@ export interface EngineDocumentSessionOptions {
    */
   formatFor?: (path: string) => ProjectFormat;
   /**
-   * The one notice after an open that dropped JavaScript-plugin content
-   * (removedPluginContent.ts; G2). Absent: dropped silently.
+   * The one notice after an open whose content needs a plugin that is not
+   * here (missingPluginContent.ts; the content is kept). Absent: not shown.
    */
   notify?: (message: string) => void;
 }
@@ -142,7 +142,7 @@ export class EngineDocumentSession {
     const r = await this.run('openProject', this.o.engine().execute({ type: 'openProject', path }));
     await this.dropRecovery();
     await this.upgradeLegacyPrecomps();
-    await this.dropPluginContent();
+    await this.reportMissingPlugins();
     return r;
   }
 
@@ -291,7 +291,7 @@ export class EngineDocumentSession {
     if (!opened) await this.run('newProject', engine.execute({ type: 'newProject' }));
     await this.run('restoreDocument', engine.execute({ type: 'restoreDocument', document: new TextEncoder().encode(text), label: RECOVER_LABEL }));
     await this.upgradeLegacyPrecomps();
-    await this.dropPluginContent();
+    await this.reportMissingPlugins();
     await this.o.mirror.whenIdle();
     return true;
   }
@@ -316,10 +316,10 @@ export class EngineDocumentSession {
     }
   }
 
-  /** A project that still carries JavaScript-plugin content: dropped as one entry, said once. */
-  private async dropPluginContent(): Promise<void> {
-    const dropped = await dropRemovedPluginContent(this.o.engine());
-    if (dropped) this.o.notify?.(dropped.message);
+  /** A project whose content needs a missing plugin: kept as it is, said once. */
+  private async reportMissingPlugins(): Promise<void> {
+    const missing = await findMissingPluginContent(this.o.engine());
+    if (missing) this.o.notify?.(missing.message);
   }
 
   private async dropRecovery(): Promise<void> {

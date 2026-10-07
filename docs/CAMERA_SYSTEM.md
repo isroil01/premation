@@ -372,31 +372,42 @@ camera. Time remap retimes the layer's own animation, never the camera's clock.
 
 ### 8.2 Where the models genuinely differ
 
-- **"3D" means oriented 2D layers.** No imported meshes, no PBR materials, no
-  HDRI. Extrusion exists (`extrusion.ts`) but the primitive is still a layer in
-  a space. AE is the same in its classic renderer; it differs in having Cinema
-  4D / Advanced 3D renderers this app has no equivalent of.
+Updated 2026-10-07 for AE parity step 4 (docs/AE_PARITY_PLAN.md; what still
+needs the GPU box is in docs/VERIFY_ON_TEST_MACHINE.md).
+
+- **3D is layers plus real geometry.** Layers are oriented planes; extrusions,
+  curved primitives and imported models (glTF / GLB, OBJ, FBX, USDA / USDZ —
+  normalized to one GLB project item by the `modelImport` job) are meshes with
+  PBR materials, vertex colours and glTF alpha modes, and keep their layer
+  styles and effects. They are lit by scene lights and an image-based
+  Environment Light: band-2 SH irradiance plus a float prefiltered specular
+  atlas from an HDR / EXR sky, drawn as a visible sky on request, or live
+  from a comp / video layer (an animated environment) — without using a light
+  slot. Fog and layer-to-layer reflections (Reflect Layers) are in.
 - **Depth of field is per-pixel on the depth-tested path, per layer elsewhere**
   (§7): 3D depth groups gather from the real depth buffer (`dof-gather`) like
   AE's circle-of-confusion over scene depth; layers that fall off the depth
   path still resolve per-pixel CoC across their own quad only.
-- **Shadows are 2.5D projections**, not cast geometry. Shading itself is
-  per-fragment: Lambert plus Blinn-Phong on the depth-tested path (`builtin.ts`,
-  `fn shade3d`, driven by a world-position varying), with `quadGain` in
-  `FrameScene.ts` as the documented fallback, and extrusion shaded per face. An
-  earlier version of this section claimed the opposite; see `EDITOR_REFERENCE.md`
-  §5 (2026-08-10) for the correction and `retiredDocClaims.test.ts` for the guard
-  that now keeps it corrected.
-- **Camera tracking & planar 3D solve.** Point / planar / mesh / Smooth Stabilize
-  live under `src/core/tracking/`; `applyPlanarCameraSolve` keys a one-node
-  camera from a tracked plane (homography decomposition — not full SfM).
-  Subspace warp + rolling-shutter footholds are in `subspaceWarp.ts`.
-- **Rotation is three scalars, not two groups.** AE splits a camera's rotation
-  into Orientation and X/Y/Z Rotation; here `orientationX/Y/Z` are the single
-  set, composing as offsets onto the base aim (§4.3). The expressible moves are
-  the same — tripod pan, tilt, dutch angle, and all three on a tracking camera —
-  but a project that distinguishes the two AE groups does not round-trip that
-  distinction.
+- **Shadows are shadow maps on the depth path**: every shadow-casting light
+  is mapped (up to four float shadow maps per 3D run, PCF filtered,
+  `render_graph/threed.cpp`), casters from every run of the composition cast,
+  floors receive, an environment light casts from its key direction, and
+  Ground Shadows adds a shadow catcher under the scene. Casters are cut out
+  by their own alpha. Shading is per-fragment Lambert plus Blinn-Phong or PBR
+  (`solid3d.wgsl` / `textured3d.wgsl` `shade3d`). Motion blur, advanced blend
+  modes, mattes and glass keep a layer on the depth path (drawn offscreen
+  against the run's depth, then composited).
+- **Camera tracking & planar 3D solve.** The engine's tracking jobs
+  (`native/engine/src/jobs`: point, planar, mask, stabilize, camera solve) key a
+  one-node camera from tracked planes. A full 3D camera tracker with automatic
+  features is parity step 3.5.
+- **Rotation is Orientation plus X/Y/Z Rotation on layers, one set on
+  cameras.** A 3D layer has both AE groups, and the 3D gizmo's Local axes
+  follow the parent chain and Orientation. On a camera, `orientationX/Y/Z` are
+  the single set, composing as offsets onto the base aim (§4.3). The
+  expressible moves are the same — tripod pan, tilt, dutch angle — but a
+  project that distinguishes the two AE groups on a camera does not round-trip
+  that distinction.
 
 Canonical gap list: `docs/EDITOR_REFERENCE.md` §4.
 

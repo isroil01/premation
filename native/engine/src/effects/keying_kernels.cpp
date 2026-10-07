@@ -12,13 +12,9 @@
 
 namespace premation::effects {
 
-namespace {
-
 // ── keylight.ts ─────────────────────────────────────────────────────────────
-
-struct KeyChannels {
-  std::size_t p, a, b;
-};
+// (key_channels / screen_amount / clip_matte / soften_alpha are shared with
+// keying_more_kernels.cpp — AE parity 5.2 — through kernels.hpp.)
 
 KeyChannels key_channels(double r, double g, double bl) {
   if (g >= r && g >= bl) return {1, 0, 2};
@@ -78,6 +74,8 @@ void soften_alpha(RgbaView img, double px, ThreadPool* pool) {
     }
   });
 }
+
+namespace {
 
 // ── keyingEffects.ts helpers ────────────────────────────────────────────────
 
@@ -385,6 +383,127 @@ void matte_choker(RgbaView img, double spread, double choke, double softness, do
     if (choke > 0) plane_min_max(alpha, w, h, morph_r(choke), false, pool);
   }
   for (std::size_t p = 0; p < alpha.size(); ++p) data[p * 4 + 3] = u8c(clamp255(static_cast<double>(alpha[p])));
+}
+
+namespace {
+
+/// Mean over a (2r+1)² window, clamped at the edges (integral image).
+std::vector<double> window_mean(const std::vector<double>& v, int w, int h, int r) {
+  const auto W = static_cast<std::size_t>(w) + 1;
+  std::vector<double> integ(W * (static_cast<std::size_t>(h) + 1), 0.0);
+  for (int y = 0; y < h; ++y) {
+    double row = 0;
+    for (int x = 0; x < w; ++x) {
+      row += v[static_cast<std::size_t>(y) * static_cast<std::size_t>(w) + static_cast<std::size_t>(x)];
+      integ[(static_cast<std::size_t>(y) + 1) * W + static_cast<std::size_t>(x) + 1] = integ[static_cast<std::size_t>(y) * W + static_cast<std::size_t>(x) + 1] + row;
+    }
+  }
+  std::vector<double> out(v.size());
+  for (int y = 0; y < h; ++y) {
+    const auto y0 = static_cast<std::size_t>(std::max(0, y - r));
+    const auto y1 = static_cast<std::size_t>(std::min(h - 1, y + r));
+    for (int x = 0; x < w; ++x) {
+      const auto x0 = static_cast<std::size_t>(std::max(0, x - r));
+      const auto x1 = static_cast<std::size_t>(std::min(w - 1, x + r));
+      const double s = integ[(y1 + 1) * W + x1 + 1] - integ[y0 * W + x1 + 1] - integ[(y1 + 1) * W + x0] + integ[y0 * W + x0];
+      out[static_cast<std::size_t>(y) * static_cast<std::size_t>(w) + static_cast<std::size_t>(x)] =
+          s / static_cast<double>((x1 - x0 + 1) * (y1 - y0 + 1));
+    }
+  }
+  return out;
+}
+
+void gauss_plane(std::vector<double>& a, int w, int h, double sigma) {
+  if (!(sigma > 0.3)) return;
+  const int r = static_cast<int>(std::ceil(3 * sigma));
+  std::vector<double> k(static_cast<std::size_t>(2 * r + 1));
+  double sum = 0;
+  for (int i = -r; i <= r; ++i) sum += (k[static_cast<std::size_t>(i + r)] = std::exp(-(i * i) / (2 * sigma * sigma)));
+  for (double& v : k) v /= sum;
+  std::vector<double> tmp(a.size());
+  const auto idx = [w](int x, int y) { return static_cast<std::size_t>(y) * static_cast<std::size_t>(w) + static_cast<std::size_t>(x); };
+  for (int y = 0; y < h; ++y)
+    for (int x = 0; x < w; ++x) {
+      double s = 0;
+      for (int i = -r; i <= r; ++i) s += k[static_cast<std::size_t>(i + r)] * a[idx(std::clamp(x + i, 0, w - 1), y)];
+      tmp[idx(x, y)] = s;
+    }
+  for (int y = 0; y < h; ++y)
+    for (int x = 0; x < w; ++x) {
+      double s = 0;
+      for (int i = -r; i <= r; ++i) s += k[static_cast<std::size_t>(i + r)] * tmp[idx(x, std::clamp(y + i, 0, h - 1))];
+      a[idx(x, y)] = s;
+    }
+}
+
+}  // namespace
+
+void refine_matte(RgbaView img, double edgeRadius, double smooth, double contrast, double shiftEdge, double feather, double decontaminate,
+                  bool hard, ThreadPool* /*pool*/) {
+  const int w = img.w;
+  const int h = img.h;
+  if (w <= 0 || h <= 0) return;
+  const std::size_t n = img.pixels();
+  std::uint8_t* d = img.data.data();
+  std::vector<double> a(n);
+  std::vector<double> I(n);
+  for (std::size_t i = 0; i < n; ++i) {
+    a[i] = d[i * 4 + 3] / 255.0;
+    I[i] = (0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2]) / 255.0;
+  }
+  // Guided filter: the matte as a local linear function of the picture.
+  const int r = static_cast<int>(std::lround(std::clamp(edgeRadius, 0.0, 200.0)));
+  if (r > 0) {
+    const double eps = hard ? 1e-4 : 2e-3;
+    std::vector<double> II(n);
+    std::vector<double> Ia(n);
+    for (std::size_t i = 0; i < n; ++i) {
+      II[i] = I[i] * I[i];
+      Ia[i] = I[i] * a[i];
+    }
+    const std::vector<double> mI = window_mean(I, w, h, r);
+    const std::vector<double> ma = window_mean(a, w, h, r);
+    const std::vector<double> mII = window_mean(II, w, h, r);
+    const std::vector<double> mIa = window_mean(Ia, w, h, r);
+    std::vector<double> A(n);
+    std::vector<double> B(n);
+    for (std::size_t i = 0; i < n; ++i) {
+      A[i] = (mIa[i] - mI[i] * ma[i]) / (mII[i] - mI[i] * mI[i] + eps);
+      B[i] = ma[i] - A[i] * mI[i];
+    }
+    const std::vector<double> mA = window_mean(A, w, h, r);
+    const std::vector<double> mB = window_mean(B, w, h, r);
+    for (std::size_t i = 0; i < n; ++i) a[i] = std::clamp(mA[i] * I[i] + mB[i], 0.0, 1.0);
+  }
+  gauss_plane(a, w, h, std::clamp(smooth, 0.0, 100.0) / 3);
+  const double k = 1 + std::clamp(contrast, 0.0, 100.0) / 100.0 * 9;
+  const double shift = std::clamp(shiftEdge, -100.0, 100.0) / 100.0 * 0.45;
+  for (double& v : a) v = std::clamp((v - 0.5 + shift) * k + 0.5, 0.0, 1.0);
+  gauss_plane(a, w, h, std::clamp(feather, 0.0, 200.0) / 2);
+  if (decontaminate > 0) {
+    // The background's colour near each edge pixel (a normalised blur of the
+    // clear pixels), taken out of it: F = (I − (1 − α)·B) / α.
+    std::vector<double> wgt(n);
+    std::array<std::vector<double>, 3> bg{std::vector<double>(n), std::vector<double>(n), std::vector<double>(n)};
+    for (std::size_t i = 0; i < n; ++i) {
+      wgt[i] = a[i] < 0.1 ? 1 : 0;
+      for (std::size_t c = 0; c < 3; ++c) bg[c][i] = wgt[i] * d[i * 4 + c];
+    }
+    const double sigma = std::max(4.0, std::min(w, h) / 80.0);
+    gauss_plane(wgt, w, h, sigma);
+    for (auto& ch : bg) gauss_plane(ch, w, h, sigma);
+    const double amt = std::clamp(decontaminate, 0.0, 100.0) / 100.0;
+    for (std::size_t i = 0; i < n; ++i) {
+      if (a[i] <= 0.02 || a[i] >= 0.98 || wgt[i] < 1e-4) continue;
+      for (std::size_t c = 0; c < 3; ++c) {
+        const double Bc = bg[c][i] / wgt[i];
+        const double Ic = d[i * 4 + c];
+        const double F = std::clamp((Ic - (1 - a[i]) * Bc) / a[i], 0.0, 255.0);
+        d[i * 4 + c] = u8c(Ic + amt * (F - Ic));
+      }
+    }
+  }
+  for (std::size_t i = 0; i < n; ++i) d[i * 4 + 3] = u8c(a[i] * 255);
 }
 
 }  // namespace premation::effects

@@ -50,6 +50,13 @@ export interface HandleSpec {
    * coarser target and the one you meant.
    */
   kind: 'vertex' | 'tangent' | 'centre';
+  /**
+   * AE parity 5.5: the offset lives in a `data` param (a flat [x0, y0, x1, y1, …]
+   * array) at pair `dataIndex` instead of in `xKey` / `yKey` — Mesh Warp's
+   * variable rows × columns mesh.
+   */
+  dataKey?: string;
+  dataIndex?: number;
 }
 
 /** A resolved handle: its live layer-space position and where it came from. */
@@ -216,22 +223,83 @@ const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v)
  * the static prop says. A handle drawn at the un-animated position on an
  * animated effect is worse than no handle: it invites a drag that jumps.
  */
+/**
+ * Mesh Warp's handles for a `rows` × `columns` mesh (AE parity 5.5): one per
+ * vertex, (rows + 1) × (columns + 1), their offsets in the `meshOffsets` data
+ * param. The legacy 3 × 3 mesh with no `meshOffsets` keeps its v0X … v15Y
+ * params (MESH_WARP_HANDLES).
+ */
+export function meshWarpHandles(rows: number, columns: number): HandleSpec[] {
+  const r = Math.max(1, Math.min(31, Math.round(rows)));
+  const c = Math.max(1, Math.min(31, Math.round(columns)));
+  const out: HandleSpec[] = [];
+  for (let row = 0; row <= r; row++) {
+    for (let col = 0; col <= c; col++) {
+      const i = row * (c + 1) + col;
+      out.push({
+        id: `m${i}`,
+        label: `Mesh ${row + 1},${col + 1}`,
+        xKey: '',
+        yKey: '',
+        dataKey: 'meshOffsets',
+        dataIndex: i,
+        kind: 'vertex',
+        rest: (w, h) => ({ x: (col / c) * w, y: (row / r) * h }),
+      });
+    }
+  }
+  return out;
+}
+
+/** Whether a Mesh Warp's params use the variable mesh (rows / columns other than 3, or stored offsets). */
+export function meshWarpUsesData(params: Readonly<Record<string, unknown>>): boolean {
+  const rows = typeof params.rows === 'number' ? params.rows : 3;
+  const cols = typeof params.columns === 'number' ? params.columns : 3;
+  const data = params.meshOffsets;
+  return Math.round(rows) !== 3 || Math.round(cols) !== 3 || (Array.isArray(data) && data.length > 0);
+}
+
+function specsFor(type: string, params: Readonly<Record<string, unknown>>): readonly HandleSpec[] | undefined {
+  if (type === 'mesh-warp' && meshWarpUsesData(params)) {
+    return meshWarpHandles(typeof params.rows === 'number' ? params.rows : 3, typeof params.columns === 'number' ? params.columns : 3);
+  }
+  return (EFFECT_HANDLES as Record<string, readonly HandleSpec[] | undefined>)[type];
+}
+
 export function collectEffectHandles(
   type: string,
   params: Readonly<Record<string, unknown>>,
   w: number,
   h: number,
 ): EffectHandle[] {
-  const specs = (EFFECT_HANDLES as Record<string, readonly HandleSpec[] | undefined>)[type];
+  const specs = specsFor(type, params);
   if (!specs) return [];
   return specs.map((spec) => {
     const rest = spec.rest(w, h);
+    if (spec.dataKey !== undefined && spec.dataIndex !== undefined) {
+      const arr = Array.isArray(params[spec.dataKey]) ? (params[spec.dataKey] as unknown[]) : [];
+      return { spec, rest, pos: { x: rest.x + num(arr[spec.dataIndex * 2]), y: rest.y + num(arr[spec.dataIndex * 2 + 1]) } };
+    }
     return {
       spec,
       rest,
       pos: { x: rest.x + num(params[spec.xKey]), y: rest.y + num(params[spec.yKey]) },
     };
   });
+}
+
+/**
+ * The `data` array after dragging handle `index` to `offset` (AE parity 5.5):
+ * the stored array padded with zeros to `count` pairs, that pair replaced.
+ */
+export function withDataOffset(current: unknown, count: number, index: number, offset: HandlePoint): number[] {
+  const arr = Array.isArray(current) ? current.map((v) => (typeof v === 'number' && Number.isFinite(v) ? v : 0)) : [];
+  const out = Array.from({ length: count * 2 }, (_, i) => arr[i] ?? 0);
+  if (index >= 0 && index < count) {
+    out[index * 2] = offset.x;
+    out[index * 2 + 1] = offset.y;
+  }
+  return out;
 }
 
 /**

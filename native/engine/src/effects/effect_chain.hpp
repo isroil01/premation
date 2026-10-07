@@ -113,6 +113,23 @@ struct ChannelLut {
 [[nodiscard]] ChannelLut build_channel_lut(std::string_view type, const raster::json::Value& params);
 void apply_channel_lut(RgbaView img, const ChannelLut& lut, ThreadPool* pool);
 
+/// AE parity 5.1: a colour effect whose params reach past a per-channel LUT /
+/// matrix — Lumetri's saturation, vibrance, Hue / Luma vs curves, HSL Secondary
+/// and vignette; Levels' alpha channel; Hue/Saturation's colour ranges and
+/// Colorize. Such an effect runs as ONE pixel pass (`apply_color_grade`) and
+/// its layer goes to the CPU bake; at neutral values the effect keeps its LUT /
+/// CSS / matrix route unchanged.
+[[nodiscard]] bool color_grade_needs_pixels(std::string_view type, const raster::json::Value& params);
+/// AE parity 5.3: the grade's pixel stage has a GPU pass — Lumetri (its LUT,
+/// then lumetri-grade: saturation, vibrance, the Hue / Luma vs curves, HSL
+/// Secondary, vignette), Levels' alpha (alpha-levels after its LUT) and
+/// Hue/Saturation's ranges and Colorize (hue-sat-ranges).
+[[nodiscard]] bool color_grade_gpu_capable(std::string_view type, const raster::json::Value& params);
+/// AE parity 5.3: Lumetri's Hue vs Sat / Hue / Luma and Luma vs Sat tables
+/// (curve k at k × 256, 128 = neutral) for the GPU pass; `present[k]` = not flat.
+[[nodiscard]] std::vector<float> lumetri_curve_data(const raster::json::Value& params, std::array<bool, 4>& present);
+void apply_color_grade(std::string_view type, const raster::json::Value& params, RgbaView img, ThreadPool* pool);
+
 /// effects.ts `effectCss(e)` — the effect's CSS filter function(s), "" if none.
 [[nodiscard]] std::string effect_css(std::string_view type, const raster::json::Value& params);
 

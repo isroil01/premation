@@ -23,6 +23,7 @@ import {
   type CatalogEffectParam,
   type CatalogJson,
 } from '@motion/engine-api';
+import { pluginEffectDefFor } from './pluginEffectDefs';
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -73,9 +74,13 @@ export interface Effect {
 /** Every built-in effect, in menu order. */
 export const EFFECT_DEFS: ReadonlyArray<EffectDef> = EFFECT_CATALOG;
 
-/** The definition of a built-in effect type; undefined for an unknown one. */
+/**
+ * The definition of an effect type: a built-in from the catalog, else a loaded
+ * native plugin's (pluginEffectDefs.ts); undefined for an unknown one (a
+ * missing plugin — the card then says so and the engine passes it through).
+ */
 export function effectDefFor(type: EffectType): EffectDef | undefined {
-  return catalogEffect(type);
+  return catalogEffect(type) ?? pluginEffectDefFor(type);
 }
 
 /** Effects that render only as a shader pass (no CSS-filter equivalent). */
@@ -193,13 +198,13 @@ export function scaleEffectLengths(
   return effects.map((e) => {
     const def = catalogEffect(e.type);
     if (!def) return e;
-    const lengths = def.params.filter((p) => (p.type === 'number' || p.type === 'resolved') && p.unit === 'px');
+    const lengths = def.params.filter((p) => (p.type === 'number' || p.type === 'resolved' || p.type === 'data') && p.unit === 'px');
     if (lengths.length === 0) return e;
     const params: Record<string, EffectParamValue> = { ...paramsOf(e) };
     for (const p of lengths) {
       const v = params[p.key];
       if (typeof v === 'number') params[p.key] = v * k;
-      else if (p.type === 'resolved' && Array.isArray(v)) {
+      else if ((p.type === 'resolved' || p.type === 'data') && Array.isArray(v)) {
         params[p.key] = (v as readonly unknown[]).map((x) => (typeof x === 'number' ? x * k : x)) as number[];
       }
     }

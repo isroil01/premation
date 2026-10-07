@@ -106,7 +106,7 @@ Json patch_to_store(const api::CompSettingsPatch& p) {
   if (p.world) {
     auto w = js::parse(*p.world);
     if (!w) fail(ErrorCode::invalid_argument, "world must be JSON");
-    for (const char* k : {"defaultEnvPreset", "groundLevel", "showSkyBackdrop", "ssao"}) {
+    for (const char* k : {"defaultEnvPreset", "groundLevel", "showSkyBackdrop", "ssao", "fog", "groundShadows"}) {
       if (w->is_object() && w->has(k)) out.set(k, w->at(k));
     }
   }

@@ -11,11 +11,7 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
 import { Icon, type IconName } from '@components/Icon';
 import { SearchField } from '@components/SearchField';
-import { ValueField } from '@components/ValueField';
-import { Checkbox } from '@components/Checkbox';
-import { PropertyRow } from '@components/PropertyRow';
 import { EmptyState } from '@components/EmptyState';
-import { Dropdown } from '@components/Dropdown';
 import { VirtualList } from '@components/VirtualList';
 import { BrowserRow, BrowserTag, BrowserEmpty } from '@components/BrowserTree';
 import { useSelectionStore } from '@stores/selectionStore';
@@ -36,36 +32,20 @@ import { PATH_OP_CATALOG } from '@core/scene/pathOps';
 import { documentMirror } from '@stores/documentMirror';
 import { useMirrorKeys, useMirrorLayer, useMirrorTree } from '@hooks/useMirror';
 import { secondsToFlicks } from '@motion/engine-api';
-import { mirrorMaskShapeKeyed, mirrorMasksAt, mirrorMaskWatchKeys } from '@core/mirror/masks';
+import { mirrorMasksAt, mirrorMaskWatchKeys } from '@core/mirror/masks';
 import { uiKindOf } from '@core/mirror/layerKinds';
 import { mirrorPathOps } from '@core/mirror/layerFacts';
 import { jsonField } from '@core/mirror/layerFields';
-import {
-  rectangleMask,
-  ellipseMask,
-  type MaskMode,
-  type MaskPath,
-} from '@core/effects/mask';
 import { edit } from '@core/engine/uiEdits';
-import { useEngineEdit } from '@layout/Inspector/useEngineEdit';
-import { SIZE } from '@core/scene/layerKindSize';
 import { setCanvasDrag } from '@core/dnd/canvasDrag';
 import {
-  addMaskEdit,
   applyEffectPresetEdit,
   enableSimulationEdit,
-  maskValueCommands,
   copyEffectsEdit,
   pasteEffectsEdit,
   saveEffectPresetEdit,
-  removeMaskEdit,
-  renameMaskEdit,
-  setMaskInvertedEdit,
-  setMaskModeEdit,
-  setMaskShapeAnimatedEdit,
-  setMaskVertexFeatherEdit,
 } from './effectEdits';
-import { EFFECT_CATEGORY } from './effectCategory';
+import { EFFECT_CATEGORY, PLUGIN_EFFECTS_CATEGORY, effectCategoryOf } from './effectCategory';
 import { effectPreviewFor, EFFECT_PREVIEW_H, EFFECT_PREVIEW_W } from './effectPreviewThumbs';
 import {
   flattenFxGroups,
@@ -117,15 +97,6 @@ function EffectFavoriteStar({ id, label }: { id: string; label: string }): JSX.E
 
 // AE menu order — `None` leads, because it is the "this path does not cut"
 // option rather than a variant of the set operations below it.
-const MASK_MODES: ReadonlyArray<{ mode: MaskMode; label: string }> = [
-  { mode: 'none', label: 'None' },
-  { mode: 'add', label: 'Add' },
-  { mode: 'subtract', label: 'Subtract' },
-  { mode: 'intersect', label: 'Intersect' },
-  { mode: 'lighten', label: 'Lighten' },
-  { mode: 'darken', label: 'Darken' },
-  { mode: 'difference', label: 'Difference' },
-];
 
 /** Folder order in the browser — most-reached-for first. */
 const EFFECT_CATEGORY_ORDER: readonly string[] = [
@@ -263,7 +234,7 @@ export function EffectBrowser({ nodeId }: { nodeId: string | null }): JSX.Elemen
     const groups: Record<string, typeof browserDefs> = {};
     for (const cat of EFFECT_CATEGORY_ORDER) groups[cat] = [];
     browserDefs.forEach((d) => {
-      const cat = EFFECT_CATEGORY[d.type];
+      const cat = effectCategoryOf(d);
       if (cat) (groups[cat] ??= []).push(d);
     });
     return groups;
@@ -302,7 +273,7 @@ export function EffectBrowser({ nodeId }: { nodeId: string | null }): JSX.Elemen
     groups.push({
       id: cat,
       label: cat,
-      icon: EFFECT_CATEGORY_ICON[cat],
+      icon: cat === PLUGIN_EFFECTS_CATEGORY ? 'plugin' : EFFECT_CATEGORY_ICON[cat],
       defaultOpen: index === 0,
       items: items.map((d) => ({
         kind: 'effect' as const,
@@ -691,161 +662,6 @@ export function EffectBrowser({ nodeId }: { nodeId: string | null }): JSX.Elemen
 }
 
 /**
- * One mask's card: header band (name, mode, remove), then its values.
- *
- * Every edit is an engine command (B3): Rectangle / Ellipse / Remove / Mode /
- * Inverted / Name are one entry each, a Feather / Opacity / Expansion scrub is
- * one gesture (they hold across the shape's keys when the SHAPE is keyframed);
- * per-vertex feather is one write of the path's feather points.
- */
-function MaskCard({
-  nodeId,
-  mask: m,
-  index: i,
-  time,
-}: {
-  nodeId: string;
-  mask: MaskPath;
-  index: number;
-  /** The playhead, comp seconds. */
-  time: number;
-}): JSX.Element {
-  const e = useEngineEdit();
-  // The name commits on blur / Enter — one "Rename Mask" entry, not one per keystroke.
-  const [draft, setDraft] = useState<string | null>(null);
-  const commitName = (): void => {
-    if (draft === null) return;
-    const next = draft.trim();
-    setDraft(null);
-    if (next !== (m.name ?? '')) void renameMaskEdit(nodeId, m.id, next);
-  };
-  const setValue = (key: 'feather' | 'opacity' | 'expansion', v: number, label: string): void => {
-    const cmds = maskValueCommands(nodeId, m.id, key, v, time);
-    if (cmds) e.send(label, cmds);
-  };
-  const variable = m.points.some((pt) => typeof pt.feather === 'number');
-
-  return (
-    // Same card as an applied effect: header band, then the parameters
-    // under it. A mask IS a per-layer item with a mode and a handful of
-    // values, exactly like an effect, and the panel showing the two in
-    // two different shapes was the only reason they read as unrelated.
-    <div className={styles.effectCardItem}>
-      <div className={styles.effectCardHead}>
-        <span className={styles.maskMark} aria-hidden>
-          <Icon name="mask-square" size="sm" />
-        </span>
-        <span className={styles.itemLabel}>{m.name?.trim() || `Mask ${i + 1}`}</span>
-        <Dropdown
-          placement="left-start"
-          trigger={
-            <button type="button" className={styles.blendTrigger}>
-              {MASK_MODES.find((x) => x.mode === m.mode)?.label ?? 'Add'}
-              <Icon name="chevron-down" size="sm" />
-            </button>
-          }
-          items={MASK_MODES.map((x) => ({
-            type: 'item',
-            id: x.mode,
-            label: x.label,
-            icon: x.mode === m.mode ? 'check' : undefined,
-            onSelect: () => { void setMaskModeEdit(nodeId, m.id, x.mode); },
-          }))}
-        />
-        <div className={styles.itemActions}>
-          <button
-            type="button"
-            className={styles.remove}
-            aria-label={`Remove Mask ${i + 1}`}
-            title={`Remove Mask ${i + 1}`}
-            onClick={() => { void removeMaskEdit(nodeId, m.id, `Remove Mask ${i + 1}`); }}
-          >
-            <Icon name="close" size="sm" />
-          </button>
-        </div>
-      </div>
-      <div className={styles.effectParamsBody}>
-        <PropertyRow label="Name" compact>
-          <input
-            value={draft ?? m.name ?? ''}
-            placeholder={`Mask ${i + 1}`}
-            aria-label={`Mask ${i + 1} name`}
-            onChange={(ev) => setDraft(ev.target.value)}
-            onBlur={commitName}
-            onKeyDown={(ev) => {
-              if (ev.key === 'Enter') ev.currentTarget.blur();
-              else if (ev.key === 'Escape') { setDraft(null); ev.currentTarget.blur(); }
-            }}
-            style={{
-              width: '100%',
-              fontSize: 'var(--font-size-xs)',
-              padding: '2px 6px',
-              borderRadius: 4,
-              border: '1px solid var(--color-border, #333)',
-              background: 'var(--color-surface, #1e1e1e)',
-              color: 'inherit',
-            }}
-          />
-        </PropertyRow>
-        {/* One PropertyRow per value, so a mask's Feather sits in the
-            same column as an effect's Softness rather than in a
-            three-up strip of its own. */}
-        <PropertyRow label="Feather" compact>
-          <ValueField {...e.scrub('Set Mask Feather')} value={m.feather} min={0} max={200} precision={0} unit="px"
-            onChange={(v) => setValue('feather', v, 'Set Mask Feather')} aria-label="Mask feather" />
-        </PropertyRow>
-        {/* Variable-width feather: one row per vertex. A vertex with
-            its own value overrides the uniform Feather above and the
-            softness interpolates along the outline between vertices
-            (the distance-field renderer in maskFeather.ts). Right-side
-            clear button drops the override — every override cleared
-            returns the path to the plain blur renderer. */}
-        <PropertyRow label="Per-Vertex" compact>
-          <Checkbox
-            checked={variable}
-            onChange={() => {
-              // Toggle ON seeds every vertex at the uniform value (so
-              // nothing visibly changes until a vertex is edited);
-              // toggle OFF clears every override.
-              void setMaskVertexFeatherEdit(nodeId, m.id, m.points.map((_, vi) => ({ index: vi, feather: variable ? undefined : m.feather })), time);
-            }}
-            aria-label={`Variable feather for Mask ${i + 1}`}
-            style={{ width: 14, height: 14 }}
-          />
-        </PropertyRow>
-        {variable &&
-          m.points.map((pt, vi) => (
-            <PropertyRow key={vi} label={`  V${vi + 1}`} compact>
-              <ValueField
-                value={Math.round(pt.feather ?? m.feather)}
-                min={0} max={200} precision={0} unit="px"
-                onChange={(v) => { void setMaskVertexFeatherEdit(nodeId, m.id, [{ index: vi, feather: v }], time); }}
-                aria-label={`Mask ${i + 1} vertex ${vi + 1} feather`}
-              />
-            </PropertyRow>
-          ))}
-        <PropertyRow label="Opacity" compact>
-          <ValueField {...e.scrub('Set Mask Opacity')} value={Math.round(m.opacity * 100)} min={0} max={100} precision={0} unit="%"
-            onChange={(v) => setValue('opacity', v, 'Set Mask Opacity')} aria-label="Mask opacity" />
-        </PropertyRow>
-        <PropertyRow label="Expansion" compact>
-          <ValueField {...e.scrub('Set Mask Expansion')} value={Math.round(m.expansion ?? 0)} min={-500} max={500} precision={0} unit="px"
-            onChange={(v) => setValue('expansion', v, 'Set Mask Expansion')} aria-label="Mask expansion" />
-        </PropertyRow>
-        <PropertyRow label="Inverted" compact>
-          <Checkbox
-            checked={!!m.inverted}
-            onChange={() => { void setMaskInvertedEdit(nodeId, m.id, !m.inverted); }}
-            aria-label={`Invert Mask ${i + 1}`}
-            style={{ width: 14, height: 14 }}
-          />
-        </PropertyRow>
-      </div>
-    </div>
-  );
-}
-
-/**
  * The right-inspector Effects panel: the browser above, the selected layer's
  * masks below. Needs a layer — with none it says so instead of offering a
  * search box for a library nothing can be added to.
@@ -875,15 +691,8 @@ export function EffectsPanel(): JSX.Element {
     );
   }
 
-  const m = documentMirror();
-  const kind = uiKindOf(layer) ?? 'shape';
-  const layerKind = kind === 'text' || kind === 'image' || kind === 'video' ? kind : 'shape';
-  const { w: maskW, h: maskH } = SIZE[layerKind];
-  // The masks the renderer draws at the playhead — an animated mask's
-  // interpolated shape, whose values the edits below patch — not the static
-  // shape it stops reading once keyed (same read as the Layer panel).
-  const masks = mirrorMasksAt(m, primary, secondsToFlicks(maskCompTime));
-  const shapeKeyed = mirrorMaskShapeKeyed(m, primary);
+  // The mask count for the pointer to Properties ▸ Masks (AE parity 5.4).
+  const masks = mirrorMasksAt(documentMirror(), primary, secondsToFlicks(maskCompTime));
 
   return (
     <div className={styles.root}>
@@ -891,59 +700,12 @@ export function EffectsPanel(): JSX.Element {
       <div className={styles.sectionTitle}>Effects &amp; Presets</div>
       <EffectBrowser nodeId={primary} />
 
-      <div className={styles.sectionTitle}>Masks</div>
-      {!hasSelection && (
-        <p className={styles.hint} style={{ margin: '0 0 8px', fontSize: 'var(--font-size-xs)', color: 'var(--color-text-tertiary)' }}>
-          Select a layer, then draw with Mask Rectangle / Ellipse / Pen in the toolbar.
-        </p>
-      )}
-      <div className={styles.addRow}>
-        <button
-          type="button"
-          className={styles.addChip}
-          disabled={!hasSelection}
-          title={hasSelection ? 'Add a rectangle mask' : 'Select a layer first'}
-          onClick={() => { if (primary) void addMaskEdit(primary, rectangleMask(maskW, maskH), 'Add Rectangle Mask'); }}
-        >
-          <Icon name="plus" size="sm" /> Rectangle
-        </button>
-        <button
-          type="button"
-          className={styles.addChip}
-          disabled={!hasSelection}
-          title={hasSelection ? 'Add an ellipse mask' : 'Select a layer first'}
-          onClick={() => { if (primary) void addMaskEdit(primary, ellipseMask(maskW, maskH), 'Add Ellipse Mask'); }}
-        >
-          <Icon name="plus" size="sm" /> Ellipse
-        </button>
-        <button
-          type="button"
-          className={styles.addChip}
-          disabled={!hasSelection}
-          title="Switch to the Mask Pen tool"
-          onClick={() => useUIStore.getState().setActiveTool('mask-pen')}
-        >
-          <Icon name="pen" size="sm" /> Draw
-        </button>
-        {masks.length > 0 && (
-          <button
-            type="button"
-            className={styles.addChip}
-            title={shapeKeyed ? 'Remove mask animation' : 'Keyframe the mask shape at the playhead (animate the mask)'}
-            onClick={() => { void setMaskShapeAnimatedEdit(primary, masks[0]!.id, !shapeKeyed, maskCompTime); }}
-          >
-            <Icon name="keyframe" size="sm" /> {shapeKeyed ? 'Un-animate' : 'Keyframe shape'}
-          </button>
-        )}
-      </div>
-
-      {masks.length > 0 && (
-        <div className={styles.stackList}>
-          {masks.map((m, i) => (
-            <MaskCard key={m.id} nodeId={primary} mask={m} index={i} time={maskCompTime} />
-          ))}
-        </div>
-      )}
+      {/* AE parity 5.4: masks moved to Properties ▸ Masks (their own section,
+          as AE's Masks group in the layer's properties); this panel is the
+          effect browser. */}
+      <p className={styles.hint} style={{ margin: '8px 0 0', fontSize: 'var(--font-size-xs)', color: 'var(--color-text-tertiary)' }}>
+        Masks are in Properties ▸ Masks{masks.length > 0 ? ` (${masks.length} on this layer)` : ''}.
+      </p>
     </div>
   );
 }

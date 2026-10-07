@@ -404,6 +404,34 @@ export const APP_MENU: MenuGroupModel[] = [
         ],
       },
       {
+        // AE parity 5.4: AE's Layer ▸ Mask (maskCommands.ts).
+        label: 'Mask',
+        labelKey: 'menu.sub.mask',
+        children: [
+          { commandId: 'mask.new', label: 'New Mask' },
+          {
+            label: 'Mode',
+            labelKey: 'menu.sub.maskMode',
+            children: [
+              { commandId: 'mask.mode.none', label: 'None' },
+              { commandId: 'mask.mode.add', label: 'Add' },
+              { commandId: 'mask.mode.subtract', label: 'Subtract' },
+              { commandId: 'mask.mode.intersect', label: 'Intersect' },
+              { commandId: 'mask.mode.lighten', label: 'Lighten' },
+              { commandId: 'mask.mode.darken', label: 'Darken' },
+              { commandId: 'mask.mode.difference', label: 'Difference' },
+            ],
+          },
+          { commandId: 'mask.invert', label: 'Inverted' },
+          { separator: true },
+          { commandId: 'mask.smartInterpolation', label: 'Smart Mask Interpolation…' },
+          { commandId: 'mask.track', label: 'Track Mask…' },
+          { separator: true },
+          { commandId: 'mask.removeLast', label: 'Remove Mask' },
+          { commandId: 'mask.removeAll', label: 'Remove All Masks' },
+        ],
+      },
+      {
         // AE's Layer ▸ Mask and Shape Path. Acts on the vertices selected with
         // Direct Selection, else on the selected layers' paths (pathCommands.ts).
         label: 'Mask and Shape Path',
@@ -623,6 +651,21 @@ export const APP_MENU: MenuGroupModel[] = [
       },
       { separator: true },
       { commandId: 'animation.motionSketch', label: 'Motion Sketch' },
+      {
+        // AE parity 3.8: AE's tracking entries (layout/Inspector/trackMotion/trackingCommands.ts).
+        label: 'Tracking',
+        labelKey: 'menu.sub.tracking',
+        children: [
+          { commandId: 'animation.trackMotion', label: 'Track Motion' },
+          { commandId: 'animation.stabilizeMotion', label: 'Stabilize Motion' },
+          { commandId: 'animation.warpStabilizer', label: 'Warp Stabilizer' },
+          { commandId: 'animation.trackPlanar', label: 'Track Planar Surface' },
+          { commandId: 'animation.trackCamera', label: 'Track Camera' },
+          { commandId: 'animation.trackFace', label: 'Track Face' },
+          { separator: true },
+          { commandId: 'animation.contentAwareFill', label: 'Content-Aware Fill' },
+        ],
+      },
     ],
   },
   {
@@ -841,6 +884,7 @@ export const APP_MENU: MenuGroupModel[] = [
           { commandId: 'view.swatches', label: 'Swatches' },
           { commandId: 'view.character', label: 'Text' },
           { commandId: 'view.tracker', label: 'Tracker' },
+          { commandId: 'view.contentAwareFill', label: 'Content-Aware Fill' },
         ],
       },
       { separator: true },

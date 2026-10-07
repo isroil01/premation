@@ -30,6 +30,7 @@ import { getTime as getPlayheadTime } from '@stores/playbackClockStore';
 import { documentMirror } from '@stores/documentMirror';
 import { activeCompIdNow } from '@hooks/useMirror';
 import { useGuidesStore } from '@stores/guidesStore';
+import { useLayoutStore } from '@stores/layoutStore';
 import { useUIStore } from '@stores/uiStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { type WorkspaceController } from '@core/workspace/WorkspaceController';
@@ -198,9 +199,11 @@ export function videoContextMenuItems(id: string): ContextMenuItem {
         onSelect: () => {
           const src = mirrorSourceDisplaySize(documentMirror(), id);
           useTrackerStore.getState().setMode('smooth', src?.width ?? 0, src?.height ?? 0);
+          // The Tracker panel is where Track lives (Properties has no Track Motion section).
+          useLayoutStore.getState().openPanel('tracker');
           useUIStore.getState().notify({
             level: 'info',
-            message: 'Smooth Stabilize armed — open Inspector ▸ Track Motion and press Track.',
+            message: 'Smooth Stabilize armed — press Track in the Tracker panel.',
             durationMs: 4000,
           });
         },
@@ -211,9 +214,10 @@ export function videoContextMenuItems(id: string): ContextMenuItem {
         onSelect: () => {
           const src = mirrorSourceDisplaySize(documentMirror(), id);
           useTrackerStore.getState().setMode('follow', src?.width ?? 0, src?.height ?? 0);
+          useLayoutStore.getState().openPanel('tracker');
           useUIStore.getState().notify({
             level: 'info',
-            message: 'Tracker armed — drag the point in the viewport, then Track in Inspector ▸ Track Motion.',
+            message: 'Tracker armed — drag the point in the viewport, then press Track in the Tracker panel.',
             durationMs: 4000,
           });
         },

@@ -78,7 +78,7 @@ struct EffectSpec {
   [[nodiscard]] bool has(std::uint32_t flag) const noexcept { return (outFlags & flag) != 0; }
 };
 
-enum class PluginStatus : std::uint8_t { loaded, disabled, failed, quarantined };
+enum class PluginStatus : std::uint8_t { loaded, disabled, failed, quarantined, revoked };
 [[nodiscard]] std::string_view to_string(PluginStatus s) noexcept;
 
 /// What the host tells the world about one plugin (listPlugins).
@@ -184,7 +184,20 @@ struct HostOptions {
   int threads = 0;
   /// Register the effects with the document (NativeEffects) and install its handlers.
   bool attachToDocument = true;
+  /// Plugins the user disabled (Electron's `state.json`, `--plugin-disabled`):
+  /// listed as disabled and NOT loaded — none of their code runs until
+  /// setPluginEnabled turns them on.
+  std::vector<std::string> disabled;
+  /// The registry's signed revocation list, already verified by Electron
+  /// (`--revoked <file>`): plugin id → reason. A revoked plugin is listed
+  /// `revoked` and never loaded; setPluginEnabled cannot turn it on.
+  std::map<std::string, std::string, std::less<>> revoked;
 };
+
+/// `--revoked <file>`: `{"revoked":[{"id":"…","reason":"…"}]}` → id → reason.
+/// A missing or malformed file is an empty list (logged): Electron verified the
+/// signed list before writing it, and a bad file must not stop the engine.
+[[nodiscard]] std::map<std::string, std::string, std::less<>> read_revoked_file(const std::filesystem::path& file);
 
 class PluginHost {
  public:

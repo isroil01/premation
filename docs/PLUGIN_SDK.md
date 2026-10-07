@@ -195,11 +195,36 @@ it and clears the quarantine.
 | `setPluginEnabled` | enable / disable for this session; re-enabling retries a failed or quarantined plugin |
 | `setPluginData` | write a plugin's document data (arbitrary-data params) |
 
-The TypeScript engine hosts no native plugins: `listPlugins` is empty and
-`invokeEffectAction` is `unsupported`. The editor's surfaces (the Effects
-panel, the Inspector's effect cards, a plugin manager) use these queries
-once `engine()` is the C++ engine (plan D5). Until then native plugins run
-where the C++ engine renders: the engine viewport and `premation-plugins`.
+The C++ engine is the only engine (the TypeScript one is deleted), so these
+queries always answer from `premation-engine`. Native plugins render in the
+engine viewport and in `premation-plugins` today. The editor surfaces that
+expose them — installing from the plugin store, the Effects panel and Add
+menu, the Properties effect cards built from `EffectInfo.params`, and export
+with plugins — are AE parity step 2 (docs/AE_PARITY_PLAN.md). A project whose
+plugin is missing keeps the effect untouched: it passes through, is recorded
+on `layerErrors`, and one notice names the missing plugin
+(`src/core/project/missingPluginContent.ts`).
+
+## Distributing a plugin
+
+Plugins are distributed through the plugin store (docs/PLUGIN_STORE.md): free,
+public or private (private installs only for its publisher), and installed by
+the editor with a signature check and no restart.
+
+1. Build against the SDK from a release (`premation-sdk-<platform>.zip`):
+   `find_package(PremationSdk)` and `premation_add_plugin(name SOURCES …
+   MANIFEST premation-plugin.json)` lay the bundle out under
+   `<build>/plugins/<name>/`.
+2. List platform-specific binaries under `binary` with the keys
+   `windows-x64`, `macos-universal` (or `macos-arm64` / `macos-x64`),
+   `linux-x64` (the plain `windows` / `macos` / `linux` keys still work).
+3. `node pack-plugin.mjs <bundle> --key plugin-key.json` (keygen once with
+   `sign-plugin.mjs keygen`, and keep the key: it is the only thing that can
+   ship an update) → `<id>-<version>.pplugin` and its `.sig`.
+4. Publish from the editor (Dashboard ▸ Plugins ▸ Publish) or with
+   `sign-plugin.mjs publish`. Public needs a verified publisher.
+
+`examples/plugin-ci/` does all of this in GitHub Actions for three platforms.
 
 ## Building and testing a plugin
 

@@ -142,6 +142,8 @@ export function compRecordFromSettings(id: string, s: CompSettings): Composition
     ...(world.groundLevel !== undefined ? { groundLevel: world.groundLevel } : {}),
     ...(world.showSkyBackdrop !== undefined ? { showSkyBackdrop: world.showSkyBackdrop } : {}),
     ...(world.ssao !== undefined ? { ssao: world.ssao } : {}),
+    ...(world.fog !== undefined ? { fog: world.fog } : {}),
+    ...(world.groundShadows !== undefined ? { groundShadows: world.groundShadows } : {}),
   } as CompositionSettings;
 }
 

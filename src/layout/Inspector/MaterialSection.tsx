@@ -375,6 +375,8 @@ export function MaterialSection({ nodeId }: { nodeId: string }): JSX.Element | n
 
   const material = mirrorMaterial(tree);
   const params = materialParamsOf(material);
+  const reflectsLayers = tree?.nodes.get('material/reflectsLayers')?.value?.kind === 'bool'
+    && (tree.nodes.get('material/reflectsLayers')?.value as { value: boolean }).value;
   const fill = layerFill(nodeId);
   // Built-ins first, then the project's own — subscribed through `materials`
   // so saving or deleting one repaints the strip.
@@ -568,12 +570,10 @@ export function MaterialSection({ nodeId }: { nodeId: string }): JSX.Element | n
 
       <div className={s.divider} />
 
-      {/* ── Reflections (AE Advanced 3D, scoped honestly) ────────── */}
-      {/* These act on ENVIRONMENT reflections — the IBL specular term the
-          comp's environment light provides. There is no layer-to-layer
-          reflection pass, which is also why AE's fourth axis (Appears in
-          Reflections) has no control here: a switch that changes no pixel
-          is worse than no switch. */}
+      {/* ── Reflections (AE Advanced 3D) ────────── */}
+      {/* Intensity / Sharpness / Rolloff shape the ENVIRONMENT reflection (the
+          environment light's prefiltered HDR map) and, with Reflect Layers on,
+          the planar reflection of the other 3D layers (AE parity 4.8). */}
       <span className={s.groupHeader}>Reflections</span>
       {material.shading === 'toon' ? (
         <p className={s.hint}>
@@ -597,9 +597,21 @@ export function MaterialSection({ nodeId }: { nodeId: string }): JSX.Element | n
             value={material.reflectionRolloff}
             engineProp={{ nodeId, prop: 'reflectionRolloff' }}
           />
+          <span className={s.row}>
+            <span className={s.label}>Reflect Layers</span>
+            <Switch
+              checked={reflectsLayers}
+              disabled={!hasPath(nodeId, 'material/reflectsLayers')}
+              onChange={(ev) => {
+                void edit('Set Reflect Layers', fieldCommands([nodeId], 'material/reflectsLayers', values.bool(ev.currentTarget.checked)));
+              }}
+              aria-label="Reflect layers"
+            />
+          </span>
           <p className={s.hint}>
-            Reflections mirror the comp&rsquo;s Environment light — add one to see
-            them. Like Specular, they render on lit surfaces (Accepts Lights on).
+            Reflections mirror the comp&rsquo;s Environment light; Reflect Layers also
+            mirrors the other 3D layers (a floor or a glossy wall). Like Specular,
+            they render on lit surfaces (Accepts Lights on).
           </p>
         </>
       )}

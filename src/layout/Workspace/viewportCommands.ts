@@ -97,6 +97,10 @@ export const VIEWPORT_COMMAND_IDS = {
   viewerLutLoad: 'view.viewerLut.load',
   viewerLutClear: 'view.viewerLut.clear',
   rotoTool: 'tool.roto',
+  gizmoUniversal: 'view.gizmo3d.universal',
+  gizmoPosition: 'view.gizmo3d.position',
+  gizmoRotation: 'view.gizmo3d.rotation',
+  gizmoScale: 'view.gizmo3d.scale',
   inlineAiPrompt: 'ai.inlinePrompt',
 } as const;
 
@@ -459,6 +463,25 @@ export function buildViewportCommands(): ReadonlyArray<Command> {
       enabled: () => true,
       execute: () => useUIStore.getState().setActiveTool('roto'),
     },
+    // ── 3D gizmo (AE parity 4.6) ─────────────────────────────────────
+    // Shift+Alt+1…4 pick the gizmo (Alt+1…4 are the multicam angles); the
+    // Rotate tool (W) shows the rotation gizmo whatever is picked, as AE's
+    // Rotation tool does on a 3D layer.
+    ...([
+      ['gizmoUniversal', 'universal', 'Universal Gizmo', 'Move, scale and rotate from one gizmo.', '1'],
+      ['gizmoPosition', 'position', 'Position Gizmo', 'Move along an axis or a plane.', '2'],
+      ['gizmoRotation', 'rotation', 'Rotation Gizmo', 'Rotate about an axis, the view, or freely (trackball).', '3'],
+      ['gizmoScale', 'scale', 'Scale Gizmo', 'Scale along an axis, or uniformly from the centre.', '4'],
+    ] as const).map(([key, state, label, description, digit]) => ({
+      id: asCommandId(VIEWPORT_COMMAND_IDS[key]),
+      label,
+      description,
+      icon: `gizmo-${state}` as const,
+      shortcut: { key: digit, alt: true, shift: true },
+      enabled: () => true,
+      isChecked: () => useGuidesStore.getState().gizmo3dState === state,
+      execute: () => useGuidesStore.getState().setGizmo3dState(state),
+    })),
     // ── AI ───────────────────────────────────────────────────────────
     {
       id: asCommandId(VIEWPORT_COMMAND_IDS.inlineAiPrompt),

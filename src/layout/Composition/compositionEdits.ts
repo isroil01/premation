@@ -111,7 +111,7 @@ export async function createCompositionEdit(init: NewCompositionInit): Promise<s
 
 // ── Composition Settings ──────────────────────────────────────────────
 
-const WORLD_KEYS = ['defaultEnvPreset', 'groundLevel', 'showSkyBackdrop', 'ssao'] as const;
+const WORLD_KEYS = ['defaultEnvPreset', 'groundLevel', 'showSkyBackdrop', 'ssao', 'fog', 'groundShadows'] as const;
 
 const same = (a: unknown, b: unknown): boolean => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 

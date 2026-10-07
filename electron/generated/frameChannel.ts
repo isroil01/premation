@@ -185,7 +185,7 @@ export interface OverlayScene3D {
   position: number[];
   /** light: radius, cone, coneFeather, and the aim in degrees (lightAngle + the layer's world Z rotation) — what buildLightGizmo takes. */
   light: number[];
-  /** layer: the local transform sampled at the frame (sampleTransform3DAtPlayhead): x, y, z, rotationX, rotationY, rotation, scaleX, scaleY, scaleZ (stored units). */
+  /** layer: the local transform sampled at the frame (sampleTransform3DAtPlayhead): x, y, z, rotationX, rotationY, rotation, scaleX, scaleY, scaleZ, orientationX, orientationY, orientationZ (stored units; position in the parent's space — `parent` lifts it to the world). */
   local: number[];
   /** layer: the extrusion depth (animated winning, ≥ 0). */
   extrusion: number;

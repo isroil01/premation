@@ -26,7 +26,7 @@ import { Icon } from '@components/Icon';
 import { Badge } from '@components/Badge';
 import { useViewportDisplayStore } from '@stores/viewportDisplayStore';
 import { useRotoBrushStore } from '@stores/rotoBrushStore';
-import { propagateRotoForward, rotoFreezeEdit, rotoMattes } from '@core/workspace/rotoBrushTool';
+import { propagateObjectMatte, propagateRotoForward, rotoFreezeEdit, rotoMattes } from '@core/workspace/rotoBrushTool';
 import { edit } from '@core/engine/uiEdits';
 import { useMirrorTree } from '@hooks/useMirror';
 import { playheadSeconds } from '@core/timeline/timelineView';
@@ -391,6 +391,34 @@ function RotoOptions(): JSX.Element {
   const frozen = mattes.frozen.length > 0;
   const canFreeze = !!nodeId && !busy && (frozen || mattes.live.length > 0);
   const canPropagate = !!nodeId && strokes.some((s) => s.kind === 'fg') && !busy && !frozen;
+  const engine = useRotoBrushStore((s) => s.engine);
+  const refine = useRotoBrushStore((s) => s.refine);
+
+  /** Object Matte (AE parity 3.1): the subject followed with the model, from the playhead, either way. */
+  const propagateMatte = (direction: 'forward' | 'backward' | 'both'): void => {
+    if (!nodeId) return;
+    const store = useRotoBrushStore.getState();
+    const settings = activeCompSettingsNow();
+    const origin = playheadSeconds();
+    const wa = settingsSetWorkArea(settings);
+    const start = direction === 'forward' ? origin : wa ? wa.start : 0;
+    const end = direction === 'backward' ? origin + 1 / settingsFps(settings) : wa ? wa.end : settingsDurationSeconds(settings);
+    if (!(end > start)) {
+      store.setStatus('Nothing in that direction to propagate into.');
+      return;
+    }
+    store.setBusy(true, 0);
+    store.setStatus('Object Matte…');
+    propagateObjectMatte(nodeId, store.strokes, {
+      origin, start, end, fps: settingsFps(settings), direction, featherPx: store.featherPx, refine: store.refine,
+    }, (f) => {
+      useRotoBrushStore.getState().setBusy(true, f);
+      return useRotoBrushStore.getState().busy;
+    })
+      .then((r) => useRotoBrushStore.getState().setStatus(r.status === 'cancelled' ? 'Cancelled.' : `Object Matte: ${r.frames} frames.`))
+      .catch((err: unknown) => useRotoBrushStore.getState().setStatus(err instanceof Error ? err.message : 'Object Matte failed.'))
+      .finally(() => useRotoBrushStore.getState().setBusy(false));
+  };
 
   const propagate = (): void => {
     if (!nodeId) return;
@@ -443,16 +471,73 @@ function RotoOptions(): JSX.Element {
       <Row label="Feather">
         <ValueField value={featherPx} unit="px" min={0} max={64} precision={0} onChange={(v) => useRotoBrushStore.getState().setFeather(Number(v))} />
       </Row>
-      <button
-        type="button"
-        className={styles.kind}
-        disabled={!canPropagate}
-        title="Track the matte forward from the playhead to the end of the work area"
-        onClick={propagate}
-      >
-        <Icon name="skip-forward" size="sm" />
-        {busy ? `Propagating ${Math.round(progress * 100)}%` : 'Propagate Forward'}
-      </button>
+      <div className={styles.kinds} role="group" aria-label="Matte engine">
+        <button
+          type="button"
+          className={engine === 'objectMatte' ? styles.kindActive : styles.kind}
+          aria-pressed={engine === 'objectMatte'}
+          title="Object Matte: the segmentation model follows the subject frame by frame (soft matte, refined edges)"
+          onClick={() => useRotoBrushStore.getState().setEngine('objectMatte')}
+        >
+          Object Matte
+        </button>
+        <button
+          type="button"
+          className={engine === 'classic' ? styles.kindActive : styles.kind}
+          aria-pressed={engine === 'classic'}
+          title="Roto Brush (classic): colour and motion carry the outline forward"
+          onClick={() => useRotoBrushStore.getState().setEngine('classic')}
+        >
+          Classic
+        </button>
+      </div>
+      {engine === 'objectMatte' ? (
+        <>
+          <div className={styles.kinds} role="group" aria-label="Propagate">
+            <button type="button" className={styles.kind} disabled={!canPropagate} aria-label="Propagate backward" title="Propagate backward from the playhead" onClick={() => propagateMatte('backward')}>
+              <Icon name="skip-back" size="sm" />
+            </button>
+            <button type="button" className={styles.kind} disabled={!canPropagate} aria-label="Propagate both ways" title="Propagate both ways over the work area" onClick={() => propagateMatte('both')}>
+              {busy ? `${Math.round(progress * 100)}%` : '◀▶'}
+            </button>
+            <button type="button" className={styles.kind} disabled={!canPropagate} aria-label="Propagate forward" title="Propagate forward from the playhead" onClick={() => propagateMatte('forward')}>
+              <Icon name="skip-forward" size="sm" />
+            </button>
+          </div>
+          <Row label="Edge">
+            <ValueField aria-label="Refine edge radius" value={refine.edgeRadius} unit="px" min={0} max={64} precision={0} onChange={(v) => useRotoBrushStore.getState().setRefine({ edgeRadius: Number(v) })} />
+          </Row>
+          <Row label="Choke">
+            <ValueField aria-label="Choke" value={refine.choke} unit="%" min={-100} max={100} precision={0} onChange={(v) => useRotoBrushStore.getState().setRefine({ choke: Number(v) })} />
+          </Row>
+          <Row label="Decontaminate">
+            <ValueField aria-label="Decontaminate" value={refine.decontaminate} unit="%" min={0} max={100} precision={0} onChange={(v) => useRotoBrushStore.getState().setRefine({ decontaminate: Number(v) })} />
+          </Row>
+          <Row label="Chatter">
+            <ValueField aria-label="Reduce chatter" value={refine.reduceChatter} unit="%" min={0} max={100} precision={0} onChange={(v) => useRotoBrushStore.getState().setRefine({ reduceChatter: Number(v) })} />
+          </Row>
+          <button
+            type="button"
+            className={refine.motionBlur ? styles.kindActive : styles.kind}
+            aria-pressed={refine.motionBlur}
+            title="Blur the matte along the motion, as the camera blurred the subject"
+            onClick={() => useRotoBrushStore.getState().setRefine({ motionBlur: !refine.motionBlur })}
+          >
+            Motion Blur
+          </button>
+        </>
+      ) : (
+        <button
+          type="button"
+          className={styles.kind}
+          disabled={!canPropagate}
+          title="Track the matte forward from the playhead to the end of the work area"
+          onClick={propagate}
+        >
+          <Icon name="skip-forward" size="sm" />
+          {busy ? `Propagating ${Math.round(progress * 100)}%` : 'Propagate Forward'}
+        </button>
+      )}
       <button
         type="button"
         className={frozen ? styles.kindActive : styles.kind}

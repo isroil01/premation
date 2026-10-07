@@ -132,6 +132,7 @@ export type EffectType =
   | 'optics-compensation'
   | 'mesh-warp'
   | 'liquify'
+  | 'reshape'
   | 'mirror'
   | 'offset'
   // Stylize — a directional derivative and a randomised resample.
@@ -206,7 +207,14 @@ export type EffectType =
   | 'color-range'
   | 'extract'
   | 'spill-suppressor'
+  // AE parity 5.2.
+  | 'advanced-spill-suppressor'
+  | 'key-cleaner'
+  | 'remove-grain'
   | 'matte-choker'
+  // AE parity 3.2 — the matte follows the picture's own edges (hair), decontaminated.
+  | 'refine-soft-matte'
+  | 'refine-hard-matte'
   // Channel — these treat the four channels as data rather than as a picture.
   | 'alpha-levels'
   | 'solid-composite'
@@ -408,6 +416,13 @@ export interface EffectParamDef {
    * `options`, which `effectRegistryComplete.test.ts` enforces.
    */
   /**
+   * `'data'` (AE parity 5.5) is a flat numeric array an on-canvas TOOL writes —
+   * Mesh Warp's variable mesh offsets, Liquify's painted distortion field. No
+   * inspector control (the tool is the editor); stored in the document as a
+   * static param (a json value); a `px` unit scales it element-wise with the
+   * raster like a `resolved` geometry array.
+   */
+  /**
    * `'maskPath'` is a reference to one of THIS layer's mask paths (stored as
    * the path id, '' = none) — the spine a path-following effect draws along.
    * Rendered as a dropdown of the layer's masks; the render pipeline resolves
@@ -417,7 +432,7 @@ export interface EffectParamDef {
    * mask (maskAnim) re-resolves per frame, which is what makes an effect
    * follow a tracked object for free.
    */
-  type: 'number' | 'color' | 'checkbox' | 'curve' | 'layer' | 'resolved' | 'enum' | 'maskPath';
+  type: 'number' | 'color' | 'checkbox' | 'curve' | 'layer' | 'resolved' | 'enum' | 'maskPath' | 'data';
   /** The choices for an `'enum'` param, in menu order. Ignored for other types. */
   options?: ReadonlyArray<{ value: number; label: string }>;
   /**
@@ -569,7 +584,7 @@ export function scaleEffectLengths(
     // left alone: a Vegas light on a mask drew at half its distance from the
     // centre on a 2x bake. Such arrays scale element-wise; resolved params that
     // are counts or flags simply do not declare a unit.
-    const lengths = def.params.filter((p) => (p.type === 'number' || p.type === 'resolved') && p.unit === 'px');
+    const lengths = def.params.filter((p) => (p.type === 'number' || p.type === 'resolved' || p.type === 'data') && p.unit === 'px');
     if (lengths.length === 0) return e;
     // Resolve through paramsOf first: it folds in declared defaults and the
     // legacy `amount`, so a param the caller never set still scales.
@@ -577,7 +592,7 @@ export function scaleEffectLengths(
     for (const p of lengths) {
       const v = params[p.key];
       if (typeof v === 'number') params[p.key] = v * k;
-      else if (p.type === 'resolved' && Array.isArray(v)) {
+      else if ((p.type === 'resolved' || p.type === 'data') && Array.isArray(v)) {
         params[p.key] = (v as readonly unknown[]).map((x) => (typeof x === 'number' ? x * k : x)) as number[];
       }
     }
@@ -733,6 +748,19 @@ function scalar(
  * blurs, so the bound stops here rather than at AE's 1000+.
  */
 export const BLUR_MAX_PX = 250;
+
+/** Refine Soft / Hard Matte's controls (AE parity 3.2; catalog/effects.json is the source). */
+function refineMatteParams(edgeRadius: number, smooth: number, contrast: number): EffectParamDef[] {
+  return [
+    { key: 'edgeRadius', label: 'Edge Radius', type: 'number', unit: 'px', min: 0, max: 100, precision: 0, default: edgeRadius },
+    { key: 'smooth', label: 'Smooth', type: 'number', unit: 'px', min: 0, max: 100, precision: 1, default: smooth },
+    { key: 'feather', label: 'Feather', type: 'number', unit: 'px', min: 0, max: 100, precision: 1, default: 0 },
+    { key: 'contrast', label: 'Contrast', type: 'number', unit: '%', min: 0, max: 100, precision: 0, default: contrast },
+    { key: 'shiftEdge', label: 'Shift Edge', type: 'number', unit: '%', min: -100, max: 100, precision: 0, default: 0 },
+    { key: 'decontaminateEdges', label: 'Decontaminate Edge Colors', type: 'checkbox', default: true },
+    { key: 'decontaminationAmount', label: 'Decontamination Amount', type: 'number', unit: '%', min: 0, max: 100, precision: 0, default: 100 },
+  ];
+}
 
 export const EFFECT_DEFS: EffectDef[] = [
   scalar('blur', 'Blur', 'px', 0, BLUR_MAX_PX, 6, (a) => `blur(${a}px)`),
@@ -1544,9 +1572,31 @@ export const EFFECT_DEFS: EffectDef[] = [
     type: 'hue-saturation',
     label: 'Hue/Saturation',
     params: [
-      { key: 'hue', label: 'Master Hue', type: 'number', unit: '°', min: -180, max: 180, default: 0 },
-      { key: 'saturation', label: 'Master Saturation', type: 'number', min: -100, max: 100, default: 0 },
-      { key: 'lightness', label: 'Master Lightness', type: 'number', min: -100, max: 100, default: 0 },
+      { key: 'hue', label: 'Master Hue', type: 'number', group: 'Master', unit: '°', min: -180, max: 180, default: 0 },
+      { key: 'saturation', label: 'Master Saturation', type: 'number', group: 'Master', min: -100, max: 100, default: 0 },
+      { key: 'lightness', label: 'Master Lightness', type: 'number', group: 'Master', min: -100, max: 100, default: 0 },
+      { key: 'redsHue', label: 'Reds Hue', type: 'number', group: 'Reds', unit: '°', min: -180, max: 180, default: 0 },
+      { key: 'redsSaturation', label: 'Reds Saturation', type: 'number', group: 'Reds', min: -100, max: 100, default: 0 },
+      { key: 'redsLightness', label: 'Reds Lightness', type: 'number', group: 'Reds', min: -100, max: 100, default: 0 },
+      { key: 'yellowsHue', label: 'Yellows Hue', type: 'number', group: 'Yellows', unit: '°', min: -180, max: 180, default: 0 },
+      { key: 'yellowsSaturation', label: 'Yellows Saturation', type: 'number', group: 'Yellows', min: -100, max: 100, default: 0 },
+      { key: 'yellowsLightness', label: 'Yellows Lightness', type: 'number', group: 'Yellows', min: -100, max: 100, default: 0 },
+      { key: 'greensHue', label: 'Greens Hue', type: 'number', group: 'Greens', unit: '°', min: -180, max: 180, default: 0 },
+      { key: 'greensSaturation', label: 'Greens Saturation', type: 'number', group: 'Greens', min: -100, max: 100, default: 0 },
+      { key: 'greensLightness', label: 'Greens Lightness', type: 'number', group: 'Greens', min: -100, max: 100, default: 0 },
+      { key: 'cyansHue', label: 'Cyans Hue', type: 'number', group: 'Cyans', unit: '°', min: -180, max: 180, default: 0 },
+      { key: 'cyansSaturation', label: 'Cyans Saturation', type: 'number', group: 'Cyans', min: -100, max: 100, default: 0 },
+      { key: 'cyansLightness', label: 'Cyans Lightness', type: 'number', group: 'Cyans', min: -100, max: 100, default: 0 },
+      { key: 'bluesHue', label: 'Blues Hue', type: 'number', group: 'Blues', unit: '°', min: -180, max: 180, default: 0 },
+      { key: 'bluesSaturation', label: 'Blues Saturation', type: 'number', group: 'Blues', min: -100, max: 100, default: 0 },
+      { key: 'bluesLightness', label: 'Blues Lightness', type: 'number', group: 'Blues', min: -100, max: 100, default: 0 },
+      { key: 'magentasHue', label: 'Magentas Hue', type: 'number', group: 'Magentas', unit: '°', min: -180, max: 180, default: 0 },
+      { key: 'magentasSaturation', label: 'Magentas Saturation', type: 'number', group: 'Magentas', min: -100, max: 100, default: 0 },
+      { key: 'magentasLightness', label: 'Magentas Lightness', type: 'number', group: 'Magentas', min: -100, max: 100, default: 0 },
+      { key: 'colorize', label: 'Colorize', type: 'checkbox', group: 'Colorize', default: false },
+      { key: 'colorizeHue', label: 'Colorize Hue', type: 'number', group: 'Colorize', unit: '°', min: 0, max: 360, default: 0 },
+      { key: 'colorizeSaturation', label: 'Colorize Saturation', type: 'number', group: 'Colorize', min: 0, max: 100, default: 25 },
+      { key: 'colorizeLightness', label: 'Colorize Lightness', type: 'number', group: 'Colorize', min: -100, max: 100, default: 0 },
     ],
     css: (p) => {
       const parts: string[] = [];
@@ -1568,11 +1618,31 @@ export const EFFECT_DEFS: EffectDef[] = [
     type: 'levels',
     label: 'Levels',
     params: [
-      { key: 'inputBlack', label: 'Input Black', type: 'number', min: 0, max: 255, default: 0 },
-      { key: 'inputWhite', label: 'Input White', type: 'number', min: 0, max: 255, default: 255 },
-      { key: 'gamma', label: 'Gamma', type: 'number', min: 0.1, max: 10, precision: 2, default: 1 },
-      { key: 'outputBlack', label: 'Output Black', type: 'number', min: 0, max: 255, default: 0 },
-      { key: 'outputWhite', label: 'Output White', type: 'number', min: 0, max: 255, default: 255 },
+      { key: 'inputBlack', label: 'Input Black', type: 'number', group: 'RGB', min: 0, max: 255, default: 0 },
+      { key: 'inputWhite', label: 'Input White', type: 'number', group: 'RGB', min: 0, max: 255, default: 255 },
+      { key: 'gamma', label: 'Gamma', type: 'number', group: 'RGB', min: 0.1, max: 10, precision: 2, default: 1 },
+      { key: 'outputBlack', label: 'Output Black', type: 'number', group: 'RGB', min: 0, max: 255, default: 0 },
+      { key: 'outputWhite', label: 'Output White', type: 'number', group: 'RGB', min: 0, max: 255, default: 255 },
+      { key: 'redInputBlack', label: 'Red Input Black', type: 'number', group: 'Red', min: 0, max: 255, default: 0 },
+      { key: 'redInputWhite', label: 'Red Input White', type: 'number', group: 'Red', min: 0, max: 255, default: 255 },
+      { key: 'redGamma', label: 'Red Gamma', type: 'number', group: 'Red', min: 0.1, max: 10, precision: 2, default: 1 },
+      { key: 'redOutputBlack', label: 'Red Output Black', type: 'number', group: 'Red', min: 0, max: 255, default: 0 },
+      { key: 'redOutputWhite', label: 'Red Output White', type: 'number', group: 'Red', min: 0, max: 255, default: 255 },
+      { key: 'greenInputBlack', label: 'Green Input Black', type: 'number', group: 'Green', min: 0, max: 255, default: 0 },
+      { key: 'greenInputWhite', label: 'Green Input White', type: 'number', group: 'Green', min: 0, max: 255, default: 255 },
+      { key: 'greenGamma', label: 'Green Gamma', type: 'number', group: 'Green', min: 0.1, max: 10, precision: 2, default: 1 },
+      { key: 'greenOutputBlack', label: 'Green Output Black', type: 'number', group: 'Green', min: 0, max: 255, default: 0 },
+      { key: 'greenOutputWhite', label: 'Green Output White', type: 'number', group: 'Green', min: 0, max: 255, default: 255 },
+      { key: 'blueInputBlack', label: 'Blue Input Black', type: 'number', group: 'Blue', min: 0, max: 255, default: 0 },
+      { key: 'blueInputWhite', label: 'Blue Input White', type: 'number', group: 'Blue', min: 0, max: 255, default: 255 },
+      { key: 'blueGamma', label: 'Blue Gamma', type: 'number', group: 'Blue', min: 0.1, max: 10, precision: 2, default: 1 },
+      { key: 'blueOutputBlack', label: 'Blue Output Black', type: 'number', group: 'Blue', min: 0, max: 255, default: 0 },
+      { key: 'blueOutputWhite', label: 'Blue Output White', type: 'number', group: 'Blue', min: 0, max: 255, default: 255 },
+      { key: 'alphaInputBlack', label: 'Alpha Input Black', type: 'number', group: 'Alpha', min: 0, max: 255, default: 0 },
+      { key: 'alphaInputWhite', label: 'Alpha Input White', type: 'number', group: 'Alpha', min: 0, max: 255, default: 255 },
+      { key: 'alphaGamma', label: 'Alpha Gamma', type: 'number', group: 'Alpha', min: 0.1, max: 10, precision: 2, default: 1 },
+      { key: 'alphaOutputBlack', label: 'Alpha Output Black', type: 'number', group: 'Alpha', min: 0, max: 255, default: 0 },
+      { key: 'alphaOutputWhite', label: 'Alpha Output White', type: 'number', group: 'Alpha', min: 0, max: 255, default: 255 },
     ],
     css: () => '',
   },
@@ -1603,14 +1673,58 @@ export const EFFECT_DEFS: EffectDef[] = [
     type: 'lumetri',
     label: 'Lumetri Color',
     params: [
-      { key: 'exposure', label: 'Exposure', type: 'number', unit: 'stops', min: -5, max: 5, precision: 2, default: 0 },
-      { key: 'contrast', label: 'Contrast', type: 'number', unit: '%', min: -100, max: 100, default: 0 },
-      { key: 'highlights', label: 'Highlights', type: 'number', unit: '%', min: -100, max: 100, default: 0 },
-      { key: 'shadows', label: 'Shadows', type: 'number', unit: '%', min: -100, max: 100, default: 0 },
-      { key: 'whites', label: 'Whites', type: 'number', unit: '%', min: -100, max: 100, default: 0 },
-      { key: 'blacks', label: 'Blacks', type: 'number', unit: '%', min: -100, max: 100, default: 0 },
-      { key: 'temperature', label: 'Temperature', type: 'number', unit: '%', min: -100, max: 100, default: 0 },
-      { key: 'tint', label: 'Tint', type: 'number', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'exposure', label: 'Exposure', type: 'number', group: 'Basic Correction', unit: 'stops', min: -5, max: 5, precision: 2, default: 0 },
+      { key: 'contrast', label: 'Contrast', type: 'number', group: 'Basic Correction', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'highlights', label: 'Highlights', type: 'number', group: 'Basic Correction', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'shadows', label: 'Shadows', type: 'number', group: 'Basic Correction', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'whites', label: 'Whites', type: 'number', group: 'Basic Correction', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'blacks', label: 'Blacks', type: 'number', group: 'Basic Correction', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'temperature', label: 'Temperature', type: 'number', group: 'Basic Correction', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'tint', label: 'Tint', type: 'number', group: 'Basic Correction', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'saturation', label: 'Saturation', type: 'number', group: 'Basic Correction', unit: '%', min: 0, max: 200, default: 100 },
+      { key: 'fadedFilm', label: 'Faded Film', type: 'number', group: 'Creative', unit: '%', min: 0, max: 100, default: 0 },
+      { key: 'vibrance', label: 'Vibrance', type: 'number', group: 'Creative', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'creativeSaturation', label: 'Saturation', type: 'number', group: 'Creative', unit: '%', min: 0, max: 200, default: 100 },
+      { key: 'shadowTintHue', label: 'Shadow Tint Hue', type: 'number', group: 'Creative', unit: '°', min: 0, max: 360, default: 0 },
+      { key: 'shadowTintAmount', label: 'Shadow Tint Amount', type: 'number', group: 'Creative', unit: '%', min: 0, max: 100, default: 0 },
+      { key: 'highlightTintHue', label: 'Highlight Tint Hue', type: 'number', group: 'Creative', unit: '°', min: 0, max: 360, default: 0 },
+      { key: 'highlightTintAmount', label: 'Highlight Tint Amount', type: 'number', group: 'Creative', unit: '%', min: 0, max: 100, default: 0 },
+      { key: 'tintBalance', label: 'Tint Balance', type: 'number', group: 'Creative', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'rgbCurve', label: 'RGB Curve', type: 'curve', group: 'Curves', default: [[0,  0],  [255,  255]] },
+      { key: 'redCurve', label: 'Red Curve', type: 'curve', group: 'Curves', default: [[0,  0],  [255,  255]] },
+      { key: 'greenCurve', label: 'Green Curve', type: 'curve', group: 'Curves', default: [[0,  0],  [255,  255]] },
+      { key: 'blueCurve', label: 'Blue Curve', type: 'curve', group: 'Curves', default: [[0,  0],  [255,  255]] },
+      { key: 'hueVsSat', label: 'Hue vs Saturation', type: 'curve', group: 'Hue Saturation Curves', default: [[0,  128],  [255,  128]] },
+      { key: 'hueVsHue', label: 'Hue vs Hue', type: 'curve', group: 'Hue Saturation Curves', default: [[0,  128],  [255,  128]] },
+      { key: 'hueVsLuma', label: 'Hue vs Luma', type: 'curve', group: 'Hue Saturation Curves', default: [[0,  128],  [255,  128]] },
+      { key: 'lumaVsSat', label: 'Luma vs Saturation', type: 'curve', group: 'Hue Saturation Curves', default: [[0,  128],  [255,  128]] },
+      { key: 'shadowsHue', label: 'Shadows Hue', type: 'number', group: 'Color Wheels', unit: '°', min: 0, max: 360, default: 0 },
+      { key: 'shadowsAmount', label: 'Shadows Amount', type: 'number', group: 'Color Wheels', unit: '%', min: 0, max: 100, default: 0 },
+      { key: 'shadowsLuma', label: 'Shadows Luma', type: 'number', group: 'Color Wheels', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'midtonesHue', label: 'Midtones Hue', type: 'number', group: 'Color Wheels', unit: '°', min: 0, max: 360, default: 0 },
+      { key: 'midtonesAmount', label: 'Midtones Amount', type: 'number', group: 'Color Wheels', unit: '%', min: 0, max: 100, default: 0 },
+      { key: 'midtonesLuma', label: 'Midtones Luma', type: 'number', group: 'Color Wheels', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'highlightsHue', label: 'Highlights Hue', type: 'number', group: 'Color Wheels', unit: '°', min: 0, max: 360, default: 0 },
+      { key: 'highlightsAmount', label: 'Highlights Amount', type: 'number', group: 'Color Wheels', unit: '%', min: 0, max: 100, default: 0 },
+      { key: 'highlightsLuma', label: 'Highlights Luma', type: 'number', group: 'Color Wheels', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'hslEnable', label: 'Enable', type: 'checkbox', group: 'HSL Secondary', default: false },
+      { key: 'hslHue', label: 'Hue Center', type: 'number', group: 'HSL Secondary', unit: '°', min: 0, max: 360, default: 0 },
+      { key: 'hslHueRange', label: 'Hue Range', type: 'number', group: 'HSL Secondary', unit: '°', min: 0, max: 180, default: 30 },
+      { key: 'hslHueSoftness', label: 'Hue Softness', type: 'number', group: 'HSL Secondary', unit: '°', min: 0, max: 180, default: 20 },
+      { key: 'hslSatMin', label: 'Saturation Min', type: 'number', group: 'HSL Secondary', unit: '%', min: 0, max: 100, default: 0 },
+      { key: 'hslSatMax', label: 'Saturation Max', type: 'number', group: 'HSL Secondary', unit: '%', min: 0, max: 100, default: 100 },
+      { key: 'hslLumMin', label: 'Luma Min', type: 'number', group: 'HSL Secondary', unit: '%', min: 0, max: 100, default: 0 },
+      { key: 'hslLumMax', label: 'Luma Max', type: 'number', group: 'HSL Secondary', unit: '%', min: 0, max: 100, default: 100 },
+      { key: 'hslSoftness', label: 'Range Softness', type: 'number', group: 'HSL Secondary', unit: '%', min: 0, max: 100, default: 10 },
+      { key: 'hslShowMask', label: 'Show Mask', type: 'checkbox', group: 'HSL Secondary', default: false },
+      { key: 'hslTemperature', label: 'Temperature', type: 'number', group: 'HSL Secondary', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'hslTint', label: 'Tint', type: 'number', group: 'HSL Secondary', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'hslContrast', label: 'Contrast', type: 'number', group: 'HSL Secondary', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'hslSaturation', label: 'Saturation', type: 'number', group: 'HSL Secondary', unit: '%', min: 0, max: 200, default: 100 },
+      { key: 'vignetteAmount', label: 'Amount', type: 'number', group: 'Vignette', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'vignetteMidpoint', label: 'Midpoint', type: 'number', group: 'Vignette', unit: '%', min: 0, max: 100, default: 50 },
+      { key: 'vignetteRoundness', label: 'Roundness', type: 'number', group: 'Vignette', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'vignetteFeather', label: 'Feather', type: 'number', group: 'Vignette', unit: '%', min: 0, max: 100, default: 50 },
     ],
     css: () => '',
   },
@@ -2424,6 +2538,11 @@ export const EFFECT_DEFS: EffectDef[] = [
       // halo; softness feathers the matte edge without blurring colour.
       { key: 'choke', label: 'Choke (Shrink/Grow)', type: 'number', unit: 'px', min: -10, max: 10, default: 0 },
       { key: 'matteSoftness', label: 'Matte Softness', type: 'number', unit: 'px', min: 0, max: 25, default: 0 },
+      { key: 'view', label: 'View', type: 'enum', options: [{ value: 0, label: 'Final Result' }, { value: 1, label: 'Source' }, { value: 2, label: 'Screen Matte' }, { value: 3, label: 'Status' }, { value: 4, label: 'Intermediate Result' }], default: 0 },
+      { key: 'screenPreBlur', label: 'Screen Pre-blur', type: 'number', unit: 'px', min: 0, max: 20, precision: 1, default: 0 },
+      { key: 'clipRollback', label: 'Clip Rollback', type: 'number', group: 'Screen Matte', unit: 'px', min: 0, max: 50, precision: 0, default: 0 },
+      { key: 'insideMaskId', label: 'Inside Mask', type: 'maskPath', group: 'Inside Mask', default: '' },
+      { key: 'outsideMaskId', label: 'Outside Mask', type: 'maskPath', group: 'Outside Mask', default: '' },
     ],
     css: () => '',
   },
@@ -2559,6 +2678,23 @@ export const EFFECT_DEFS: EffectDef[] = [
       // Negative bloats, which is why the range is signed rather than two
       // controls that would have to be kept mutually exclusive.
       { key: 'pinch', label: 'Pinch', type: 'number', unit: '%', min: -100, max: 100, default: 0 },
+      { key: 'distortionPercentage', label: 'Distortion Percentage', type: 'number', unit: '%', min: 0, max: 200, default: 100 },
+      { key: 'fieldGrid', label: 'Distortion Mesh Size', type: 'data', default: [] },
+      { key: 'field', label: 'Distortion Mesh', type: 'data', unit: 'px', default: [] },
+    ],
+    css: () => '',
+  },
+  // AE parity 5.5 — Reshape: the picture inside the Source mask morphs to the Destination mask (a thin-plate spline
+  // over their outlines; the Boundary mask, when set, holds everything outside it).
+  {
+    type: 'reshape',
+    label: 'Reshape',
+    params: [
+      { key: 'sourceMaskId', label: 'Source Mask', type: 'maskPath', default: '' },
+      { key: 'destinationMaskId', label: 'Destination Mask', type: 'maskPath', default: '' },
+      { key: 'boundaryMaskId', label: 'Boundary Mask', type: 'maskPath', default: '' },
+      { key: 'percent', label: 'Percent', type: 'number', unit: '%', min: 0, max: 100, default: 100 },
+      { key: 'elasticity', label: 'Elasticity', type: 'enum', options: [{ value: 0, label: 'Stiff' }, { value: 1, label: 'Less Stiff' }, { value: 2, label: 'Below Normal' }, { value: 3, label: 'Normal' }, { value: 4, label: 'Above Normal' }, { value: 5, label: 'Loose' }, { value: 6, label: 'Liquid' }, { value: 7, label: 'Super Fluid' }], default: 3 },
     ],
     css: () => '',
   },
@@ -2612,6 +2748,9 @@ export const EFFECT_DEFS: EffectDef[] = [
       { key: 'v14Y', label: 'Vertex 3,4 Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
       { key: 'v15X', label: 'Vertex 4,4 X Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
       { key: 'v15Y', label: 'Vertex 4,4 Y Offset', type: 'number', unit: 'px', min: -10000, max: 10000, default: 0 },
+      { key: 'rows', label: 'Rows', type: 'number', min: 1, max: 31, precision: 0, default: 3 },
+      { key: 'columns', label: 'Columns', type: 'number', min: 1, max: 31, precision: 0, default: 3 },
+      { key: 'meshOffsets', label: 'Distortion Mesh', type: 'data', unit: 'px', default: [] },
     ],
     css: () => '',
   },
@@ -3355,6 +3494,46 @@ export const EFFECT_DEFS: EffectDef[] = [
     ],
     css: () => '',
   },
+  // AE parity 5.2 — spill, matte edge and grain cleanup (CPU pixel passes, keying_more_kernels.cpp).
+  {
+    type: 'advanced-spill-suppressor',
+    label: 'Advanced Spill Suppressor',
+    params: [
+      { key: 'method', label: 'Method', type: 'enum', options: [{ value: 0, label: 'Standard' }, { value: 1, label: 'Ultra' }], default: 0 },
+      { key: 'suppression', label: 'Suppression', type: 'number', unit: '%', min: 0, max: 100, default: 100 },
+      { key: 'keyColor', label: 'Key Color', type: 'color', group: 'Ultra Settings', default: '#00ff00' },
+      { key: 'tolerance', label: 'Tolerance', type: 'number', group: 'Ultra Settings', unit: '%', min: 0, max: 100, default: 50 },
+      { key: 'desaturate', label: 'Desaturate', type: 'number', group: 'Ultra Settings', unit: '%', min: 0, max: 100, default: 0 },
+      { key: 'spillRange', label: 'Spill Range', type: 'number', group: 'Ultra Settings', unit: '%', min: 0, max: 100, default: 50 },
+      { key: 'spillColorCorrection', label: 'Spill Color Correction', type: 'number', group: 'Ultra Settings', unit: '%', min: 0, max: 100, default: 0 },
+      { key: 'lumaCorrection', label: 'Luma Correction', type: 'number', group: 'Ultra Settings', unit: '%', min: 0, max: 100, default: 0 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'key-cleaner',
+    label: 'Key Cleaner',
+    params: [
+      { key: 'edgeRadius', label: 'Additional Edge Radius', type: 'number', unit: 'px', min: 0, max: 50, precision: 0, default: 4 },
+      { key: 'reduceChatter', label: 'Reduce Chatter', type: 'checkbox', default: false },
+      { key: 'alphaContrast', label: 'Alpha Contrast', type: 'number', unit: '%', min: 0, max: 200, default: 100 },
+      { key: 'strength', label: 'Strength', type: 'number', unit: '%', min: 0, max: 100, default: 100 },
+    ],
+    css: () => '',
+  },
+  {
+    type: 'remove-grain',
+    label: 'Remove Grain',
+    params: [
+      { key: 'viewingMode', label: 'Viewing Mode', type: 'enum', options: [{ value: 0, label: 'Final Output' }, { value: 1, label: 'Noise Samples' }], default: 0 },
+      { key: 'noiseReduction', label: 'Noise Reduction', type: 'number', unit: '%', min: 0, max: 100, default: 50 },
+      { key: 'radius', label: 'Reduction Radius', type: 'number', unit: 'px', min: 1, max: 8, precision: 0, default: 2 },
+      { key: 'passes', label: 'Passes', type: 'number', min: 1, max: 4, precision: 0, default: 1 },
+      { key: 'detail', label: 'Fine Detail', type: 'number', unit: '%', min: 0, max: 100, default: 50 },
+      { key: 'chroma', label: 'Chroma Suppression', type: 'number', unit: '%', min: 0, max: 100, default: 60 },
+    ],
+    css: () => '',
+  },
   {
     type: 'matte-choker',
     label: 'Matte Choker',
@@ -3364,6 +3543,19 @@ export const EFFECT_DEFS: EffectDef[] = [
       { key: 'softness', label: 'Gray Level Softness', type: 'number', unit: 'px', min: 0, max: 50, precision: 0, default: 2 },
       { key: 'iterations', label: 'Iterations', type: 'number', min: 1, max: 5, precision: 0, default: 1 },
     ],
+    css: () => '',
+  },
+
+  {
+    type: 'refine-soft-matte',
+    label: 'Refine Soft Matte',
+    params: refineMatteParams(10, 4, 0),
+    css: () => '',
+  },
+  {
+    type: 'refine-hard-matte',
+    label: 'Refine Hard Matte',
+    params: refineMatteParams(3, 1, 50),
     css: () => '',
   },
 

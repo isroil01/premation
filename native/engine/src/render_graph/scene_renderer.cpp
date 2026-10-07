@@ -283,7 +283,12 @@ bool SceneRenderer::render_impl(const api::RenderFrameFile& file, const wgpu::Te
                                                                                     : wgpu::TextureFormat::RGBA8Unorm;
   for (const auto& [name, desc] : graph_->active_targets(vp.pixelWidth, vp.pixelHeight)) {
     const bool wantsFloat = desc.format == "rgba16float" || desc.format == "rgba32float";
-    const wgpu::TextureFormat fmt = wantsFloat ? interFormat : wgpu::TextureFormat::RGBA8Unorm;
+    // AE parity 5.3: data targets (kDataTargetFormat) hold mattes, guided-filter
+    // moments and YCbCr — float at any project bit depth; 32-bit where the device
+    // filters and blends it.
+    const bool data = desc.format == kDataTargetFormat;
+    const wgpu::TextureFormat dataFormat = float32_ ? wgpu::TextureFormat::RGBA32Float : wgpu::TextureFormat::RGBA16Float;
+    const wgpu::TextureFormat fmt = data ? dataFormat : wantsFloat ? interFormat : wgpu::TextureFormat::RGBA8Unorm;
     // RenderGraph.resolveTargets: rgba32float targets are never multisampled.
     const std::uint32_t samples = fmt == wgpu::TextureFormat::RGBA32Float ? 1 : desc.samples;
     RenderTarget& t = dev_->target(name, desc.width, desc.height, fmt, samples, desc.depth);

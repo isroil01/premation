@@ -516,7 +516,8 @@ export const addEffectDef: AiToolDef = {
           'equalize', 'auto-levels', 'auto-contrast', 'auto-color', 'change-color',
           'change-to-color', 'leave-color', 'toner',
           // Keying & Channel
-          'color-key', 'color-range', 'extract', 'spill-suppressor', 'matte-choker',
+          'color-key', 'color-range', 'extract', 'spill-suppressor', 'matte-choker', 'refine-soft-matte', 'refine-hard-matte',
+          'advanced-spill-suppressor', 'key-cleaner', 'remove-grain', 'reshape',
           'alpha-levels', 'solid-composite', 'channel-combiner', 'remove-color-matting',
           // Transition
           'iris-wipe', 'light-wipe', 'line-sweep', 'grid-wipe',

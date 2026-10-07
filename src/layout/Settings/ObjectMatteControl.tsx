@@ -1,11 +1,10 @@
 /**
- * Object Matte — install the neural segmentation model, or don't.
+ * Object Matte — install a different segmentation model, or don't.
  *
- * The Roto tool works without it: clicks fall back to GrabCut, which produces a
- * real matte. What a model adds is the one-click subject selection Roto Brush 3
- * and SAM are known for. So this control's job is to make that upgrade
- * available and completely optional, and to be honest about what pressing the
- * button does.
+ * The app bundles a SAM-class model and the engine uses it with nothing
+ * installed. This control installs another pair (a bigger export, a
+ * fine-tune) into this computer's app data, where the engine picks it up on
+ * the next click; Remove goes back to the bundled one.
  *
  * ── Why the URLs are shown, and editable ───────────────────────────────
  * Pressing Install makes an HTTPS request to a third-party host from an
@@ -16,8 +15,7 @@
  * one: SAM-class checkpoints ship as an encoder/decoder pair (samPipeline.ts),
  * and a single-file URL cannot produce a working segmenter.
  *
- * After one install the model is cached locally and loaded at boot with no
- * network at all.
+ * After one install the model stays on this computer; nothing is fetched again.
  */
 
 import { useEffect, useState } from 'react';
@@ -25,7 +23,6 @@ import { Button } from '@components/Button';
 import { Input } from '@components/Input';
 import { SUGGESTED_MODEL } from '@core/tracking/samModelInstall';
 import { useSamModelStore } from '@stores/samModelStore';
-import { registerBundledSamAtBoot } from '@core/tracking/samBundled';
 import { installObjectMatteJob } from './objectMatteJob';
 import styles from './ObjectMatteControl.module.css';
 
@@ -58,32 +55,14 @@ export function ObjectMatteControl(): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  if (status.kind === 'bundled') {
-    return (
-      <div className={styles.root}>
-        <div className={styles.readyRow}>
-          <span className={styles.ready}>Bundled with the app · {megabytes(status.bytes)}</span>
-        </div>
-        {/* No Remove button: there is nothing on this device to reclaim — the
-            model ships inside the app. Installing a custom model below still
-            overrides it (samModelInstall.ts). */}
-        <div className={styles.hint}>
-          Neural one-click selection is ready — nothing to download. Clicks in the
-          Roto tool use it automatically, with the classical matte as fallback.
-        </div>
-      </div>
-    );
-  }
-
   if (status.kind === 'ready') {
     return (
       <div className={styles.root}>
         <div className={styles.readyRow}>
           <span className={styles.ready}>Installed · {megabytes(status.bytes)}</span>
           {/* Removing the custom model falls back to the bundled one, not to
-              nothing — re-registered immediately so the very next Roto click
-              behaves the way the panel now says it will. */}
-          <Button variant="secondary" size="sm" onClick={() => { void remove().then(() => registerBundledSamAtBoot()); }}>
+              nothing: the engine checks the folder on every click. */}
+          <Button variant="secondary" size="sm" onClick={() => { void remove(); }}>
             Remove
           </Button>
         </div>
@@ -145,10 +124,10 @@ export function ObjectMatteControl(): JSX.Element {
       </div>
       {status.kind === 'failed' ? <div className={styles.error}>{status.message}</div> : null}
       <div className={styles.hint}>
-        Optional. Downloads an encoder/decoder pair — about {megabytes(SUGGESTED_MODEL.approxBytes)} from
-        the hosts above, once — and keeps it on this device. Without it the Roto
-        tool still works — this build bundles a neural model, and clicks fall
-        back to the classical matte only when neither is available.
+        Optional. The app already bundles a model, and the Roto tool uses it with
+        nothing installed. Install downloads another encoder/decoder pair — about
+        {' '}{megabytes(SUGGESTED_MODEL.approxBytes)} for the suggested one, from the hosts above, once — and
+        keeps it on this computer, where the engine uses it instead.
       </div>
     </div>
   );

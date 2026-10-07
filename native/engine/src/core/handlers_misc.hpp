@@ -6,6 +6,9 @@
 // command with no `handle` overload answers `unsupported`.
 #pragma once
 
+#include <optional>
+#include <string_view>
+
 #include "handlers_common.hpp"
 
 namespace premation::doc {
@@ -23,5 +26,14 @@ ResultOf<api::SetPluginData> handle(const api::SetPluginData& c, HCtx& x);
 ResultOf<api::SetEssentialProp> handle(const api::SetEssentialProp& c, HCtx& x);
 ResultOf<api::SetContentAwareFill> handle(const api::SetContentAwareFill& c, HCtx& x);
 ResultOf<api::SetCaptions> handle(const api::SetCaptions& c, HCtx& x);
+ResultOf<api::SetLayerTrackers> handle(const api::SetLayerTrackers& c, HCtx& x);
+ResultOf<api::SetCameraSolve> handle(const api::SetCameraSolve& c, HCtx& x);
+ResultOf<api::SetLayerMatte> handle(const api::SetLayerMatte& c, HCtx& x);
+
+/// The layer's stored camera solve (`fx.cameraSolve`, AE parity 3.5), frame times in composition time.
+[[nodiscard]] std::optional<api::CameraSolveData> camera_solve_of(const Document& d, const EditorView& view, std::string_view layer);
+
+/// The layer's saved trackers (`fx.trackers`), sample times mapped to composition time.
+[[nodiscard]] api::LayerTrackers layer_trackers(const Document& d, const EditorView& view, std::string_view layer);
 
 }  // namespace premation::doc

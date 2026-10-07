@@ -208,9 +208,11 @@ TEST_CASE("setOverlayGeometry scene3d: cameras, lights and 3D layers; groups kee
   const auto& d = f.layers.at(deep);
   REQUIRE(d.scene.has_value());
   CHECK(d.scene->role == api::Scene3DRole::layer);
-  REQUIRE(d.scene->local.size() == 9);
+  REQUIRE(d.scene->local.size() == 12);
   CHECK(d.scene->local[6] == Approx(1));  // scaleX
   CHECK(d.scene->local[8] == Approx(1));  // scaleZ
+  CHECK(d.scene->local[9] == Approx(0));  // orientationX..Z
+  CHECK(d.scene->local[11] == Approx(0));
   CHECK(d.scene->extrusion == Approx(0));
   CHECK(d.matrix.size() == 16);
 }

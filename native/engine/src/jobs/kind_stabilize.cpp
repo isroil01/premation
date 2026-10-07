@@ -21,6 +21,12 @@
 // parent-space deltas, rotation and scale composed onto the layer's own
 // values), through track_apply.hpp's addKeyframes / deleteKeyframes splice.
 //
+// Framing (AE parity 3.6, the Warp Stabilizer's Framing): `stabilizeOnly`
+// (default) leaves the moving borders; `stabilizeCrop` zooms every frame by
+// the one factor the worst frame needs; `cropAutoScale` zooms each frame by
+// what it needs, eased; both capped at `maxScale` (%, default 150) and written
+// on top of the scale keys (st::framing_scales).
+//
 // Variants (smoothStabilize.ts `variant`):
 //   similarity       the above (default).
 //   subspace         the Warp Stabilizer's mesh path: per adjacent pair a 4×4
@@ -74,6 +80,8 @@ struct StabJob {
   Method method = Method::positionRotationScale;
   Variant variant = Variant::similarity;
   std::uint32_t maxEdge = kAnalysisEdge;
+  st::Framing framing = st::Framing::stabilizeOnly;
+  double maxScale = 1.5;
 };
 
 /// The mesh variants' path: one cell grid per comp frame, in flow-sample px.
@@ -129,6 +137,14 @@ class StabilizeResult final : public JobResult {
                      job_.fl.height > 0 ? static_cast<double>(job_.fl.height) : sh_};
     const bool rot = job_.method != Method::position;
     const bool scale = job_.method == Method::positionRotationScale;
+    // Framing: the zoom that hides the moving borders (AE parity 3.6),
+    // measured on the correction as it is applied.
+    std::vector<st::Sim> applied;
+    applied.reserve(corr_.size());
+    for (const st::Sim& c : corr_) applied.push_back(st::applied_correction(c, cx, cy, rot, scale));
+    const std::vector<double> zoom =
+        st::framing_scales(applied, sw_, sh_, job_.framing, job_.maxScale, std::max(1.0, job_.smoothnessSec * job_.fps));
+    const bool framed = job_.framing != st::Framing::stabilizeOnly;
     ta::Buckets bk({"x", "y", "rotation", "scaleX", "scaleY"});
     std::size_t n = 0;
     double prevRotDelta = 0;
@@ -156,9 +172,10 @@ class StabilizeResult final : public JobResult {
       bk.add("x", compTime, v.sample(video, "x", t).value_or(g->local.x) + dx);
       bk.add("y", compTime, v.sample(video, "y", t).value_or(g->local.y) + dy);
       if (rot) bk.add("rotation", compTime, v.sample(video, "rotation", t).value_or(g->local.rotation) + rotDelta);
-      if (scale) {
-        bk.add("scaleX", compTime, v.sample(video, "scaleX", t).value_or(g->local.scale_x) * k);
-        bk.add("scaleY", compTime, v.sample(video, "scaleY", t).value_or(g->local.scale_y) * k);
+      if (scale || framed) {
+        const double z = (scale ? k : 1.0) * zoom[i];
+        bk.add("scaleX", compTime, v.sample(video, "scaleX", t).value_or(g->local.scale_x) * z);
+        bk.add("scaleY", compTime, v.sample(video, "scaleY", t).value_or(g->local.scale_y) * z);
       }
       ++n;
     }
@@ -331,6 +348,18 @@ PreparedJob prepare_stabilize(const api::StabilizeJob& spec, const JobDocContext
   job.frames = tf::comp_frames_of(spec.range, job.fps);
   if (job.frames.last <= job.frames.first) fail(ErrorCode::out_of_range, "the range covers one frame or less — nothing to stabilize");
   if (spec.analysis_max_edge) job.maxEdge = *spec.analysis_max_edge;
+  switch (spec.framing.value_or(api::StabilizeFraming::stabilize_only)) {
+    case api::StabilizeFraming::stabilize_only: job.framing = st::Framing::stabilizeOnly; break;
+    case api::StabilizeFraming::stabilize_crop: job.framing = st::Framing::stabilizeCrop; break;
+    case api::StabilizeFraming::crop_auto_scale: job.framing = st::Framing::cropAutoScale; break;
+  }
+  if (spec.max_scale) {
+    if (!std::isfinite(*spec.max_scale) || *spec.max_scale < 100) fail(ErrorCode::out_of_range, "maxScale must be ≥ 100 %");
+    job.maxScale = *spec.max_scale / 100;
+  }
+  if (job.framing != st::Framing::stabilizeOnly && job.variant != Variant::similarity) {
+    fail(ErrorCode::invalid_argument, "framing applies to the similarity variant (the mesh variants keep the frame)");
+  }
   return PreparedJob{"stabilize", [job = std::move(job)](JobControl& control) { return run_stabilize(job, control); }};
 }
 

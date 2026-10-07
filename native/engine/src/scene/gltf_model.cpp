@@ -6,6 +6,9 @@
 #include <cctype>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <limits>
 #include <mutex>
 #include <stdexcept>
@@ -14,6 +17,8 @@
 #include "json.hpp"
 #include "native_effects.hpp"
 #include "numconv.hpp"
+#include "scene.hpp"
+#include "media_paths.hpp"
 
 namespace premation::scene::gltf {
 namespace {
@@ -352,7 +357,14 @@ Parsed parse_json(const Json& g, const Buffer* glbBin) {
   std::vector<std::string> unsupported;
   for (const Json& e : g.at("extensionsRequired").arr()) {
     const std::string s = e.is_string() ? e.str() : std::string();
-    if (s != "KHR_texture_transform" && s != "KHR_materials_emissive_strength") unsupported.push_back(s);
+    // AE parity 4.7: quantized attributes read through the accessor reader's
+    // normalized-integer path; KHR_materials_* shape materials only.
+    static constexpr std::array<std::string_view, 9> kRead = {"KHR_texture_transform", "KHR_materials_emissive_strength",
+                                                              "KHR_mesh_quantization", "KHR_materials_unlit",
+                                                              "KHR_materials_transmission", "KHR_materials_ior",
+                                                              "KHR_materials_specular", "KHR_materials_clearcoat",
+                                                              "KHR_materials_volume"};
+    if (std::ranges::find(kRead, s) == kRead.end()) unsupported.push_back(s);
   }
   if (!unsupported.empty()) {
     std::vector<std::string> kinds;
@@ -430,6 +442,13 @@ Parsed parse_json(const Json& g, const Buffer* glbBin) {
     if (present(ef)) mt.emissiveFactor = {fe(ef, 0, 0), fe(ef, 1, 0), fe(ef, 2, 0)};
     const Json& es = m.at("extensions").at("KHR_materials_emissive_strength").at("emissiveStrength");
     mt.emissiveStrength = es.is_number() ? es.num() : 1;
+    if (m.at("alphaMode").is_string()) mt.alphaMode = m.at("alphaMode").str();
+    if (m.at("alphaCutoff").is_number()) mt.alphaCutoff = m.at("alphaCutoff").num();
+    mt.unlit = m.at("extensions").at("KHR_materials_unlit").is_object();
+    const Json& tf = m.at("extensions").at("KHR_materials_transmission").at("transmissionFactor");
+    if (tf.is_number()) mt.transmission = tf.num();
+    const Json& ior = m.at("extensions").at("KHR_materials_ior").at("ior");
+    if (ior.is_number()) mt.ior = ior.num();
     out.materials.push_back(std::move(mt));
   }
 
@@ -453,6 +472,23 @@ Parsed parse_json(const Json& g, const Buffer* glbBin) {
       }
       pr.normals = !attrs.at("NORMAL").is_undefined() ? rd.accessor(attrs.at("NORMAL")) : generate_normals(pr.positions, pr.indices);
       if (present(p.at("material"))) pr.material = num_or(p.at("material"), kNaN);
+      if (!attrs.at("COLOR_0").is_undefined()) {
+        // VEC3 or VEC4 (any component type, normalized): rgba per vertex.
+        std::vector<float> c = rd.accessor(attrs.at("COLOR_0"));
+        const std::size_t n = pr.positions.size() / 3;
+        if (n > 0 && c.size() == n * 3) {
+          std::vector<float> rgba(n * 4);
+          for (std::size_t i = 0; i < n; ++i) {
+            rgba[i * 4] = c[i * 3];
+            rgba[i * 4 + 1] = c[i * 3 + 1];
+            rgba[i * 4 + 2] = c[i * 3 + 2];
+            rgba[i * 4 + 3] = 1.0F;
+          }
+          pr.colors = std::move(rgba);
+        } else if (n > 0 && c.size() == n * 4) {
+          pr.colors = std::move(c);
+        }
+      }
       if (!attrs.at("JOINTS_0").is_undefined() && !attrs.at("WEIGHTS_0").is_undefined()) {
         pr.joints = rd.accessor(attrs.at("JOINTS_0"));
         pr.weights = rd.accessor(attrs.at("WEIGHTS_0"));
@@ -672,8 +708,26 @@ std::optional<Entry> primitive_to_entry(const Parsed& parsed, std::string_view m
       }
     }
   }
-  const std::array<double, 4> f = material != nullptr ? material->baseColorFactor : std::array<double, 4>{1, 1, 1, 1};
+  std::array<double, 4> f = material != nullptr ? material->baseColorFactor : std::array<double, 4>{1, 1, 1, 1};
+  // AE parity 4.7: the alpha mode. OPAQUE ignores alpha (the factor's and the
+  // texture's), MASK keeps what passes the cutoff, BLEND keeps it as it is.
+  const std::string mode = material != nullptr ? material->alphaMode : "OPAQUE";
+  if (mode == "MASK") {
+    // factor.a × texture.a is what passes the cutoff: with a texture the
+    // picture is thresholded at cutoff / factor.a (and the fill keeps 1);
+    // without one the factor alone decides.
+    const double cutoff = material->alphaCutoff;
+    const bool textured = material->baseColorTexture.has_value();
+    e.alphaMode = "mask:" + motion::js::number_to_string(textured && f[3] > 0 ? cutoff / f[3] : (textured ? 2.0 : cutoff));
+    f[3] = textured ? 1 : (f[3] >= cutoff ? 1 : 0);
+  } else if (mode == "BLEND") {
+    e.alphaMode = "blend";
+  } else {
+    e.alphaMode = "opaque";
+    f[3] = 1;
+  }
   e.fill = "#" + hex2(f[0]) + hex2(f[1]) + hex2(f[2]) + hex2(f[3]);
+  if (prim.colors && prim.colors->size() == vcount * 4) e.colors = *prim.colors;
   if (material != nullptr && material->baseColorTexture) e.textureImage = material->baseColorTexture->image;
   e.doubleSided = material != nullptr && material->doubleSided;
   e.metallic = material != nullptr ? material->metallicFactor : 0;
@@ -751,6 +805,29 @@ std::shared_ptr<const Model> model_for(const doc::Document& d, std::string_view 
       if (c.type != "Model") continue;
       const Json& p = c.props;
       if (!p.at("modelKey").is_string() || p.at("modelKey").str() != modelKey) continue;
+      // AE parity 4.7: the model file as a project asset (`modelAsset`: an item id), read from disk.
+      if (p.at("modelAsset").is_string() && !p.at("modelAsset").str().empty()) {
+        const Json* rec = doc::find_asset(d, p.at("modelAsset").str());
+        if (rec == nullptr) {
+          why = "the model's project item '" + p.at("modelAsset").str() + "' is not in the document";
+          return nullptr;
+        }
+        std::string file;
+        for (const char* k : {"src", "path"}) {
+          if (rec->at(k).is_string() && !rec->at(k).str().empty()) {
+            file = file_url_path(rec->at(k).str());
+            if (std::filesystem::path(std::u8string(file.begin(), file.end())).is_absolute()) break;
+          }
+        }
+        const std::filesystem::path fp(std::u8string(file.begin(), file.end()));
+        std::ifstream in(fp, std::ios::binary);
+        if (file.empty() || !in) {
+          why = "the model's file '" + file + "' cannot be read (relink the project item)";
+          return nullptr;
+        }
+        const std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        return register_model(modelKey, bytes);
+      }
       if (!p.at("glbData").is_string() || !p.at("glbData").str().starts_with("data:")) continue;
       const std::string& url = p.at("glbData").str();
       const auto comma = url.find(',');
@@ -766,7 +843,7 @@ std::shared_ptr<const Model> model_for(const doc::Document& d, std::string_view 
       return register_model(modelKey, *bytes);
     }
   }
-  why = "the model's file is not in the document (no Model component carries its glbData)";
+  why = "the model's file is not in the document (no Model component carries its glbData or modelAsset)";
   return nullptr;
 }
 
@@ -780,12 +857,30 @@ std::string image_src(std::string_view modelKey, std::size_t image) {
   return "gltf:" + std::string(modelKey) + "#" + std::to_string(image);
 }
 
+std::string image_src(std::string_view modelKey, std::size_t image, std::string_view alphaMode) {
+  std::string s = image_src(modelKey, image);
+  if (alphaMode == "opaque") s += "@opaque";
+  else if (alphaMode.starts_with("mask:")) s += "@" + std::string(alphaMode);
+  return s;
+}
+
+std::string image_src_alpha(std::string_view src) {
+  if (!src.starts_with("gltf:")) return {};
+  const auto at = src.rfind('@');
+  const auto hash = src.rfind('#');
+  if (at == std::string_view::npos || hash == std::string_view::npos || at < hash) return {};
+  return std::string(src.substr(at + 1));
+}
+
 std::optional<std::pair<std::string, std::size_t>> parse_image_src(std::string_view src) {
   if (!src.starts_with("gltf:")) return std::nullopt;
   const auto hash = src.rfind('#');
   if (hash == std::string_view::npos || hash < 5) return std::nullopt;
   std::size_t idx = 0;
-  for (const char c : src.substr(hash + 1)) {
+  std::string_view digits = src.substr(hash + 1);
+  if (const auto at = digits.find('@'); at != std::string_view::npos) digits = digits.substr(0, at);  // the alpha-mode suffix
+  if (digits.empty()) return std::nullopt;
+  for (const char c : digits) {
     if (c < '0' || c > '9') return std::nullopt;
     idx = idx * 10 + static_cast<std::size_t>(c - '0');
   }

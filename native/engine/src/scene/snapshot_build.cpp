@@ -317,7 +317,7 @@ class Walk final : public Scene3DHost {
   /// `matrixAt` (3D layers): the projected affine per sample (threed_port `matrix_at`).
   /// `quadAt`: a 3D comp card's perspective quad per sample (MotionSample.quad).
   void motion_samples(RLayer& l, const doc::Node& n, const Base& base, const std::string& id,
-                      const std::function<std::array<double, 6>(double, double)>& matrixAt = {},
+                      const std::function<Scene3D::MotionPose(double, double)>& matrixAt = {},
                       const std::function<std::optional<std::array<double, 8>>(double, double)>& quadAt = {});
   void text_fields(RLayer& l, const doc::Node& n, const Base& base, const Values& a);
   void attach_precomps(std::vector<RLayer>& list);
@@ -745,7 +745,7 @@ RLayer Walk::precomp_container(const doc::Node& group, std::optional<NestedComp>
             l, group, gb, group.id,
             [&](double ti, double tc) {
               const auto& k = cardOf(ti, tc);
-              return k ? k->matrix : c.matrix;
+              return Scene3D::MotionPose{k ? k->matrix : c.matrix, {}};  // a card: no world matrix (flat quad)
             },
             [&](double ti, double tc) -> std::optional<std::array<double, 8>> {
               const auto& k = cardOf(ti, tc);
@@ -784,7 +784,7 @@ void Walk::attach_precomps(std::vector<RLayer>& list) {
 }
 
 void Walk::motion_samples(RLayer& l, const doc::Node& n, const Base& base, const std::string& id,
-                          const std::function<std::array<double, 6>(double, double)>& matrixAt,
+                          const std::function<Scene3D::MotionPose(double, double)>& matrixAt,
                           const std::function<std::optional<std::array<double, 8>>(double, double)>& quadAt) {
   if (!mb_) return;
   // Force Motion Blur (forceMotionBlur.ts readForceMotionBlur) overrides the two opt-ins.
@@ -821,8 +821,8 @@ void Walk::motion_samples(RLayer& l, const doc::Node& n, const Base& base, const
     // 3D: PROJECTED travel at the box corners (motionBlur.ts affineTravelPx).
     const double ta = probe.front();
     const double tb = probe.back();
-    const std::array<double, 6> ma = matrixAt(remap(id, ta, true), ta);
-    const std::array<double, 6> mb = matrixAt(remap(id, tb, true), tb);
+    const std::array<double, 6> ma = matrixAt(remap(id, ta, true), ta).matrix;
+    const std::array<double, 6> mb = matrixAt(remap(id, tb, true), tb).matrix;
     const double hw = std::max(0.0, base.width.value_or(0)) / 2;
     const double hh = std::max(0.0, base.height.value_or(0)) / 2;
     const std::array<std::array<double, 2>, 5> corners = {{{0, 0}, {-hw, -hh}, {hw, -hh}, {hw, hh}, {-hw, hh}}};
@@ -873,7 +873,11 @@ void Walk::motion_samples(RLayer& l, const doc::Node& n, const Base& base, const
     s.scaleX = sc ? *sc : sample("scaleX", ti).value_or(base.scaleX);
     s.scaleY = sc ? *sc : sample("scaleY", ti).value_or(base.scaleY);
     s.opacity = op ? *op / 100 : base.opacity;
-    if (matrixAt) s.matrix = matrixAt(ti, tc);
+    if (matrixAt) {
+      const Scene3D::MotionPose pose = matrixAt(ti, tc);
+      s.matrix = pose.matrix;
+      if (pose.world[15] != 0) s.world3d = pose.world;  // all zeros = no world matrix
+    }
     if (quadAt) s.quad = quadAt(ti, tc);
     out.push_back(s);
   }
@@ -1517,6 +1521,22 @@ void Walk::build_node(const doc::Node& n) {
     }
     if (best->at("dataUrl").is_string()) l.contentAwareFillSrc = best->at("dataUrl").str();
   }
+  // A per-frame soft matte (AE parity 3.2, setLayerMatte): each frame is the
+  // layer's cut-out picture, so the nearest one stands in for the footage the
+  // same way — and over a fill, since it was cut from the footage itself.
+  if (fx.at("alphaMatte").is_object() && fx.at("alphaMatte").at("frames").is_array() && !fx.at("alphaMatte").at("frames").arr().empty()) {
+    const Json::Array& frames = fx.at("alphaMatte").at("frames").arr();
+    const Json* best = &frames.front();
+    double bestD = std::abs(best->at("t").num() - layerTimeNow);
+    for (const Json& fr : frames) {
+      const double dd = std::abs(fr.at("t").num() - layerTimeNow);
+      if (dd < bestD) {
+        best = &fr;
+        bestD = dd;
+      }
+    }
+    if (best->at("src").is_string()) l.contentAwareFillSrc = best->at("src").str();
+  }
   l.sourceTime = retimed_source_at(n.id, t_);  // its own Speed % / Time Remap (retime_port.cpp)
   if (layerKind == LayerKind::video) {
     // Frame blending: the source frames bracketing the (retimed) source time, on
@@ -1653,8 +1673,17 @@ void Walk::build_node(const doc::Node& n) {
   {
     const bool rounded = resolvedCornerRadius > 0 || has_independent_corner_radii(radii);
     if (rounded) l.cornerRadii = radii;
-    const double csx = std::abs(sx);
-    const double csy = std::abs(sy);
+    // A 3D layer's sx / sy are its PROJECTED size (perspective included), so
+    // dividing the radius by them made it shrink near the camera and grow far
+    // from it. The layer's own world scale (the world matrix's X / Y axes,
+    // column-major, no projection) is what the radius is authored against.
+    double csx = std::abs(sx);
+    double csy = std::abs(sy);
+    if (is3d && l.world3d) {
+      const auto& w3 = *l.world3d;
+      csx = std::sqrt(w3[0] * w3[0] + w3[1] * w3[1] + w3[2] * w3[2]);
+      csy = std::sqrt(w3[4] * w3[4] + w3[5] * w3[5] + w3[6] * w3[6]);
+    }
     if (rounded && (csx != 1 || csy != 1) && csx > 1e-6 && csy > 1e-6) l.cornerRadiusScale = std::array<double, 2>{csx, csy};
   }
   if (layerKind == LayerKind::text) text_fields(l, n, base, a);

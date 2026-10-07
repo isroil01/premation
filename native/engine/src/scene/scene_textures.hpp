@@ -31,6 +31,7 @@
 #include <vector>
 
 #include "canvas.hpp"
+#include "media_paths.hpp"
 #include "frame_build.hpp"
 #include "pixel_motion.hpp"
 #include "raster_source.hpp"
@@ -56,10 +57,6 @@ struct RasterEntry {
   std::vector<std::string> unsupported;
   std::string error;
 };
-
-/// A document media `src` as a file path: `file://` and the desktop app's
-/// `local-file://` URLs decoded; anything else returned unchanged.
-[[nodiscard]] std::string file_url_path(std::string_view src);
 
 struct PrepareStats {
   std::uint32_t rasterHits = 0;

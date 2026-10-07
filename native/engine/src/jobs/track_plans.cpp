@@ -106,6 +106,93 @@ std::optional<Plan> Planner::stabilize(const Track& samples) const {
   return Plan{"Stabilize Motion", video, b.writes(), {}, {}, n};
 }
 
+std::optional<Plan> Planner::stabilize_transform(const std::vector<Track>& tracks, bool wantScale) const {
+  const std::string& video = s_.video;
+  if (v_.node(video) == nullptr || tracks.size() < 2) return std::nullopt;
+  const std::optional<Geometry> g = v_.geometry(video);
+  if (!g) return std::nullopt;
+  const std::optional<std::string> parent = v_.parent_of(video);
+  std::map<double, const CompSample*> refByTime;
+  for (const CompSample& s : tracks[1]) refByTime.insert_or_assign(s.compTime, &s);
+  Buckets bk({"x", "y", "rotation", "scaleX", "scaleY"});
+  std::optional<P2> a0;
+  std::optional<double> baseAngle;
+  std::optional<double> baseLength;
+  double prevAngleDelta = 0;
+  std::size_t n = 0;
+  for (const CompSample& a : tracks[0]) {
+    const auto it = refByTime.find(a.compTime);
+    if (it == refByTime.end()) continue;
+    const std::optional<P2> ca = to_comp(a.x, a.y, a.compTime);
+    const std::optional<P2> cb = to_comp(it->second->x, it->second->y, a.compTime);
+    if (!ca || !cb) continue;
+    const double vx = cb->x - ca->x;
+    const double vy = cb->y - ca->y;
+    const double len = hypot2(vx, vy);
+    if (len < 1e-6) continue;
+    const double angle = atan2_deg(vy, vx);
+    if (!a0) {
+      a0 = *ca;
+      baseAngle = angle;
+      baseLength = len;
+    }
+    const double dTheta = unwrap_deg(angle - *baseAngle, prevAngleDelta);
+    prevAngleDelta = dTheta;
+    const double s = wantScale ? len / *baseLength : 1.0;
+    const double t = v_.key_time(video, a.compTime);
+    // Where the layer's position sits in the comp now.
+    P2 pos{v_.sample(video, "x", t).value_or(g->local.x), v_.sample(video, "y", t).value_or(g->local.y)};
+    std::optional<doc::LayerSpace> ps;
+    if (parent) {
+      ps = v_.space(*parent, a.compTime);
+      if (!ps) continue;
+      pos = DocView::to_comp(*ps, pos);
+    }
+    // The similarity taking the feature pair at t back to frame 0: rotate by
+    // −dθ and scale by 1/s about the feature, then move it onto a0.
+    const double r = -dTheta * 3.14159265358979323846 / 180;
+    const double c = std::cos(r) / s;
+    const double sn = std::sin(r) / s;
+    const double dx = pos.x - ca->x;
+    const double dy = pos.y - ca->y;
+    P2 moved{a0->x + c * dx - sn * dy, a0->y + sn * dx + c * dy};
+    if (ps) moved = DocView::from_comp(*ps, moved);
+    bk.add("x", a.compTime, moved.x);
+    bk.add("y", a.compTime, moved.y);
+    bk.add("rotation", a.compTime, v_.sample(video, "rotation", t).value_or(g->local.rotation) - dTheta);
+    if (wantScale) {
+      bk.add("scaleX", a.compTime, v_.sample(video, "scaleX", t).value_or(g->local.scale_x) / s);
+      bk.add("scaleY", a.compTime, v_.sample(video, "scaleY", t).value_or(g->local.scale_y) / s);
+    }
+    ++n;
+  }
+  if (n == 0) return std::nullopt;
+  return Plan{wantScale ? "Stabilize Motion (rotation & scale)" : "Stabilize Motion (rotation)", video, bk.writes(), {}, {}, n};
+}
+
+std::optional<Plan> Planner::effect_point(const std::string& target, const std::string& effectId, const std::string& effectType,
+                                          const std::string& param, const Track& samples) const {
+  if (v_.node(target) == nullptr || samples.empty() || effectId.empty()) return std::nullopt;
+  const std::string kx = param + "X";
+  const std::string ky = param + "Y";
+  Buckets bk({kx, ky});
+  std::size_t n = 0;
+  for (const CompSample& s : samples) {
+    const std::optional<P2> cp = to_comp(s.x, s.y, s.compTime);
+    if (!cp) continue;
+    const std::optional<doc::LayerSpace> space = v_.space(target, s.compTime);
+    if (!space) continue;
+    // Effect points are layer px measured from the layer's centre (the
+    // catalog's default 0 is the centre), as Corner Pin's are from its corners.
+    const P2 l = DocView::from_comp(*space, *cp);
+    bk.add(kx, s.compTime, l.x);
+    bk.add(ky, s.compTime, l.y);
+    ++n;
+  }
+  if (n == 0) return std::nullopt;
+  return Plan{"Apply Motion Track to Effect Point", target, bk.writes(), effectType, effectId, n};
+}
+
 std::optional<Plan> Planner::transform(const std::string& target, const std::vector<Track>& tracks, bool wantScale) const {
   if (v_.node(target) == nullptr || tracks.size() != 2) return std::nullopt;
   const std::optional<Geometry> g = v_.geometry(target);

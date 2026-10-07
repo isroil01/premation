@@ -18,7 +18,8 @@ struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
 }
 
 fn unpackLinear(c : vec4<f32>) -> f32 {
-  return dot(c.rgb, vec3<f32>(1.0, 1.0 / 255.0, 1.0 / 65025.0));
+  // Float depth (AE parity 4.3): the prepass writes r + g / 4096 into rgba16float.
+  return c.r + c.g * (1.0 / 4096.0);
 }
 
 fn texUvOf(q : vec2<f32>) -> vec2<f32> { return obj.uvRect.xy + q * obj.uvRect.zw; }

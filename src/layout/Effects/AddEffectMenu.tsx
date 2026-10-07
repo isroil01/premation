@@ -16,7 +16,7 @@ import { SearchField } from '@components/SearchField';
 import { Icon } from '@components/Icon';
 import type { EffectDef, EffectType } from '@core/inspector/effectCatalog';
 import { addEffectEdit } from './effectEdits';
-import { EFFECT_CATEGORY } from './effectCategory';
+import { effectCategoryOf } from './effectCategory';
 import { useAllEffectDefs, useEffectFavorites } from './effectCatalog';
 import styles from './AddEffectMenu.module.css';
 
@@ -45,7 +45,7 @@ export function addEffectMenuGroups(
   if (favs.length > 0) groups.push({ label: 'Favourites', defs: favs });
   const byCategory = new Map<string, EffectDef[]>();
   for (const d of defs) {
-    const cat = EFFECT_CATEGORY[d.type];
+    const cat = effectCategoryOf(d);
     if (!cat) continue;
     const list = byCategory.get(cat);
     if (list) list.push(d);

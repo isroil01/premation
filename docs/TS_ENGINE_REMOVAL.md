@@ -253,9 +253,9 @@ own commit (builds and passes):
   `docs/PLUGINS.md`, `PLUGIN_SYSTEM_REFERENCE.md`, `PLUGIN_SYSTEM_FOR_AI.md`.
   The native SDK (`native/sdk`, `docs/PLUGIN_SDK.md`) stays. A project that
   used JS plugins still opens: its JS-plugin effects and plugin-kind layers are
-  dropped after open as ONE undoable entry with one notice
-  (`src/core/project/removedPluginContent.ts`; native SDK effects, loaded or
-  not, are kept). The legacy `plugins` / `pluginStorage` document blocks ride
+  kept in the document, pass through, and one notice names the missing plugins
+  (`src/core/project/missingPluginContent.ts`; AE parity step 1.2 replaced the
+  earlier drop-on-open, which lost data). The legacy `plugins` / `pluginStorage` document blocks ride
   through a save unchanged.
 
 Measured over the branch (1f904db4 → the plugin commits): about **51k

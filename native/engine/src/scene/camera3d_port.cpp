@@ -262,6 +262,7 @@ Material read_node_material(const doc::Node& n, const AnimatedLookup& animated) 
   m.transparencyRolloff = pct(p.at("transparencyRolloff"), 0);
   const Json& ior = p.at("ior");
   m.ior = ior.is_number() && std::isfinite(ior.num()) ? std::max(1.0, std::min(4.0, ior.num())) : 1.52;
+  m.reflectsLayers = p.at("reflectsLayers").is_bool() && p.at("reflectsLayers").b();
   return m;
 }
 

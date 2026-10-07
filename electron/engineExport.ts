@@ -123,6 +123,12 @@ export interface EngineExportDeps {
   ffmpegPath(): string;
   /** A fresh working directory for one job (created by the launcher). */
   workDirFor(jobId: string): string;
+  /**
+   * The native plugins the export renders with (AE parity 2.10): the same
+   * folder, disabled set and revocations as the editor's engine
+   * (ipc/nativePlugins.ts `exportPluginJob`). Absent: plugin effects refuse.
+   */
+  plugins?(): Promise<ExportPluginJob | null>;
   spawn?: typeof nodeSpawn;
   fs?: {
     mkdir(p: string): Promise<void>;
@@ -200,9 +206,21 @@ function videoEncoderOf(spec: EngineExportSpec): VideoEncoder {
   return 'libx264';
 }
 
+/** The plugin half of an export job (export_job.hpp JobSpec `plugins` / `pluginDisabled` / `pluginRevoked`). */
+export interface ExportPluginJob {
+  plugins: string[];
+  pluginDisabled: string[];
+  pluginRevoked?: string;
+}
+
 /** The job file the engine reads (export_job.hpp `parse_job`). */
-export function engineJobFile(spec: EngineExportSpec, workDir: string): Record<string, unknown> {
+export function engineJobFile(spec: EngineExportSpec, workDir: string, plugins?: ExportPluginJob | null): Record<string, unknown> {
   const job: Record<string, unknown> = { projectPath: spec.projectPath, workDir };
+  if (plugins && plugins.plugins.length > 0) {
+    job.plugins = plugins.plugins;
+    if (plugins.pluginDisabled.length > 0) job.pluginDisabled = plugins.pluginDisabled;
+    if (plugins.pluginRevoked) job.pluginRevoked = plugins.pluginRevoked;
+  }
   if (spec.comp) job.comp = spec.comp;
   for (const k of ['startFrame', 'endFrame', 'fps', 'width', 'height', 'scale'] as const) {
     if (typeof spec[k] === 'number') job[k] = spec[k];
@@ -332,7 +350,8 @@ export function startEngineExport(
     const workDir = deps.workDirFor(jobId);
     await fs.mkdir(workDir);
     const jobPath = path.join(workDir, 'job.json');
-    await fs.writeFile(jobPath, JSON.stringify(engineJobFile(spec, workDir)));
+    const pluginJob = deps.plugins ? await deps.plugins().catch(() => null) : null;
+    await fs.writeFile(jobPath, JSON.stringify(engineJobFile(spec, workDir, pluginJob)));
     if (cancelled) {
       finish({ kind: 'cancelled' });
       return;

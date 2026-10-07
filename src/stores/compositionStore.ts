@@ -13,7 +13,14 @@
  */
 
 import { useMemo } from 'react';
-import { useProjectStore, DEFAULT_GLOBAL_LIGHT, DEFAULT_SSAO, type CompositionSettings } from './projectStore';
+import {
+  useProjectStore,
+  DEFAULT_GLOBAL_LIGHT,
+  DEFAULT_SSAO,
+  resolveFog,
+  resolveGroundShadows,
+  type CompositionSettings,
+} from './projectStore';
 import { sortedStops, type FillPaint } from '@core/paint/fill';
 import { isEnvironmentPresetId, DEFAULT_ENVIRONMENT_PRESET } from '@core/scene/environmentLight';
 
@@ -41,7 +48,9 @@ export function compKeyFor(c: CompositionSettings): string {
   const ao = c.ssao
     ? `${c.ssao.enabled ? 1 : 0}/${c.ssao.radius}/${c.ssao.intensity}/${c.ssao.quality}`
     : '';
-  return `${c.width}x${c.height}:${c.fps}:${c.durationSeconds}:${c.background}:${c.transparent ? 1 : 0}:${c.startFrame ?? 0}:${paint}:${light}:${ao}`;
+  // Fog, ground shadows and the sky backdrop change pixels too (AE parity 4.3 / 4.4 / 4.8).
+  const world3d = `${c.fog ? JSON.stringify(c.fog) : ''}/${c.groundShadows ? JSON.stringify(c.groundShadows) : ''}/${c.showSkyBackdrop ? 1 : 0}/${c.groundLevel ?? 0}`;
+  return `${c.width}x${c.height}:${c.fps}:${c.durationSeconds}:${c.background}:${c.transparent ? 1 : 0}:${c.startFrame ?? 0}:${paint}:${light}:${ao}:${world3d}`;
 }
 
 export const DEFAULT_COMPOSITION: CompositionSettings = {
@@ -153,6 +162,9 @@ export function sanitize(patch: Partial<CompositionSettings>): Partial<Compositi
       quality: v.quality === 'full' ? 'full' : 'half',
     };
   }
+  // 3D ▸ Fog and Ground shadows (AE parity 4.8 / 4.3): whole objects, sanitized like SSAO.
+  if (patch.fog !== undefined) out.fog = resolveFog({ fog: patch.fog });
+  if (patch.groundShadows !== undefined) out.groundShadows = resolveGroundShadows({ groundShadows: patch.groundShadows });
   return out;
 }
 

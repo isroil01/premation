@@ -9,13 +9,13 @@ namespace premation::effects {
 
 namespace {
 
-constexpr std::array<std::string_view, 120> kPorted{
+constexpr std::array<std::string_view, 122> kPorted{
     "gaussian-blur",   "fast-box-blur",   "radial-blur",   "channel-blur",    "unsharp-mask",     "sharpen",
     "noise",           "add-grain",       "turbulent-noise", "median",        "minimax",          "simple-choker",
     "mosaic",          "find-edges",      "emboss",        "vibrance",        "bilateral-blur",   "smart-blur",
     "camera-lens-blur", "photo-filter",   "black-and-white", "tritone",       "threshold",        "selective-color",
     "shadow-highlight", "colorama",        "keylight",        "linear-color-key", "luma-key",     "shift-channels",
-    "color-key",       "color-range",     "extract",       "spill-suppressor", "matte-choker",     "bulge",
+    "color-key",       "color-range",     "extract",       "spill-suppressor", "matte-choker", "refine-soft-matte", "refine-hard-matte",     "bulge",
     "spherize",        "twirl",           "corner-pin",    "polar-coordinates", "mirror",          "offset",
     "optics-compensation", "mesh-warp",   "liquify",       "equalize",        "auto-levels",      "auto-contrast",
     "auto-color",      "change-color",    "change-to-color", "leave-color",   "toner",            "venetian-blinds",
@@ -149,6 +149,9 @@ bool run_kernel(std::string_view type, const KernelArgs& a, const KernelLists& l
     spill_suppressor(img, key(), a("amount", 50), b("preserveLuma", true), pool);
   } else if (type == "matte-choker") {
     matte_choker(img, a("spread", 0), a("choke", 0), a("softness", 0), a("iterations", 1), pool);
+  } else if (type == "refine-soft-matte" || type == "refine-hard-matte") {
+    refine_matte(img, a("edgeRadius", 0), a("smooth", 0), a("contrast", 0), a("shiftEdge", 0), a("feather", 0), a("decontaminate", 0),
+                 type == "refine-hard-matte", pool);
   } else if (type == "bulge") {
     bulge(img, a("centerX", img.w / 2.0), a("centerY", img.h / 2.0), a("radius", 50), a("height", 50), pool);
   } else if (type == "spherize") {

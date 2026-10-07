@@ -4,6 +4,8 @@
 
 #include <filesystem>
 #include <memory>
+#include <span>
+#include <string_view>
 #include <string>
 
 namespace premation::plugins {
@@ -31,7 +33,10 @@ class DynamicLibrary {
   bool pinned_ = false;
 };
 
-/// The binary name the manifest's `binary` object keys by: "windows" | "macos" | "linux".
+/// The generic `binary` key for this OS: "windows" | "macos" | "linux".
 [[nodiscard]] const char* platform_key() noexcept;
+/// Every `binary` key this machine can load, most specific first
+/// (docs/PLUGIN_STORE.md §1): e.g. macos-arm64, macos-universal, macos.
+[[nodiscard]] std::span<const std::string_view> platform_keys() noexcept;
 
 }  // namespace premation::plugins

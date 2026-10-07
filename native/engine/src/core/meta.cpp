@@ -59,7 +59,7 @@ PropertyMeta from_effect_param(std::string_view effectLabel, const EffectParamDe
   } else if (p.type == "layer") {
     m.type = "enum";
     m.defaultValue = Json::string("");
-  } else if (p.type == "curve") {
+  } else if (p.type == "curve" || p.type == "data") {
     m.type = "path";
     m.defaultValue = Json::null();
   }

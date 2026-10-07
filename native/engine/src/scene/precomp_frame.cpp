@@ -18,6 +18,7 @@ api::RenderPrecompFrame precomp_frame(const RLayer& l, const Mat3& placement, bo
     out.camera3d = std::move(cam);
     if (!own.lights3d.empty()) out.lights3d = own.lights3d;
     if (own.envMap) out.env_map = own.envMap;
+    if (own.fog) out.fog = own.fog;
   }
   if (card) {
     out.flat_width = l.width;

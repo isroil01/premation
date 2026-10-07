@@ -74,6 +74,13 @@ import { Ik3DSection, isIk3DTip } from './Ik3DSection';
 import { LightSection } from './LightSection';
 import { MaterialSection, MaterialPresetAction, hasMaterialSection } from './MaterialSection';
 import { MediaSection } from './MediaSection';
+import { mirrorMasksAt } from '@core/mirror/masks';
+import { MasksSection, hasMasksSection } from './MasksSection';
+import { CropSection, hasCropSection } from './CropSection';
+import { PaintSection, hasPaintSection } from './PaintSection';
+import { PuppetControls } from './PuppetControls';
+import { isRiggableLayer } from '@core/mirror/layerKinds';
+import { TrackMotionSection } from './TrackMotionSection';
 import { ModelSection } from './ModelSection';
 import { MotionToolsSection, hasMotionToolsSection } from './MotionToolsSection';
 import { ParticleSection } from './ParticleSection';
@@ -275,6 +282,20 @@ export const INSPECTOR_SECTIONS: readonly InspectorSectionDef[] = [
     Component: MediaSection,
   },
   {
+    // AE parity 3.8: Track Motion in Properties, as AE's Tracker is reached from
+    // the layer. The same section the Tracker panel shows; mounted only while
+    // open, because mounting arms the viewport's track overlay.
+    id: 'trackMotion',
+    title: 'Track Motion',
+    icon: 'crosshair',
+    category: 'layer',
+    defaultOpen: false,
+    keywords: 'tracker track stabilize warp stabilizer planar mocha camera solve face roto object matte content-aware fill',
+    appliesTo: (id) => kindOf(id) === 'image' || kindOf(id) === 'video',
+    Component: TrackMotionSection,
+    mountOnOpen: true,
+  },
+  {
     id: 'precomp',
     title: 'Pre-composition',
     icon: 'folder',
@@ -393,6 +414,50 @@ export const INSPECTOR_SECTIONS: readonly InspectorSectionDef[] = [
   // says "No effects" on every plain shape is exactly the clutter this panel
   // was redesigned to remove, while the header's + stays one click away.
   // Adding an effect anywhere forces it open (`revealEffectsInProperties`).
+  // AE parity 5.6: Crop (a rectangle mask named "Crop"), Paint and Puppet,
+  // surfaced in Properties instead of only in their own panels / tools.
+  {
+    id: 'crop',
+    title: 'Crop',
+    icon: 'mask-square',
+    category: 'style',
+    defaultOpen: false,
+    keywords: 'crop trim edges inset left top right bottom',
+    appliesTo: hasCropSection,
+    Component: CropSection,
+  },
+  {
+    id: 'paint',
+    title: 'Paint',
+    icon: 'brush',
+    category: 'style',
+    defaultOpen: true,
+    keywords: 'paint brush stroke clone eraser',
+    appliesTo: hasPaintSection,
+    Component: PaintSection,
+  },
+  {
+    id: 'puppet',
+    title: 'Puppet',
+    icon: 'puppet-pin',
+    category: 'layer',
+    defaultOpen: true,
+    keywords: 'puppet pins mesh deform rig starch overlap bend advanced',
+    appliesTo: (id) => isRiggableLayer(documentMirror().layer(id)) && !!documentMirror().tree(id)?.nodes.has('puppet'),
+    Component: PuppetControls,
+  },
+  // AE parity 5.4: the layer's masks (moved out of the Effects panel), above
+  // Effects as in AE's layer properties. Open when the layer has masks.
+  {
+    id: 'masks',
+    title: 'Masks',
+    icon: 'mask-square',
+    category: 'style',
+    defaultOpen: (id) => mirrorMasksAt(documentMirror(), id, 0).length > 0,
+    keywords: 'mask masks feather expansion mask path rectangle ellipse pen smart mask interpolation',
+    appliesTo: hasMasksSection,
+    Component: MasksSection,
+  },
   {
     id: 'effects',
     title: 'Effects',

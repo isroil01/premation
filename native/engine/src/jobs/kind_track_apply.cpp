@@ -42,6 +42,7 @@
 #include "job_inputs.hpp"
 #include "job_kinds.hpp"
 #include "model.hpp"
+#include "props.hpp"
 #include "scene.hpp"
 #include "track_apply.hpp"
 #include "camera_solve.hpp"
@@ -69,6 +70,13 @@ struct ApplyJob {
   std::vector<ta::Track> tracks;
   double sourceWidth = 0;
   double sourceHeight = 0;
+  /// follow onto an effect point (AE parity 3.6).
+  std::string effectId;
+  std::string effectType;
+  std::string param;
+  /// stabilize with two tracks (AE parity 3.6).
+  bool stabilizeRotation = false;
+  bool stabilizeScale = false;
 };
 
 ta::NullMode null_mode_of(TrackApplyMode m) {
@@ -297,13 +305,19 @@ class TrackApplyResult final : public JobResult {
           fail(ErrorCode::not_found, "no layer '" + job_.target + "' to apply the track to", {.layer = job_.target});
         }
         const bool camera = !job_.target.empty() && v.is_camera(job_.target);
-        if (job_.mode == TrackApplyMode::follow) send(planner.follow(job_.target, first, camera));
+        if (job_.mode == TrackApplyMode::follow) {
+          send(job_.effectId.empty() ? planner.follow(job_.target, first, camera)
+                                     : planner.effect_point(job_.target, job_.effectId, job_.effectType, job_.param, first));
+        }
         if (job_.mode == TrackApplyMode::transform) {
           send(camera ? planner.camera_track(job_.target, job_.tracks) : planner.transform(job_.target, job_.tracks, true));
         }
         if (job_.mode == TrackApplyMode::corner) send(planner.corner(job_.target, job_.tracks, {}));
         if (job_.mode == TrackApplyMode::mesh_warp) send(planner.mesh_warp(job_.target, job_.tracks));
-        if (job_.mode == TrackApplyMode::stabilize) send(planner.stabilize(first));
+        if (job_.mode == TrackApplyMode::stabilize) {
+          send(job_.stabilizeRotation || job_.stabilizeScale ? planner.stabilize_transform(job_.tracks, job_.stabilizeScale)
+                                                             : planner.stabilize(first));
+        }
         break;
       }
       case TrackApplyMode::create_null: make_null(a, src, job_.nullMode, first, job_.tracks); break;
@@ -411,6 +425,28 @@ PreparedJob prepare_track_apply(const api::TrackApplyJob& spec, const JobDocCont
     const std::optional<std::string> tc = ctx.doc.node(*spec.target) != nullptr ? doc::comp_of_layer(ctx.doc, *spec.target) : std::nullopt;
     if (!tc || *tc == *spec.target) fail(ErrorCode::not_found, "no layer '" + *spec.target + "' to apply the track to", {.layer = *spec.target});
     job.target = *spec.target;
+  }
+  if (spec.target_path && !spec.target_path->empty()) {
+    const std::string& path = *spec.target_path;
+    if (spec.mode != TrackApplyMode::follow || !path.starts_with("effects/") || std::count(path.begin(), path.end(), '/') != 2) {
+      fail(ErrorCode::invalid_argument, "targetPath is an effect point 'effects/<id>/<param>' for a follow apply", {.path = path});
+    }
+    const std::string rest = path.substr(8);
+    job.effectId = rest.substr(0, rest.find('/'));
+    job.param = rest.substr(rest.find('/') + 1);
+    const ta::DocView v(ctx.doc, *comp);
+    job.effectType = v.effect_type(job.target, job.effectId);
+    if (job.effectType.empty()) fail(ErrorCode::not_found, "no effect '" + job.effectId + "' on the target", {.layer = job.target, .path = path});
+    const doc::Catalog cat = doc::catalog_for(ctx.doc, job.target);
+    const std::string base = "effect." + job.effectId + "." + job.param;
+    if (cat.by_member(base + "X") == nullptr || cat.by_member(base + "Y") == nullptr) {
+      fail(ErrorCode::invalid_argument, "'" + job.param + "' is not a point of " + job.effectType, {.layer = job.target, .path = path});
+    }
+  }
+  job.stabilizeRotation = spec.stabilize_rotation.value_or(false);
+  job.stabilizeScale = spec.stabilize_scale.value_or(false);
+  if (spec.mode == TrackApplyMode::stabilize && (job.stabilizeRotation || job.stabilizeScale) && nTracks < 2) {
+    fail(ErrorCode::invalid_argument, "rotation / scale stabilize needs two tracks");
   }
   switch (spec.mode) {
     case TrackApplyMode::follow:

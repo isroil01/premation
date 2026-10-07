@@ -58,6 +58,13 @@ struct Scope3D {
   const std::vector<api::RenderLight3D>* lights3d = nullptr;
   const api::RenderEnvMap* env_map = nullptr;
   bool ssao = false;
+  /// AE parity 4.8: the scope's fog; 4.3: its shadow catcher.
+  const api::RenderFog* fog = nullptr;
+  const api::RenderShadowCatcher* shadowCatcher = nullptr;
+  /// Every renderable of the scope (the comp's, or a sealed precomp's
+  /// children): shadow casters are drawn from all of them, across runs (AE
+  /// parity 4.3), not only from the run being rendered.
+  const std::vector<api::Renderable>* all = nullptr;
   static Scope3D of(const api::RenderFrameScene& s);
 };
 

@@ -80,8 +80,8 @@ const ItemKind_TO_NUM: Record<string, number> = { 'folder': 0, 'composition': 1,
 const ItemKind_FROM_NUM: readonly (T.ItemKind | undefined)[] = ['folder', 'composition', 'footage', 'solid', 'placeholder'];
 function enc_ItemKind(v: T.ItemKind): number { const n = ItemKind_TO_NUM[v]; if (n === undefined) throw new RangeError('ItemKind: invalid value ' + String(v)); return n; }
 function dec_ItemKind(n: number): T.ItemKind { const v = ItemKind_FROM_NUM[n]; if (v === undefined) throw new DecodeError('ItemKind: unknown value ' + n, 'badEnum'); return v; }
-const MediaType_TO_NUM: Record<string, number> = { 'none': 0, 'image': 1, 'video': 2, 'audio': 3 };
-const MediaType_FROM_NUM: readonly (T.MediaType | undefined)[] = ['none', 'image', 'video', 'audio'];
+const MediaType_TO_NUM: Record<string, number> = { 'none': 0, 'image': 1, 'video': 2, 'audio': 3, 'model': 4 };
+const MediaType_FROM_NUM: readonly (T.MediaType | undefined)[] = ['none', 'image', 'video', 'audio', 'model'];
 function enc_MediaType(v: T.MediaType): number { const n = MediaType_TO_NUM[v]; if (n === undefined) throw new RangeError('MediaType: invalid value ' + String(v)); return n; }
 function dec_MediaType(n: number): T.MediaType { const v = MediaType_FROM_NUM[n]; if (v === undefined) throw new DecodeError('MediaType: unknown value ' + n, 'badEnum'); return v; }
 const AlphaMode_TO_NUM: Record<string, number> = { 'auto': 0, 'ignore': 1, 'straight': 2, 'premultiplied': 3 };
@@ -196,18 +196,46 @@ const OverlayKind_TO_NUM: Record<string, number> = { 'transform': 0, 'bounds': 1
 const OverlayKind_FROM_NUM: readonly (T.OverlayKind | undefined)[] = ['transform', 'bounds', 'motionPath', 'rig', 'textBox', undefined, undefined, undefined, 'scene3d'];
 function enc_OverlayKind(v: T.OverlayKind): number { const n = OverlayKind_TO_NUM[v]; if (n === undefined) throw new RangeError('OverlayKind: invalid value ' + String(v)); return n; }
 function dec_OverlayKind(n: number): T.OverlayKind { const v = OverlayKind_FROM_NUM[n]; if (v === undefined) throw new DecodeError('OverlayKind: unknown value ' + n, 'badEnum'); return v; }
-const TrackKind_TO_NUM: Record<string, number> = { 'position': 0, 'positionRotation': 1, 'positionRotationScale': 2, 'perspectiveCorner': 3, 'mask': 4, 'planar': 5 };
-const TrackKind_FROM_NUM: readonly (T.TrackKind | undefined)[] = ['position', 'positionRotation', 'positionRotationScale', 'perspectiveCorner', 'mask', 'planar'];
+const TrackKind_TO_NUM: Record<string, number> = { 'position': 0, 'positionRotation': 1, 'positionRotationScale': 2, 'perspectiveCorner': 3, 'mask': 4, 'planar': 5, 'planarRegion': 6 };
+const TrackKind_FROM_NUM: readonly (T.TrackKind | undefined)[] = ['position', 'positionRotation', 'positionRotationScale', 'perspectiveCorner', 'mask', 'planar', 'planarRegion'];
 function enc_TrackKind(v: T.TrackKind): number { const n = TrackKind_TO_NUM[v]; if (n === undefined) throw new RangeError('TrackKind: invalid value ' + String(v)); return n; }
 function dec_TrackKind(n: number): T.TrackKind { const v = TrackKind_FROM_NUM[n]; if (v === undefined) throw new DecodeError('TrackKind: unknown value ' + n, 'badEnum'); return v; }
 const TrackDirection_TO_NUM: Record<string, number> = { 'forward': 0, 'backward': 1, 'both': 2 };
 const TrackDirection_FROM_NUM: readonly (T.TrackDirection | undefined)[] = ['forward', 'backward', 'both'];
 function enc_TrackDirection(v: T.TrackDirection): number { const n = TrackDirection_TO_NUM[v]; if (n === undefined) throw new RangeError('TrackDirection: invalid value ' + String(v)); return n; }
 function dec_TrackDirection(n: number): T.TrackDirection { const v = TrackDirection_FROM_NUM[n]; if (v === undefined) throw new DecodeError('TrackDirection: unknown value ' + n, 'badEnum'); return v; }
+const MaskTrackMethod_TO_NUM: Record<string, number> = { 'vertices': 0, 'position': 1, 'positionRotation': 2, 'positionScaleRotation': 3, 'affine': 4, 'perspective': 5 };
+const MaskTrackMethod_FROM_NUM: readonly (T.MaskTrackMethod | undefined)[] = ['vertices', 'position', 'positionRotation', 'positionScaleRotation', 'affine', 'perspective'];
+function enc_MaskTrackMethod(v: T.MaskTrackMethod): number { const n = MaskTrackMethod_TO_NUM[v]; if (n === undefined) throw new RangeError('MaskTrackMethod: invalid value ' + String(v)); return n; }
+function dec_MaskTrackMethod(n: number): T.MaskTrackMethod { const v = MaskTrackMethod_FROM_NUM[n]; if (v === undefined) throw new DecodeError('MaskTrackMethod: unknown value ' + n, 'badEnum'); return v; }
+const StabilizeFraming_TO_NUM: Record<string, number> = { 'stabilizeOnly': 0, 'stabilizeCrop': 1, 'cropAutoScale': 2 };
+const StabilizeFraming_FROM_NUM: readonly (T.StabilizeFraming | undefined)[] = ['stabilizeOnly', 'stabilizeCrop', 'cropAutoScale'];
+function enc_StabilizeFraming(v: T.StabilizeFraming): number { const n = StabilizeFraming_TO_NUM[v]; if (n === undefined) throw new RangeError('StabilizeFraming: invalid value ' + String(v)); return n; }
+function dec_StabilizeFraming(n: number): T.StabilizeFraming { const v = StabilizeFraming_FROM_NUM[n]; if (v === undefined) throw new DecodeError('StabilizeFraming: unknown value ' + n, 'badEnum'); return v; }
+const FaceTrackMode_TO_NUM: Record<string, number> = { 'outline': 0, 'detailed': 1 };
+const FaceTrackMode_FROM_NUM: readonly (T.FaceTrackMode | undefined)[] = ['outline', 'detailed'];
+function enc_FaceTrackMode(v: T.FaceTrackMode): number { const n = FaceTrackMode_TO_NUM[v]; if (n === undefined) throw new RangeError('FaceTrackMode: invalid value ' + String(v)); return n; }
+function dec_FaceTrackMode(n: number): T.FaceTrackMode { const v = FaceTrackMode_FROM_NUM[n]; if (v === undefined) throw new DecodeError('FaceTrackMode: unknown value ' + n, 'badEnum'); return v; }
+const CameraTrackAction_TO_NUM: Record<string, number> = { 'solve': 0, 'groundPlane': 1, 'createLayers': 2 };
+const CameraTrackAction_FROM_NUM: readonly (T.CameraTrackAction | undefined)[] = ['solve', 'groundPlane', 'createLayers'];
+function enc_CameraTrackAction(v: T.CameraTrackAction): number { const n = CameraTrackAction_TO_NUM[v]; if (n === undefined) throw new RangeError('CameraTrackAction: invalid value ' + String(v)); return n; }
+function dec_CameraTrackAction(n: number): T.CameraTrackAction { const v = CameraTrackAction_FROM_NUM[n]; if (v === undefined) throw new DecodeError('CameraTrackAction: unknown value ' + n, 'badEnum'); return v; }
+const TrackPointLayer_TO_NUM: Record<string, number> = { 'text': 0, 'solid': 1, 'null': 2, 'shadowCatcher': 3 };
+const TrackPointLayer_FROM_NUM: readonly (T.TrackPointLayer | undefined)[] = ['text', 'solid', 'null', 'shadowCatcher'];
+function enc_TrackPointLayer(v: T.TrackPointLayer): number { const n = TrackPointLayer_TO_NUM[v]; if (n === undefined) throw new RangeError('TrackPointLayer: invalid value ' + String(v)); return n; }
+function dec_TrackPointLayer(n: number): T.TrackPointLayer { const v = TrackPointLayer_FROM_NUM[n]; if (v === undefined) throw new DecodeError('TrackPointLayer: unknown value ' + n, 'badEnum'); return v; }
 const TrackApplyMode_TO_NUM: Record<string, number> = { 'follow': 0, 'transform': 1, 'corner': 2, 'stabilize': 3, 'meshWarp': 4, 'createNull': 5, 'nullsForPlanes': 6, 'cameraSolve': 7 };
 const TrackApplyMode_FROM_NUM: readonly (T.TrackApplyMode | undefined)[] = ['follow', 'transform', 'corner', 'stabilize', 'meshWarp', 'createNull', 'nullsForPlanes', 'cameraSolve'];
 function enc_TrackApplyMode(v: T.TrackApplyMode): number { const n = TrackApplyMode_TO_NUM[v]; if (n === undefined) throw new RangeError('TrackApplyMode: invalid value ' + String(v)); return n; }
 function dec_TrackApplyMode(n: number): T.TrackApplyMode { const v = TrackApplyMode_FROM_NUM[n]; if (v === undefined) throw new DecodeError('TrackApplyMode: unknown value ' + n, 'badEnum'); return v; }
+const ContentAwareFillMode_TO_NUM: Record<string, number> = { 'object': 0, 'surface': 1, 'edgeBlend': 2 };
+const ContentAwareFillMode_FROM_NUM: readonly (T.ContentAwareFillMode | undefined)[] = ['object', 'surface', 'edgeBlend'];
+function enc_ContentAwareFillMode(v: T.ContentAwareFillMode): number { const n = ContentAwareFillMode_TO_NUM[v]; if (n === undefined) throw new RangeError('ContentAwareFillMode: invalid value ' + String(v)); return n; }
+function dec_ContentAwareFillMode(n: number): T.ContentAwareFillMode { const v = ContentAwareFillMode_FROM_NUM[n]; if (v === undefined) throw new DecodeError('ContentAwareFillMode: unknown value ' + n, 'badEnum'); return v; }
+const ContentAwareLighting_TO_NUM: Record<string, number> = { 'off': 0, 'subtle': 1, 'moderate': 2, 'strong': 3 };
+const ContentAwareLighting_FROM_NUM: readonly (T.ContentAwareLighting | undefined)[] = ['off', 'subtle', 'moderate', 'strong'];
+function enc_ContentAwareLighting(v: T.ContentAwareLighting): number { const n = ContentAwareLighting_TO_NUM[v]; if (n === undefined) throw new RangeError('ContentAwareLighting: invalid value ' + String(v)); return n; }
+function dec_ContentAwareLighting(n: number): T.ContentAwareLighting { const v = ContentAwareLighting_FROM_NUM[n]; if (v === undefined) throw new DecodeError('ContentAwareLighting: unknown value ' + n, 'badEnum'); return v; }
 const SvgRole_TO_NUM: Record<string, number> = { 'none': 0, 'layer': 1, 'converted': 2 };
 const SvgRole_FROM_NUM: readonly (T.SvgRole | undefined)[] = ['none', 'layer', 'converted'];
 function enc_SvgRole(v: T.SvgRole): number { const n = SvgRole_TO_NUM[v]; if (n === undefined) throw new RangeError('SvgRole: invalid value ' + String(v)); return n; }
@@ -216,8 +244,8 @@ const PropertyKind_TO_NUM: Record<string, number> = { 'property': 0, 'group': 1,
 const PropertyKind_FROM_NUM: readonly (T.PropertyKind | undefined)[] = ['property', 'group', 'indexedGroup'];
 function enc_PropertyKind(v: T.PropertyKind): number { const n = PropertyKind_TO_NUM[v]; if (n === undefined) throw new RangeError('PropertyKind: invalid value ' + String(v)); return n; }
 function dec_PropertyKind(n: number): T.PropertyKind { const v = PropertyKind_FROM_NUM[n]; if (v === undefined) throw new DecodeError('PropertyKind: unknown value ' + n, 'badEnum'); return v; }
-const PluginStatus_TO_NUM: Record<string, number> = { 'loaded': 0, 'disabled': 1, 'failed': 2, 'quarantined': 3 };
-const PluginStatus_FROM_NUM: readonly (T.PluginStatus | undefined)[] = ['loaded', 'disabled', 'failed', 'quarantined'];
+const PluginStatus_TO_NUM: Record<string, number> = { 'loaded': 0, 'disabled': 1, 'failed': 2, 'quarantined': 3, 'revoked': 4 };
+const PluginStatus_FROM_NUM: readonly (T.PluginStatus | undefined)[] = ['loaded', 'disabled', 'failed', 'quarantined', 'revoked'];
 function enc_PluginStatus(v: T.PluginStatus): number { const n = PluginStatus_TO_NUM[v]; if (n === undefined) throw new RangeError('PluginStatus: invalid value ' + String(v)); return n; }
 function dec_PluginStatus(n: number): T.PluginStatus { const v = PluginStatus_FROM_NUM[n]; if (v === undefined) throw new DecodeError('PluginStatus: unknown value ' + n, 'badEnum'); return v; }
 const HitMode_TO_NUM: Record<string, number> = { 'topmost': 0, 'all': 1 };
@@ -316,6 +344,14 @@ const RenderGuideAxis_TO_NUM: Record<string, number> = { 'x': 0, 'y': 1 };
 const RenderGuideAxis_FROM_NUM: readonly (T.RenderGuideAxis | undefined)[] = ['x', 'y'];
 function enc_RenderGuideAxis(v: T.RenderGuideAxis): number { const n = RenderGuideAxis_TO_NUM[v]; if (n === undefined) throw new RangeError('RenderGuideAxis: invalid value ' + String(v)); return n; }
 function dec_RenderGuideAxis(n: number): T.RenderGuideAxis { const v = RenderGuideAxis_FROM_NUM[n]; if (v === undefined) throw new DecodeError('RenderGuideAxis: unknown value ' + n, 'badEnum'); return v; }
+const RenderMeshSurface_TO_NUM: Record<string, number> = { 'layer': 0, 'uv': 1 };
+const RenderMeshSurface_FROM_NUM: readonly (T.RenderMeshSurface | undefined)[] = ['layer', 'uv'];
+function enc_RenderMeshSurface(v: T.RenderMeshSurface): number { const n = RenderMeshSurface_TO_NUM[v]; if (n === undefined) throw new RangeError('RenderMeshSurface: invalid value ' + String(v)); return n; }
+function dec_RenderMeshSurface(n: number): T.RenderMeshSurface { const v = RenderMeshSurface_FROM_NUM[n]; if (v === undefined) throw new DecodeError('RenderMeshSurface: unknown value ' + n, 'badEnum'); return v; }
+const RenderFogMode_TO_NUM: Record<string, number> = { 'linear': 0, 'exponential': 1, 'exponential2': 2 };
+const RenderFogMode_FROM_NUM: readonly (T.RenderFogMode | undefined)[] = ['linear', 'exponential', 'exponential2'];
+function enc_RenderFogMode(v: T.RenderFogMode): number { const n = RenderFogMode_TO_NUM[v]; if (n === undefined) throw new RangeError('RenderFogMode: invalid value ' + String(v)); return n; }
+function dec_RenderFogMode(n: number): T.RenderFogMode { const v = RenderFogMode_FROM_NUM[n]; if (v === undefined) throw new DecodeError('RenderFogMode: unknown value ' + n, 'badEnum'); return v; }
 const RenderColorSpace_TO_NUM: Record<string, number> = { 'srgb': 0, 'rec709': 1, 'linearSrgb': 2, 'acesCg': 3, 'rec2020': 4, 'linearRec2020': 5, 'aces2065': 6 };
 const RenderColorSpace_FROM_NUM: readonly (T.RenderColorSpace | undefined)[] = ['srgb', 'rec709', 'linearSrgb', 'acesCg', 'rec2020', 'linearRec2020', 'aces2065'];
 function enc_RenderColorSpace(v: T.RenderColorSpace): number { const n = RenderColorSpace_TO_NUM[v]; if (n === undefined) throw new RangeError('RenderColorSpace: invalid value ' + String(v)); return n; }
@@ -7827,9 +7863,13 @@ function encS_TrackMotionJob(w: Writer, v: T.TrackMotionJob): void {
   if (v.analysisMaxEdge !== undefined) { w.varint(5672); w.u32(v.analysisMaxEdge); }
   w.varint(5680); w.bool(v.stabilize);
   if (v.planarGrid !== undefined) { w.varint(13680); w.u32(v.planarGrid); }
+  if (v.autoFeature !== undefined) { w.varint(13760); w.bool(v.autoFeature); }
+  { const a = v.excludeMasks; for (let i = 0; i < a.length; i++) { w.varint(13770); w.str(a[i]!); } }
+  if (v.maskMethod !== undefined) { w.varint(13776); w.varint(enc_MaskTrackMethod(v.maskMethod)); }
 }
 function decS_TrackMotionJob(r: Reader, end: number, o: any): T.TrackMotionJob {
   const l_points: T.TrackPointSpec[] = [];
+  const l_excludeMasks: string[] = [];
   let h_layer = false;
   let h_kind = false;
   let h_range = false;
@@ -7846,6 +7886,8 @@ function decS_TrackMotionJob(r: Reader, end: number, o: any): T.TrackMotionJob {
   let v_analysisMaxEdge: number | undefined;
   let v_stabilize: boolean | undefined;
   let v_planarGrid: number | undefined;
+  let v_autoFeature: boolean | undefined;
+  let v_maskMethod: T.MaskTrackMethod | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -7861,6 +7903,9 @@ function decS_TrackMotionJob(r: Reader, end: number, o: any): T.TrackMotionJob {
       case 5672: v_analysisMaxEdge = r.u32(); break;
       case 5680: v_stabilize = r.bool(); h_stabilize = true; break;
       case 13680: v_planarGrid = r.u32(); break;
+      case 13760: v_autoFeature = r.bool(); break;
+      case 13770: l_excludeMasks.push(r.str()); break;
+      case 13776: v_maskMethod = dec_MaskTrackMethod(r.varint()); break;
       default: r.skip(key);
     }
   }
@@ -7882,6 +7927,9 @@ function decS_TrackMotionJob(r: Reader, end: number, o: any): T.TrackMotionJob {
   if (v_analysisMaxEdge !== undefined) o.analysisMaxEdge = v_analysisMaxEdge;
   o.stabilize = v_stabilize;
   if (v_planarGrid !== undefined) o.planarGrid = v_planarGrid;
+  if (v_autoFeature !== undefined) o.autoFeature = v_autoFeature;
+  o.excludeMasks = l_excludeMasks;
+  if (v_maskMethod !== undefined) o.maskMethod = v_maskMethod;
   return o;
 }
 function encS_StabilizeJob(w: Writer, v: T.StabilizeJob): void {
@@ -7891,6 +7939,8 @@ function encS_StabilizeJob(w: Writer, v: T.StabilizeJob): void {
   w.byte(34); w.str(v.method);
   if (v.analysisMaxEdge !== undefined) { w.varint(5632); w.u32(v.analysisMaxEdge); }
   if (v.variant !== undefined) { w.varint(13634); w.str(v.variant); }
+  if (v.framing !== undefined) { w.varint(13640); w.varint(enc_StabilizeFraming(v.framing)); }
+  if (v.maxScale !== undefined) { w.varint(13649); w.f64(v.maxScale); }
 }
 function decS_StabilizeJob(r: Reader, end: number, o: any): T.StabilizeJob {
   let h_layer = false;
@@ -7903,6 +7953,8 @@ function decS_StabilizeJob(r: Reader, end: number, o: any): T.StabilizeJob {
   let v_method: string | undefined;
   let v_analysisMaxEdge: number | undefined;
   let v_variant: string | undefined;
+  let v_framing: T.StabilizeFraming | undefined;
+  let v_maxScale: number | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -7912,6 +7964,8 @@ function decS_StabilizeJob(r: Reader, end: number, o: any): T.StabilizeJob {
       case 34: v_method = r.str(); h_method = true; break;
       case 5632: v_analysisMaxEdge = r.u32(); break;
       case 13634: v_variant = r.str(); break;
+      case 13640: v_framing = dec_StabilizeFraming(r.varint()); break;
+      case 13649: v_maxScale = r.f64(); break;
       default: r.skip(key);
     }
   }
@@ -7926,6 +7980,8 @@ function decS_StabilizeJob(r: Reader, end: number, o: any): T.StabilizeJob {
   o.method = v_method;
   if (v_analysisMaxEdge !== undefined) o.analysisMaxEdge = v_analysisMaxEdge;
   if (v_variant !== undefined) o.variant = v_variant;
+  if (v_framing !== undefined) o.framing = v_framing;
+  if (v_maxScale !== undefined) o.maxScale = v_maxScale;
   return o;
 }
 function encS_AutoTraceJob(w: Writer, v: T.AutoTraceJob): void {
@@ -8052,11 +8108,18 @@ function encS_ObjectMatteJob(w: Writer, v: T.ObjectMatteJob): void {
   if (v.maskMode !== undefined) { w.varint(5664); w.varint(enc_MaskMode(v.maskMode)); }
   if (v.feather !== undefined) { w.varint(5673); w.f64(v.feather); }
   { const a = v.replaceMasks; for (let i = 0; i < a.length; i++) { w.varint(5682); w.str(a[i]!); } }
+  if (v.direction !== undefined) { w.varint(5688); w.varint(enc_TrackDirection(v.direction)); }
+  { const a = v.strokes; for (let i = 0; i < a.length; i++) { w.varint(5698); { const s = w.beginLd(); encS_ObjectMatteStroke(w, a[i]!); w.endLd(s); } } }
+  if (v.matte !== undefined) { w.varint(5704); w.bool(v.matte); }
+  if (v.refine !== undefined) { w.varint(5714); { const s = w.beginLd(); encS_MatteRefine(w, v.refine); w.endLd(s); } }
+  if (v.outputFolder !== undefined) { w.varint(5722); w.str(v.outputFolder); }
+  if (v.origin !== undefined) { w.varint(5728); w.i64(v.origin); }
 }
 function decS_ObjectMatteJob(r: Reader, end: number, o: any): T.ObjectMatteJob {
   const l_prompts: T.Vec2[] = [];
   const l_backgroundPrompts: T.Vec2[] = [];
   const l_replaceMasks: string[] = [];
+  const l_strokes: T.ObjectMatteStroke[] = [];
   let h_layer = false;
   let h_range = false;
   let h_encoderModel = false;
@@ -8069,6 +8132,11 @@ function decS_ObjectMatteJob(r: Reader, end: number, o: any): T.ObjectMatteJob {
   let v_maskName: string | undefined;
   let v_maskMode: T.MaskMode | undefined;
   let v_feather: number | undefined;
+  let v_direction: T.TrackDirection | undefined;
+  let v_matte: boolean | undefined;
+  let v_refine: T.MatteRefine | undefined;
+  let v_outputFolder: string | undefined;
+  let v_origin: number | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -8083,6 +8151,12 @@ function decS_ObjectMatteJob(r: Reader, end: number, o: any): T.ObjectMatteJob {
       case 5664: v_maskMode = dec_MaskMode(r.varint()); break;
       case 5673: v_feather = r.f64(); break;
       case 5682: l_replaceMasks.push(r.str()); break;
+      case 5688: v_direction = dec_TrackDirection(r.varint()); break;
+      case 5698: l_strokes.push(decS_ObjectMatteStroke(r, r.ldEnd(), {})); break;
+      case 5704: v_matte = r.bool(); break;
+      case 5714: v_refine = decS_MatteRefine(r, r.ldEnd(), {}); break;
+      case 5722: v_outputFolder = r.str(); break;
+      case 5728: v_origin = r.i64(); break;
       default: r.skip(key);
     }
   }
@@ -8102,6 +8176,192 @@ function decS_ObjectMatteJob(r: Reader, end: number, o: any): T.ObjectMatteJob {
   if (v_maskMode !== undefined) o.maskMode = v_maskMode;
   if (v_feather !== undefined) o.feather = v_feather;
   o.replaceMasks = l_replaceMasks;
+  if (v_direction !== undefined) o.direction = v_direction;
+  o.strokes = l_strokes;
+  if (v_matte !== undefined) o.matte = v_matte;
+  if (v_refine !== undefined) o.refine = v_refine;
+  if (v_outputFolder !== undefined) o.outputFolder = v_outputFolder;
+  if (v_origin !== undefined) o.origin = v_origin;
+  return o;
+}
+function encS_ObjectMatteStroke(w: Writer, v: T.ObjectMatteStroke): void {
+  w.byte(8); w.i64(v.time);
+  { const a = v.points; for (let i = 0; i < a.length; i++) { w.byte(18); { const s = w.beginLd(); encS_Vec2(w, a[i]!); w.endLd(s); } } }
+  w.byte(24); w.bool(v.background);
+}
+function decS_ObjectMatteStroke(r: Reader, end: number, o: any): T.ObjectMatteStroke {
+  const l_points: T.Vec2[] = [];
+  let h_time = false;
+  let h_background = false;
+  let v_time: number | undefined;
+  let v_background: boolean | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 8: v_time = r.i64(); h_time = true; break;
+      case 18: l_points.push(decS_Vec2(r, r.ldEnd(), {})); break;
+      case 24: v_background = r.bool(); h_background = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_time) throw new DecodeError('ObjectMatteStroke.time: missing', 'missingField');
+  if (!h_background) throw new DecodeError('ObjectMatteStroke.background: missing', 'missingField');
+  o.time = v_time;
+  o.points = l_points;
+  o.background = v_background;
+  return o;
+}
+function encS_MatteRefine(w: Writer, v: T.MatteRefine): void {
+  w.byte(9); w.f64(v.edgeRadius);
+  w.byte(17); w.f64(v.decontaminate);
+  w.byte(24); w.bool(v.motionBlur);
+  w.byte(33); w.f64(v.shutterAngle);
+  w.byte(41); w.f64(v.feather);
+  w.byte(49); w.f64(v.choke);
+  w.byte(57); w.f64(v.reduceChatter);
+}
+function decS_MatteRefine(r: Reader, end: number, o: any): T.MatteRefine {
+  let h_edgeRadius = false;
+  let h_decontaminate = false;
+  let h_motionBlur = false;
+  let h_shutterAngle = false;
+  let h_feather = false;
+  let h_choke = false;
+  let h_reduceChatter = false;
+  let v_edgeRadius: number | undefined;
+  let v_decontaminate: number | undefined;
+  let v_motionBlur: boolean | undefined;
+  let v_shutterAngle: number | undefined;
+  let v_feather: number | undefined;
+  let v_choke: number | undefined;
+  let v_reduceChatter: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 9: v_edgeRadius = r.f64(); h_edgeRadius = true; break;
+      case 17: v_decontaminate = r.f64(); h_decontaminate = true; break;
+      case 24: v_motionBlur = r.bool(); h_motionBlur = true; break;
+      case 33: v_shutterAngle = r.f64(); h_shutterAngle = true; break;
+      case 41: v_feather = r.f64(); h_feather = true; break;
+      case 49: v_choke = r.f64(); h_choke = true; break;
+      case 57: v_reduceChatter = r.f64(); h_reduceChatter = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_edgeRadius) throw new DecodeError('MatteRefine.edgeRadius: missing', 'missingField');
+  if (!h_decontaminate) throw new DecodeError('MatteRefine.decontaminate: missing', 'missingField');
+  if (!h_motionBlur) throw new DecodeError('MatteRefine.motionBlur: missing', 'missingField');
+  if (!h_shutterAngle) throw new DecodeError('MatteRefine.shutterAngle: missing', 'missingField');
+  if (!h_feather) throw new DecodeError('MatteRefine.feather: missing', 'missingField');
+  if (!h_choke) throw new DecodeError('MatteRefine.choke: missing', 'missingField');
+  if (!h_reduceChatter) throw new DecodeError('MatteRefine.reduceChatter: missing', 'missingField');
+  o.edgeRadius = v_edgeRadius;
+  o.decontaminate = v_decontaminate;
+  o.motionBlur = v_motionBlur;
+  o.shutterAngle = v_shutterAngle;
+  o.feather = v_feather;
+  o.choke = v_choke;
+  o.reduceChatter = v_reduceChatter;
+  return o;
+}
+function encS_FaceTrackJob(w: Writer, v: T.FaceTrackJob): void {
+  w.byte(10); w.str(v.layer);
+  w.byte(18); { const s = w.beginLd(); encS_TimeRange(w, v.range); w.endLd(s); }
+  w.byte(24); w.varint(enc_TrackDirection(v.direction));
+  w.byte(32); w.varint(enc_FaceTrackMode(v.mode));
+  if (v.mask !== undefined) { w.byte(42); w.str(v.mask); }
+  w.byte(50); w.str(v.landmarkModel);
+  if (v.origin !== undefined) { w.byte(56); w.i64(v.origin); }
+}
+function decS_FaceTrackJob(r: Reader, end: number, o: any): T.FaceTrackJob {
+  let h_layer = false;
+  let h_range = false;
+  let h_direction = false;
+  let h_mode = false;
+  let h_landmarkModel = false;
+  let v_layer: string | undefined;
+  let v_range: T.TimeRange | undefined;
+  let v_direction: T.TrackDirection | undefined;
+  let v_mode: T.FaceTrackMode | undefined;
+  let v_mask: string | undefined;
+  let v_landmarkModel: string | undefined;
+  let v_origin: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_layer = r.str(); h_layer = true; break;
+      case 18: v_range = decS_TimeRange(r, r.ldEnd(), {}); h_range = true; break;
+      case 24: v_direction = dec_TrackDirection(r.varint()); h_direction = true; break;
+      case 32: v_mode = dec_FaceTrackMode(r.varint()); h_mode = true; break;
+      case 42: v_mask = r.str(); break;
+      case 50: v_landmarkModel = r.str(); h_landmarkModel = true; break;
+      case 56: v_origin = r.i64(); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_layer) throw new DecodeError('FaceTrackJob.layer: missing', 'missingField');
+  if (!h_range) throw new DecodeError('FaceTrackJob.range: missing', 'missingField');
+  if (!h_direction) throw new DecodeError('FaceTrackJob.direction: missing', 'missingField');
+  if (!h_mode) throw new DecodeError('FaceTrackJob.mode: missing', 'missingField');
+  if (!h_landmarkModel) throw new DecodeError('FaceTrackJob.landmarkModel: missing', 'missingField');
+  o.layer = v_layer;
+  o.range = v_range;
+  o.direction = v_direction;
+  o.mode = v_mode;
+  if (v_mask !== undefined) o.mask = v_mask;
+  o.landmarkModel = v_landmarkModel;
+  if (v_origin !== undefined) o.origin = v_origin;
+  return o;
+}
+function encS_CameraTrackJob(w: Writer, v: T.CameraTrackJob): void {
+  w.byte(10); w.str(v.layer);
+  w.byte(18); { const s = w.beginLd(); encS_TimeRange(w, v.range); w.endLd(s); }
+  if (v.action !== undefined) { w.byte(24); w.varint(enc_CameraTrackAction(v.action)); }
+  if (v.focalLength !== undefined) { w.byte(33); w.f64(v.focalLength); }
+  if (v.analysisMaxEdge !== undefined) { w.byte(40); w.u32(v.analysisMaxEdge); }
+  if (v.maxFeatures !== undefined) { w.byte(48); w.u32(v.maxFeatures); }
+  { const a = v.points; if (a.length) { w.byte(58); const s = w.beginLd(); for (let i = 0; i < a.length; i++) w.u32(a[i]!); w.endLd(s); } }
+  if (v.create !== undefined) { w.byte(64); w.varint(enc_TrackPointLayer(v.create)); }
+}
+function decS_CameraTrackJob(r: Reader, end: number, o: any): T.CameraTrackJob {
+  const l_points: number[] = [];
+  let h_layer = false;
+  let h_range = false;
+  let v_layer: string | undefined;
+  let v_range: T.TimeRange | undefined;
+  let v_action: T.CameraTrackAction | undefined;
+  let v_focalLength: number | undefined;
+  let v_analysisMaxEdge: number | undefined;
+  let v_maxFeatures: number | undefined;
+  let v_create: T.TrackPointLayer | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_layer = r.str(); h_layer = true; break;
+      case 18: v_range = decS_TimeRange(r, r.ldEnd(), {}); h_range = true; break;
+      case 24: v_action = dec_CameraTrackAction(r.varint()); break;
+      case 33: v_focalLength = r.f64(); break;
+      case 40: v_analysisMaxEdge = r.u32(); break;
+      case 48: v_maxFeatures = r.u32(); break;
+      case 58: { const e = r.ldEnd(); while (r.pos < e) l_points.push(r.u32()); r.expectAt(e); break; }
+      case 64: v_create = dec_TrackPointLayer(r.varint()); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_layer) throw new DecodeError('CameraTrackJob.layer: missing', 'missingField');
+  if (!h_range) throw new DecodeError('CameraTrackJob.range: missing', 'missingField');
+  o.layer = v_layer;
+  o.range = v_range;
+  if (v_action !== undefined) o.action = v_action;
+  if (v_focalLength !== undefined) o.focalLength = v_focalLength;
+  if (v_analysisMaxEdge !== undefined) o.analysisMaxEdge = v_analysisMaxEdge;
+  if (v_maxFeatures !== undefined) o.maxFeatures = v_maxFeatures;
+  o.points = l_points;
+  if (v_create !== undefined) o.create = v_create;
   return o;
 }
 function encS_TranscribeJob(w: Writer, v: T.TranscribeJob): void {
@@ -8344,6 +8604,32 @@ function decS_RenderJob(r: Reader, end: number, o: any): T.RenderJob {
   o.items = l_items;
   return o;
 }
+function encS_ModelImportJob(w: Writer, v: T.ModelImportJob): void {
+  { const a = v.files; for (let i = 0; i < a.length; i++) { w.byte(10); w.str(a[i]!); } }
+  w.byte(18); w.str(v.outputFolder);
+  if (v.name !== undefined) { w.byte(26); w.str(v.name); }
+}
+function decS_ModelImportJob(r: Reader, end: number, o: any): T.ModelImportJob {
+  const l_files: string[] = [];
+  let h_outputFolder = false;
+  let v_outputFolder: string | undefined;
+  let v_name: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_files.push(r.str()); break;
+      case 18: v_outputFolder = r.str(); h_outputFolder = true; break;
+      case 26: v_name = r.str(); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_outputFolder) throw new DecodeError('ModelImportJob.outputFolder: missing', 'missingField');
+  o.files = l_files;
+  o.outputFolder = v_outputFolder;
+  if (v_name !== undefined) o.name = v_name;
+  return o;
+}
 function encS_PrerenderJob(w: Writer, v: T.PrerenderJob): void {
   { const a = v.comps; for (let i = 0; i < a.length; i++) { w.byte(10); w.str(a[i]!); } }
   w.byte(18); w.str(v.outputFolder);
@@ -8438,6 +8724,9 @@ function encS_TrackApplyJob(w: Writer, v: T.TrackApplyJob): void {
   w.byte(41); w.f64(v.sourceWidth);
   w.byte(49); w.f64(v.sourceHeight);
   if (v.nullMode !== undefined) { w.byte(56); w.varint(enc_TrackApplyMode(v.nullMode)); }
+  if (v.targetPath !== undefined) { w.byte(66); w.str(v.targetPath); }
+  if (v.stabilizeRotation !== undefined) { w.byte(72); w.bool(v.stabilizeRotation); }
+  if (v.stabilizeScale !== undefined) { w.byte(80); w.bool(v.stabilizeScale); }
 }
 function decS_TrackApplyJob(r: Reader, end: number, o: any): T.TrackApplyJob {
   const l_tracks: T.TrackSeries[] = [];
@@ -8451,6 +8740,9 @@ function decS_TrackApplyJob(r: Reader, end: number, o: any): T.TrackApplyJob {
   let v_sourceWidth: number | undefined;
   let v_sourceHeight: number | undefined;
   let v_nullMode: T.TrackApplyMode | undefined;
+  let v_targetPath: string | undefined;
+  let v_stabilizeRotation: boolean | undefined;
+  let v_stabilizeScale: boolean | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -8461,6 +8753,9 @@ function decS_TrackApplyJob(r: Reader, end: number, o: any): T.TrackApplyJob {
       case 41: v_sourceWidth = r.f64(); h_sourceWidth = true; break;
       case 49: v_sourceHeight = r.f64(); h_sourceHeight = true; break;
       case 56: v_nullMode = dec_TrackApplyMode(r.varint()); break;
+      case 66: v_targetPath = r.str(); break;
+      case 72: v_stabilizeRotation = r.bool(); break;
+      case 80: v_stabilizeScale = r.bool(); break;
       default: r.skip(key);
     }
   }
@@ -8476,6 +8771,321 @@ function decS_TrackApplyJob(r: Reader, end: number, o: any): T.TrackApplyJob {
   o.sourceWidth = v_sourceWidth;
   o.sourceHeight = v_sourceHeight;
   if (v_nullMode !== undefined) o.nullMode = v_nullMode;
+  if (v_targetPath !== undefined) o.targetPath = v_targetPath;
+  if (v_stabilizeRotation !== undefined) o.stabilizeRotation = v_stabilizeRotation;
+  if (v_stabilizeScale !== undefined) o.stabilizeScale = v_stabilizeScale;
+  return o;
+}
+function encS_TrackerPointData(w: Writer, v: T.TrackerPointData): void {
+  w.byte(10); { const s = w.beginLd(); encS_Rect(w, v.feature); w.endLd(s); }
+  w.byte(18); { const s = w.beginLd(); encS_Rect(w, v.search); w.endLd(s); }
+  w.byte(26); { const s = w.beginLd(); encS_Vec2(w, v.attach); w.endLd(s); }
+  { const a = v.samples; for (let i = 0; i < a.length; i++) { w.byte(34); { const s = w.beginLd(); encS_TrackSampleRow(w, a[i]!); w.endLd(s); } } }
+}
+function decS_TrackerPointData(r: Reader, end: number, o: any): T.TrackerPointData {
+  const l_samples: T.TrackSampleRow[] = [];
+  let h_feature = false;
+  let h_search = false;
+  let h_attach = false;
+  let v_feature: T.Rect | undefined;
+  let v_search: T.Rect | undefined;
+  let v_attach: T.Vec2 | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_feature = decS_Rect(r, r.ldEnd(), {}); h_feature = true; break;
+      case 18: v_search = decS_Rect(r, r.ldEnd(), {}); h_search = true; break;
+      case 26: v_attach = decS_Vec2(r, r.ldEnd(), {}); h_attach = true; break;
+      case 34: l_samples.push(decS_TrackSampleRow(r, r.ldEnd(), {})); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_feature) throw new DecodeError('TrackerPointData.feature: missing', 'missingField');
+  if (!h_search) throw new DecodeError('TrackerPointData.search: missing', 'missingField');
+  if (!h_attach) throw new DecodeError('TrackerPointData.attach: missing', 'missingField');
+  o.feature = v_feature;
+  o.search = v_search;
+  o.attach = v_attach;
+  o.samples = l_samples;
+  return o;
+}
+function encS_TrackerData(w: Writer, v: T.TrackerData): void {
+  w.byte(10); w.str(v.name);
+  w.byte(18); w.str(v.mode);
+  w.byte(24); w.varint(enc_TrackKind(v.kind));
+  w.byte(33); w.f64(v.sourceWidth);
+  w.byte(41); w.f64(v.sourceHeight);
+  { const a = v.points; for (let i = 0; i < a.length; i++) { w.byte(50); { const s = w.beginLd(); encS_TrackerPointData(w, a[i]!); w.endLd(s); } } }
+}
+function decS_TrackerData(r: Reader, end: number, o: any): T.TrackerData {
+  const l_points: T.TrackerPointData[] = [];
+  let h_name = false;
+  let h_mode = false;
+  let h_kind = false;
+  let h_sourceWidth = false;
+  let h_sourceHeight = false;
+  let v_name: string | undefined;
+  let v_mode: string | undefined;
+  let v_kind: T.TrackKind | undefined;
+  let v_sourceWidth: number | undefined;
+  let v_sourceHeight: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_name = r.str(); h_name = true; break;
+      case 18: v_mode = r.str(); h_mode = true; break;
+      case 24: v_kind = dec_TrackKind(r.varint()); h_kind = true; break;
+      case 33: v_sourceWidth = r.f64(); h_sourceWidth = true; break;
+      case 41: v_sourceHeight = r.f64(); h_sourceHeight = true; break;
+      case 50: l_points.push(decS_TrackerPointData(r, r.ldEnd(), {})); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_name) throw new DecodeError('TrackerData.name: missing', 'missingField');
+  if (!h_mode) throw new DecodeError('TrackerData.mode: missing', 'missingField');
+  if (!h_kind) throw new DecodeError('TrackerData.kind: missing', 'missingField');
+  if (!h_sourceWidth) throw new DecodeError('TrackerData.sourceWidth: missing', 'missingField');
+  if (!h_sourceHeight) throw new DecodeError('TrackerData.sourceHeight: missing', 'missingField');
+  o.name = v_name;
+  o.mode = v_mode;
+  o.kind = v_kind;
+  o.sourceWidth = v_sourceWidth;
+  o.sourceHeight = v_sourceHeight;
+  o.points = l_points;
+  return o;
+}
+function encS_LayerTrackers(w: Writer, v: T.LayerTrackers): void {
+  { const a = v.trackers; for (let i = 0; i < a.length; i++) { w.byte(10); { const s = w.beginLd(); encS_TrackerData(w, a[i]!); w.endLd(s); } } }
+}
+function decS_LayerTrackers(r: Reader, end: number, o: any): T.LayerTrackers {
+  const l_trackers: T.TrackerData[] = [];
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_trackers.push(decS_TrackerData(r, r.ldEnd(), {})); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  o.trackers = l_trackers;
+  return o;
+}
+function encS_SetLayerTrackers(w: Writer, v: T.SetLayerTrackers): void {
+  w.byte(10); w.str(v.layer);
+  { const a = v.trackers; for (let i = 0; i < a.length; i++) { w.byte(18); { const s = w.beginLd(); encS_TrackerData(w, a[i]!); w.endLd(s); } } }
+}
+function decS_SetLayerTrackers(r: Reader, end: number, o: any): T.SetLayerTrackers {
+  const l_trackers: T.TrackerData[] = [];
+  let h_layer = false;
+  let v_layer: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_layer = r.str(); h_layer = true; break;
+      case 18: l_trackers.push(decS_TrackerData(r, r.ldEnd(), {})); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_layer) throw new DecodeError('SetLayerTrackers.layer: missing', 'missingField');
+  o.layer = v_layer;
+  o.trackers = l_trackers;
+  return o;
+}
+function encS_GetLayerTrackers(w: Writer, v: T.GetLayerTrackers): void {
+  w.byte(10); w.str(v.layer);
+}
+function decS_GetLayerTrackers(r: Reader, end: number, o: any): T.GetLayerTrackers {
+  let h_layer = false;
+  let v_layer: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_layer = r.str(); h_layer = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_layer) throw new DecodeError('GetLayerTrackers.layer: missing', 'missingField');
+  o.layer = v_layer;
+  return o;
+}
+function encS_CameraSolveFrame(w: Writer, v: T.CameraSolveFrame): void {
+  w.byte(8); w.i64(v.time);
+  { const a = v.rotation; if (a.length) { w.byte(18); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  w.byte(26); { const s = w.beginLd(); encS_Vec3(w, v.center); w.endLd(s); }
+}
+function decS_CameraSolveFrame(r: Reader, end: number, o: any): T.CameraSolveFrame {
+  const l_rotation: number[] = [];
+  let h_time = false;
+  let h_center = false;
+  let v_time: number | undefined;
+  let v_center: T.Vec3 | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 8: v_time = r.i64(); h_time = true; break;
+      case 18: { const e = r.ldEnd(); while (r.pos < e) l_rotation.push(r.f64()); r.expectAt(e); break; }
+      case 26: v_center = decS_Vec3(r, r.ldEnd(), {}); h_center = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_time) throw new DecodeError('CameraSolveFrame.time: missing', 'missingField');
+  if (!h_center) throw new DecodeError('CameraSolveFrame.center: missing', 'missingField');
+  o.time = v_time;
+  o.rotation = l_rotation;
+  o.center = v_center;
+  return o;
+}
+function encS_CameraSolveData(w: Writer, v: T.CameraSolveData): void {
+  w.byte(10); w.str(v.camera);
+  w.byte(17); w.f64(v.focal);
+  w.byte(25); w.f64(v.sourceWidth);
+  w.byte(33); w.f64(v.sourceHeight);
+  { const a = v.frames; for (let i = 0; i < a.length; i++) { w.byte(42); { const s = w.beginLd(); encS_CameraSolveFrame(w, a[i]!); w.endLd(s); } } }
+  { const a = v.points; for (let i = 0; i < a.length; i++) { w.byte(50); { const s = w.beginLd(); encS_Vec3(w, a[i]!); w.endLd(s); } } }
+  { const a = v.pointErrors; if (a.length) { w.byte(58); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  w.byte(66); { const s = w.beginLd(); encS_Vec3(w, v.worldOrigin); w.endLd(s); }
+  w.byte(73); w.f64(v.worldScale);
+  { const a = v.worldRotation; if (a.length) { w.byte(82); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  w.byte(90); { const s = w.beginLd(); encS_Vec3(w, v.worldCentroid); w.endLd(s); }
+}
+function decS_CameraSolveData(r: Reader, end: number, o: any): T.CameraSolveData {
+  const l_frames: T.CameraSolveFrame[] = [];
+  const l_points: T.Vec3[] = [];
+  const l_pointErrors: number[] = [];
+  const l_worldRotation: number[] = [];
+  let h_camera = false;
+  let h_focal = false;
+  let h_sourceWidth = false;
+  let h_sourceHeight = false;
+  let h_worldOrigin = false;
+  let h_worldScale = false;
+  let h_worldCentroid = false;
+  let v_camera: string | undefined;
+  let v_focal: number | undefined;
+  let v_sourceWidth: number | undefined;
+  let v_sourceHeight: number | undefined;
+  let v_worldOrigin: T.Vec3 | undefined;
+  let v_worldScale: number | undefined;
+  let v_worldCentroid: T.Vec3 | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_camera = r.str(); h_camera = true; break;
+      case 17: v_focal = r.f64(); h_focal = true; break;
+      case 25: v_sourceWidth = r.f64(); h_sourceWidth = true; break;
+      case 33: v_sourceHeight = r.f64(); h_sourceHeight = true; break;
+      case 42: l_frames.push(decS_CameraSolveFrame(r, r.ldEnd(), {})); break;
+      case 50: l_points.push(decS_Vec3(r, r.ldEnd(), {})); break;
+      case 58: { const e = r.ldEnd(); while (r.pos < e) l_pointErrors.push(r.f64()); r.expectAt(e); break; }
+      case 66: v_worldOrigin = decS_Vec3(r, r.ldEnd(), {}); h_worldOrigin = true; break;
+      case 73: v_worldScale = r.f64(); h_worldScale = true; break;
+      case 82: { const e = r.ldEnd(); while (r.pos < e) l_worldRotation.push(r.f64()); r.expectAt(e); break; }
+      case 90: v_worldCentroid = decS_Vec3(r, r.ldEnd(), {}); h_worldCentroid = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_camera) throw new DecodeError('CameraSolveData.camera: missing', 'missingField');
+  if (!h_focal) throw new DecodeError('CameraSolveData.focal: missing', 'missingField');
+  if (!h_sourceWidth) throw new DecodeError('CameraSolveData.sourceWidth: missing', 'missingField');
+  if (!h_sourceHeight) throw new DecodeError('CameraSolveData.sourceHeight: missing', 'missingField');
+  if (!h_worldOrigin) throw new DecodeError('CameraSolveData.worldOrigin: missing', 'missingField');
+  if (!h_worldScale) throw new DecodeError('CameraSolveData.worldScale: missing', 'missingField');
+  if (!h_worldCentroid) throw new DecodeError('CameraSolveData.worldCentroid: missing', 'missingField');
+  o.camera = v_camera;
+  o.focal = v_focal;
+  o.sourceWidth = v_sourceWidth;
+  o.sourceHeight = v_sourceHeight;
+  o.frames = l_frames;
+  o.points = l_points;
+  o.pointErrors = l_pointErrors;
+  o.worldOrigin = v_worldOrigin;
+  o.worldScale = v_worldScale;
+  o.worldRotation = l_worldRotation;
+  o.worldCentroid = v_worldCentroid;
+  return o;
+}
+function encS_CameraSolveAnswer(w: Writer, v: T.CameraSolveAnswer): void {
+  if (v.solve !== undefined) { w.byte(10); { const s = w.beginLd(); encS_CameraSolveData(w, v.solve); w.endLd(s); } }
+}
+function decS_CameraSolveAnswer(r: Reader, end: number, o: any): T.CameraSolveAnswer {
+  let v_solve: T.CameraSolveData | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_solve = decS_CameraSolveData(r, r.ldEnd(), {}); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (v_solve !== undefined) o.solve = v_solve;
+  return o;
+}
+function encS_SetCameraSolve(w: Writer, v: T.SetCameraSolve): void {
+  w.byte(10); w.str(v.layer);
+  if (v.solve !== undefined) { w.byte(18); { const s = w.beginLd(); encS_CameraSolveData(w, v.solve); w.endLd(s); } }
+}
+function decS_SetCameraSolve(r: Reader, end: number, o: any): T.SetCameraSolve {
+  let h_layer = false;
+  let v_layer: string | undefined;
+  let v_solve: T.CameraSolveData | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_layer = r.str(); h_layer = true; break;
+      case 18: v_solve = decS_CameraSolveData(r, r.ldEnd(), {}); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_layer) throw new DecodeError('SetCameraSolve.layer: missing', 'missingField');
+  o.layer = v_layer;
+  if (v_solve !== undefined) o.solve = v_solve;
+  return o;
+}
+function encS_GetCameraSolve(w: Writer, v: T.GetCameraSolve): void {
+  w.byte(10); w.str(v.layer);
+}
+function decS_GetCameraSolve(r: Reader, end: number, o: any): T.GetCameraSolve {
+  let h_layer = false;
+  let v_layer: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_layer = r.str(); h_layer = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_layer) throw new DecodeError('GetCameraSolve.layer: missing', 'missingField');
+  o.layer = v_layer;
+  return o;
+}
+function encS_SetLayerMatte(w: Writer, v: T.SetLayerMatte): void {
+  w.byte(10); w.str(v.layer);
+  { const a = v.frames; for (let i = 0; i < a.length; i++) { w.byte(18); { const s = w.beginLd(); encS_ContentAwareFillFrame(w, a[i]!); w.endLd(s); } } }
+}
+function decS_SetLayerMatte(r: Reader, end: number, o: any): T.SetLayerMatte {
+  const l_frames: T.ContentAwareFillFrame[] = [];
+  let h_layer = false;
+  let v_layer: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_layer = r.str(); h_layer = true; break;
+      case 18: l_frames.push(decS_ContentAwareFillFrame(r, r.ldEnd(), {})); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_layer) throw new DecodeError('SetLayerMatte.layer: missing', 'missingField');
+  o.layer = v_layer;
+  o.frames = l_frames;
   return o;
 }
 function encS_RotoBrushJob(w: Writer, v: T.RotoBrushJob): void {
@@ -8484,8 +9094,15 @@ function encS_RotoBrushJob(w: Writer, v: T.RotoBrushJob): void {
   w.byte(26); { const s = w.beginLd(); encS_Vec2(w, v.seed); w.endLd(s); }
   if (v.tolerance !== undefined) { w.byte(33); w.f64(v.tolerance); }
   if (v.feather !== undefined) { w.byte(41); w.f64(v.feather); }
+  { const a = v.prompts; for (let i = 0; i < a.length; i++) { w.byte(50); { const s = w.beginLd(); encS_Vec2(w, a[i]!); w.endLd(s); } } }
+  { const a = v.backgroundPrompts; for (let i = 0; i < a.length; i++) { w.byte(58); { const s = w.beginLd(); encS_Vec2(w, a[i]!); w.endLd(s); } } }
+  if (v.startMask !== undefined) { w.byte(66); w.str(v.startMask); }
+  { const a = v.replaceMasks; for (let i = 0; i < a.length; i++) { w.byte(74); w.str(a[i]!); } }
 }
 function decS_RotoBrushJob(r: Reader, end: number, o: any): T.RotoBrushJob {
+  const l_prompts: T.Vec2[] = [];
+  const l_backgroundPrompts: T.Vec2[] = [];
+  const l_replaceMasks: string[] = [];
   let h_layer = false;
   let h_range = false;
   let h_seed = false;
@@ -8494,6 +9111,7 @@ function decS_RotoBrushJob(r: Reader, end: number, o: any): T.RotoBrushJob {
   let v_seed: T.Vec2 | undefined;
   let v_tolerance: number | undefined;
   let v_feather: number | undefined;
+  let v_startMask: string | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -8502,6 +9120,10 @@ function decS_RotoBrushJob(r: Reader, end: number, o: any): T.RotoBrushJob {
       case 26: v_seed = decS_Vec2(r, r.ldEnd(), {}); h_seed = true; break;
       case 33: v_tolerance = r.f64(); break;
       case 41: v_feather = r.f64(); break;
+      case 50: l_prompts.push(decS_Vec2(r, r.ldEnd(), {})); break;
+      case 58: l_backgroundPrompts.push(decS_Vec2(r, r.ldEnd(), {})); break;
+      case 66: v_startMask = r.str(); break;
+      case 74: l_replaceMasks.push(r.str()); break;
       default: r.skip(key);
     }
   }
@@ -8514,26 +9136,45 @@ function decS_RotoBrushJob(r: Reader, end: number, o: any): T.RotoBrushJob {
   o.seed = v_seed;
   if (v_tolerance !== undefined) o.tolerance = v_tolerance;
   if (v_feather !== undefined) o.feather = v_feather;
+  o.prompts = l_prompts;
+  o.backgroundPrompts = l_backgroundPrompts;
+  if (v_startMask !== undefined) o.startMask = v_startMask;
+  o.replaceMasks = l_replaceMasks;
   return o;
 }
 function encS_ContentAwareFillJob(w: Writer, v: T.ContentAwareFillJob): void {
   w.byte(10); w.str(v.layer);
   w.byte(18); { const s = w.beginLd(); encS_TimeRange(w, v.range); w.endLd(s); }
   w.byte(26); w.str(v.outputFolder);
+  if (v.mode !== undefined) { w.byte(32); w.varint(enc_ContentAwareFillMode(v.mode)); }
+  if (v.lighting !== undefined) { w.byte(40); w.varint(enc_ContentAwareLighting(v.lighting)); }
+  { const a = v.references; for (let i = 0; i < a.length; i++) { w.byte(50); { const s = w.beginLd(); encS_ContentAwareFillFrame(w, a[i]!); w.endLd(s); } } }
+  if (v.expansion !== undefined) { w.byte(57); w.f64(v.expansion); }
+  if (v.createReference !== undefined) { w.byte(64); w.bool(v.createReference); }
 }
 function decS_ContentAwareFillJob(r: Reader, end: number, o: any): T.ContentAwareFillJob {
+  const l_references: T.ContentAwareFillFrame[] = [];
   let h_layer = false;
   let h_range = false;
   let h_outputFolder = false;
   let v_layer: string | undefined;
   let v_range: T.TimeRange | undefined;
   let v_outputFolder: string | undefined;
+  let v_mode: T.ContentAwareFillMode | undefined;
+  let v_lighting: T.ContentAwareLighting | undefined;
+  let v_expansion: number | undefined;
+  let v_createReference: boolean | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
       case 10: v_layer = r.str(); h_layer = true; break;
       case 18: v_range = decS_TimeRange(r, r.ldEnd(), {}); h_range = true; break;
       case 26: v_outputFolder = r.str(); h_outputFolder = true; break;
+      case 32: v_mode = dec_ContentAwareFillMode(r.varint()); break;
+      case 40: v_lighting = dec_ContentAwareLighting(r.varint()); break;
+      case 50: l_references.push(decS_ContentAwareFillFrame(r, r.ldEnd(), {})); break;
+      case 57: v_expansion = r.f64(); break;
+      case 64: v_createReference = r.bool(); break;
       default: r.skip(key);
     }
   }
@@ -8544,6 +9185,11 @@ function decS_ContentAwareFillJob(r: Reader, end: number, o: any): T.ContentAwar
   o.layer = v_layer;
   o.range = v_range;
   o.outputFolder = v_outputFolder;
+  if (v_mode !== undefined) o.mode = v_mode;
+  if (v_lighting !== undefined) o.lighting = v_lighting;
+  o.references = l_references;
+  if (v_expansion !== undefined) o.expansion = v_expansion;
+  if (v_createReference !== undefined) o.createReference = v_createReference;
   return o;
 }
 function encS_AutoReframeJob(w: Writer, v: T.AutoReframeJob): void {
@@ -8876,6 +9522,19 @@ function decS_SetPluginEnabled(r: Reader, end: number, o: any): T.SetPluginEnabl
   if (!h_enabled) throw new DecodeError('SetPluginEnabled.enabled: missing', 'missingField');
   o.plugin = v_plugin;
   o.enabled = v_enabled;
+  return o;
+}
+function encS_RescanPlugins(w: Writer, v: T.RescanPlugins): void {
+  void w; void v;
+}
+function decS_RescanPlugins(r: Reader, end: number, o: any): T.RescanPlugins {
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
   return o;
 }
 function encS_SetPluginData(w: Writer, v: T.SetPluginData): void {
@@ -11208,6 +11867,7 @@ function encS_EffectParamInfo(w: Writer, v: T.EffectParamInfo): void {
   { const a = v.choices; for (let i = 0; i < a.length; i++) { w.byte(82); w.str(a[i]!); } }
   w.byte(90); w.str(v.unit);
   w.byte(98); w.str(v.group);
+  if (v.precision !== undefined) { w.byte(104); w.u32(v.precision); }
 }
 function decS_EffectParamInfo(r: Reader, end: number, o: any): T.EffectParamInfo {
   const l_choices: string[] = [];
@@ -11228,6 +11888,7 @@ function decS_EffectParamInfo(r: Reader, end: number, o: any): T.EffectParamInfo
   let v_softMax: number | undefined;
   let v_unit: string | undefined;
   let v_group: string | undefined;
+  let v_precision: number | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -11243,6 +11904,7 @@ function decS_EffectParamInfo(r: Reader, end: number, o: any): T.EffectParamInfo
       case 82: l_choices.push(r.str()); break;
       case 90: v_unit = r.str(); h_unit = true; break;
       case 98: v_group = r.str(); h_group = true; break;
+      case 104: v_precision = r.u32(); break;
       default: r.skip(key);
     }
   }
@@ -11265,6 +11927,7 @@ function decS_EffectParamInfo(r: Reader, end: number, o: any): T.EffectParamInfo
   o.choices = l_choices;
   o.unit = v_unit;
   o.group = v_group;
+  if (v_precision !== undefined) o.precision = v_precision;
   return o;
 }
 function encS_EffectInfo(w: Writer, v: T.EffectInfo): void {
@@ -11276,9 +11939,11 @@ function encS_EffectInfo(w: Writer, v: T.EffectInfo): void {
   { const a = v.params; for (let i = 0; i < a.length; i++) { w.byte(50); { const s = w.beginLd(); encS_EffectParamInfo(w, a[i]!); w.endLd(s); } } }
   w.byte(56); w.bool(v.supportsFloat);
   w.byte(64); w.bool(v.audio);
+  { const a = v.actions; for (let i = 0; i < a.length; i++) { w.byte(74); { const s = w.beginLd(); encS_EffectActionInfo(w, a[i]!); w.endLd(s); } } }
 }
 function decS_EffectInfo(r: Reader, end: number, o: any): T.EffectInfo {
   const l_params: T.EffectParamInfo[] = [];
+  const l_actions: T.EffectActionInfo[] = [];
   let h_matchName = false;
   let h_displayName = false;
   let h_category = false;
@@ -11304,6 +11969,7 @@ function decS_EffectInfo(r: Reader, end: number, o: any): T.EffectInfo {
       case 50: l_params.push(decS_EffectParamInfo(r, r.ldEnd(), {})); break;
       case 56: v_supportsFloat = r.bool(); h_supportsFloat = true; break;
       case 64: v_audio = r.bool(); h_audio = true; break;
+      case 74: l_actions.push(decS_EffectActionInfo(r, r.ldEnd(), {})); break;
       default: r.skip(key);
     }
   }
@@ -11323,6 +11989,31 @@ function decS_EffectInfo(r: Reader, end: number, o: any): T.EffectInfo {
   o.params = l_params;
   o.supportsFloat = v_supportsFloat;
   o.audio = v_audio;
+  o.actions = l_actions;
+  return o;
+}
+function encS_EffectActionInfo(w: Writer, v: T.EffectActionInfo): void {
+  w.byte(10); w.str(v.key);
+  w.byte(18); w.str(v.label);
+}
+function decS_EffectActionInfo(r: Reader, end: number, o: any): T.EffectActionInfo {
+  let h_key = false;
+  let h_label = false;
+  let v_key: string | undefined;
+  let v_label: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_key = r.str(); h_key = true; break;
+      case 18: v_label = r.str(); h_label = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_key) throw new DecodeError('EffectActionInfo.key: missing', 'missingField');
+  if (!h_label) throw new DecodeError('EffectActionInfo.label: missing', 'missingField');
+  o.key = v_key;
+  o.label = v_label;
   return o;
 }
 function encS_ListEffects(w: Writer, v: T.ListEffects): void {
@@ -14661,9 +15352,11 @@ function decS_RenderGlass(r: Reader, end: number, o: any): T.RenderGlass {
 function encS_RenderMotionSample(w: Writer, v: T.RenderMotionSample): void {
   { const a = v.modelMatrix; if (a.length) { w.byte(10); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
   w.byte(17); w.f64(v.opacity);
+  { const a = v.model3d; if (a.length) { w.byte(26); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
 }
 function decS_RenderMotionSample(r: Reader, end: number, o: any): T.RenderMotionSample {
   const l_modelMatrix: number[] = [];
+  const l_model3d: number[] = [];
   let h_opacity = false;
   let v_opacity: number | undefined;
   while (r.pos < end) {
@@ -14671,6 +15364,7 @@ function decS_RenderMotionSample(r: Reader, end: number, o: any): T.RenderMotion
     switch (key) {
       case 10: { const e = r.ldEnd(); while (r.pos < e) l_modelMatrix.push(r.f64()); r.expectAt(e); break; }
       case 17: v_opacity = r.f64(); h_opacity = true; break;
+      case 26: { const e = r.ldEnd(); while (r.pos < e) l_model3d.push(r.f64()); r.expectAt(e); break; }
       default: r.skip(key);
     }
   }
@@ -14678,6 +15372,7 @@ function decS_RenderMotionSample(r: Reader, end: number, o: any): T.RenderMotion
   if (!h_opacity) throw new DecodeError('RenderMotionSample.opacity: missing', 'missingField');
   o.modelMatrix = l_modelMatrix;
   o.opacity = v_opacity;
+  o.model3d = l_model3d;
   return o;
 }
 function encS_RenderAdjustment(w: Writer, v: T.RenderAdjustment): void {
@@ -14947,6 +15642,10 @@ function encS_RenderExtrudedMesh(w: Writer, v: T.RenderExtrudedMesh): void {
   w.byte(32); w.varint(enc_RenderIndexFormat(v.indexFormat));
   { const a = v.ranges; for (let i = 0; i < a.length; i++) { w.byte(42); { const s = w.beginLd(); encS_RenderMeshRange(w, a[i]!); w.endLd(s); } } }
   if (v.pbr !== undefined) { w.byte(50); { const s = w.beginLd(); encS_RenderPbrMaps(w, v.pbr); w.endLd(s); } }
+  w.byte(56); w.varint(enc_RenderMeshSurface(v.surface));
+  w.byte(65); w.f64(v.surfaceWidth);
+  w.byte(73); w.f64(v.surfaceHeight);
+  w.byte(82); w.bytes(v.colors);
 }
 function decS_RenderExtrudedMesh(r: Reader, end: number, o: any): T.RenderExtrudedMesh {
   const l_ranges: T.RenderMeshRange[] = [];
@@ -14954,11 +15653,19 @@ function decS_RenderExtrudedMesh(r: Reader, end: number, o: any): T.RenderExtrud
   let h_vertices = false;
   let h_indices = false;
   let h_indexFormat = false;
+  let h_surface = false;
+  let h_surfaceWidth = false;
+  let h_surfaceHeight = false;
+  let h_colors = false;
   let v_key: string | undefined;
   let v_vertices: Uint8Array | undefined;
   let v_indices: Uint8Array | undefined;
   let v_indexFormat: T.RenderIndexFormat | undefined;
   let v_pbr: T.RenderPbrMaps | undefined;
+  let v_surface: T.RenderMeshSurface | undefined;
+  let v_surfaceWidth: number | undefined;
+  let v_surfaceHeight: number | undefined;
+  let v_colors: Uint8Array | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -14968,6 +15675,10 @@ function decS_RenderExtrudedMesh(r: Reader, end: number, o: any): T.RenderExtrud
       case 32: v_indexFormat = dec_RenderIndexFormat(r.varint()); h_indexFormat = true; break;
       case 42: l_ranges.push(decS_RenderMeshRange(r, r.ldEnd(), {})); break;
       case 50: v_pbr = decS_RenderPbrMaps(r, r.ldEnd(), {}); break;
+      case 56: v_surface = dec_RenderMeshSurface(r.varint()); h_surface = true; break;
+      case 65: v_surfaceWidth = r.f64(); h_surfaceWidth = true; break;
+      case 73: v_surfaceHeight = r.f64(); h_surfaceHeight = true; break;
+      case 82: v_colors = r.bytes(); h_colors = true; break;
       default: r.skip(key);
     }
   }
@@ -14976,12 +15687,20 @@ function decS_RenderExtrudedMesh(r: Reader, end: number, o: any): T.RenderExtrud
   if (!h_vertices) throw new DecodeError('RenderExtrudedMesh.vertices: missing', 'missingField');
   if (!h_indices) throw new DecodeError('RenderExtrudedMesh.indices: missing', 'missingField');
   if (!h_indexFormat) throw new DecodeError('RenderExtrudedMesh.indexFormat: missing', 'missingField');
+  if (!h_surface) throw new DecodeError('RenderExtrudedMesh.surface: missing', 'missingField');
+  if (!h_surfaceWidth) throw new DecodeError('RenderExtrudedMesh.surfaceWidth: missing', 'missingField');
+  if (!h_surfaceHeight) throw new DecodeError('RenderExtrudedMesh.surfaceHeight: missing', 'missingField');
+  if (!h_colors) throw new DecodeError('RenderExtrudedMesh.colors: missing', 'missingField');
   o.key = v_key;
   o.vertices = v_vertices;
   o.indices = v_indices;
   o.indexFormat = v_indexFormat;
   o.ranges = l_ranges;
   if (v_pbr !== undefined) o.pbr = v_pbr;
+  o.surface = v_surface;
+  o.surfaceWidth = v_surfaceWidth;
+  o.surfaceHeight = v_surfaceHeight;
+  o.colors = v_colors;
   return o;
 }
 function encS_RenderShade3D(w: Writer, v: T.RenderShade3D): void {
@@ -15001,6 +15720,7 @@ function encS_RenderShade3D(w: Writer, v: T.RenderShade3D): void {
   if (v.transparencyRolloff !== undefined) { w.byte(113); w.f64(v.transparencyRolloff); }
   if (v.ior !== undefined) { w.byte(121); w.f64(v.ior); }
   if (v.acceptsShadows !== undefined) { w.varint(128); w.bool(v.acceptsShadows); }
+  if (v.layerReflections !== undefined) { w.varint(136); w.bool(v.layerReflections); }
 }
 function decS_RenderShade3D(r: Reader, end: number, o: any): T.RenderShade3D {
   const l_quadGain: number[] = [];
@@ -15021,6 +15741,7 @@ function decS_RenderShade3D(r: Reader, end: number, o: any): T.RenderShade3D {
   let v_transparencyRolloff: number | undefined;
   let v_ior: number | undefined;
   let v_acceptsShadows: boolean | undefined;
+  let v_layerReflections: boolean | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -15040,6 +15761,7 @@ function decS_RenderShade3D(r: Reader, end: number, o: any): T.RenderShade3D {
       case 113: v_transparencyRolloff = r.f64(); break;
       case 121: v_ior = r.f64(); break;
       case 128: v_acceptsShadows = r.bool(); break;
+      case 136: v_layerReflections = r.bool(); break;
       default: r.skip(key);
     }
   }
@@ -15062,6 +15784,7 @@ function decS_RenderShade3D(r: Reader, end: number, o: any): T.RenderShade3D {
   if (v_transparencyRolloff !== undefined) o.transparencyRolloff = v_transparencyRolloff;
   if (v_ior !== undefined) o.ior = v_ior;
   if (v_acceptsShadows !== undefined) o.acceptsShadows = v_acceptsShadows;
+  if (v_layerReflections !== undefined) o.layerReflections = v_layerReflections;
   return o;
 }
 function encS_RenderThreeD(w: Writer, v: T.RenderThreeD): void {
@@ -15309,8 +16032,19 @@ function encS_RenderEnvMap(w: Writer, v: T.RenderEnvMap): void {
   w.byte(50); w.bytes(v.data);
   w.byte(57); w.f64(v.intensity);
   w.byte(65); w.f64(v.rotationDeg);
+  w.byte(72); w.varint(enc_RenderTextureFormat(v.format));
+  { const a = v.sh; if (a.length) { w.byte(82); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  w.byte(88); w.bool(v.visibleSky);
+  w.byte(97); w.f64(v.skyBlur);
+  w.byte(105); w.f64(v.skyIntensity);
+  if (v.textureKey !== undefined) { w.byte(114); w.str(v.textureKey); }
+  { const a = v.shadowDir; if (a.length) { w.byte(122); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  w.varint(129); w.f64(v.shadowDarkness);
+  w.varint(137); w.f64(v.shadowSoftness);
 }
 function decS_RenderEnvMap(r: Reader, end: number, o: any): T.RenderEnvMap {
+  const l_sh: number[] = [];
+  const l_shadowDir: number[] = [];
   let h_id = false;
   let h_width = false;
   let h_height = false;
@@ -15319,6 +16053,12 @@ function decS_RenderEnvMap(r: Reader, end: number, o: any): T.RenderEnvMap {
   let h_data = false;
   let h_intensity = false;
   let h_rotationDeg = false;
+  let h_format = false;
+  let h_visibleSky = false;
+  let h_skyBlur = false;
+  let h_skyIntensity = false;
+  let h_shadowDarkness = false;
+  let h_shadowSoftness = false;
   let v_id: string | undefined;
   let v_width: number | undefined;
   let v_height: number | undefined;
@@ -15327,6 +16067,13 @@ function decS_RenderEnvMap(r: Reader, end: number, o: any): T.RenderEnvMap {
   let v_data: Uint8Array | undefined;
   let v_intensity: number | undefined;
   let v_rotationDeg: number | undefined;
+  let v_format: T.RenderTextureFormat | undefined;
+  let v_visibleSky: boolean | undefined;
+  let v_skyBlur: number | undefined;
+  let v_skyIntensity: number | undefined;
+  let v_textureKey: string | undefined;
+  let v_shadowDarkness: number | undefined;
+  let v_shadowSoftness: number | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -15338,6 +16085,15 @@ function decS_RenderEnvMap(r: Reader, end: number, o: any): T.RenderEnvMap {
       case 50: v_data = r.bytes(); h_data = true; break;
       case 57: v_intensity = r.f64(); h_intensity = true; break;
       case 65: v_rotationDeg = r.f64(); h_rotationDeg = true; break;
+      case 72: v_format = dec_RenderTextureFormat(r.varint()); h_format = true; break;
+      case 82: { const e = r.ldEnd(); while (r.pos < e) l_sh.push(r.f64()); r.expectAt(e); break; }
+      case 88: v_visibleSky = r.bool(); h_visibleSky = true; break;
+      case 97: v_skyBlur = r.f64(); h_skyBlur = true; break;
+      case 105: v_skyIntensity = r.f64(); h_skyIntensity = true; break;
+      case 114: v_textureKey = r.str(); break;
+      case 122: { const e = r.ldEnd(); while (r.pos < e) l_shadowDir.push(r.f64()); r.expectAt(e); break; }
+      case 129: v_shadowDarkness = r.f64(); h_shadowDarkness = true; break;
+      case 137: v_shadowSoftness = r.f64(); h_shadowSoftness = true; break;
       default: r.skip(key);
     }
   }
@@ -15350,6 +16106,12 @@ function decS_RenderEnvMap(r: Reader, end: number, o: any): T.RenderEnvMap {
   if (!h_data) throw new DecodeError('RenderEnvMap.data: missing', 'missingField');
   if (!h_intensity) throw new DecodeError('RenderEnvMap.intensity: missing', 'missingField');
   if (!h_rotationDeg) throw new DecodeError('RenderEnvMap.rotationDeg: missing', 'missingField');
+  if (!h_format) throw new DecodeError('RenderEnvMap.format: missing', 'missingField');
+  if (!h_visibleSky) throw new DecodeError('RenderEnvMap.visibleSky: missing', 'missingField');
+  if (!h_skyBlur) throw new DecodeError('RenderEnvMap.skyBlur: missing', 'missingField');
+  if (!h_skyIntensity) throw new DecodeError('RenderEnvMap.skyIntensity: missing', 'missingField');
+  if (!h_shadowDarkness) throw new DecodeError('RenderEnvMap.shadowDarkness: missing', 'missingField');
+  if (!h_shadowSoftness) throw new DecodeError('RenderEnvMap.shadowSoftness: missing', 'missingField');
   o.id = v_id;
   o.width = v_width;
   o.height = v_height;
@@ -15358,6 +16120,93 @@ function decS_RenderEnvMap(r: Reader, end: number, o: any): T.RenderEnvMap {
   o.data = v_data;
   o.intensity = v_intensity;
   o.rotationDeg = v_rotationDeg;
+  o.format = v_format;
+  o.sh = l_sh;
+  o.visibleSky = v_visibleSky;
+  o.skyBlur = v_skyBlur;
+  o.skyIntensity = v_skyIntensity;
+  if (v_textureKey !== undefined) o.textureKey = v_textureKey;
+  o.shadowDir = l_shadowDir;
+  o.shadowDarkness = v_shadowDarkness;
+  o.shadowSoftness = v_shadowSoftness;
+  return o;
+}
+function encS_RenderFog(w: Writer, v: T.RenderFog): void {
+  w.byte(8); w.varint(enc_RenderFogMode(v.mode));
+  w.byte(18); { const s = w.beginLd(); encS_Color(w, v.color); w.endLd(s); }
+  w.byte(25); w.f64(v.start);
+  w.byte(33); w.f64(v.end);
+  w.byte(41); w.f64(v.density);
+  w.byte(49); w.f64(v.maxOpacity);
+}
+function decS_RenderFog(r: Reader, end: number, o: any): T.RenderFog {
+  let h_mode = false;
+  let h_color = false;
+  let h_start = false;
+  let h_end = false;
+  let h_density = false;
+  let h_maxOpacity = false;
+  let v_mode: T.RenderFogMode | undefined;
+  let v_color: T.Color | undefined;
+  let v_start: number | undefined;
+  let v_end: number | undefined;
+  let v_density: number | undefined;
+  let v_maxOpacity: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 8: v_mode = dec_RenderFogMode(r.varint()); h_mode = true; break;
+      case 18: v_color = decS_Color(r, r.ldEnd(), {}); h_color = true; break;
+      case 25: v_start = r.f64(); h_start = true; break;
+      case 33: v_end = r.f64(); h_end = true; break;
+      case 41: v_density = r.f64(); h_density = true; break;
+      case 49: v_maxOpacity = r.f64(); h_maxOpacity = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_mode) throw new DecodeError('RenderFog.mode: missing', 'missingField');
+  if (!h_color) throw new DecodeError('RenderFog.color: missing', 'missingField');
+  if (!h_start) throw new DecodeError('RenderFog.start: missing', 'missingField');
+  if (!h_end) throw new DecodeError('RenderFog.end: missing', 'missingField');
+  if (!h_density) throw new DecodeError('RenderFog.density: missing', 'missingField');
+  if (!h_maxOpacity) throw new DecodeError('RenderFog.maxOpacity: missing', 'missingField');
+  o.mode = v_mode;
+  o.color = v_color;
+  o.start = v_start;
+  o.end = v_end;
+  o.density = v_density;
+  o.maxOpacity = v_maxOpacity;
+  return o;
+}
+function encS_RenderShadowCatcher(w: Writer, v: T.RenderShadowCatcher): void {
+  w.byte(9); w.f64(v.y);
+  w.byte(17); w.f64(v.opacity);
+  w.byte(25); w.f64(v.size);
+}
+function decS_RenderShadowCatcher(r: Reader, end: number, o: any): T.RenderShadowCatcher {
+  let h_y = false;
+  let h_opacity = false;
+  let h_size = false;
+  let v_y: number | undefined;
+  let v_opacity: number | undefined;
+  let v_size: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 9: v_y = r.f64(); h_y = true; break;
+      case 17: v_opacity = r.f64(); h_opacity = true; break;
+      case 25: v_size = r.f64(); h_size = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_y) throw new DecodeError('RenderShadowCatcher.y: missing', 'missingField');
+  if (!h_opacity) throw new DecodeError('RenderShadowCatcher.opacity: missing', 'missingField');
+  if (!h_size) throw new DecodeError('RenderShadowCatcher.size: missing', 'missingField');
+  o.y = v_y;
+  o.opacity = v_opacity;
+  o.size = v_size;
   return o;
 }
 function encS_RenderSsao(w: Writer, v: T.RenderSsao): void {
@@ -15402,6 +16251,7 @@ function encS_RenderPrecompFrame(w: Writer, v: T.RenderPrecompFrame): void {
   if (v.envMap !== undefined) { w.byte(26); { const s = w.beginLd(); encS_RenderEnvMap(w, v.envMap); w.endLd(s); } }
   if (v.flatWidth !== undefined) { w.byte(33); w.f64(v.flatWidth); }
   if (v.flatHeight !== undefined) { w.byte(41); w.f64(v.flatHeight); }
+  if (v.fog !== undefined) { w.byte(50); { const s = w.beginLd(); encS_RenderFog(w, v.fog); w.endLd(s); } }
 }
 function decS_RenderPrecompFrame(r: Reader, end: number, o: any): T.RenderPrecompFrame {
   const l_lights3d: T.RenderLight3D[] = [];
@@ -15409,6 +16259,7 @@ function decS_RenderPrecompFrame(r: Reader, end: number, o: any): T.RenderPrecom
   let v_envMap: T.RenderEnvMap | undefined;
   let v_flatWidth: number | undefined;
   let v_flatHeight: number | undefined;
+  let v_fog: T.RenderFog | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -15417,6 +16268,7 @@ function decS_RenderPrecompFrame(r: Reader, end: number, o: any): T.RenderPrecom
       case 26: v_envMap = decS_RenderEnvMap(r, r.ldEnd(), {}); break;
       case 33: v_flatWidth = r.f64(); break;
       case 41: v_flatHeight = r.f64(); break;
+      case 50: v_fog = decS_RenderFog(r, r.ldEnd(), {}); break;
       default: r.skip(key);
     }
   }
@@ -15426,6 +16278,7 @@ function decS_RenderPrecompFrame(r: Reader, end: number, o: any): T.RenderPrecom
   if (v_envMap !== undefined) o.envMap = v_envMap;
   if (v_flatWidth !== undefined) o.flatWidth = v_flatWidth;
   if (v_flatHeight !== undefined) o.flatHeight = v_flatHeight;
+  if (v_fog !== undefined) o.fog = v_fog;
   return o;
 }
 function encS_Renderable(w: Writer, v: T.Renderable): void {
@@ -15610,6 +16463,8 @@ function encS_RenderFrameScene(w: Writer, v: T.RenderFrameScene): void {
   { const a = v.lights3d; for (let i = 0; i < a.length; i++) { w.byte(74); { const s = w.beginLd(); encS_RenderLight3D(w, a[i]!); w.endLd(s); } } }
   if (v.envMap !== undefined) { w.byte(82); { const s = w.beginLd(); encS_RenderEnvMap(w, v.envMap); w.endLd(s); } }
   if (v.ssao !== undefined) { w.byte(90); { const s = w.beginLd(); encS_RenderSsao(w, v.ssao); w.endLd(s); } }
+  if (v.fog !== undefined) { w.byte(98); { const s = w.beginLd(); encS_RenderFog(w, v.fog); w.endLd(s); } }
+  if (v.shadowCatcher !== undefined) { w.byte(106); { const s = w.beginLd(); encS_RenderShadowCatcher(w, v.shadowCatcher); w.endLd(s); } }
 }
 function decS_RenderFrameScene(r: Reader, end: number, o: any): T.RenderFrameScene {
   const l_renderables: T.Renderable[] = [];
@@ -15627,6 +16482,8 @@ function decS_RenderFrameScene(r: Reader, end: number, o: any): T.RenderFrameSce
   let v_camera3d: T.RenderCamera3D | undefined;
   let v_envMap: T.RenderEnvMap | undefined;
   let v_ssao: T.RenderSsao | undefined;
+  let v_fog: T.RenderFog | undefined;
+  let v_shadowCatcher: T.RenderShadowCatcher | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -15641,6 +16498,8 @@ function decS_RenderFrameScene(r: Reader, end: number, o: any): T.RenderFrameSce
       case 74: l_lights3d.push(decS_RenderLight3D(r, r.ldEnd(), {})); break;
       case 82: v_envMap = decS_RenderEnvMap(r, r.ldEnd(), {}); break;
       case 90: v_ssao = decS_RenderSsao(r, r.ldEnd(), {}); break;
+      case 98: v_fog = decS_RenderFog(r, r.ldEnd(), {}); break;
+      case 106: v_shadowCatcher = decS_RenderShadowCatcher(r, r.ldEnd(), {}); break;
       default: r.skip(key);
     }
   }
@@ -15660,6 +16519,8 @@ function decS_RenderFrameScene(r: Reader, end: number, o: any): T.RenderFrameSce
   o.lights3d = l_lights3d;
   if (v_envMap !== undefined) o.envMap = v_envMap;
   if (v_ssao !== undefined) o.ssao = v_ssao;
+  if (v_fog !== undefined) o.fog = v_fog;
+  if (v_shadowCatcher !== undefined) o.shadowCatcher = v_shadowCatcher;
   return o;
 }
 function encS_RenderGuide(w: Writer, v: T.RenderGuide): void {
@@ -16357,6 +17218,9 @@ function encU_JobSpec(w: Writer, v: T.JobSpec): void {
     case 'rigLogo': w.varint(13722); { const s = w.beginLd(); encS_RigLogoJob(w, v.value); w.endLd(s); } return;
     case 'physicsBake': w.varint(13730); { const s = w.beginLd(); encS_PhysicsBakeJob(w, v.value); w.endLd(s); } return;
     case 'particleBake': w.varint(13738); { const s = w.beginLd(); encS_ParticleBakeJob(w, v.value); w.endLd(s); } return;
+    case 'cameraTrack': w.varint(13746); { const s = w.beginLd(); encS_CameraTrackJob(w, v.value); w.endLd(s); } return;
+    case 'faceTrack': w.varint(13754); { const s = w.beginLd(); encS_FaceTrackJob(w, v.value); w.endLd(s); } return;
+    case 'modelImport': w.varint(13762); { const s = w.beginLd(); encS_ModelImportJob(w, v.value); w.endLd(s); } return;
     default: throw new RangeError('JobSpec: unknown kind ' + String((v as { kind?: unknown }).kind));
   }
 }
@@ -16385,6 +17249,9 @@ function decU_JobSpec(r: Reader, end: number): T.JobSpec {
       case 13722: out = { kind: 'rigLogo', value: decS_RigLogoJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
       case 13730: out = { kind: 'physicsBake', value: decS_PhysicsBakeJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
       case 13738: out = { kind: 'particleBake', value: decS_ParticleBakeJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
+      case 13746: out = { kind: 'cameraTrack', value: decS_CameraTrackJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
+      case 13754: out = { kind: 'faceTrack', value: decS_FaceTrackJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
+      case 13762: out = { kind: 'modelImport', value: decS_ModelImportJob(r, r.ldEnd(), {}) } as T.JobSpec; break;
       default: r.skip(key);
     }
   }
@@ -16578,6 +17445,7 @@ function encU_Command(w: Writer, v: T.Command): void {
     case 'applyJobResult': w.varint(6818); { const s = w.beginLd(); encS_ApplyJobResult(w, v); w.endLd(s); } return;
     case 'setPluginEnabled': w.varint(6962); { const s = w.beginLd(); encS_SetPluginEnabled(w, v); w.endLd(s); } return;
     case 'setPluginData': w.varint(6970); { const s = w.beginLd(); encS_SetPluginData(w, v); w.endLd(s); } return;
+    case 'rescanPlugins': w.varint(6978); { const s = w.beginLd(); encS_RescanPlugins(w, v); w.endLd(s); } return;
     case 'liftRange': w.varint(7770); { const s = w.beginLd(); encS_LiftRange(w, v); w.endLd(s); } return;
     case 'setOverlayGeometry': w.varint(14170); { const s = w.beginLd(); encS_SetOverlayGeometry(w, v); w.endLd(s); } return;
     case 'setContentAwareFill': w.varint(14818); { const s = w.beginLd(); encS_SetContentAwareFill(w, v); w.endLd(s); } return;
@@ -16587,6 +17455,9 @@ function encU_Command(w: Writer, v: T.Command): void {
     case 'createLiveMerge': w.varint(15538); { const s = w.beginLd(); encS_CreateLiveMerge(w, v); w.endLd(s); } return;
     case 'migrateLegacyPrecomps': w.varint(15546); { const s = w.beginLd(); encS_MigrateLegacyPrecomps(w, v); w.endLd(s); } return;
     case 'setEssentialProp': w.varint(15554); { const s = w.beginLd(); encS_SetEssentialProp(w, v); w.endLd(s); } return;
+    case 'setLayerTrackers': w.varint(15562); { const s = w.beginLd(); encS_SetLayerTrackers(w, v); w.endLd(s); } return;
+    case 'setCameraSolve': w.varint(15570); { const s = w.beginLd(); encS_SetCameraSolve(w, v); w.endLd(s); } return;
+    case 'setLayerMatte': w.varint(15578); { const s = w.beginLd(); encS_SetLayerMatte(w, v); w.endLd(s); } return;
     default: throw new RangeError('Command: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -16750,6 +17621,7 @@ function decU_Command(r: Reader, end: number): T.Command {
       case 6818: out = decS_ApplyJobResult(r, r.ldEnd(), { type: 'applyJobResult' }) as T.Command; break;
       case 6962: out = decS_SetPluginEnabled(r, r.ldEnd(), { type: 'setPluginEnabled' }) as T.Command; break;
       case 6970: out = decS_SetPluginData(r, r.ldEnd(), { type: 'setPluginData' }) as T.Command; break;
+      case 6978: out = decS_RescanPlugins(r, r.ldEnd(), { type: 'rescanPlugins' }) as T.Command; break;
       case 7770: out = decS_LiftRange(r, r.ldEnd(), { type: 'liftRange' }) as T.Command; break;
       case 14170: out = decS_SetOverlayGeometry(r, r.ldEnd(), { type: 'setOverlayGeometry' }) as T.Command; break;
       case 14818: out = decS_SetContentAwareFill(r, r.ldEnd(), { type: 'setContentAwareFill' }) as T.Command; break;
@@ -16759,6 +17631,9 @@ function decU_Command(r: Reader, end: number): T.Command {
       case 15538: out = decS_CreateLiveMerge(r, r.ldEnd(), { type: 'createLiveMerge' }) as T.Command; break;
       case 15546: out = decS_MigrateLegacyPrecomps(r, r.ldEnd(), { type: 'migrateLegacyPrecomps' }) as T.Command; break;
       case 15554: out = decS_SetEssentialProp(r, r.ldEnd(), { type: 'setEssentialProp' }) as T.Command; break;
+      case 15562: out = decS_SetLayerTrackers(r, r.ldEnd(), { type: 'setLayerTrackers' }) as T.Command; break;
+      case 15570: out = decS_SetCameraSolve(r, r.ldEnd(), { type: 'setCameraSolve' }) as T.Command; break;
+      case 15578: out = decS_SetLayerMatte(r, r.ldEnd(), { type: 'setLayerMatte' }) as T.Command; break;
       default: r.skip(key);
     }
   }
@@ -16922,6 +17797,7 @@ function encU_CommandResult(w: Writer, v: T.CommandResult): void {
     case 'applyJobResult': w.varint(6818); { const s = w.beginLd(); encS_ItemList(w, v); w.endLd(s); } return;
     case 'setPluginEnabled': w.varint(6962); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'setPluginData': w.varint(6970); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
+    case 'rescanPlugins': w.varint(6978); { const s = w.beginLd(); encS_PluginList(w, v); w.endLd(s); } return;
     case 'liftRange': w.varint(7770); { const s = w.beginLd(); encS_TimeRangeEdit(w, v); w.endLd(s); } return;
     case 'setOverlayGeometry': w.varint(14170); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'setContentAwareFill': w.varint(14818); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
@@ -16931,6 +17807,9 @@ function encU_CommandResult(w: Writer, v: T.CommandResult): void {
     case 'createLiveMerge': w.varint(15538); { const s = w.beginLd(); encS_LayerRef(w, v); w.endLd(s); } return;
     case 'migrateLegacyPrecomps': w.varint(15546); { const s = w.beginLd(); encS_ItemList(w, v); w.endLd(s); } return;
     case 'setEssentialProp': w.varint(15554); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
+    case 'setLayerTrackers': w.varint(15562); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
+    case 'setCameraSolve': w.varint(15570); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
+    case 'setLayerMatte': w.varint(15578); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     default: throw new RangeError('CommandResult: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -17094,6 +17973,7 @@ function decU_CommandResult(r: Reader, end: number): T.CommandResult {
       case 6818: out = decS_ItemList(r, r.ldEnd(), { type: 'applyJobResult' }) as T.CommandResult; break;
       case 6962: out = decS_Empty(r, r.ldEnd(), { type: 'setPluginEnabled' }) as T.CommandResult; break;
       case 6970: out = decS_Empty(r, r.ldEnd(), { type: 'setPluginData' }) as T.CommandResult; break;
+      case 6978: out = decS_PluginList(r, r.ldEnd(), { type: 'rescanPlugins' }) as T.CommandResult; break;
       case 7770: out = decS_TimeRangeEdit(r, r.ldEnd(), { type: 'liftRange' }) as T.CommandResult; break;
       case 14170: out = decS_Empty(r, r.ldEnd(), { type: 'setOverlayGeometry' }) as T.CommandResult; break;
       case 14818: out = decS_Empty(r, r.ldEnd(), { type: 'setContentAwareFill' }) as T.CommandResult; break;
@@ -17103,6 +17983,9 @@ function decU_CommandResult(r: Reader, end: number): T.CommandResult {
       case 15538: out = decS_LayerRef(r, r.ldEnd(), { type: 'createLiveMerge' }) as T.CommandResult; break;
       case 15546: out = decS_ItemList(r, r.ldEnd(), { type: 'migrateLegacyPrecomps' }) as T.CommandResult; break;
       case 15554: out = decS_Empty(r, r.ldEnd(), { type: 'setEssentialProp' }) as T.CommandResult; break;
+      case 15562: out = decS_Empty(r, r.ldEnd(), { type: 'setLayerTrackers' }) as T.CommandResult; break;
+      case 15570: out = decS_Empty(r, r.ldEnd(), { type: 'setCameraSolve' }) as T.CommandResult; break;
+      case 15578: out = decS_Empty(r, r.ldEnd(), { type: 'setLayerMatte' }) as T.CommandResult; break;
       default: r.skip(key);
     }
   }
@@ -17148,6 +18031,8 @@ function encU_Query(w: Writer, v: T.Query): void {
     case 'getEffectUi': w.varint(8698); { const s = w.beginLd(); encS_GetEffectUi(w, v); w.endLd(s); } return;
     case 'exportDocument': w.varint(8706); { const s = w.beginLd(); encS_ExportDocument(w, v); w.endLd(s); } return;
     case 'getCacheCoverage': w.varint(8714); { const s = w.beginLd(); encS_GetCacheCoverage(w, v); w.endLd(s); } return;
+    case 'getLayerTrackers': w.varint(8722); { const s = w.beginLd(); encS_GetLayerTrackers(w, v); w.endLd(s); } return;
+    case 'getCameraSolve': w.varint(8730); { const s = w.beginLd(); encS_GetCameraSolve(w, v); w.endLd(s); } return;
     case 'capturePreset': w.varint(15106); { const s = w.beginLd(); encS_CapturePreset(w, v); w.endLd(s); } return;
     case 'copyKeyframes': w.varint(15114); { const s = w.beginLd(); encS_CopyKeyframes(w, v); w.endLd(s); } return;
     case 'copyEffects': w.varint(15122); { const s = w.beginLd(); encS_CopyEffects(w, v); w.endLd(s); } return;
@@ -17209,6 +18094,8 @@ function decU_Query(r: Reader, end: number): T.Query {
       case 8698: out = decS_GetEffectUi(r, r.ldEnd(), { type: 'getEffectUi' }) as T.Query; break;
       case 8706: out = decS_ExportDocument(r, r.ldEnd(), { type: 'exportDocument' }) as T.Query; break;
       case 8714: out = decS_GetCacheCoverage(r, r.ldEnd(), { type: 'getCacheCoverage' }) as T.Query; break;
+      case 8722: out = decS_GetLayerTrackers(r, r.ldEnd(), { type: 'getLayerTrackers' }) as T.Query; break;
+      case 8730: out = decS_GetCameraSolve(r, r.ldEnd(), { type: 'getCameraSolve' }) as T.Query; break;
       case 15106: out = decS_CapturePreset(r, r.ldEnd(), { type: 'capturePreset' }) as T.Query; break;
       case 15114: out = decS_CopyKeyframes(r, r.ldEnd(), { type: 'copyKeyframes' }) as T.Query; break;
       case 15122: out = decS_CopyEffects(r, r.ldEnd(), { type: 'copyEffects' }) as T.Query; break;
@@ -17270,6 +18157,8 @@ function encU_QueryResult(w: Writer, v: T.QueryResult): void {
     case 'getEffectUi': w.varint(8698); { const s = w.beginLd(); encS_EffectUi(w, v); w.endLd(s); } return;
     case 'exportDocument': w.varint(8706); { const s = w.beginLd(); encS_ExportedDocument(w, v); w.endLd(s); } return;
     case 'getCacheCoverage': w.varint(8714); { const s = w.beginLd(); encS_CacheCoverage(w, v); w.endLd(s); } return;
+    case 'getLayerTrackers': w.varint(8722); { const s = w.beginLd(); encS_LayerTrackers(w, v); w.endLd(s); } return;
+    case 'getCameraSolve': w.varint(8730); { const s = w.beginLd(); encS_CameraSolveAnswer(w, v); w.endLd(s); } return;
     case 'capturePreset': w.varint(15106); { const s = w.beginLd(); encS_CapturedPreset(w, v); w.endLd(s); } return;
     case 'copyKeyframes': w.varint(15114); { const s = w.beginLd(); encS_KeyframeSets(w, v); w.endLd(s); } return;
     case 'copyEffects': w.varint(15122); { const s = w.beginLd(); encS_CopiedEffects(w, v); w.endLd(s); } return;
@@ -17331,6 +18220,8 @@ function decU_QueryResult(r: Reader, end: number): T.QueryResult {
       case 8698: out = decS_EffectUi(r, r.ldEnd(), { type: 'getEffectUi' }) as T.QueryResult; break;
       case 8706: out = decS_ExportedDocument(r, r.ldEnd(), { type: 'exportDocument' }) as T.QueryResult; break;
       case 8714: out = decS_CacheCoverage(r, r.ldEnd(), { type: 'getCacheCoverage' }) as T.QueryResult; break;
+      case 8722: out = decS_LayerTrackers(r, r.ldEnd(), { type: 'getLayerTrackers' }) as T.QueryResult; break;
+      case 8730: out = decS_CameraSolveAnswer(r, r.ldEnd(), { type: 'getCameraSolve' }) as T.QueryResult; break;
       case 15106: out = decS_CapturedPreset(r, r.ldEnd(), { type: 'capturePreset' }) as T.QueryResult; break;
       case 15114: out = decS_KeyframeSets(r, r.ldEnd(), { type: 'copyKeyframes' }) as T.QueryResult; break;
       case 15122: out = decS_CopiedEffects(r, r.ldEnd(), { type: 'copyEffects' }) as T.QueryResult; break;
@@ -17713,16 +18604,32 @@ export const codecs = {
   AutoTraceJob: mk<T.AutoTraceJob>(encS_AutoTraceJob, (r, e) => decS_AutoTraceJob(r, e, {})),
   SceneDetectJob: mk<T.SceneDetectJob>(encS_SceneDetectJob, (r, e) => decS_SceneDetectJob(r, e, {})),
   ObjectMatteJob: mk<T.ObjectMatteJob>(encS_ObjectMatteJob, (r, e) => decS_ObjectMatteJob(r, e, {})),
+  ObjectMatteStroke: mk<T.ObjectMatteStroke>(encS_ObjectMatteStroke, (r, e) => decS_ObjectMatteStroke(r, e, {})),
+  MatteRefine: mk<T.MatteRefine>(encS_MatteRefine, (r, e) => decS_MatteRefine(r, e, {})),
+  FaceTrackJob: mk<T.FaceTrackJob>(encS_FaceTrackJob, (r, e) => decS_FaceTrackJob(r, e, {})),
+  CameraTrackJob: mk<T.CameraTrackJob>(encS_CameraTrackJob, (r, e) => decS_CameraTrackJob(r, e, {})),
   TranscribeJob: mk<T.TranscribeJob>(encS_TranscribeJob, (r, e) => decS_TranscribeJob(r, e, {})),
   AudioAnalysisJob: mk<T.AudioAnalysisJob>(encS_AudioAnalysisJob, (r, e) => decS_AudioAnalysisJob(r, e, {})),
   AudioDuckJob: mk<T.AudioDuckJob>(encS_AudioDuckJob, (r, e) => decS_AudioDuckJob(r, e, {})),
   AudioGateJob: mk<T.AudioGateJob>(encS_AudioGateJob, (r, e) => decS_AudioGateJob(r, e, {})),
   ProxyJob: mk<T.ProxyJob>(encS_ProxyJob, (r, e) => decS_ProxyJob(r, e, {})),
   RenderJob: mk<T.RenderJob>(encS_RenderJob, (r, e) => decS_RenderJob(r, e, {})),
+  ModelImportJob: mk<T.ModelImportJob>(encS_ModelImportJob, (r, e) => decS_ModelImportJob(r, e, {})),
   PrerenderJob: mk<T.PrerenderJob>(encS_PrerenderJob, (r, e) => decS_PrerenderJob(r, e, {})),
   TrackSampleRow: mk<T.TrackSampleRow>(encS_TrackSampleRow, (r, e) => decS_TrackSampleRow(r, e, {})),
   TrackSeries: mk<T.TrackSeries>(encS_TrackSeries, (r, e) => decS_TrackSeries(r, e, {})),
   TrackApplyJob: mk<T.TrackApplyJob>(encS_TrackApplyJob, (r, e) => decS_TrackApplyJob(r, e, {})),
+  TrackerPointData: mk<T.TrackerPointData>(encS_TrackerPointData, (r, e) => decS_TrackerPointData(r, e, {})),
+  TrackerData: mk<T.TrackerData>(encS_TrackerData, (r, e) => decS_TrackerData(r, e, {})),
+  LayerTrackers: mk<T.LayerTrackers>(encS_LayerTrackers, (r, e) => decS_LayerTrackers(r, e, {})),
+  SetLayerTrackers: mk<T.SetLayerTrackers>(encS_SetLayerTrackers, (r, e) => decS_SetLayerTrackers(r, e, {})),
+  GetLayerTrackers: mk<T.GetLayerTrackers>(encS_GetLayerTrackers, (r, e) => decS_GetLayerTrackers(r, e, {})),
+  CameraSolveFrame: mk<T.CameraSolveFrame>(encS_CameraSolveFrame, (r, e) => decS_CameraSolveFrame(r, e, {})),
+  CameraSolveData: mk<T.CameraSolveData>(encS_CameraSolveData, (r, e) => decS_CameraSolveData(r, e, {})),
+  CameraSolveAnswer: mk<T.CameraSolveAnswer>(encS_CameraSolveAnswer, (r, e) => decS_CameraSolveAnswer(r, e, {})),
+  SetCameraSolve: mk<T.SetCameraSolve>(encS_SetCameraSolve, (r, e) => decS_SetCameraSolve(r, e, {})),
+  GetCameraSolve: mk<T.GetCameraSolve>(encS_GetCameraSolve, (r, e) => decS_GetCameraSolve(r, e, {})),
+  SetLayerMatte: mk<T.SetLayerMatte>(encS_SetLayerMatte, (r, e) => decS_SetLayerMatte(r, e, {})),
   RotoBrushJob: mk<T.RotoBrushJob>(encS_RotoBrushJob, (r, e) => decS_RotoBrushJob(r, e, {})),
   ContentAwareFillJob: mk<T.ContentAwareFillJob>(encS_ContentAwareFillJob, (r, e) => decS_ContentAwareFillJob(r, e, {})),
   AutoReframeJob: mk<T.AutoReframeJob>(encS_AutoReframeJob, (r, e) => decS_AutoReframeJob(r, e, {})),
@@ -17739,6 +18646,7 @@ export const codecs = {
   CaptionInput: mk<T.CaptionInput>(encS_CaptionInput, (r, e) => decS_CaptionInput(r, e, {})),
   SetCaptions: mk<T.SetCaptions>(encS_SetCaptions, (r, e) => decS_SetCaptions(r, e, {})),
   SetPluginEnabled: mk<T.SetPluginEnabled>(encS_SetPluginEnabled, (r, e) => decS_SetPluginEnabled(r, e, {})),
+  RescanPlugins: mk<T.RescanPlugins>(encS_RescanPlugins, (r, e) => decS_RescanPlugins(r, e, {})),
   SetPluginData: mk<T.SetPluginData>(encS_SetPluginData, (r, e) => decS_SetPluginData(r, e, {})),
   ItemInfo: mk<T.ItemInfo>(encS_ItemInfo, (r, e) => decS_ItemInfo(r, e, {})),
   CompInfo: mk<T.CompInfo>(encS_CompInfo, (r, e) => decS_CompInfo(r, e, {})),
@@ -17814,6 +18722,7 @@ export const codecs = {
   CryptomatteInfo: mk<T.CryptomatteInfo>(encS_CryptomatteInfo, (r, e) => decS_CryptomatteInfo(r, e, {})),
   EffectParamInfo: mk<T.EffectParamInfo>(encS_EffectParamInfo, (r, e) => decS_EffectParamInfo(r, e, {})),
   EffectInfo: mk<T.EffectInfo>(encS_EffectInfo, (r, e) => decS_EffectInfo(r, e, {})),
+  EffectActionInfo: mk<T.EffectActionInfo>(encS_EffectActionInfo, (r, e) => decS_EffectActionInfo(r, e, {})),
   ListEffects: mk<T.ListEffects>(encS_ListEffects, (r, e) => decS_ListEffects(r, e, {})),
   ListGroupTypes: mk<T.ListGroupTypes>(encS_ListGroupTypes, (r, e) => decS_ListGroupTypes(r, e, {})),
   ListPresets: mk<T.ListPresets>(encS_ListPresets, (r, e) => decS_ListPresets(r, e, {})),
@@ -17940,6 +18849,8 @@ export const codecs = {
   RenderCamera3D: mk<T.RenderCamera3D>(encS_RenderCamera3D, (r, e) => decS_RenderCamera3D(r, e, {})),
   RenderLight3D: mk<T.RenderLight3D>(encS_RenderLight3D, (r, e) => decS_RenderLight3D(r, e, {})),
   RenderEnvMap: mk<T.RenderEnvMap>(encS_RenderEnvMap, (r, e) => decS_RenderEnvMap(r, e, {})),
+  RenderFog: mk<T.RenderFog>(encS_RenderFog, (r, e) => decS_RenderFog(r, e, {})),
+  RenderShadowCatcher: mk<T.RenderShadowCatcher>(encS_RenderShadowCatcher, (r, e) => decS_RenderShadowCatcher(r, e, {})),
   RenderSsao: mk<T.RenderSsao>(encS_RenderSsao, (r, e) => decS_RenderSsao(r, e, {})),
   RenderPrecompFrame: mk<T.RenderPrecompFrame>(encS_RenderPrecompFrame, (r, e) => decS_RenderPrecompFrame(r, e, {})),
   Renderable: mk<T.Renderable>(encS_Renderable, (r, e) => decS_Renderable(r, e, {})),

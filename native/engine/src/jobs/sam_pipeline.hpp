@@ -88,9 +88,11 @@ inline constexpr std::size_t kMaxContourPoints = 48;
 
 /// The matte as ONE outline in frame pixels: the traced outer contour with
 /// the largest area (trace_bitmap.hpp, threshold 128, tolerance 1, min area 4),
-/// decimated by stride to at most kMaxContourPoints as objectMask.ts does.
-/// Empty when the matte holds nothing.
+/// decimated by stride to at most `maxPoints` (objectMask.ts: kMaxContourPoints).
+/// The points walk the contour in order, so the path never zigzags. Empty when
+/// the matte holds nothing.
 [[nodiscard]] std::vector<trace::TracePoint> matte_contour(std::span<const std::uint8_t> mask, std::uint32_t width,
-                                                           std::uint32_t height);
+                                                           std::uint32_t height,
+                                                           std::size_t maxPoints = kMaxContourPoints);
 
 }  // namespace premation::jobs::sam

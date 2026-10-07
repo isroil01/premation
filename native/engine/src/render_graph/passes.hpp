@@ -19,6 +19,9 @@ inline constexpr std::string_view kMatteTarget = "matte-target";
 inline constexpr std::string_view kBackdropHalf1 = "backdrop-half1";
 inline constexpr std::string_view kBackdropHalf2 = "backdrop-half2";
 inline constexpr std::string_view kDofTarget = "dof-target";
+/// AE parity 4.2: a 3D-run layer drawn offscreen against the run's depth (and its matte source).
+inline constexpr std::string_view kLayer3DTarget = "layer3d-target";
+inline constexpr std::string_view kLayer3DMatteTarget = "layer3d-matte";
 inline constexpr std::string_view kPluginOrigin = "plugin-origin";
 inline constexpr std::string_view kGeneratorTarget = "generator-target";
 inline constexpr std::string_view kFxHist = "fx-hist";
@@ -30,6 +33,11 @@ inline constexpr std::string_view kFxScopeMask = "fx-scope-mask";
 /// The input of a faded / scoped effect that spans several chain entries,
 /// kept until its last entry blends back over it (effect_chain.cpp).
 inline constexpr std::string_view kFxBlendInput = "fx-blend-input";
+/// AE parity 5.3: scratch buffers of the multi-pass keying / matte / grade
+/// passes (effect_chain.cpp, matte-ops.wgsl) — data, not colour: always float
+/// (kDataTargetFormat), whatever the project's bit depth.
+inline constexpr std::array<std::string_view, 4> kFxAux = {"fx-aux-0", "fx-aux-1", "fx-aux-2", "fx-aux-3"};
+inline constexpr std::string_view kDataTargetFormat = "rgba16float-data";
 inline constexpr std::array<std::string_view, 4> kPrecompTargets = {"precomp-target-0", "precomp-target-1",
                                                                     "precomp-target-2", "precomp-target-3"};
 inline constexpr std::uint32_t kBackdropDownscale = 2;

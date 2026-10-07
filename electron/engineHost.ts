@@ -563,12 +563,18 @@ export interface EngineHostOptions {
   supervisor?: Partial<SupervisorOptions>;
   /** G1: the native plugin folder (bundles with premation-plugin.json) the engine scans. */
   nativePluginDir?: string;
+  /** Per-launch plugin arguments (nativePluginStore `engineArgsFor`, after pending installs are applied). */
+  nativePluginLaunchArgs?: () => Promise<readonly string[]>;
   /** G1: the plugin crash journal — a plugin that killed the engine is quarantined at the next start. */
   nativePluginJournal?: string;
   /** F2 / D5: the recovery copy the engine-owned document's autosave writes (reported with ownsDocument). */
   recoveryPath?: string;
   /** Where the engine caches imported bytes / session footage as files (<userData>/session-footage). */
   sessionFootageDir?: string;
+  /** The user's installed Object Matte model folder (<userData>/models/object-matte; objectMatteModel.ts). */
+  samUserDir?: string;
+  /** The face landmark model folder (<userData>/models/face-landmarks; faceModel.ts). */
+  faceUserDir?: string;
   log?(line: string): void;
   /**
    * The user's speech-provider key for a transcribe job ('openai' …), from
@@ -705,6 +711,9 @@ export class EngineHost {
               // importBytes caches bytes as files here (the page's session-footage
               // cache, file:sessionFootageDir): the engine never holds a blob: URL.
               ...(o.sessionFootageDir ? { PREMATION_SESSION_FOOTAGE: o.sessionFootageDir } : {}),
+              // The model the user installed wins when both its files are there (read per job).
+              ...(o.samUserDir ? { PREMATION_SAM_USER_DIR: o.samUserDir } : {}),
+              ...(o.faceUserDir ? { PREMATION_FACE_USER_DIR: o.faceUserDir } : {}),
               PREMATION_SAM_DIR: process.env.PREMATION_SAM_DIR
                 ?? (o.isPackaged ? path.join(o.resourcesPath, 'models', 'object-matte') : path.join(o.appPath, 'dist', 'models', 'object-matte')),
             },
@@ -718,6 +727,7 @@ export class EngineHost {
       {
         ...o.supervisor,
         extraArgs: [...(o.supervisor?.extraArgs ?? []), ...nativePluginArgs(o.nativePluginDir, o.nativePluginJournal)],
+        ...(o.nativePluginLaunchArgs ? { launchArgs: o.nativePluginLaunchArgs } : {}),
       },
     );
     const sup = this.supervisor;

@@ -45,11 +45,11 @@ Json scaled_params(const Json& e, double k) {
   const doc::EffectDef* def = doc::registry().effect(type_of(e));
   if (def == nullptr) return params;
   for (const auto& p : def->params) {
-    if (!(p.type == "number" || p.type == "resolved") || p.unit.value_or("") != "px") continue;
+    if (!(p.type == "number" || p.type == "resolved" || p.type == "data") || p.unit.value_or("") != "px") continue;
     const Json& v = params.at(p.key);
     if (v.is_number()) {
       params.set(p.key, Json::number(v.num() * k));
-    } else if (p.type == "resolved" && v.is_array()) {
+    } else if ((p.type == "resolved" || p.type == "data") && v.is_array()) {
       Json a = Json::array();
       for (const Json& x : v.arr()) a.arr_mut().push_back(x.is_number() ? Json::number(x.num() * k) : x);
       params.set(p.key, std::move(a));

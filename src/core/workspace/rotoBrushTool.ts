@@ -10,7 +10,8 @@
  *               points as foreground / background prompts — written as the
  *               tool's "Roto Brush" Add mask, replacing the tool's previous
  *               outline in the same history entry.
- *   propagate   the `rotoBrush` job, seeded at the first foreground point.
+ *   propagate   the `rotoBrush` job, started from the tool's SAM outline and
+ *               re-seeded from every stroke's points as they ride the flow.
  *
  * ## Spaces
  *
@@ -116,6 +117,12 @@ export function strokesToPrompts(strokes: readonly RotoStroke[], layer: { width:
   return out;
 }
 
+/** The strokes painted on the frame at `time` (strokes without a time belong to every frame). */
+export function strokesAt(strokes: readonly RotoStroke[], time: number, fps = 30): RotoStroke[] {
+  const half = 0.5 / Math.max(1, fps);
+  return strokes.filter((s) => s.time === undefined || Math.abs(s.time - time) <= half);
+}
+
 /** The footage's display size — the layer px the strokes and prompts live in. */
 async function layerSize(nodeId: string): Promise<{ width: number; height: number } | null> {
   const res = await engine().query({ type: 'getSourceSize', layers: [nodeId] });
@@ -153,6 +160,7 @@ export async function segmentStrokesToMask(
   const out = requireEngineJob(await runEngineJob<{ mask?: string }>({
     kind: 'objectMatte',
     value: {
+      strokes: [],
       layer: nodeId,
       range: { start: secondsToFlicks(timeSec), duration: secondsToFlicks(1 / 30) },
       prompts: prompts.fg,
@@ -173,8 +181,8 @@ export async function segmentStrokesToMask(
 }
 
 /**
- * Propagate the matte forward from `fromSec` to `toSec` in the engine,
- * seeded at the first foreground stroke's first point (layer px).
+ * Propagate the matte forward from `fromSec` to `toSec` in the engine, from
+ * the tool's current outline and every stroke (layer px).
  */
 export async function propagateRotoForward(
   nodeId: string,
@@ -188,10 +196,12 @@ export async function propagateRotoForward(
   if (isRotoFrozen(nodeId)) throw new Error(FROZEN_MESSAGE);
   const size = await layerSize(nodeId);
   if (!size) throw new Error('Layer has no sized video source.');
-  const fg = strokes.find((s) => s.kind === 'fg' && s.points.length > 0);
-  const p0 = fg?.points[0];
-  if (!p0) throw new Error('Paint a foreground stroke first.');
-  const seed = { x: p0.x + size.width / 2, y: p0.y + size.height / 2 };
+  const prompts = strokesToPrompts(strokes, size);
+  const seed = prompts.fg[0];
+  if (!seed) throw new Error('Paint a foreground stroke first.');
+  // Start from the tool's SAM outline when there is one (the matte the user
+  // saw), and replace it: the propagated mask keys that frame too.
+  const live = rotoMattes(nodeId).live;
   const startF = Math.round(fromSec * fps);
   const endF = Math.round(toSec * fps);
   let cancel: (() => void) | null = null;
@@ -206,6 +216,10 @@ export async function propagateRotoForward(
         },
         seed,
         feather: featherPx,
+        prompts: prompts.fg,
+        backgroundPrompts: prompts.bg,
+        ...(live.length > 0 ? { startMask: live[live.length - 1] } : {}),
+        replaceMasks: live,
       },
     },
     {
@@ -219,4 +233,77 @@ export async function propagateRotoForward(
   if (out.status === 'cancelled') return { keyframes: 0, frames: 0, status: 'cancelled' };
   if (out.status !== 'done') throw new Error(out.error?.message ?? 'Roto Brush failed');
   return { keyframes: out.result?.keyframes ?? 0, frames: out.result?.frames ?? 0, status: 'completed' };
+}
+
+/**
+ * Object Matte through the shot (AE parity 3.1 / 3.2): the `objectMatte`
+ * job's video path. The strokes on the origin frame (the playhead) prompt it;
+ * strokes on any other frame are corrections for that frame. The soft matte
+ * of every frame is stored as the layer's cut-out (setLayerMatte) and its
+ * outline keyed on an "Object Matte" mask; the tool's previous outlines go.
+ */
+export async function propagateObjectMatte(
+  nodeId: string,
+  strokes: readonly RotoStroke[],
+  opts: {
+    origin: number;
+    start: number;
+    end: number;
+    fps: number;
+    direction: 'forward' | 'backward' | 'both';
+    featherPx: number;
+    refine: { edgeRadius: number; decontaminate: number; motionBlur: boolean; choke: number; reduceChatter: number };
+  },
+  onProgress?: (f: number) => boolean | void,
+): Promise<RotoBrushResult> {
+  if (isRotoFrozen(nodeId)) throw new Error(FROZEN_MESSAGE);
+  const size = await layerSize(nodeId);
+  if (!size) throw new Error('Layer has no sized video source.');
+  const here = strokesToPrompts(strokesAt(strokes, opts.origin, opts.fps), size);
+  if (here.fg.length === 0) throw new Error('Paint a foreground stroke on this frame first.');
+  const half = 0.5 / Math.max(1, opts.fps);
+  const corrections = strokes
+    .filter((s) => s.time !== undefined && Math.abs(s.time - opts.origin) > half)
+    .map((s) => {
+      const p = strokesToPrompts([s], size);
+      return { time: secondsToFlicks(s.time!), points: s.kind === 'fg' ? p.fg : p.bg, background: s.kind === 'bg' };
+    })
+    .filter((c) => c.points.length > 0);
+  const replace = new Set<string>(rotoMattes(nodeId).live);
+  for (const m of mirrorMaskHeaders(documentMirror().tree(nodeId))) if (m.name === 'Object Matte') replace.add(m.id);
+  let cancel: (() => void) | null = null;
+  const handle = requireEngineJob(await startEngineJob<{ frames: number; status: string }>(
+    {
+      kind: 'objectMatte',
+      value: {
+        layer: nodeId,
+        range: { start: secondsToFlicks(opts.start), duration: secondsToFlicks(Math.max(1 / opts.fps, opts.end - opts.start)) },
+        prompts: here.fg,
+        backgroundPrompts: here.bg,
+        encoderModel: '',
+        decoderModel: '',
+        replaceMasks: [...replace],
+        direction: opts.direction,
+        origin: secondsToFlicks(opts.origin),
+        strokes: corrections,
+        matte: true,
+        refine: {
+          edgeRadius: opts.refine.edgeRadius,
+          decontaminate: opts.refine.decontaminate / 100,
+          motionBlur: opts.refine.motionBlur,
+          shutterAngle: 180,
+          feather: opts.featherPx,
+          choke: opts.refine.choke,
+          reduceChatter: opts.refine.reduceChatter,
+        },
+      },
+    },
+    { onProgress: (f) => { if (onProgress?.(f) === false) cancel?.(); } },
+  ), 'Object Matte');
+  cancel = handle.cancel;
+  const out = await handle.done;
+  if (out.status === 'cancelled') return { keyframes: 0, frames: 0, status: 'cancelled' };
+  if (out.status !== 'done') throw new Error(out.error?.message ?? 'Object Matte failed');
+  const frames = out.result?.frames ?? 0;
+  return { keyframes: frames, frames, status: 'completed' };
 }

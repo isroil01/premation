@@ -30,6 +30,8 @@ namespace premation::scene {
 struct EnvAsset {
   std::array<float, 27> sh{};
   EnvSpecularMap specular;
+  /// AE parity 4.4: the HDR reflection atlas (linear half floats, 512 × 256 per band).
+  EnvSpecularMap hdr;
 };
 
 [[nodiscard]] std::shared_ptr<const EnvAsset> environment_asset(const doc::Document& d, std::string_view sky, std::string& why);

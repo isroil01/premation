@@ -106,6 +106,11 @@ export const LAYER_FIELDS: readonly LayerFieldSpec[] = [
     path: 'material/faceMaterials', key: 'faceMaterials', label: 'Face Materials', type: 'json', default: null,
     json: 'object', store: { component: T, key: 'faceMaterials' }, when: { threeD: true },
   },
+  {
+    // AE parity 4.8: Reflect Layers — a planar reflection of the run's other 3D layers.
+    path: 'material/reflectsLayers', key: 'reflectsLayers', label: 'Reflect Layers', type: 'bool', default: false,
+    store: { component: T, key: 'reflectsLayers' }, when: { threeD: true }, encode: [[false, null], [true, true], [false, false]],
+  },
   // ── Geometry Options ──
   {
     path: 'geometry/bevelStyle', key: 'bevelStyle', label: 'Bevel Style', type: 'choice', default: 'angular',
@@ -146,6 +151,19 @@ export const LAYER_FIELDS: readonly LayerFieldSpec[] = [
   {
     path: 'light/shadowMapSize', key: 'shadowMapSize', label: 'Shadow Map Size', type: 'scalar', default: 1024, min: 64, max: 8192,
     clearAtDefault: true, store: { component: T, key: 'shadowMapSize' }, when: { kinds: LIGHT },
+  },
+  // AE parity 4.4: an environment light's visible sky, its blur, and a live layer source.
+  {
+    path: 'light/environmentVisible', key: 'envVisible', label: 'Show Environment', type: 'bool', default: false,
+    store: { component: T, key: 'envVisible' }, when: { kinds: LIGHT }, encode: [[false, null], [true, true], [false, false]],
+  },
+  {
+    path: 'light/environmentBlur', key: 'envSkyBlur', label: 'Environment Blur', type: 'scalar', default: 0, min: 0, max: 100,
+    clearAtDefault: true, store: { component: T, key: 'envSkyBlur' }, when: { kinds: LIGHT },
+  },
+  {
+    path: 'light/environmentLayer', key: 'envLayer', label: 'Environment Layer', type: 'string', default: '',
+    clearAtDefault: true, store: { component: T, key: 'envLayer' }, when: { kinds: LIGHT },
   },
   // ── Camera Options ──
   {

@@ -14,6 +14,8 @@
 //                    [--log-level debug|info|warn|error]
 //                    [--plugins DIR]       native plugin bundles (repeatable; + PREMATION_PLUGIN_PATH)
 //                    [--plugin-journal F]  the plugin crash journal (quarantines a plugin that killed the engine)
+//                    [--plugin-disabled ID] a plugin the user disabled: listed, not loaded (repeatable)
+//                    [--revoked F]         the verified revocation list: listed plugins never load
 //                    [--version]
 //   premation-engine --export JOB.json     F1: render one export job and exit (export/export_job.hpp)
 //   premation-engine --job JOB.json        an engine job's crash-isolated half (jobs/child_job.hpp)
@@ -131,6 +133,12 @@ int run(int argc, char** argv) {
       ok = !v.empty();
     } else if (k == "--plugin-journal") {
       o.pluginJournal = std::string(v);
+      ok = !v.empty();
+    } else if (k == "--plugin-disabled") {
+      o.pluginDisabled.emplace_back(v);
+      ok = !v.empty();
+    } else if (k == "--revoked") {
+      o.pluginRevoked = std::string(v);
       ok = !v.empty();
     } else if (k == "--log-level") {
       if (v == "debug") o.logLevel = premation::log::Level::debug;

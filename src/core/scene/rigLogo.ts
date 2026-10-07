@@ -35,7 +35,7 @@ import { secondsToFlicks } from '@motion/engine-api';
  * rasterizes it to an image whose alpha culls correctly. The engine's job
  * makes the same decision (kind_rig_logo.cpp).
  */
-export const RIGGABLE_KINDS: ReadonlySet<SceneKind> = new Set(['shape', 'image']);
+export const RIGGABLE_KINDS: ReadonlySet<SceneKind> = new Set(['shape', 'image', 'video']);  // video: AE parity 5.5
 
 /** Whether a scene kind can be rigged directly (see RIGGABLE_KINDS). */
 export function isRiggableKind(kind: SceneKind): boolean {

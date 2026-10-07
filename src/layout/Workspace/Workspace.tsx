@@ -70,6 +70,7 @@ import { MiniFlowchart } from './MiniFlowchart';
 import { TextEditOverlay } from './TextEditOverlay';
 import { PuppetOverlay } from './PuppetOverlay';
 import { EffectHandleOverlay } from './EffectHandleOverlay';
+import { LiquifyBrushOverlay } from './LiquifyBrushOverlay';
 import { BoneOverlay } from './BoneOverlay';
 import { TrackPointOverlay } from './TrackPointOverlay';
 import { Gizmo3dOverlay } from './Gizmo3dOverlay';
@@ -681,6 +682,7 @@ export function WorkspaceViewport({
           <TextEditOverlay />
           <PuppetOverlay />
           <EffectHandleOverlay />
+          <LiquifyBrushOverlay />
           <BoneOverlay />
           <TrackPointOverlay />
           {/* Mounts for the whole 3D SCENE, not for the selection: the ground

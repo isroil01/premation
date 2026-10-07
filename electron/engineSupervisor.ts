@@ -86,6 +86,12 @@ export interface SupervisorOptions {
   /** Extra engine arguments (`--no-gpu`, `--log-level debug`, `--slots 4`). */
   extraArgs: readonly string[];
   /**
+   * Arguments computed at EACH launch, restarts included (the installed
+   * plugins' `--plugin-disabled` / `--revoked`, after pending installs and
+   * uninstalls are applied — nativePluginStore.ts). A failure adds nothing.
+   */
+  launchArgs?: () => Promise<readonly string[]>;
+  /**
    * Release every FrameReady slot at once when nobody listens for frames —
    * a headless session (tests, CLI) must not starve the ring.
    */
@@ -290,11 +296,17 @@ export class EngineSupervisor {
     } catch {
       vendor = undefined;
     }
-    const afterVendor: SupervisorState = this.state_;  // stop() may have run during the await
+    let launchArgs: readonly string[] = [];
+    try {
+      launchArgs = this.opts.launchArgs ? await this.opts.launchArgs() : [];
+    } catch {
+      launchArgs = [];
+    }
+    const afterVendor: SupervisorState = this.state_;  // stop() may have run during the awaits
     if (afterVendor === 'stopping' || afterVendor === 'stopped') return;
     const args = ['--host-pid', String(this.deps.hostPid)];
     if (vendor) args.push('--gpu-vendor', String(vendor));
-    args.push(...this.opts.extraArgs);
+    args.push(...this.opts.extraArgs, ...launchArgs);
 
     const gen = ++this.generation;
     let child: EngineChild;

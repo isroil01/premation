@@ -125,7 +125,7 @@ std::vector<std::uint8_t> mask_from_decoder(std::span<const float> iouScores, st
 }
 
 std::vector<trace::TracePoint> matte_contour(std::span<const std::uint8_t> mask, std::uint32_t width,
-                                             std::uint32_t height) {
+                                             std::uint32_t height, std::size_t maxPoints) {
   trace::TraceOptions opts;  // traceBitmap.ts defaults: 128, tolerance 1, min area 4
   const std::vector<trace::TracedContour> contours = trace::trace_bitmap(mask, width, height, 1, opts);
   const trace::TracedContour* best = nullptr;
@@ -140,7 +140,8 @@ std::vector<trace::TracePoint> matte_contour(std::span<const std::uint8_t> mask,
   }
   if (best == nullptr) return {};
   const std::size_t n = best->points.size();
-  const std::size_t stride = std::max<std::size_t>(1, (n + kMaxContourPoints - 1) / kMaxContourPoints);
+  const std::size_t cap = std::max<std::size_t>(3, maxPoints);
+  const std::size_t stride = std::max<std::size_t>(1, (n + cap - 1) / cap);
   std::vector<trace::TracePoint> out;
   for (std::size_t i = 0; i < n; i += stride) out.push_back(best->points[i]);
   return out;

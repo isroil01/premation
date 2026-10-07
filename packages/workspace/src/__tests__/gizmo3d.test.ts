@@ -12,10 +12,11 @@ import {
   viewportToComp,
   compToViewport,
   buildGroundGridLines,
+  getGizmoBasis,
   type Gizmo3DConfig,
 } from '../selection/gizmo3d';
 import { buildDimensionalGuideData, type DimensionalGuideState } from '../selection/dimensionalGuides';
-import { Project3D } from '@motion/scene';
+import { Matrix4Math, Project3D } from '@motion/scene';
 
 const W = 1920;
 const H = 1080;
@@ -105,10 +106,39 @@ describe('buildRenderedGizmo3D', () => {
 
     const rot = build('rotation');
     expect(rot.axes).toHaveLength(0);
-    expect(rot.arcs.map((a) => a.type).sort()).toEqual(['rot_x', 'rot_y', 'rot_z']);
+    // The view-facing outer ring rides with the axis rings (AE parity 4.6).
+    expect(rot.arcs.map((a) => a.type).sort()).toEqual(['rot_outer', 'rot_x', 'rot_y', 'rot_z']);
+    expect(rot.trackball).not.toBeNull();
+    expect(rot.scaleHandles).toHaveLength(0);
 
     const scl = build('scale');
     expect(scl.axes.map((a) => a.type).sort()).toEqual(['scale_x', 'scale_y', 'scale_z']);
+    expect(scl.scaleHandles).toHaveLength(0);
+  });
+
+  it('universal carries a scale cube on every visible arm, pointing along it (AE parity 4.6)', () => {
+    const u = build('universal');
+    // Front view: Z points at the camera, so only X and Y have an arm to sit on.
+    expect(u.scaleHandles.map((h) => h.type).sort()).toEqual(['scale_x', 'scale_y']);
+    const sx = u.scaleHandles.find((h) => h.type === 'scale_x')!;
+    expect(sx.screenDir.x).toBeCloseTo(1, 5);
+    expect(sx.screenDir.y).toBeCloseTo(0, 5);
+    expect(sx.screenDist).toBeGreaterThan(30);
+    // The cube is hit as its own handle, not as the arrow it sits on.
+    expect(hitTestGizmo3D(sx.screen, u, 10)).toBe('scale_x');
+  });
+});
+
+describe('trackball and view ring (AE parity 4.6)', () => {
+  it('the outer ring is grabbed on its circle; inside it, off every other handle, is the free trackball', () => {
+    const g = build('rotation');
+    const tb = g.trackball!;
+    expect(hitTestGizmo3D({ x: tb.centerScreen.x, y: tb.centerScreen.y - tb.radius }, g, 6)).toBe('rot_outer');
+    // Between the centre and a ring, away from the axis rings' lines.
+    const r = tb.radius * 0.45;
+    expect(hitTestGizmo3D({ x: tb.centerScreen.x + r * Math.SQRT1_2, y: tb.centerScreen.y + r * Math.SQRT1_2 }, g, 4)).toBe('rot_free');
+    // Outside the ring: nothing.
+    expect(hitTestGizmo3D({ x: tb.centerScreen.x + tb.radius * 1.5, y: tb.centerScreen.y }, g, 4)).toBeNull();
   });
 });
 
@@ -353,5 +383,38 @@ describe('gizmo3d handle reachability (one-side-only regressions)', () => {
       expect(axis!.screenLen).toBeGreaterThan(70);
       expect(axis!.screenLen).toBeLessThan(100);
     }
+  });
+});
+
+describe('getGizmoBasis — Local axes in the parent chain and Orientation', () => {
+  const close = (v: { x: number; y: number; z: number }, x: number, y: number, z: number) => {
+    expect(v.x).toBeCloseTo(x, 6);
+    expect(v.y).toBeCloseTo(y, 6);
+    expect(v.z).toBeCloseTo(z, 6);
+  };
+
+  it('a parent rotated 90° about Z turns the local X axis onto world Y (scale ignored)', () => {
+    const parent = Matrix4Math.compose({
+      position: { x: 300, y: 200, z: 0 },
+      rotation: { x: 0, y: 0, z: Math.PI / 2 },
+      scale: { x: 2, y: 2, z: 2 },
+      anchor: { x: 0, y: 0, z: 0 },
+    });
+    const b = getGizmoBasis('local', NO_ROT, cam, { parent: Array.from(parent) });
+    close(b.x, 0, 1, 0);
+    close(b.y, -1, 0, 0);
+    close(b.z, 0, 0, 1);
+  });
+
+  it('Orientation turns the axes like the X/Y/Z rotation would', () => {
+    const viaOrientation = getGizmoBasis('local', NO_ROT, cam, { orientation: { x: 0, y: 90, z: 0 } });
+    const viaRotation = getGizmoBasis('local', { rotX: 0, rotY: 90, rotZ: 0 }, cam);
+    close(viaOrientation.x, viaRotation.x.x, viaRotation.x.y, viaRotation.x.z);
+    close(viaOrientation.z, viaRotation.z.x, viaRotation.z.y, viaRotation.z.z);
+  });
+
+  it('World mode ignores the frame', () => {
+    const b = getGizmoBasis('world', NO_ROT, cam, { orientation: { x: 30, y: 40, z: 50 } });
+    close(b.x, 1, 0, 0);
   });
 });

@@ -1,7 +1,6 @@
 import { defineConfig, loadEnv, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import * as path from 'node:path';
-import { readFile } from 'node:fs/promises';
 import { buildAppCsp } from './src/core/api/csp';
 
 /**
@@ -36,39 +35,8 @@ function motionCsp(mode: string): Plugin {
   };
 }
 
-/**
- * Dev-only: serve the ORT wasm glue module past Vite's import analysis.
- *
- * onnxruntime-web `import()`s its glue (.mjs) from a RUNTIME-computed URL
- * (`/models/ort/…`, staged by scripts/fetchObjectMatte.cjs). The dev server
- * rewrites dynamic imports to append `?import`, and answers 500 for public-dir
- * files reached that way — "assets in public cannot be imported". Production
- * is untouched: the built app fetches the same path as a plain static file.
- * This middleware runs ahead of Vite's own and serves the file as JavaScript,
- * query string and all.
- */
-function serveOrtGlue(): Plugin {
-  return {
-    name: 'motion-serve-ort-glue',
-    apply: 'serve',
-    configureServer(server) {
-      server.middlewares.use((req, res, next) => {
-        const url = (req.url ?? '').split('?')[0]!;
-        if (!url.startsWith('/models/ort/') || !url.endsWith('.mjs')) return next();
-        const file = path.join(__dirname, 'public', ...url.split('/').filter(Boolean));
-        readFile(file)
-          .then((body) => {
-            res.setHeader('Content-Type', 'text/javascript');
-            res.end(body);
-          })
-          .catch(() => next());
-      });
-    },
-  };
-}
-
 export default defineConfig(({ mode }) => ({
-  plugins: [react(), motionCsp(mode), serveOrtGlue()],
+  plugins: [react(), motionCsp(mode)],
   base: './',
   // `PREMATION_UI_*` joins the default `VITE_` so ONE dev line in `.env.local`
   // (`PREMATION_UI_PLATFORM=mac`) reaches both the renderer and the Electron

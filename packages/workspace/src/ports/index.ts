@@ -87,6 +87,13 @@ export interface WorkspaceNode {
    * selected device is visibly selected; only the grips go.
    */
   readonly device?: boolean;
+  /**
+   * A 3D layer's distance from the view at a world point (its surface under
+   * the pointer; smaller = nearer), or null where it has none. The HitTester
+   * orders overlapping 3D layers of one 3D run nearest-first with it, as the
+   * renderer's depth test composites them (AE parity 4.6).
+   */
+  readonly pickDepth?: (worldPoint: Vec2) => number | null;
   /** Optional precise hit test in the node's *local* space (path/shape/mask). */
   readonly hitTestLocal?: (localPoint: Vec2) => boolean;
   /** Bezier path points in LOCAL space (only for shapes with custom paths). */

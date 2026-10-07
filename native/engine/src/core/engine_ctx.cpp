@@ -248,10 +248,11 @@ Json FakePorts::import_file(const api::ImportFile& file, const std::string& id) 
   if (name.find("undecodable") != std::string::npos) fail(api::ErrorCode::io, "cannot decode '" + name + "'");
   const bool audio = ends_with_ci(name, ".wav") || ends_with_ci(name, ".mp3") || ends_with_ci(name, ".aac");
   const bool image = ends_with_ci(name, ".png") || ends_with_ci(name, ".jpg") || ends_with_ci(name, ".jpeg");
+  const bool model = ends_with_ci(name, ".glb");
   Json a = Json::object();
   a.set("id", Json::string(id));
   a.set("name", Json::string(name));
-  a.set("type", Json::string(audio ? "audio" : image ? "image" : "video"));
+  a.set("type", Json::string(model ? "model" : audio ? "audio" : image ? "image" : "video"));
   a.set("src", Json::string("blob:fake/" + id));
   a.set("size", Json::number(1000));
   Json md = Json::object();
@@ -502,6 +503,21 @@ std::string utf8_of(const std::filesystem::path& p) {
 }  // namespace
 
 Json FilePorts::record_for(const std::string& path, const std::string& name, const std::string& id, std::string_view mime) {
+  // AE parity 4.7: a 3D model file (.glb, written by the modelImport job) is
+  // stored as a `model` item — nothing for the footage probe to read.
+  if (any_suffix(name, {".glb", ".gltf"}) || mime == "model/gltf-binary" || mime == "model/gltf+json") {
+    std::error_code mec;
+    const auto msize = std::filesystem::file_size(std::filesystem::path(std::u8string(path.begin(), path.end())), mec);
+    if (mec) fail(api::ErrorCode::io, "the model file could not be read");
+    Json m = Json::object();
+    m.set("id", Json::string(id));
+    m.set("name", Json::string(name));
+    m.set("type", Json::string("model"));
+    m.set("src", Json::string(local_file_url(path)));
+    m.set("size", Json::number(static_cast<double>(msize)));
+    m.set("path", Json::string(path));
+    return m;
+  }
   Json facts = Json::object();
   std::string error;
   if (!probe_ || !probe_(path, facts, error)) fail(api::ErrorCode::io, error.empty() ? "the file could not be read" : error);

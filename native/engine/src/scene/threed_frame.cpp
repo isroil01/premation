@@ -119,12 +119,17 @@ void enforce_extrusion_path_agreement(std::vector<api::Renderable>& rs) {
 bool depth_eligible_3d(const api::Renderable& r) {
   if (!r.three_d) return false;
   if (r.depth_exempt) return false;
-  if (r.matte_source || r.matte || r.adjustment || r.precomp || r.generator) return false;
-  if (r.advanced_blend && *r.advanced_blend > 0) return false;
-  if (r.preserve_transparency) return false;
-  if (r.glass || (r.backdrop_blur && *r.backdrop_blur > 0)) return false;
-  if (r.motion_samples.size() > 1) return false;
+  if (r.adjustment || r.precomp || r.generator) return false;
   if (r.deformed_mesh) return false;
+  // AE parity 4.2: track mattes (and their sources), advanced blends,
+  // Preserve Transparency, glass, backdrop blur and motion blur stay on the
+  // depth path — render_3d_group draws such a layer offscreen against the
+  // run's depth and composites it there. Motion blur needs every sample's 3D
+  // pose; a layer without them keeps the 2D route.
+  if (r.motion_samples.size() > 1 &&
+      std::ranges::any_of(r.motion_samples, [](const api::RenderMotionSample& s) { return s.model3d.size() != 16; })) {
+    return false;
+  }
   return true;
 }
 
@@ -189,6 +194,16 @@ void apply_three_d(const RLayer& l, const Mat3& parent, api::Renderable& r, cons
         r.color_matrix = wm;
       }
       if (has_lut_effect(l)) r.lut_texture_key = "lut:" + l.id;
+    }
+  }
+  // AE parity 4.2: each motion-blur sample's own 3D model (the same bridge as
+  // the layer's: the unit quad, or the bare world matrix of a mesh).
+  if (r.three_d && r.motion_samples.size() == l.motionSamples.size()) {
+    for (std::size_t i = 0; i < l.motionSamples.size(); ++i) {
+      const auto& w = l.motionSamples[i].world3d;
+      if (!w) continue;
+      if (r.extruded_mesh) r.motion_samples[i].model3d.assign(w->begin(), w->end());
+      else r.motion_samples[i].model3d = model3d_for(*w, l);
     }
   }
   if (l.castsShadow3d && r.three_d) r.three_d->casts_shadow = true;
@@ -260,6 +275,8 @@ bool finish_frame_3d(const Snapshot& s, api::RenderFrameScene& sc) {
   sc.camera3d = s.camera3d;
   if (!s.lights3d.empty()) sc.lights3d = s.lights3d;
   if (s.envMap) sc.env_map = s.envMap;
+  if (s.fog) sc.fog = s.fog;
+  if (s.shadowCatcher) sc.shadow_catcher = s.shadowCatcher;
   if (s.ssao && s.ssao->enabled) sc.ssao = s.ssao;
   return true;
 }

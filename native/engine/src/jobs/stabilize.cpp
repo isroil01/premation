@@ -1,6 +1,7 @@
 #include "stabilize.hpp"
 
 #include <algorithm>
+#include <limits>
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -362,6 +363,81 @@ std::vector<Sim> stabilizing_corrections(std::span<const std::optional<Sim>> pai
   for (size_t i = 0; i < n; ++i) {
     const Sim smooth = sim_from(srot[i], mjs::exp(slog[i]), stx[i], sty[i]);
     out.push_back(compose_sim(smooth, invert_sim(path[i])));
+  }
+  return out;
+}
+
+Sim applied_correction(const Sim& corr, double cx, double cy, bool rotation, bool scale) noexcept {
+  const double r = rotation ? sim_rotation(corr) : 0;
+  const double k = scale ? sim_scale(corr) : 1;
+  Sim a = sim_from(r, k, 0, 0);
+  const XY target = apply_sim(corr, cx, cy);
+  const XY moved = apply_sim(a, cx, cy);
+  a.tx = target.x - moved.x;
+  a.ty = target.y - moved.y;
+  return a;
+}
+
+double border_free_scale(const Sim& applied, double w, double h) noexcept {
+  if (!(w > 0) || !(h > 0)) return 1;
+  const Sim inv = invert_sim(applied);
+  const double cx = w / 2;
+  const double cy = h / 2;
+  // With a zoom k about the centre on top of `applied`, output point o shows
+  // source point inv(c + (o − c)/k). Along u = 1/k that is a straight line
+  // from inv(c) to inv(o): find the largest u ≤ 1 that stays in the frame.
+  const XY c0 = apply_sim(inv, cx, cy);
+  if (c0.x < 0 || c0.y < 0 || c0.x > w || c0.y > h) return std::numeric_limits<double>::infinity();
+  double u = 1;
+  const std::array<XY, 4> corners{XY{0, 0}, XY{w, 0}, XY{w, h}, XY{0, h}};
+  for (const XY& o : corners) {
+    const XY p = apply_sim(inv, o.x, o.y);
+    const double dx = p.x - c0.x;
+    const double dy = p.y - c0.y;
+    auto limit = [&](double d, double from, double lo, double hi) {
+      if (d > 1e-12) u = std::min(u, (hi - from) / d);
+      else if (d < -1e-12) u = std::min(u, (lo - from) / d);
+    };
+    limit(dx, c0.x, 0, w);
+    limit(dy, c0.y, 0, h);
+  }
+  return u > 1e-9 ? std::max(1.0, 1 / u) : std::numeric_limits<double>::infinity();
+}
+
+std::vector<double> framing_scales(std::span<const Sim> applied, double w, double h, Framing framing, double maxScale,
+                                   double sigmaFrames) {
+  std::vector<double> k(applied.size(), 1.0);
+  if (framing == Framing::stabilizeOnly || applied.empty()) return k;
+  const double cap = std::max(1.0, std::isfinite(maxScale) ? maxScale : 1.0);
+  for (std::size_t i = 0; i < applied.size(); ++i) k[i] = std::min(cap, border_free_scale(applied[i], w, h));
+  if (framing == Framing::stabilizeCrop) {
+    const double worst = *std::max_element(k.begin(), k.end());
+    std::fill(k.begin(), k.end(), worst);
+    return k;
+  }
+  // cropAutoScale: a running max over ±2σ (the zoom is ready before the
+  // shake arrives), then a Gaussian so it eases in and out.
+  const auto n = static_cast<std::ptrdiff_t>(k.size());
+  const auto reach = static_cast<std::ptrdiff_t>(std::ceil(2 * std::max(1.0, sigmaFrames)));
+  std::vector<double> peak(k.size());
+  for (std::ptrdiff_t i = 0; i < n; ++i) {
+    double m = 1;
+    for (std::ptrdiff_t j = std::max<std::ptrdiff_t>(0, i - reach); j <= std::min(n - 1, i + reach); ++j) m = std::max(m, k[static_cast<std::size_t>(j)]);
+    peak[static_cast<std::size_t>(i)] = m;
+  }
+  const double sigma = std::max(1.0, sigmaFrames);
+  std::vector<double> out(k.size());
+  for (std::ptrdiff_t i = 0; i < n; ++i) {
+    double sum = 0;
+    double wsum = 0;
+    for (std::ptrdiff_t j = std::max<std::ptrdiff_t>(0, i - 3 * reach); j <= std::min(n - 1, i + 3 * reach); ++j) {
+      const double d = static_cast<double>(j - i);
+      const double wt = std::exp(-(d * d) / (2 * sigma * sigma));
+      sum += wt * peak[static_cast<std::size_t>(j)];
+      wsum += wt;
+    }
+    // Never less than the frame itself needs (the blur can only lower a peak).
+    out[static_cast<std::size_t>(i)] = std::min(cap, std::max(k[static_cast<std::size_t>(i)], sum / wsum));
   }
   return out;
 }
