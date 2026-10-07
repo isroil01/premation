@@ -99,6 +99,8 @@ import { openTransitionSettings } from '@layout/Timeline/TransitionSettingsDialo
 import { myTransitions, presetSpanSeconds, saveSelectionAsTransition, USER_TRANSITION_PREFIX } from '@layout/EditorLayout/MyTransitions';
 import { smoothPositionPath, straightenPositionPath } from '@core/mirror/positionTracks';
 import { editPositionKeys } from '@layout/Workspace/viewportEdits';
+import { motionPathKeyframeMenuItems } from '@layout/Workspace/viewportPrecisionMenus';
+import { POSITION_PSEUDO_PROP } from '@motion/animation';
 
 /**
  * The value a property HAS at comp `seconds`: the evaluated value when the
@@ -534,6 +536,11 @@ export function useTimelineHandlers(tracksRef: MutableRefObject<ReadonlyArray<Ti
               id: 'motion-path',
               label: 'Motion Path',
               children: [
+                // AE's Keyframe Interpolation ▸ Spatial, on the Position key that
+                // was clicked (the motion path's own vertex menu, reused).
+                ...(['x', 'y', 'z', POSITION_PSEUDO_PROP].includes(hit.rowProp)
+                  ? motionPathKeyframeMenuItems(hit.sel.layer, storedTimeOf(hit.sel.layer)(hit.key)).filter((it) => it.id === 'mp-spatial')
+                  : []),
                 {
                   id: 'motion-path-smooth',
                   label: 'Smooth (Auto-Bezier)',

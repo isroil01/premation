@@ -113,11 +113,35 @@ import { TrackHeader, PropertyHeader, TrackCategoryHeader } from './TrackHeaderC
 import { mirrorCanResetProperties } from '@core/mirror/resetFacts';
 import { activeCompSize, resetPropertiesEdit, resetTransformEdit } from './resetEdits';
 import { expressionRowMenuItems } from './expressionRowMenu';
+import { openTimelineExpressionEditor } from './timelineExpressionEditor';
+import { trackExpressionFacts } from '@core/mirror/memberExpressions';
+import { propRefForTrack } from '@core/engine/propRefs';
+
 import { TrackContent, LaneRow } from './Lanes';
 import { Keyframes } from './KeyframeLayer';
 import { useClipDrag } from './useClipDrag';
 import { useKeyframeDrag } from './useKeyframeDrag';
 import { useMarquee } from './useMarquee';
+
+/**
+ * A property row's expression for its `=` badge: the first member track that
+ * has one, and the engine's error for that property if it reported one
+ * (`layerErrors`, stage 'expression'). Null when the row has no expression.
+ */
+function rowExpression(nodeId: string, props: ReadonlyArray<string>): { enabled: boolean; error: string | null } | null {
+  const m = documentMirror();
+  for (const p of props) {
+    const facts = trackExpressionFacts(m, nodeId, p);
+    if (!facts) continue;
+    const path = propRefForTrack(nodeId, p)?.ref.path;
+    const comp = m.layer(nodeId)?.comp;
+    const err = comp
+      ? m.layerErrors(comp).find((e) => e.layer === nodeId && e.stage === 'expression' && (!e.path || e.path === path))
+      : undefined;
+    return { enabled: facts.enabled, error: err?.message ?? null };
+  }
+  return null;
+}
 
 // The names other files import from here — kept on this module after the
 // split so no importer moves.
@@ -2424,6 +2448,12 @@ function Timeline({
                   key={`h_${row.track.id}_${row.prop.prop}`}
                   whipNodeId={row.track.id}
                   whipProp={row.prop.prop}
+                  expression={rowExpression(row.track.id, row.prop.stopwatchProps ?? row.prop.valueProps ?? [row.prop.prop])}
+                  onEditExpression={() => {
+                    const props = row.prop.stopwatchProps ?? row.prop.valueProps ?? [row.prop.prop];
+                    const first = props.find((p) => trackExpressionFacts(documentMirror(), row.track.id, p) !== null) ?? props[0]!;
+                    openTimelineExpressionEditor(row.track.id, first);
+                  }}
                   label={row.prop.label}
                   style={propStyle}
                   keyframes={row.prop.keyframes}

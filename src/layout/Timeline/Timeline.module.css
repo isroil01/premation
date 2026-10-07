@@ -1891,6 +1891,36 @@
 }
 
 /* The name reads the same animated or not — the stopwatch says which. */
+/* AE's expression `=` beside a property name: lit while it runs, dim when
+   disabled, red when the engine reports it failing. A click opens the editor. */
+.exprBadge {
+  flex: 0 0 auto;
+  height: 16px;
+  min-width: 16px;
+  padding: 0 3px;
+  margin-left: 4px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-primary);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.exprBadge:hover {
+  border-color: var(--color-border);
+}
+
+.exprBadgeOff {
+  color: var(--color-text-tertiary);
+}
+
+.exprBadgeError {
+  color: var(--color-danger);
+}
+
 .propHeaderStatic .propName {
   color: var(--color-text-secondary);
 }

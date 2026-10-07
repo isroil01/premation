@@ -819,6 +819,8 @@ export function PropertyHeader({
   whipNodeId,
   whipProp,
   contextMenuItems,
+  expression,
+  onEditExpression,
 }: {
   label: string;
   style: CSSProperties;
@@ -848,6 +850,13 @@ export function PropertyHeader({
    * timeline never pays for menus nobody opens. Absent = no menu.
    */
   contextMenuItems?: () => ContextMenuItem[];
+  /**
+   * The row's expression, when it has one (AE's `=` beside the property):
+   * whether it is enabled and whether the engine reported it failing.
+   */
+  expression?: { enabled: boolean; error: string | null } | null;
+  /** Open the row's expression editor (the `=` button). */
+  onEditExpression?: () => void;
 }): JSX.Element {
   const sorted = useMemo(() => [...keyframes].sort((a, b) => a.time - b.time), [keyframes]);
   const onContextMenu = contextMenuItems
@@ -896,6 +905,29 @@ export function PropertyHeader({
     <StopwatchButton animated={animated} label={label} onToggle={onStopwatch} />
   ) : null;
 
+  // AE's expression `=`: lit while the expression runs, red when it fails —
+  // a click opens the editor over the timeline.
+  const exprBadge = expression ? (
+    <button
+      type="button"
+      className={cn(styles.exprBadge, !expression.enabled && styles.exprBadgeOff, expression.error && styles.exprBadgeError)}
+      aria-label={`Edit expression on ${label}`}
+      title={
+        expression.error
+          ? `Expression error: ${expression.error} — click to edit`
+          : expression.enabled
+            ? 'Expression — click to edit'
+            : 'Expression (disabled) — click to edit'
+      }
+      onClick={(e) => {
+        e.stopPropagation();
+        onEditExpression?.();
+      }}
+    >
+      =
+    </button>
+  ) : null;
+
   // The name is the row's SELECT target — AE's property selection, on which
   // proportional scrubbing is defined. Ctrl/Cmd-click adds to the ordered
   // selection; a plain click replaces it.
@@ -941,6 +973,7 @@ export function PropertyHeader({
       >
         {stopwatch}
         {name}
+        {exprBadge}
         {fields}
       </div>
     );
@@ -956,6 +989,7 @@ export function PropertyHeader({
     >
       {stopwatch}
       {name}
+      {exprBadge}
       {fields}
       <div className={styles.propNav}>
         <KeyframeNavigator
