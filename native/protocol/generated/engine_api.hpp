@@ -459,6 +459,15 @@ enum class TransitionAlignment : std::uint32_t {
 [[nodiscard]] std::string_view to_string(TransitionAlignment v) noexcept;
 [[nodiscard]] bool from_u32(std::uint32_t n, TransitionAlignment& out) noexcept;
 
+enum class TransitionEase : std::uint32_t {
+  linear = 0,
+  ease_in_out = 1,
+  ease_in = 2,
+  ease_out = 3,
+};
+[[nodiscard]] std::string_view to_string(TransitionEase v) noexcept;
+[[nodiscard]] bool from_u32(std::uint32_t n, TransitionEase& out) noexcept;
+
 enum class MaskMode : std::uint32_t {
   none = 0,
   add = 1,
@@ -2454,6 +2463,11 @@ struct AddTransition {
   TransitionKind kind = TransitionKind::cross_dissolve;
   Time duration = 0;
   TransitionAlignment alignment = TransitionAlignment::centred;
+  std::optional<std::string> effect;
+  std::optional<double> angle;
+  std::optional<double> softness;
+  std::optional<std::string> color;
+  std::optional<TransitionEase> ease;
   bool operator==(const AddTransition&) const = default;
 };
 
@@ -2462,6 +2476,11 @@ struct SetTransition {
   std::optional<TransitionKind> kind;
   std::optional<Time> duration;
   std::optional<TransitionAlignment> alignment;
+  std::optional<std::string> effect;
+  std::optional<double> angle;
+  std::optional<double> softness;
+  std::optional<std::string> color;
+  std::optional<TransitionEase> ease;
   bool operator==(const SetTransition&) const = default;
 };
 
@@ -2696,6 +2715,7 @@ struct ApplyPreset {
   std::vector<LayerId> layers;
   std::string preset;
   Time time = 0;
+  std::optional<std::string> body;
   bool operator==(const ApplyPreset&) const = default;
 };
 
@@ -4498,6 +4518,11 @@ struct Transition {
   TransitionKind kind = TransitionKind::cross_dissolve;
   Time duration = 0;
   TransitionAlignment alignment = TransitionAlignment::centred;
+  std::optional<std::string> effect;
+  std::optional<double> angle;
+  std::optional<double> softness;
+  std::optional<std::string> color;
+  std::optional<TransitionEase> ease;
   bool operator==(const Transition&) const = default;
 };
 

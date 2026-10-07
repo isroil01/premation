@@ -42,6 +42,7 @@ import { easePatch, keyIdsAt, trackRef, valueCommands } from '@layout/Inspector/
 import { reorderCommands } from '@layout/Workspace/layerMenuEdits';
 import { easeKeyframes, easeKindOnKeys, setRovingOnKeys } from '@layout/Timeline/keyframeEdits';
 import { rippleDeleteLayers } from '@layout/Timeline/timelineEdits';
+import { withUserPresetBody } from '@core/animation/animationPresets';
 
 function notify(message: string, level: 'info' | 'success' | 'warning' = 'info', durationMs = 3200): void {
   useUIStore.getState().notify({ level, message, durationMs });
@@ -565,7 +566,7 @@ export async function applyAnimationPresetEdit(nodeIds: readonly string[], prese
   await documentMirror().loadTrees(nodeIds);
   const layers = nodeIds.filter((id) => isLayer(id));
   if (layers.length === 0) return false;
-  const res = await edit(`Apply ${preset}`, { type: 'applyPreset', layers, preset, time: compTime(seconds) });
+  const res = await edit(`Apply ${preset}`, { type: 'applyPreset', layers, preset, time: compTime(seconds), ...withUserPresetBody(preset) });
   return res.ok;
 }
 

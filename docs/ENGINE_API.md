@@ -393,7 +393,7 @@ coalescable inside a gesture (§5.2). Controls and I/O never enter history.
 | `rippleDeleteRange` | B3z — delete a comp TIME RANGE and close the gap (transcript editing): layers crossing an edge are split there, the parts inside deleted, later unlocked layers move left by the range's length. Inverse: every split, deleted and shifted layer. |
 | `liftRange` | B4 (id 971) — AE Lift: the same cut WITHOUT the ripple (the gap stays). Returns `TimeRangeEdit {layers, splits, deleted}`: the layers the splits created, the edges cut, the pieces removed. Inverse: every split and deleted layer. |
 | `shiftLayerKeyframes` | B3z — move every keyframe a layer owns by a layer-time delta (Stagger / Sequence animation), data tracks included, time remap / speed excluded. Inverse: shift back. |
-| `addTransition`, `setTransition` [c], `removeTransitions` | B3z — a transition on the cut between two layers (kind, whole-frame duration, alignment); refused with the frames the handles lack when a source cannot pay for the overlap. Remove puts each cut back exactly as it was before the transition. Inverse: the previous records and everything they materialised. Event: `transitionsChanged`. |
+| `addTransition`, `setTransition` [c], `removeTransitions` | B3z — a transition on the cut between two layers (kind, whole-frame duration, alignment; optional `effect` — any Transition effect with a Transition Completion, ramped as the wipe — `angle`, `softness`, a dip's `color` and the ramp's `ease`); refused with the frames the handles lack when a source cannot pay for the overlap. Remove puts each cut back exactly as it was before the transition. Inverse: the previous records and everything they materialised. Event: `transitionsChanged`. |
 | `editWorkArea` | Lift or extract the work area. Inverse: restore every trimmed/split/shifted layer. |
 | `insertGap` | Inverse: shift back. |
 | `timeReverseLayers` | Inverse: reverse again (exact: stretch sign + mirrored keys). |
@@ -436,7 +436,7 @@ coalescable inside a gesture (§5.2). Controls and I/O never enter history.
 | `duplicatePropertyGroups`, `copyPropertyGroups` | Copies (same layer / other layers). Inverse: remove the copies. |
 | `setGroupEnabled` | fx switch, mask enable, animator enable. Inverse: previous flags. |
 | `renamePropertyGroup` | Inverse: previous name. |
-| `applyPreset` | Animation preset at `time`. Inverse: remove added groups, restore overwritten keys. |
+| `applyPreset` | Animation preset at `time` — a built-in by name, or a user preset carried as `body` (JSON). Inverse: remove added groups, restore overwritten keys. |
 | `invokeEffectAction` | A plugin effect's button (param supervision). The plugin's resulting writes are one history entry; inverse is that entry. |
 | `addProperties` | G1 — AE's Add ▸ Property: OPTIONAL properties that exist only once added, under `parent` (`text/animators/<id>/props`): Anchor Point X/Y/Z (Z only on a 3D layer), Skew Axis, Line Anchor, Character Value, Fill / Stroke Hue·Saturation·Brightness, Stroke Opacity, Fill Color / Stroke Color (`color`, `strokeColor`) and Font Axis properties (`axis<TAG>`, at most 8 distinct tags per layer — `outOfRange`). A property already present keeps its value. Returns the property paths in input order. Inverse: the animator as it was. |
 | `removeProperties` | G1 — delete optional properties with their keyframes and expressions (a non-optional property: `invalidArgument`; an absent one: `notFound`). Inverse: the properties, keys and expressions back exactly. |

@@ -24,6 +24,8 @@ export interface TransitionView {
   /** Length in FRAMES of the composition. */
   durationFrames: number;
   alignment: TransitionAlignment;
+  /** A wipe's Transition effect (absent = Linear Wipe). */
+  effect?: string;
 }
 
 /** One API record as a view, at the composition's frame rate. */
@@ -36,6 +38,7 @@ export function transitionViewOf(t: Transition, fps: number): TransitionView {
     kind: t.kind,
     durationFrames: Math.max(1, Math.round(flicksToSeconds(t.duration) * rate)),
     alignment: t.alignment,
+    ...(t.effect ? { effect: t.effect } : {}),
   };
 }
 

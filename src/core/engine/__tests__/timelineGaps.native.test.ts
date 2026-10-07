@@ -78,6 +78,34 @@ describe('transitions', () => {
     expect(after.comps.find((c) => c.id === s.comp)!.transitions).toEqual([]);
   });
 
+  it('an effect wipe ramps that effect, with its direction, softness and ease; a dip takes a colour', async () => {
+    await cut();
+    const { transition } = await exact({
+      type: 'addTransition', left: s.A, right: s.B, kind: 'wipe', duration: f(12), alignment: 'centred',
+      effect: 'radial-wipe', angle: 45, softness: 12, ease: 'easeInOut',
+    }) as { transition: string };
+    const fx = (await docView()).getNodeEffects(s.B).find((e) => e.type === 'radial-wipe');
+    expect(fx).toBeDefined();
+    expect(fx!.params).toMatchObject({ startAngle: 45, feather: 12 });
+    const doc = await h.query({ type: 'getDocument', includeProperties: false, includeKeyframes: false });
+    expect(doc.comps.find((c) => c.id === s.comp)!.transitions[0]!).toMatchObject({ effect: 'radial-wipe', angle: 45, softness: 12, ease: 'easeInOut' });
+    // Back to a plain wipe, then a dip through a colour.
+    await exact({ type: 'setTransition', transition, effect: '' });
+    expect((await docView()).getNodeEffects(s.B).some((e) => e.type === 'linear-wipe')).toBe(true);
+    await exact({ type: 'setTransition', transition, kind: 'dipToWhite', color: '#ff0000' });
+    expect((await docView()).getNodeEffects(s.B).find((e) => e.type === 'fill')?.params).toMatchObject({ color: '#ff0000' });
+    // A non-transition effect and a bad colour are refused, the record unchanged.
+    expect((await h.client.execute({ type: 'setTransition', transition, effect: 'gaussian-blur' })).ok).toBe(false);
+    expect((await h.client.execute({ type: 'setTransition', transition, color: 'red' })).ok).toBe(false);
+  });
+
+  it('applies a user preset carried as its body (the engine registry only has the built-ins)', async () => {
+    const body = JSON.stringify({ tracks: [{ prop: 'opacity', keyframes: [{ t: 0, value: 0 }, { t: 0.5, value: 100 }] }] });
+    expect((await h.client.execute({ type: 'applyPreset', layers: [s.A], preset: 'My Fade', time: sec(1) })).ok).toBe(false);
+    await exact({ type: 'applyPreset', layers: [s.A], preset: 'My Fade', time: sec(1), body });
+    expect((await docView()).getTrackKeyframes(s.A, 'opacity')?.length ?? 0).toBeGreaterThanOrEqual(2);
+  });
+
   it('refuses a cut that is not one, and a transition the handles cannot pay for', async () => {
     const bad = await h.client.execute({ type: 'addTransition', left: s.A, right: s.T, kind: 'crossDissolve', duration: f(12), alignment: 'centred' });
     expect(bad.ok).toBe(false);

@@ -37,6 +37,7 @@ import {
   type AnimationPreset,
   type CapturedPresetBody,
   type PresetImportResult,
+  withUserPresetBody,
 } from '@core/animation/animationPresets';
 import { downloadBlob } from '@core/export/exportManager';
 import { uiKindOf } from '@core/mirror/layerKinds';
@@ -208,6 +209,7 @@ export function MotionPresetsBody(): JSX.Element {
     // engine reads is this panel's `listPresets`).
     void edit('Apply animation preset', {
       type: 'applyPreset', layers: [id], preset: preset.name, time: compTime(getTime()),
+      ...(preset.builtin ? {} : withUserPresetBody(preset.name)),
     }, { quiet: true }).then((res) => {
       notify(
         res.ok

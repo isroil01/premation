@@ -54,6 +54,7 @@ import {
   toggleAudioMuteEdit,
   toggleLayerFlagEdit,
   toggleTrackSwitchEdit,
+  applyAnimationPresetEdit,
 } from '@layout/Menu/appEdits';
 import { edit } from '@core/engine/uiEdits';
 import { compTime } from '@core/engine/propRefs';
@@ -93,6 +94,9 @@ import type { MutableRefObject } from 'react';
 import { applyTransitionEdit } from '@layout/EditorLayout/transitionInsertEdits';
 import { TRANSITION_ITEMS, getTransitionItem } from '@core/library/transitionLibrary';
 import { hasPositionKeys, hasPositionTangents } from '@core/mirror/motionFacts';
+import { cutTransitionEffects } from '@layout/Timeline/cutTransitionEffects';
+import { openTransitionSettings } from '@layout/Timeline/TransitionSettingsDialog';
+import { myTransitions, presetSpanSeconds, saveSelectionAsTransition, USER_TRANSITION_PREFIX } from '@layout/EditorLayout/MyTransitions';
 import { smoothPositionPath, straightenPositionPath } from '@core/mirror/positionTracks';
 import { editPositionKeys } from '@layout/Workspace/viewportEdits';
 
@@ -872,28 +876,62 @@ export function useTimelineHandlers(tracksRef: MutableRefObject<ReadonlyArray<Ti
         })),
       })),
       {
+        // This layer's own animation, kept as a reusable transition (My Transitions in the Library).
+        id: 'save-as-transition',
+        label: 'Save Animation as Transition…',
+        disabled: !nodeId,
+        onSelect: () => {
+          if (!nodeId) return;
+          useSelectionStore.getState().set([nodeId]);
+          void saveSelectionAsTransition();
+        },
+      },
+      {
         id: 'add-transition',
         label: 'Transition at Cut',
         disabled: !cut,
-        children: TRANSITION_KINDS.map((kind) => ({
-          id: `add-transition-${kind}`,
-          label: TRANSITION_LABEL[kind],
-          onSelect: () => {
-            if (!cut) return;
-            void addTransitionEdit(
-              cut.leftNodeId,
-              cut.rightNodeId,
-              kind,
-              DEFAULT_TRANSITION_FRAMES,
-              'centred',
-            ).then((res) => {
-              if (!res.ok) void customAlert('Transition', res.reason);
-            });
+        children: [
+          ...TRANSITION_KINDS.map((kind) => ({
+            id: `add-transition-${kind}`,
+            label: TRANSITION_LABEL[kind],
+            onSelect: () => {
+              if (!cut) return;
+              void addTransitionEdit(
+                cut.leftNodeId,
+                cut.rightNodeId,
+                kind,
+                DEFAULT_TRANSITION_FRAMES,
+                'centred',
+              ).then((res) => {
+                if (!res.ok) void customAlert('Transition', res.reason);
+              });
+            },
+          })),
+          {
+            // Any Transition effect with a Transition Completion, ramped on the
+            // incoming layer (the engine's addTransition{effect}).
+            id: 'add-transition-effects',
+            label: 'Effect Wipes',
+            children: cutTransitionEffects().map((fx) => ({
+              id: `add-transition-fx-${fx.type}`,
+              label: fx.label,
+              onSelect: () => {
+                if (!cut) return;
+                void addTransitionEdit(cut.leftNodeId, cut.rightNodeId, 'wipe', DEFAULT_TRANSITION_FRAMES, 'centred', { effect: fx.type }).then((res) => {
+                  if (!res.ok) void customAlert('Transition', res.reason);
+                });
+              },
+            })),
           },
-        })),
+        ],
       },
       ...(existingTransition && cut
         ? [
+            {
+              id: 'transition-settings',
+              label: 'Transition Settings…',
+              onSelect: () => openTransitionSettings(existingTransition.id, existingTransition.leftNodeId),
+            },
             /*
              * Alignment — where the transition sits relative to the cut.
              *
@@ -1021,6 +1059,23 @@ export function useTimelineHandlers(tracksRef: MutableRefObject<ReadonlyArray<Ti
    * the Library's recipe — one undo entry.
    */
   const handleLayerTransitionDrop = (transId: string, trackId: string, edge: 'in' | 'out'): void => {
+    // A transition the user saved (My Transitions): its preset, from the in-point
+    // or ending at the out-point — one `applyPreset{body}`.
+    if (transId.startsWith(USER_TRANSITION_PREFIX)) {
+      const name = transId.slice(USER_TRANSITION_PREFIX.length);
+      const preset = myTransitions().find((p) => p.name === name);
+      const target = documentMirror().layer(trackId);
+      if (!preset || !target) return;
+      const inS = flicksToSeconds(target.timing.inPoint);
+      const outS = flicksToSeconds(target.timing.outPoint);
+      const at = edge === 'in' ? inS : Math.max(inS, outS - presetSpanSeconds(preset));
+      void applyAnimationPresetEdit([trackId], name, at).then((ok) => {
+        useUIStore.getState().notify(ok
+          ? { level: 'success', message: `${name} ${edge === 'in' ? 'entrance' : 'exit'} on ${target.name}`, durationMs: 1800 }
+          : { level: 'warning', message: `Could not apply ${name}`, durationMs: 2400 });
+      });
+      return;
+    }
     const item = getTransitionItem(transId);
     const layer = documentMirror().layer(trackId);
     if (!item || !layer) return;

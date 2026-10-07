@@ -37,7 +37,7 @@ import { ROW_HEIGHT_PRESETS, ROW_HEIGHT_MIN, ROW_HEIGHT_MAX, rowHeightFromDrag }
 import { collectClipSnapTargets, snapClipTime } from './clipSnap';
 import { collectClipCuts, findClipCutNear, type ClipCut } from './clipCuts';
 import { useTimelineEditModeStore } from './timelineEditMode';
-import { isLayerTransitionDrag, isTransitionDrag, readLayerTransitionDrag, readTransitionDrag } from './transitionDrag';
+import { isLayerTransitionDrag, isTransitionDrag, readLayerTransitionDrag, readTransitionDrag, readTransitionDragEffect } from './transitionDrag';
 import { hasCanvasDrag, readCanvasDrag } from '@core/dnd/canvasDrag';
 import { documentMirror } from '@stores/documentMirror';
 import { barOf, replaceSourceWithAsset, replaceTargetAt, splitLayersAt, timeStretchEdit } from './timelineEdits';
@@ -49,6 +49,8 @@ import {
   type TransitionBox,
 } from './transitionOverlay';
 import { installTransitionCommands } from './transitionCommands';
+import { wipeLabel } from './cutTransitionEffects';
+import { openTransitionSettings } from './TransitionSettingsDialog';
 import { transitionViewsOf } from '@core/mirror/transitions';
 import {
   DEFAULT_TRANSITION_FRAMES,
@@ -1518,8 +1520,8 @@ function Timeline({
    * clips are already at their ends.
    */
   const applyTransition = useCallback(
-    (cut: ClipCut, kind: TransitionKind): void => {
-      void addTransitionEdit(cut.leftNodeId, cut.rightNodeId, kind, DEFAULT_TRANSITION_FRAMES, 'centred').then(
+    (cut: ClipCut, kind: TransitionKind, effect?: string): void => {
+      void addTransitionEdit(cut.leftNodeId, cut.rightNodeId, kind, DEFAULT_TRANSITION_FRAMES, 'centred', effect ? { effect } : {}).then(
         (res) => {
           if (!res.ok) setTransitionError(res.reason);
           else setSelectedTransitionId(res.id);
@@ -1634,6 +1636,7 @@ function Timeline({
   const onLanesDrop = useCallback(
     (e: ReactDragEvent<HTMLDivElement>): void => {
       const kind = readTransitionDrag(e.dataTransfer);
+      const effect = readTransitionDragEffect(e.dataTransfer);
       setDropCutKey(null);
       setChipDragging(false);
       setDropEdge(null);
@@ -1659,7 +1662,7 @@ function Timeline({
       e.preventDefault();
       const cut = lanesCutAt(e.clientX, e.clientY);
       setTransitionError(cut ? null : 'Drop a transition on a cut — the point where one clip ends and the next begins.');
-      if (cut) applyTransition(cut, kind);
+      if (cut) applyTransition(cut, kind, effect);
     },
     [lanesCutAt, applyTransition, lanesTrackIdAt, lanesEdgeAt, onLayerTransitionDrop],
   );
@@ -2949,8 +2952,10 @@ function Timeline({
               const selected = box.id === selectedTransitionId;
               // The layout box carries only geometry; the alignment lives on
               // the record, which is also what the toggle writes back to.
-              const alignment =
-                allTransitions.find((t) => t.id === box.id)?.alignment ?? 'centred';
+              const rec = allTransitions.find((t) => t.id === box.id);
+              const alignment = rec?.alignment ?? 'centred';
+              // An effect wipe is named after its effect (Radial Wipe, Iris Wipe …).
+              const kindLabel = rec?.effect ? wipeLabel(rec.effect) : TRANSITION_LABEL[box.kind];
               return (
                 <div
                   key={box.id}
@@ -2962,13 +2967,18 @@ function Timeline({
                     top: TIMELINE_TOP_PADDING + box.topRow * trackHeight,
                     height: (box.bottomRow - box.topRow + 1) * trackHeight,
                   }}
-                  title={`${TRANSITION_LABEL[box.kind]} — drag an end to change its length, Delete to remove`}
-                  aria-label={`${TRANSITION_LABEL[box.kind]} transition, ${TRANSITION_ALIGNMENT_LABEL[alignment].toLowerCase()}`}
+                  title={`${kindLabel} — drag an end to change its length, double-click for its settings, Delete to remove`}
+                  aria-label={`${kindLabel} transition, ${TRANSITION_ALIGNMENT_LABEL[alignment].toLowerCase()}`}
                   onPointerDown={(e) => {
                     // Stopped so the press does not also start a clip drag or a
                     // marquee on the lane beneath.
                     e.stopPropagation();
                     setSelectedTransitionId(box.id);
+                  }}
+                  onDoubleClick={(e) => {
+                    // Not the lanes' double-click (which adds a dissolve at a cut).
+                    e.stopPropagation();
+                    if (rec) openTransitionSettings(rec.id, rec.leftNodeId);
                   }}
                 >
                   <div
@@ -2984,14 +2994,14 @@ function Timeline({
                     type="button"
                     className={cn(styles.transitionLabel, styles.transitionAlign)}
                     data-alignment={alignment}
-                    title={`${TRANSITION_LABEL[box.kind]} · ${TRANSITION_ALIGNMENT_LABEL[alignment]} — click to change alignment`}
+                    title={`${kindLabel} · ${TRANSITION_ALIGNMENT_LABEL[alignment]} — click to change alignment`}
                     onPointerDown={(e) => e.stopPropagation()}
                     onClick={(e) => {
                       e.stopPropagation();
                       cycleTransitionAlignment(box.id);
                     }}
                   >
-                    {box.label}
+                    {rec?.effect ? kindLabel : box.label}
                   </button>
                   <div
                     className={styles.transitionGrip}

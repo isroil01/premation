@@ -548,6 +548,15 @@ api::Transition transition_info(const Document& d, std::string_view comp, const 
   const Json& df = rec.at("durationFrames");
   const double frames = df.is_number() && std::isfinite(df.num()) ? motion::js::round(df.num()) : 0;
   t.duration = frames_to_flicks(frames, comp_fps(d, comp));
+  if (!str("effect").empty()) t.effect = str("effect");
+  if (rec.at("angle").is_number()) t.angle = rec.at("angle").num();
+  if (rec.at("softness").is_number()) t.softness = rec.at("softness").num();
+  if (!str("color").empty()) t.color = str("color");
+  const std::string ease = str("ease");
+  if (ease == "easeInOut") t.ease = api::TransitionEase::ease_in_out;
+  else if (ease == "easeIn") t.ease = api::TransitionEase::ease_in;
+  else if (ease == "easeOut") t.ease = api::TransitionEase::ease_out;
+  else if (ease == "linear") t.ease = api::TransitionEase::linear;
   return t;
 }
 

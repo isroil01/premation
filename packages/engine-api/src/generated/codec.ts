@@ -156,6 +156,10 @@ const TransitionAlignment_TO_NUM: Record<string, number> = { 'centred': 0, 'star
 const TransitionAlignment_FROM_NUM: readonly (T.TransitionAlignment | undefined)[] = ['centred', 'startAtCut', 'endAtCut'];
 function enc_TransitionAlignment(v: T.TransitionAlignment): number { const n = TransitionAlignment_TO_NUM[v]; if (n === undefined) throw new RangeError('TransitionAlignment: invalid value ' + String(v)); return n; }
 function dec_TransitionAlignment(n: number): T.TransitionAlignment { const v = TransitionAlignment_FROM_NUM[n]; if (v === undefined) throw new DecodeError('TransitionAlignment: unknown value ' + n, 'badEnum'); return v; }
+const TransitionEase_TO_NUM: Record<string, number> = { 'linear': 0, 'easeInOut': 1, 'easeIn': 2, 'easeOut': 3 };
+const TransitionEase_FROM_NUM: readonly (T.TransitionEase | undefined)[] = ['linear', 'easeInOut', 'easeIn', 'easeOut'];
+function enc_TransitionEase(v: T.TransitionEase): number { const n = TransitionEase_TO_NUM[v]; if (n === undefined) throw new RangeError('TransitionEase: invalid value ' + String(v)); return n; }
+function dec_TransitionEase(n: number): T.TransitionEase { const v = TransitionEase_FROM_NUM[n]; if (v === undefined) throw new DecodeError('TransitionEase: unknown value ' + n, 'badEnum'); return v; }
 const MaskMode_TO_NUM: Record<string, number> = { 'none': 0, 'add': 1, 'subtract': 2, 'intersect': 3, 'lighten': 4, 'darken': 5, 'difference': 6 };
 const MaskMode_FROM_NUM: readonly (T.MaskMode | undefined)[] = ['none', 'add', 'subtract', 'intersect', 'lighten', 'darken', 'difference'];
 function enc_MaskMode(v: T.MaskMode): number { const n = MaskMode_TO_NUM[v]; if (n === undefined) throw new RangeError('MaskMode: invalid value ' + String(v)); return n; }
@@ -5334,6 +5338,11 @@ function encS_Transition(w: Writer, v: T.Transition): void {
   w.byte(40); w.varint(enc_TransitionKind(v.kind));
   w.byte(48); w.i64(v.duration);
   w.byte(56); w.varint(enc_TransitionAlignment(v.alignment));
+  if (v.effect !== undefined) { w.byte(66); w.str(v.effect); }
+  if (v.angle !== undefined) { w.byte(73); w.f64(v.angle); }
+  if (v.softness !== undefined) { w.byte(81); w.f64(v.softness); }
+  if (v.color !== undefined) { w.byte(90); w.str(v.color); }
+  if (v.ease !== undefined) { w.byte(96); w.varint(enc_TransitionEase(v.ease)); }
 }
 function decS_Transition(r: Reader, end: number, o: any): T.Transition {
   let h_id = false;
@@ -5350,6 +5359,11 @@ function decS_Transition(r: Reader, end: number, o: any): T.Transition {
   let v_kind: T.TransitionKind | undefined;
   let v_duration: number | undefined;
   let v_alignment: T.TransitionAlignment | undefined;
+  let v_effect: string | undefined;
+  let v_angle: number | undefined;
+  let v_softness: number | undefined;
+  let v_color: string | undefined;
+  let v_ease: T.TransitionEase | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -5360,6 +5374,11 @@ function decS_Transition(r: Reader, end: number, o: any): T.Transition {
       case 40: v_kind = dec_TransitionKind(r.varint()); h_kind = true; break;
       case 48: v_duration = r.i64(); h_duration = true; break;
       case 56: v_alignment = dec_TransitionAlignment(r.varint()); h_alignment = true; break;
+      case 66: v_effect = r.str(); break;
+      case 73: v_angle = r.f64(); break;
+      case 81: v_softness = r.f64(); break;
+      case 90: v_color = r.str(); break;
+      case 96: v_ease = dec_TransitionEase(r.varint()); break;
       default: r.skip(key);
     }
   }
@@ -5378,6 +5397,11 @@ function decS_Transition(r: Reader, end: number, o: any): T.Transition {
   o.kind = v_kind;
   o.duration = v_duration;
   o.alignment = v_alignment;
+  if (v_effect !== undefined) o.effect = v_effect;
+  if (v_angle !== undefined) o.angle = v_angle;
+  if (v_softness !== undefined) o.softness = v_softness;
+  if (v_color !== undefined) o.color = v_color;
+  if (v_ease !== undefined) o.ease = v_ease;
   return o;
 }
 function encS_TransitionRef(w: Writer, v: T.TransitionRef): void {
@@ -5404,6 +5428,11 @@ function encS_AddTransition(w: Writer, v: T.AddTransition): void {
   w.byte(24); w.varint(enc_TransitionKind(v.kind));
   w.byte(32); w.i64(v.duration);
   w.byte(40); w.varint(enc_TransitionAlignment(v.alignment));
+  if (v.effect !== undefined) { w.byte(50); w.str(v.effect); }
+  if (v.angle !== undefined) { w.byte(57); w.f64(v.angle); }
+  if (v.softness !== undefined) { w.byte(65); w.f64(v.softness); }
+  if (v.color !== undefined) { w.byte(74); w.str(v.color); }
+  if (v.ease !== undefined) { w.byte(80); w.varint(enc_TransitionEase(v.ease)); }
 }
 function decS_AddTransition(r: Reader, end: number, o: any): T.AddTransition {
   let h_left = false;
@@ -5416,6 +5445,11 @@ function decS_AddTransition(r: Reader, end: number, o: any): T.AddTransition {
   let v_kind: T.TransitionKind | undefined;
   let v_duration: number | undefined;
   let v_alignment: T.TransitionAlignment | undefined;
+  let v_effect: string | undefined;
+  let v_angle: number | undefined;
+  let v_softness: number | undefined;
+  let v_color: string | undefined;
+  let v_ease: T.TransitionEase | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -5424,6 +5458,11 @@ function decS_AddTransition(r: Reader, end: number, o: any): T.AddTransition {
       case 24: v_kind = dec_TransitionKind(r.varint()); h_kind = true; break;
       case 32: v_duration = r.i64(); h_duration = true; break;
       case 40: v_alignment = dec_TransitionAlignment(r.varint()); h_alignment = true; break;
+      case 50: v_effect = r.str(); break;
+      case 57: v_angle = r.f64(); break;
+      case 65: v_softness = r.f64(); break;
+      case 74: v_color = r.str(); break;
+      case 80: v_ease = dec_TransitionEase(r.varint()); break;
       default: r.skip(key);
     }
   }
@@ -5438,6 +5477,11 @@ function decS_AddTransition(r: Reader, end: number, o: any): T.AddTransition {
   o.kind = v_kind;
   o.duration = v_duration;
   o.alignment = v_alignment;
+  if (v_effect !== undefined) o.effect = v_effect;
+  if (v_angle !== undefined) o.angle = v_angle;
+  if (v_softness !== undefined) o.softness = v_softness;
+  if (v_color !== undefined) o.color = v_color;
+  if (v_ease !== undefined) o.ease = v_ease;
   return o;
 }
 function encS_SetTransition(w: Writer, v: T.SetTransition): void {
@@ -5445,6 +5489,11 @@ function encS_SetTransition(w: Writer, v: T.SetTransition): void {
   if (v.kind !== undefined) { w.byte(16); w.varint(enc_TransitionKind(v.kind)); }
   if (v.duration !== undefined) { w.byte(24); w.i64(v.duration); }
   if (v.alignment !== undefined) { w.byte(32); w.varint(enc_TransitionAlignment(v.alignment)); }
+  if (v.effect !== undefined) { w.byte(42); w.str(v.effect); }
+  if (v.angle !== undefined) { w.byte(49); w.f64(v.angle); }
+  if (v.softness !== undefined) { w.byte(57); w.f64(v.softness); }
+  if (v.color !== undefined) { w.byte(66); w.str(v.color); }
+  if (v.ease !== undefined) { w.byte(72); w.varint(enc_TransitionEase(v.ease)); }
 }
 function decS_SetTransition(r: Reader, end: number, o: any): T.SetTransition {
   let h_transition = false;
@@ -5452,6 +5501,11 @@ function decS_SetTransition(r: Reader, end: number, o: any): T.SetTransition {
   let v_kind: T.TransitionKind | undefined;
   let v_duration: number | undefined;
   let v_alignment: T.TransitionAlignment | undefined;
+  let v_effect: string | undefined;
+  let v_angle: number | undefined;
+  let v_softness: number | undefined;
+  let v_color: string | undefined;
+  let v_ease: T.TransitionEase | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -5459,6 +5513,11 @@ function decS_SetTransition(r: Reader, end: number, o: any): T.SetTransition {
       case 16: v_kind = dec_TransitionKind(r.varint()); break;
       case 24: v_duration = r.i64(); break;
       case 32: v_alignment = dec_TransitionAlignment(r.varint()); break;
+      case 42: v_effect = r.str(); break;
+      case 49: v_angle = r.f64(); break;
+      case 57: v_softness = r.f64(); break;
+      case 66: v_color = r.str(); break;
+      case 72: v_ease = dec_TransitionEase(r.varint()); break;
       default: r.skip(key);
     }
   }
@@ -5468,6 +5527,11 @@ function decS_SetTransition(r: Reader, end: number, o: any): T.SetTransition {
   if (v_kind !== undefined) o.kind = v_kind;
   if (v_duration !== undefined) o.duration = v_duration;
   if (v_alignment !== undefined) o.alignment = v_alignment;
+  if (v_effect !== undefined) o.effect = v_effect;
+  if (v_angle !== undefined) o.angle = v_angle;
+  if (v_softness !== undefined) o.softness = v_softness;
+  if (v_color !== undefined) o.color = v_color;
+  if (v_ease !== undefined) o.ease = v_ease;
   return o;
 }
 function encS_RemoveTransitions(w: Writer, v: T.RemoveTransitions): void {
@@ -6426,6 +6490,7 @@ function encS_ApplyPreset(w: Writer, v: T.ApplyPreset): void {
   { const a = v.layers; for (let i = 0; i < a.length; i++) { w.byte(10); w.str(a[i]!); } }
   w.byte(18); w.str(v.preset);
   w.byte(24); w.i64(v.time);
+  if (v.body !== undefined) { w.byte(34); w.str(v.body); }
 }
 function decS_ApplyPreset(r: Reader, end: number, o: any): T.ApplyPreset {
   const l_layers: string[] = [];
@@ -6433,12 +6498,14 @@ function decS_ApplyPreset(r: Reader, end: number, o: any): T.ApplyPreset {
   let h_time = false;
   let v_preset: string | undefined;
   let v_time: number | undefined;
+  let v_body: string | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
       case 10: l_layers.push(r.str()); break;
       case 18: v_preset = r.str(); h_preset = true; break;
       case 24: v_time = r.i64(); h_time = true; break;
+      case 34: v_body = r.str(); break;
       default: r.skip(key);
     }
   }
@@ -6448,6 +6515,7 @@ function decS_ApplyPreset(r: Reader, end: number, o: any): T.ApplyPreset {
   o.layers = l_layers;
   o.preset = v_preset;
   o.time = v_time;
+  if (v_body !== undefined) o.body = v_body;
   return o;
 }
 function encS_InvokeEffectAction(w: Writer, v: T.InvokeEffectAction): void {

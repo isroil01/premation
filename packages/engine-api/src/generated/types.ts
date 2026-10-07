@@ -366,6 +366,14 @@ export type TransitionAlignment =
   | 'endAtCut';
 export const TransitionAlignmentValues = ['centred', 'startAtCut', 'endAtCut'] as const;
 
+/** The ease of a transition's ramp (the two keys it writes); absent = linear. */
+export type TransitionEase =
+  | 'linear'
+  | 'easeInOut'
+  | 'easeIn'
+  | 'easeOut';
+export const TransitionEaseValues = ['linear', 'easeInOut', 'easeIn', 'easeOut'] as const;
+
 export type MaskMode =
   | 'none'
   | 'add'
@@ -2159,6 +2167,18 @@ export interface Transition {
   /** Whole frames of the composition. */
   duration: Time;
   alignment: TransitionAlignment;
+  /**
+   * wipe: the Transition effect it ramps (any registry effect with a Transition Completion param — radial-wipe,
+   * iris-wipe, venetian-blinds, block-dissolve, card-wipe, …); absent = linear-wipe.
+   */
+  effect?: string;
+  /** wipe: the direction in degrees (the effect's wipe / start angle, or angle). Absent = the effect's default. */
+  angle?: number;
+  /** wipe: the edge softness (the effect's Feather or Softness). Absent = the effect's default. */
+  softness?: number;
+  /** dipToWhite: the colour dipped through (#rrggbb). Absent = white. */
+  color?: string;
+  ease?: TransitionEase;
 }
 
 export interface TransitionRef {
@@ -2172,14 +2192,24 @@ export interface AddTransition {
   kind: TransitionKind;
   duration: Time;
   alignment: TransitionAlignment;
+  effect?: string;
+  angle?: number;
+  softness?: number;
+  color?: string;
+  ease?: TransitionEase;
 }
 
-/** B3z — change a transition's kind, length or alignment (the bracket drag, the alignment menu): the cut is restored to what it was before the transition, then the new one materialised. Coalescable: a drag sends the absolute length per move. Refusals as addTransition (the record is unchanged). Inverse: the previous record and everything it materialised. */
+/** B3z — change a transition's kind, length, alignment or parameters (the bracket drag, the alignment menu, the transition inspector; `effect` '' = back to linear-wipe): the cut is restored to what it was before the transition, then the new one materialised. Coalescable: a drag sends the absolute length per move. Refusals as addTransition (the record is unchanged). Inverse: the previous record and everything it materialised. */
 export interface SetTransition {
   transition: string;
   kind?: TransitionKind;
   duration?: Time;
   alignment?: TransitionAlignment;
+  effect?: string;
+  angle?: number;
+  softness?: number;
+  color?: string;
+  ease?: TransitionEase;
 }
 
 /** B3z — remove transitions: each cut is put back exactly as it was before the transition was applied (bars, the ramped keys, the effect stack). Hand edits made to those tracks afterwards are discarded with it (transitions.ts). Inverse: the records and their materialisation. */
@@ -2480,11 +2510,16 @@ export interface CopyPropertyGroups {
   toLayers: LayerId[];
 }
 
-/** Apply an animation preset (.ffx-like Premation preset) to layers at `time`. */
+/**
+ * Apply an animation preset (.ffx-like Premation preset) to layers at `time`. `preset` names a built-in; `body` —
+ * the preset itself as JSON (a user preset from the editor's library: tracks, animators, effects, expressions,
+ * timeUnit) — is applied under that name instead, since the user library is editor state the engine does not hold.
+ */
 export interface ApplyPreset {
   layers: LayerId[];
   preset: string;
   time: Time;
+  body?: string;
 }
 
 /** A plugin effect's action button (param supervision / PF_Cmd_DO_DIALOG equivalents). The plugin's writes are one undo entry. */

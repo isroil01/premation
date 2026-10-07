@@ -861,6 +861,24 @@ bool from_u32(std::uint32_t n, TransitionAlignment& out) noexcept {
     default: return false;
   }
 }
+std::string_view to_string(TransitionEase v) noexcept {
+  switch (v) {
+    case TransitionEase::linear: return "linear";
+    case TransitionEase::ease_in_out: return "easeInOut";
+    case TransitionEase::ease_in: return "easeIn";
+    case TransitionEase::ease_out: return "easeOut";
+  }
+  return {};
+}
+bool from_u32(std::uint32_t n, TransitionEase& out) noexcept {
+  switch (n) {
+    case 0: out = TransitionEase::linear; return true;
+    case 1: out = TransitionEase::ease_in_out; return true;
+    case 2: out = TransitionEase::ease_in; return true;
+    case 3: out = TransitionEase::ease_out; return true;
+    default: return false;
+  }
+}
 std::string_view to_string(MaskMode v) noexcept {
   switch (v) {
     case MaskMode::none: return "none";
@@ -7335,6 +7353,11 @@ void encode(wire::Writer& w, const AddTransition& v) {
   w.varint(24U); w.varint(static_cast<std::uint32_t>(v.kind));
   w.varint(32U); w.svarint(v.duration);
   w.varint(40U); w.varint(static_cast<std::uint32_t>(v.alignment));
+  if (v.effect.has_value()) { w.varint(50U); w.str(*v.effect); }
+  if (v.angle.has_value()) { w.varint(57U); w.f64(*v.angle); }
+  if (v.softness.has_value()) { w.varint(65U); w.f64(*v.softness); }
+  if (v.color.has_value()) { w.varint(74U); w.str(*v.color); }
+  if (v.ease.has_value()) { w.varint(80U); w.varint(static_cast<std::uint32_t>(*v.ease)); }
 }
 
 Status decode(wire::Reader& r, AddTransition& out) {
@@ -7372,6 +7395,36 @@ Status decode(wire::Reader& r, AddTransition& out) {
         has_alignment = true;
         break;
       }
+      case 50U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.effect = std::move(e);
+        break;
+      }
+      case 57U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.angle = std::move(e);
+        break;
+      }
+      case 65U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.softness = std::move(e);
+        break;
+      }
+      case 74U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.color = std::move(e);
+        break;
+      }
+      case 80U: {
+        TransitionEase e = TransitionEase::linear;
+        { std::uint32_t n = 0; if (!r.u32(n)) return Status::bad_value; if (!from_u32(n, e)) return Status::bad_enum; }
+        out.ease = std::move(e);
+        break;
+      }
       default:
         if (!r.skip(key)) return Status::truncated;
         break;
@@ -7390,6 +7443,11 @@ void encode(wire::Writer& w, const SetTransition& v) {
   if (v.kind.has_value()) { w.varint(16U); w.varint(static_cast<std::uint32_t>(*v.kind)); }
   if (v.duration.has_value()) { w.varint(24U); w.svarint(*v.duration); }
   if (v.alignment.has_value()) { w.varint(32U); w.varint(static_cast<std::uint32_t>(*v.alignment)); }
+  if (v.effect.has_value()) { w.varint(42U); w.str(*v.effect); }
+  if (v.angle.has_value()) { w.varint(49U); w.f64(*v.angle); }
+  if (v.softness.has_value()) { w.varint(57U); w.f64(*v.softness); }
+  if (v.color.has_value()) { w.varint(66U); w.str(*v.color); }
+  if (v.ease.has_value()) { w.varint(72U); w.varint(static_cast<std::uint32_t>(*v.ease)); }
 }
 
 Status decode(wire::Reader& r, SetTransition& out) {
@@ -7419,6 +7477,36 @@ Status decode(wire::Reader& r, SetTransition& out) {
         TransitionAlignment e = TransitionAlignment::centred;
         { std::uint32_t n = 0; if (!r.u32(n)) return Status::bad_value; if (!from_u32(n, e)) return Status::bad_enum; }
         out.alignment = std::move(e);
+        break;
+      }
+      case 42U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.effect = std::move(e);
+        break;
+      }
+      case 49U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.angle = std::move(e);
+        break;
+      }
+      case 57U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.softness = std::move(e);
+        break;
+      }
+      case 66U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.color = std::move(e);
+        break;
+      }
+      case 72U: {
+        TransitionEase e = TransitionEase::linear;
+        { std::uint32_t n = 0; if (!r.u32(n)) return Status::bad_value; if (!from_u32(n, e)) return Status::bad_enum; }
+        out.ease = std::move(e);
         break;
       }
       default:
@@ -8663,6 +8751,7 @@ void encode(wire::Writer& w, const ApplyPreset& v) {
   for (const auto& e : v.layers) { w.varint(10U); w.str(e); }
   w.varint(18U); w.str(v.preset);
   w.varint(24U); w.svarint(v.time);
+  if (v.body.has_value()) { w.varint(34U); w.str(*v.body); }
 }
 
 Status decode(wire::Reader& r, ApplyPreset& out) {
@@ -8685,6 +8774,12 @@ Status decode(wire::Reader& r, ApplyPreset& out) {
       case 24U: {
         if (!r.svarint(out.time)) return Status::truncated;
         has_time = true;
+        break;
+      }
+      case 34U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.body = std::move(e);
         break;
       }
       default:
@@ -20107,6 +20202,11 @@ void encode(wire::Writer& w, const Transition& v) {
   w.varint(40U); w.varint(static_cast<std::uint32_t>(v.kind));
   w.varint(48U); w.svarint(v.duration);
   w.varint(56U); w.varint(static_cast<std::uint32_t>(v.alignment));
+  if (v.effect.has_value()) { w.varint(66U); w.str(*v.effect); }
+  if (v.angle.has_value()) { w.varint(73U); w.f64(*v.angle); }
+  if (v.softness.has_value()) { w.varint(81U); w.f64(*v.softness); }
+  if (v.color.has_value()) { w.varint(90U); w.str(*v.color); }
+  if (v.ease.has_value()) { w.varint(96U); w.varint(static_cast<std::uint32_t>(*v.ease)); }
 }
 
 Status decode(wire::Reader& r, Transition& out) {
@@ -20154,6 +20254,36 @@ Status decode(wire::Reader& r, Transition& out) {
       case 56U: {
         { std::uint32_t n = 0; if (!r.u32(n)) return Status::bad_value; if (!from_u32(n, out.alignment)) return Status::bad_enum; }
         has_alignment = true;
+        break;
+      }
+      case 66U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.effect = std::move(e);
+        break;
+      }
+      case 73U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.angle = std::move(e);
+        break;
+      }
+      case 81U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.softness = std::move(e);
+        break;
+      }
+      case 90U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.color = std::move(e);
+        break;
+      }
+      case 96U: {
+        TransitionEase e = TransitionEase::linear;
+        { std::uint32_t n = 0; if (!r.u32(n)) return Status::bad_value; if (!from_u32(n, e)) return Status::bad_enum; }
+        out.ease = std::move(e);
         break;
       }
       default:

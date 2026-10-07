@@ -23,15 +23,15 @@
 import { TRANSITION_KINDS } from '@core/timeline/transitionModel';
 import type { TransitionKind } from '@core/timeline/transitionModel';
 
-/** A cut transition's drag payload type (the kind is the data). */
+/** A cut transition's drag payload type (the data is the kind, or `wipe:<effect>` for an effect wipe). */
 export const TRANSITION_DND_TYPE = 'application/x-premation-transition';
 
 /** A Library layer transition's drag payload type (the item id is the data). */
 export const LAYER_TRANSITION_DND_TYPE = 'application/x-premation-layer-transition';
 
-/** Start dragging a cut transition (Library card). */
-export function startCutTransitionDrag(dataTransfer: DataTransfer, kind: TransitionKind): void {
-  dataTransfer.setData(TRANSITION_DND_TYPE, kind);
+/** Start dragging a cut transition (Library card); `effect` makes it an effect wipe. */
+export function startCutTransitionDrag(dataTransfer: DataTransfer, kind: TransitionKind, effect?: string): void {
+  dataTransfer.setData(TRANSITION_DND_TYPE, effect && kind === 'wipe' ? `wipe:${effect}` : kind);
   dataTransfer.effectAllowed = 'copy';
 }
 
@@ -43,8 +43,14 @@ export function markLayerTransitionDrag(dataTransfer: DataTransfer, transId: str
 /** A dropped cut transition's kind, or null when the drop is not one. */
 export function readTransitionDrag(dataTransfer: DataTransfer | null): TransitionKind | null {
   if (!dataTransfer) return null;
-  const raw = dataTransfer.getData(TRANSITION_DND_TYPE);
+  const raw = dataTransfer.getData(TRANSITION_DND_TYPE).split(':')[0] ?? '';
   return (TRANSITION_KINDS as ReadonlyArray<string>).includes(raw) ? (raw as TransitionKind) : null;
+}
+
+/** A dropped effect wipe's effect type (`wipe:<effect>`), or undefined. */
+export function readTransitionDragEffect(dataTransfer: DataTransfer | null): string | undefined {
+  const raw = dataTransfer?.getData(TRANSITION_DND_TYPE) ?? '';
+  return raw.startsWith('wipe:') && raw.length > 5 ? raw.slice(5) : undefined;
 }
 
 /** True while a cut transition is being dragged (safe during `dragover`). */

@@ -54,6 +54,8 @@ import { TemplateFieldsPanel } from '@layout/Templates/TemplateFieldsPanel';
 import { LibraryBrowser, FavoriteStar } from './LibraryBrowser';
 import { TRANSITION_KINDS, TRANSITION_LABEL } from '@core/timeline/transitionModel';
 import { markLayerTransitionDrag, startCutTransitionDrag } from '@layout/Timeline/transitionDrag';
+import { cutTransitionEffects } from '@layout/Timeline/cutTransitionEffects';
+import { MyTransitions } from './MyTransitions';
 import { TRANSITION_COMMAND_PREFIX } from '@layout/Timeline/transitionCommands';
 import { getCommandSystem } from '@core/commands/CommandSystem';
 import { asCommandId } from '@app-types/common';
@@ -460,6 +462,25 @@ function TransitionsContent(): JSX.Element {
               </button>
             ))}
           </div>
+          {/* Effect wipes: any Transition effect with a Transition Completion,
+              ramped across the cut on the incoming layer. Drag onto a cut;
+              its direction, softness and ease are in Transition Settings. */}
+          <div className={styles.libCutRow} aria-label="Effect wipes">
+            {cutTransitionEffects().map((fx) => (
+              <button
+                key={fx.type}
+                type="button"
+                draggable
+                className={styles.libCutItem}
+                title={`${fx.label} — drag onto the cut between two layers; double-click the bracket afterwards for direction, softness and ease`}
+                aria-label={`${fx.label} cut transition`}
+                onDragStart={(e) => startCutTransitionDrag(e.dataTransfer, 'wipe', fx.type)}
+              >
+                {fx.label}
+              </button>
+            ))}
+          </div>
+          <MyTransitions />
           <div className={styles.libSectionTitle}>Layer Transitions — drag onto a layer's start or end</div>
           <div className={styles.libList}>
             {items.map((item) => (
