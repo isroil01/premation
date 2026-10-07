@@ -84,6 +84,7 @@ import { buildChoreographyCommands } from '@core/animation/choreographyCommands'
 import { buildBeatCommands } from '@core/audio/beatCommands';
 import { buildSpeedRampCommands } from './commands/speedRampCommands';
 import { buildLayerTimeCommands } from './commands/layerTimeCommands';
+import { buildMaskCommands } from './commands/maskCommands';
 import { buildExpressionCommands } from './commands/expressionCommands';
 import { buildLayerTransformCommands } from '@core/scene/layerTransformCommands';
 import { buildOpenLayerCommands } from '@layout/LayerViewer/openLayerCommands';
@@ -1604,6 +1605,7 @@ export function buildStaticCommands(): ReadonlyArray<Command> {
     ...buildBeatCommands(),
     ...buildSpeedRampCommands(),
     ...buildLayerTimeCommands({ openTimeStretch: openTimeStretchDialog }),
+    ...buildMaskCommands(),
     ...buildExpressionCommands(),
     ...buildLayerTransformCommands({ openAutoOrient: openAutoOrientDialog, resetTransform: resetTransformEdit }),
     ...buildOpenLayerCommands(),

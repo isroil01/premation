@@ -461,6 +461,16 @@ export type TrackDirection =
   | 'both';
 export const TrackDirectionValues = ['forward', 'backward', 'both'] as const;
 
+/** AE parity 5.4 — how a `mask` track moves the mask: `vertices` (each vertex follows its own feature, the default) or AS ONE SHAPE by the transform fitted to every tracked point per frame (AE's Mask Tracker methods). */
+export type MaskTrackMethod =
+  | 'vertices'
+  | 'position'
+  | 'positionRotation'
+  | 'positionScaleRotation'
+  | 'affine'
+  | 'perspective';
+export const MaskTrackMethodValues = ['vertices', 'position', 'positionRotation', 'positionScaleRotation', 'affine', 'perspective'] as const;
+
 /** `method`: `position` (translate only), `positionRotation`, `positionRotationScale` (default). `smoothness` 0…100 (%). */
 export type StabilizeFraming =
   | 'stabilizeOnly'
@@ -2889,6 +2899,8 @@ export interface TrackMotionJob {
   autoFeature?: boolean;
   /** Kind `planarRegion`: masks of the layer (ids) whose area is never tracked (an occluder, a reflection), followed as they animate. */
   excludeMasks: string[];
+  /** Kind `mask` (AE parity 5.4): absent = `vertices`. */
+  maskMethod?: MaskTrackMethod;
 }
 
 export interface StabilizeJob {

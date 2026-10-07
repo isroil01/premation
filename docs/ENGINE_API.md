@@ -536,6 +536,18 @@ not a model extension / a binary USD crate / Draco or KTX2 in a build without
 the vcpkg codec (`invalidArgument`, the message names the alternative); a
 file that cannot be read or written (`io`). No document change.
 
+`trackMotion` mask tracking, `maskMethod` (1722, AE parity 5.4,
+`MaskTrackMethod`): `vertices` (the default — each vertex tracked as its own
+point, as before), or a whole-mask fit of the vertex tracks per frame —
+`position`, `positionRotation`, `positionScaleRotation` (similarity),
+`affine` or `perspective` (homography, 4+ vertices) — applied to the mask
+path at the start frame (jobs/mask_fit.cpp), keyed as one `addKeyframes`.
+
+Effect param type `data` (AE parity 5.5): a JSON array param the inspector
+does not draw (Mesh Warp `meshOffsets`, Liquify `field` / `fieldGrid`). It is
+written with `values.json(...)`; params flagged `px` scale every number in the
+array with the layer like any px param (bake_chain.cpp, effectCatalog.ts).
+
 The `autoTrace` COMMAND (§4.4) is this job run synchronously: the same
 prepare / work / result, applied inside the command's journal, answering the
 mask groups — for scripts and the CLI; the UI keeps starting the job (progress,

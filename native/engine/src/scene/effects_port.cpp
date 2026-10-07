@@ -186,6 +186,78 @@ bool is_gpu_only_effect(std::string_view type) {
   return def != nullptr && def->gpuOnly;
 }
 
+/// AE parity 5.2: Advanced Spill Suppressor, Key Cleaner, Remove Grain, and
+/// Keylight with a view mode, pre-blur, clip rollback or a garbage mask.
+/// AE parity 5.5: Mesh Warp's variable mesh, Liquify's painted field and Reshape run in the CPU bake.
+bool deformation_needs_cpu(const Json& e) {
+  const std::string t = type_of(e);
+  if (t == "reshape") return true;
+  if (t != "mesh-warp" && t != "liquify") return false;
+  const Json p = doc::params_of(e);
+  const auto nonEmpty = [&](std::string_view k) { return p.at(k).is_array() && !p.at(k).arr().empty(); };
+  if (t == "liquify") return nonEmpty("field");
+  const auto num = [&](std::string_view k) { return p.at(k).is_number() ? motion::js::round(p.at(k).num()) : 3.0; };
+  return num("rows") != 3 || num("columns") != 3 || nonEmpty("meshOffsets");
+}
+
+bool keying_needs_cpu(const Json& e) {
+  const std::string t = type_of(e);
+  if (t == "advanced-spill-suppressor" || t == "key-cleaner" || t == "remove-grain") return true;
+  if (t != "keylight") return false;
+  const Json p = doc::params_of(e);
+  const auto num = [&](std::string_view k) { return p.at(k).is_number() ? p.at(k).num() : 0.0; };
+  const auto str = [&](std::string_view k) { return p.at(k).is_string() ? p.at(k).str() : std::string(); };
+  return motion::js::round(num("view")) != 0 || num("screenPreBlur") > 0 || num("clipRollback") > 0 || !str("insideMaskId").empty() ||
+         !str("outsideMaskId").empty();
+}
+
+/// AE parity 5.3: the keying passes the GPU route draws — Advanced Spill
+/// Suppressor's Ultra method (advanced-spill) and Keylight's Source / Screen
+/// Matte / Status views (matte-view). The rest of keying_needs_cpu stays CPU.
+bool keying_gpu_capable(const Json& e) {
+  const std::string t = type_of(e);
+  const Json p = doc::params_of(e);
+  const auto num = [&](std::string_view k) { return p.at(k).is_number() ? p.at(k).num() : 0.0; };
+  const auto str = [&](std::string_view k) { return p.at(k).is_string() ? p.at(k).str() : std::string(); };
+  if (t == "advanced-spill-suppressor") return motion::js::round(num("method")) == 1;
+  if (t != "keylight") return false;
+  const double view = motion::js::round(num("view"));
+  return view >= 0 && view <= 3 && !(num("screenPreBlur") > 0) && !(num("clipRollback") > 0) && str("insideMaskId").empty() &&
+         str("outsideMaskId").empty();
+}
+
+/// `p[k]` as a number, `d` when absent (effect_color.cpp num_or).
+double num_or(const Json& p, std::string_view k, double d) { return p.at(k).is_number() ? p.at(k).num() : d; }
+
+/// AE parity 5.3: Lumetri's pixel stage as a lumetri-grade chain entry (the
+/// float twin of effect_color.cpp apply_lumetri_pixels, Hue / Luma vs curves
+/// excepted — color_grade_gpu_capable).
+std::optional<api::RenderEffect> lumetri_grade_entry(const Json& e, const RLayer& l) {
+  const Json p = doc::params_of(e);
+  const double lw = std::max(1.0, l.width > 0 ? l.width : 1.0);
+  const double lh = std::max(1.0, l.height > 0 ? l.height : 1.0);
+  const double sat = num_or(p, "saturation", 100) / 100 * num_or(p, "creativeSaturation", 100) / 100;
+  const double vib = num_or(p, "vibrance", 0) / 100;
+  const bool hsl = p.at("hslEnable").is_bool() && p.at("hslEnable").b();
+  const double vAmount = num_or(p, "vignetteAmount", 0) / 100;
+  if (sat == 1 && vib == 0 && !hsl && vAmount == 0) return std::nullopt;
+  const double vRound = num_or(p, "vignetteRoundness", 0) / 100;
+  const double aspect = lh / lw;
+  FxWriter w("lumetri-grade");
+  w.num("sat", sat).num("vib", vib).num("vAmount", vAmount).num("vRadius", 0.25 + num_or(p, "vignetteMidpoint", 50) / 100 * 1.1);
+  w.num("vExp", vRound < 0 ? 2 - vRound * 6 : 2).num("vFeather", std::max(0.01, num_or(p, "vignetteFeather", 50) / 100));
+  w.num("vAspect", vRound > 0 ? 1 + (aspect - 1) * vRound : 1).num("hsl", hsl ? 1 : 0);
+  w.num("hslHue", num_or(p, "hslHue", 0)).num("hslRange", num_or(p, "hslHueRange", 30)).num("hslHueSoft", num_or(p, "hslHueSoftness", 20));
+  w.num("hslSoft", num_or(p, "hslSoftness", 10) / 100);
+  w.num("satMin", num_or(p, "hslSatMin", 0) / 100).num("satMax", num_or(p, "hslSatMax", 100) / 100);
+  w.num("lumMin", num_or(p, "hslLumMin", 0) / 100).num("lumMax", num_or(p, "hslLumMax", 100) / 100);
+  w.num("temp", num_or(p, "hslTemperature", 0) / 100).num("tint", num_or(p, "hslTint", 0) / 100);
+  w.num("contrast", num_or(p, "hslContrast", 0) / 100).num("hslSat", num_or(p, "hslSaturation", 100) / 100);
+  w.num("showMask", hsl && p.at("hslShowMask").is_bool() && p.at("hslShowMask").b() ? 1 : 0);
+  w.num("lw", lw).num("lh", lh);
+  return w.done();
+}
+
 bool effects_need_cpu_bake(const std::vector<Json>& effects) {
   return std::ranges::any_of(effects, [](const Json& e) {
     if (!effect_enabled(e)) return false;
@@ -193,6 +265,11 @@ bool effects_need_cpu_bake(const std::vector<Json>& effects) {
     if (is_canvas2d_only(t)) return true;
     // AE parity 3.2: the refine-matte effects run in the CPU bake only (a guided filter over the whole layer).
     if (t == "refine-soft-matte" || t == "refine-hard-matte") return true;
+    // AE parity 5.1: a grade with cross-channel controls (Lumetri HSL / vignette, Levels alpha, Hue/Sat ranges).
+    if (color_grade_needs_pixels(e)) return true;
+    // AE parity 5.2: the keying cleanup effects and Keylight 1.2's extra controls are CPU pixel passes.
+    if (keying_needs_cpu(e)) return true;
+    if (deformation_needs_cpu(e)) return true;
     if (e.at("maskId").is_string() && !e.at("maskId").str().empty()) return true;
     const bool hasOpacity = e.at("opacity").is_number() && std::isfinite(e.at("opacity").num());
     if (hasOpacity && !gpu_blends_effect_opacity(t)) return true;
@@ -775,6 +852,9 @@ const char* gpu_effect_route_blocker(const RLayer& l) {
     const std::string t = type_of(e);
     if (is_canvas2d_only(t) && !gpu_draws_canvas_effect(l, e) && !gpu_overlay_effect(l, e)) return "a Canvas2D-only effect";
     if (is_temporal(t)) continue;  // the snapshot's time plumbing, baked or not
+    if (color_grade_needs_pixels(e) && !color_grade_gpu_capable(e)) return "a colour grade past its LUT (CPU pixel pass)";
+    if (keying_needs_cpu(e) && !keying_gpu_capable(e)) return "a keying pass the GPU chain does not draw";
+    if (deformation_needs_cpu(e)) return "a painted / meshed deformation the GPU chain does not draw";
     if (!is_native_effect(t) && doc::registry().effect(t) == nullptr) return "a missing plugin's effect";
     if (t != "beam-path" && !gpu_overlay_effect(l, e) && !(is_canvas2d_only(t) && gpu_draws_canvas_effect(l, e))) {
       const Json& pm = e.at("params").at("pathMaskId");
@@ -841,6 +921,10 @@ std::vector<api::RenderEffect> extract_gpu_route_effects(const RLayer& l) {
     } else if (is_lut_effect(t)) {
       out.push_back(FxWriter("channel-lut").text("lutKey", channel_lut_key(l.id, lutOrdinal)).done());
       ++lutOrdinal;
+      // AE parity 5.3: Lumetri's cross-channel stage after its LUT (apply_color_grade's order).
+      if (color_grade_needs_pixels(e) && color_grade_gpu_capable(e)) {
+        if (auto grade = lumetri_grade_entry(e, l)) out.push_back(std::move(*grade));
+      }
     } else if (is_canvas2d_only(t) && gpu_overlay_effect(l, e)) {
       // E4 round 2: the effect's drawing alone, landed with its composite
       // (compositeFor's code; 10 + PAINT_STYLE for a paint buffer).

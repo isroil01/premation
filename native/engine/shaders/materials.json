@@ -219,7 +219,10 @@
     "vegas-gpu",
     "stamp-field",
     "sky",
-    "shadow-catcher"
+    "shadow-catcher",
+    "lumetri-grade",
+    "advanced-spill",
+    "matte-view"
   ],
   "materials": [
     {
@@ -8562,6 +8565,90 @@
         "test": true,
         "write": false
       }
+    },
+    {
+      "name": "LUMETRI_GRADE_MATERIAL",
+      "shader": "lumetri-grade",
+      "layout": [
+        {
+          "binding": 0,
+          "type": "uniform-buffer",
+          "stages": [
+            "vertex",
+            "fragment"
+          ]
+        },
+        {
+          "binding": 1,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 2,
+          "type": "sampler",
+          "stages": [
+            "fragment"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ADVANCED_SPILL_MATERIAL",
+      "shader": "advanced-spill",
+      "layout": [
+        {
+          "binding": 0,
+          "type": "uniform-buffer",
+          "stages": [
+            "vertex",
+            "fragment"
+          ]
+        },
+        {
+          "binding": 1,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 2,
+          "type": "sampler",
+          "stages": [
+            "fragment"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "MATTE_VIEW_MATERIAL",
+      "shader": "matte-view",
+      "layout": [
+        {
+          "binding": 0,
+          "type": "uniform-buffer",
+          "stages": [
+            "vertex",
+            "fragment"
+          ]
+        },
+        {
+          "binding": 1,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 2,
+          "type": "sampler",
+          "stages": [
+            "fragment"
+          ]
+        }
+      ]
     }
   ]
 }

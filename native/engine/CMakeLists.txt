@@ -890,6 +890,8 @@ add_library(engine_effects STATIC
   src/effects/advanced_blur_kernels.cpp
   src/effects/color_kernels.cpp
   src/effects/keying_kernels.cpp
+  src/effects/keying_more_kernels.cpp
+  src/effects/warp_more_kernels.cpp
   src/effects/distort_kernels.cpp
   src/effects/auto_color_kernels.cpp
   src/effects/transition_kernels.cpp
@@ -935,7 +937,7 @@ if(MSVC)
 endif()
 
 if(MOTION_BUILD_TESTS)
-  add_executable(engine_effects_tests tests/test_effect_kernels.cpp tests/test_canvas_effects.cpp tests/test_effect_chain.cpp)
+  add_executable(engine_effects_tests tests/test_effect_kernels.cpp tests/test_canvas_effects.cpp tests/test_effect_chain.cpp tests/test_color_grade.cpp tests/test_keying_more.cpp tests/test_warp_more.cpp)
   target_link_libraries(engine_effects_tests PRIVATE engine_effect_chain engine_effects engine_canvas_effects engine_raster_core engine_json motion::options Catch2::Catch2WithMain)
   target_compile_definitions(engine_effects_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
   if(MSVC)
@@ -1241,6 +1243,7 @@ add_library(engine_jobs_core STATIC
   src/jobs/track_plans.cpp
   src/jobs/track_walk.cpp
   src/jobs/mask_sampling.cpp
+  src/jobs/mask_fit.cpp
   src/jobs/camera_solve.cpp
   src/jobs/trace_bitmap.cpp
   src/jobs/sam_pipeline.cpp
@@ -1333,7 +1336,7 @@ if(MOTION_BUILD_TESTS)
                                  tests/test_jobs_round2.cpp tests/test_roto_matte.cpp tests/test_content_aware.cpp
                                  tests/test_reframe_path.cpp tests/test_saliency.cpp
                                  tests/test_reframe_analyse.cpp tests/test_job_retime.cpp
-                                 tests/test_transcribe.cpp)
+                                 tests/test_transcribe.cpp tests/test_mask_fit.cpp)
   target_link_libraries(engine_jobs_tests PRIVATE engine_jobs_core motion::options Catch2::Catch2WithMain)
   if(MSVC)
     target_compile_options(engine_jobs_tests PRIVATE /bigobj)

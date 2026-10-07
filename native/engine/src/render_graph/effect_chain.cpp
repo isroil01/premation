@@ -117,6 +117,13 @@ const std::unordered_map<std::string, FxEntry>& fx_table() {
     t.emplace("color-range", entry(Mat::COLOR_RANGE_MATERIAL, {"ky ku kv mode", "lo hi wl 0"}));
     t.emplace("extract", entry(Mat::EXTRACT_MATERIAL, {"channel black white blackSoft", "whiteSoft invert 0 0"}));
     t.emplace("spill-suppressor", entry(Mat::SPILL_SUPPRESSOR_MATERIAL, {"keyHue strength preserveLuma 0"}));
+    // AE parity 5.3: float GPU passes for Advanced Spill Suppressor (Ultra), Lumetri's
+    // cross-channel stage and Keylight's matte views (effects_spatial_a.cpp writes them).
+    t.emplace("advanced-spill", entry(Mat::ADVANCED_SPILL_MATERIAL, {"primary suppression range tolerance", "desat colorFix lumaFix 0"}));
+    t.emplace("lumetri-grade", entry(Mat::LUMETRI_GRADE_MATERIAL, {"sat vib vAmount vRadius", "vExp vFeather vAspect hsl",
+                                                                  "hslHue hslRange hslHueSoft hslSoft", "satMin satMax lumMin lumMax",
+                                                                  "temp tint contrast hslSat", "showMask lw lh 0"}));
+    t.emplace("matte-view", entry(Mat::MATTE_VIEW_MATERIAL, {"view 0 0 0"}));
     t.emplace("wave-warp", entry(Mat::WAVE_WARP_MATERIAL, {"dx dy k phase", "height lw lh 0"}));
     t.emplace("directional-blur", entry(Mat::DIRECTIONAL_BLUR_MATERIAL, {"dx dy length steps", "lw lh 0 0"}));
     t.emplace("linear-wipe", entry(Mat::LINEAR_WIPE_MATERIAL, {"gx gy pos soft", "lw lh full 0"}));

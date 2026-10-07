@@ -3,7 +3,7 @@
 // Puppet pins warp a single layer's mesh, built from its bitmap alpha or its
 // path silhouette; a group, a precomp, text or several layers have neither.
 // So, as rigLogo.ts decided:
-//   self       ONE image or shape layer holding nothing: rigged in place.
+//   self       ONE image, video (AE parity 5.5) or shape layer holding nothing: rigged in place.
 //   rasterize  anything else: the selection drawn alone (together, in stack
 //              order) on a transparent comp by a child engine at `time`,
 //              cropped to its pixels + 4 px, imported as a PNG (importBytes,
@@ -193,7 +193,7 @@ PreparedJob prepare_rig_logo(const api::RigLogoJob& spec, const JobDocContext& c
   if (roots.size() == 1) {
     const doc::Node& n = *d.node(roots.front());
     const std::string kind = n.kind();
-    if ((kind == "image" || kind == "shape") && n.children.empty()) {
+    if ((kind == "image" || kind == "video" || kind == "shape") && n.children.empty()) {
       if (!ctx.layerSize) fail(ErrorCode::unsupported, "this engine cannot measure layers for a rig", {.layer = n.id});
       const std::optional<std::array<double, 2>> size = ctx.layerSize(n.id, seconds);
       const double h = size ? (*size)[1] : 100;

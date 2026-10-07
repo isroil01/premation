@@ -575,6 +575,17 @@ enum class TrackDirection : std::uint32_t {
 [[nodiscard]] std::string_view to_string(TrackDirection v) noexcept;
 [[nodiscard]] bool from_u32(std::uint32_t n, TrackDirection& out) noexcept;
 
+enum class MaskTrackMethod : std::uint32_t {
+  vertices = 0,
+  position = 1,
+  position_rotation = 2,
+  position_scale_rotation = 3,
+  affine = 4,
+  perspective = 5,
+};
+[[nodiscard]] std::string_view to_string(MaskTrackMethod v) noexcept;
+[[nodiscard]] bool from_u32(std::uint32_t n, MaskTrackMethod& out) noexcept;
+
 enum class StabilizeFraming : std::uint32_t {
   stabilize_only = 0,
   stabilize_crop = 1,
@@ -3089,6 +3100,7 @@ struct TrackMotionJob {
   std::optional<std::uint32_t> planar_grid;
   std::optional<bool> auto_feature;
   std::vector<std::string> exclude_masks;
+  std::optional<MaskTrackMethod> mask_method;
   bool operator==(const TrackMotionJob&) const = default;
 };
 

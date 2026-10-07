@@ -256,6 +256,11 @@ class Chain final {
   void apply_one(const Value& e) {
     const std::string& type = e["type"].str();
     const Value& p = e["params"];
+    if (color_grade_needs_pixels(type, p)) {  // AE parity 5.1
+      flush_css();
+      pixel_pass([&](PixelPass& pass) { apply_color_grade(type, p, pass.frame(), pool_); });
+      return;
+    }
     if (is_lut_effect(type)) {
       flush_css();
       const ChannelLut lut = build_channel_lut(type, p);
@@ -334,6 +339,7 @@ std::vector<std::uint8_t> run_bake_job(Canvas2D& canvas, std::span<const std::ui
 std::string_view effect_route(const Value& e) {
   const std::string& type = e["type"].str();
   const Value& p = e["params"];
+  if (color_grade_needs_pixels(type, p)) return "canvas2d";
   if (is_lut_effect(type)) return "lut";
   if (!effect_css(type, p).empty()) return "css";
   if (is_color_matrix_effect(type)) return "color";

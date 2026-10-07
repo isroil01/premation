@@ -204,6 +204,10 @@ const TrackDirection_TO_NUM: Record<string, number> = { 'forward': 0, 'backward'
 const TrackDirection_FROM_NUM: readonly (T.TrackDirection | undefined)[] = ['forward', 'backward', 'both'];
 function enc_TrackDirection(v: T.TrackDirection): number { const n = TrackDirection_TO_NUM[v]; if (n === undefined) throw new RangeError('TrackDirection: invalid value ' + String(v)); return n; }
 function dec_TrackDirection(n: number): T.TrackDirection { const v = TrackDirection_FROM_NUM[n]; if (v === undefined) throw new DecodeError('TrackDirection: unknown value ' + n, 'badEnum'); return v; }
+const MaskTrackMethod_TO_NUM: Record<string, number> = { 'vertices': 0, 'position': 1, 'positionRotation': 2, 'positionScaleRotation': 3, 'affine': 4, 'perspective': 5 };
+const MaskTrackMethod_FROM_NUM: readonly (T.MaskTrackMethod | undefined)[] = ['vertices', 'position', 'positionRotation', 'positionScaleRotation', 'affine', 'perspective'];
+function enc_MaskTrackMethod(v: T.MaskTrackMethod): number { const n = MaskTrackMethod_TO_NUM[v]; if (n === undefined) throw new RangeError('MaskTrackMethod: invalid value ' + String(v)); return n; }
+function dec_MaskTrackMethod(n: number): T.MaskTrackMethod { const v = MaskTrackMethod_FROM_NUM[n]; if (v === undefined) throw new DecodeError('MaskTrackMethod: unknown value ' + n, 'badEnum'); return v; }
 const StabilizeFraming_TO_NUM: Record<string, number> = { 'stabilizeOnly': 0, 'stabilizeCrop': 1, 'cropAutoScale': 2 };
 const StabilizeFraming_FROM_NUM: readonly (T.StabilizeFraming | undefined)[] = ['stabilizeOnly', 'stabilizeCrop', 'cropAutoScale'];
 function enc_StabilizeFraming(v: T.StabilizeFraming): number { const n = StabilizeFraming_TO_NUM[v]; if (n === undefined) throw new RangeError('StabilizeFraming: invalid value ' + String(v)); return n; }
@@ -7861,6 +7865,7 @@ function encS_TrackMotionJob(w: Writer, v: T.TrackMotionJob): void {
   if (v.planarGrid !== undefined) { w.varint(13680); w.u32(v.planarGrid); }
   if (v.autoFeature !== undefined) { w.varint(13760); w.bool(v.autoFeature); }
   { const a = v.excludeMasks; for (let i = 0; i < a.length; i++) { w.varint(13770); w.str(a[i]!); } }
+  if (v.maskMethod !== undefined) { w.varint(13776); w.varint(enc_MaskTrackMethod(v.maskMethod)); }
 }
 function decS_TrackMotionJob(r: Reader, end: number, o: any): T.TrackMotionJob {
   const l_points: T.TrackPointSpec[] = [];
@@ -7882,6 +7887,7 @@ function decS_TrackMotionJob(r: Reader, end: number, o: any): T.TrackMotionJob {
   let v_stabilize: boolean | undefined;
   let v_planarGrid: number | undefined;
   let v_autoFeature: boolean | undefined;
+  let v_maskMethod: T.MaskTrackMethod | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -7899,6 +7905,7 @@ function decS_TrackMotionJob(r: Reader, end: number, o: any): T.TrackMotionJob {
       case 13680: v_planarGrid = r.u32(); break;
       case 13760: v_autoFeature = r.bool(); break;
       case 13770: l_excludeMasks.push(r.str()); break;
+      case 13776: v_maskMethod = dec_MaskTrackMethod(r.varint()); break;
       default: r.skip(key);
     }
   }
@@ -7922,6 +7929,7 @@ function decS_TrackMotionJob(r: Reader, end: number, o: any): T.TrackMotionJob {
   if (v_planarGrid !== undefined) o.planarGrid = v_planarGrid;
   if (v_autoFeature !== undefined) o.autoFeature = v_autoFeature;
   o.excludeMasks = l_excludeMasks;
+  if (v_maskMethod !== undefined) o.maskMethod = v_maskMethod;
   return o;
 }
 function encS_StabilizeJob(w: Writer, v: T.StabilizeJob): void {

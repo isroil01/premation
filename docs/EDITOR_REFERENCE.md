@@ -61,7 +61,7 @@ rediscovered in git history and believed a second time.
 
 | Registry | Count | Source of truth |
 |---|---|---|
-| Effects | 208 | `src/core/effects/effects.ts` → `EffectType` |
+| Effects | 212 | `src/core/effects/effects.ts` → `EffectType` |
 | Blend modes | 38 | `src/core/effects/blendMode.ts` → `LayerBlendMode` |
 | Layer styles | 10 | `layerStyles.ts` → `LAYER_STYLE_LABEL` + `BACKDROP_STYLES` |
 | Path operators | 9 | `src/core/scene/pathOps.ts` → `PathOpType` (less `none`) |
@@ -70,7 +70,7 @@ rediscovered in git history and believed a second time.
 | Canvas tools | 23 | `packages/workspace/src/tools/builtin.ts` |
 | AI tools | 65 | `packages/ai-tools/src/tools/{read,write,craft,compose}.ts` |
 | Export formats | 18 | `renderSpec.ts` → `VideoFormat` + `exportManager.ts` → `ExportFormat` / `DataExportFormat` |
-| Stores | 81 | `src/stores/*.ts` |
+| Stores | 82 | `src/stores/*.ts` |
 | Packages | 13 | `packages/*` |
 
 <!-- /FEATURE-COUNTS -->
@@ -91,7 +91,7 @@ style would have left this table wrong with every test still green.
 ```
 Electron main ── IPC ──▶ renderer (React 19 + Vite)
                           │
-                          ├── src/stores/*        81 Zustand stores
+                          ├── src/stores/*        82 Zustand stores
                           ├── src/core/*          41 subsystems (effects, scene, rig, text…)
                           └── packages/*          13 workspace packages
                                 ├── scene       scene graph + components
@@ -444,6 +444,29 @@ isolated path used to force to white — a lit card looked unlit. Shadows stay
 off a card in both forms (the shadow-map pass and the projected caster copy):
 it composites through its own offscreen rather than the depth pass, and a
 projected copy of a composition draws nothing through that path.
+
+**AE parity step 5** (2026-10-07, docs/AE_PARITY_PLAN.md §5; GPU items in
+docs/VERIFY_ON_TEST_MACHINE.md). **Colour**: Lumetri has Curves (RGB and per
+channel), Hue vs Sat / Hue / Luma and Luma vs Sat, the three colour wheels,
+Faded Film, Split Toning, HSL Secondary (with Show Mask) and Vignette; Levels
+works per channel (alpha too); Hue/Saturation has its six colour ranges and
+Colorize (`effects/effect_color.cpp`; the curve editor's tone / hue / luma
+variants). **Keying**: Keylight 1.2's View, Screen Pre-blur, Clip Rollback and
+Inside / Outside masks; Advanced Spill Suppressor, Key Cleaner and Remove Grain
+(`effects/keying_more_kernels.cpp`). **Precision**: Lumetri without Hue vs
+curves, Ultra spill and Keylight's Source / Screen Matte / Status views run as
+float passes on the GPU effect route (`lumetri-grade`, `advanced-spill`,
+`matte-view`); the rest of those effects bakes 8-bit on the CPU. **Masks**:
+Properties ▸ Masks (the mask cards moved out of the Effects panel), Layer ▸
+Mask (New Mask Ctrl+Shift+N, Mode, Inverted Ctrl+Shift+I, Remove Mask, Remove
+All Masks, Smart Mask Interpolation…, Track Mask…), Smart Mask Interpolation
+(polar about the centroid, vertex matching, Keyframe Rate) and Track Mask's
+whole-mask methods (Position … Perspective). **Deformation**: Puppet on video
+layers; a Liquify brush (Warp, Turbulence, Twirl, Pucker, Bloat, Shift Pixels,
+Reconstruction) painting a displacement field; Mesh Warp with 1–31 rows and
+columns and draggable vertices; Reshape (one mask morphed to another, TPS).
+**Properties** gained Crop (a rectangle mask named "Crop", edge insets and
+feather), Paint and Puppet sections.
 
 ### Motion blur
 Shutter angle, shutter **phase**, and **adaptive sampling** — all three.
@@ -1033,8 +1056,8 @@ output.
 
 ### Tier 2 — ceilings on visual density
 
-**Effect breadth: 208 effects vs AE's 400+.** The raw count misleads in both
-directions — nobody uses 400, and the 208 effects present are properly
+**Effect breadth: 212 effects vs AE's 400+.** The raw count misleads in both
+directions — nobody uses 400, and the 212 effects present are properly
 parameterised (Levels, Curves, Channel Mixer, Keylight with
 despill/choke/softness). What matters is the missing *classes*, not the delta:
 no 3D Stroke, no Form/Plexus, no Element 3D. The dense, expensive-looking AE
@@ -1047,7 +1070,7 @@ written against this document inherited. And the missing *classes* named "no
 volumetric light rays (Shine)" and "no optical-flare system worth the name":
 `light-rays`, `lens-flare`, `light-sweep` and `beam` all ship, each with a
 registry def, a Canvas2D reference, a Generate entry, and (as of 2026-08-14) a
-GPU shader. The count is now phrased as "208 effects" rather than as a bare
+GPU shader. The count is now phrased as "212 effects" rather than as a bare
 figure specifically so that `docPropagatedCounts.test.ts` can check it.
 
 **Variable-width mask feather LANDED** (2026-08-20). `MaskPoint` gained an
@@ -2259,7 +2282,7 @@ needing a 39-entry allow-list is one that gets silenced the first time it fires.
 The cost of the narrowness is that an oblique phrasing still escapes, and §4's
 did — "Effect breadth: 73 vs AE's 400+" puts no noun after the number. That was
 rewritten into the checkable form rather than the regex being widened to chase
-it. Prose stating a count should say "208 effects".
+it. Prose stating a count should say "212 effects".
 
 Ledger table ROWS in this section are exempt, structurally rather than by a list
 of phrases: quoting a superseded number is what a corrections ledger is for, and
@@ -2933,7 +2956,7 @@ Quality (4/6/8 octaves).
 
 ### Built 2026-09-07 — effects round seven, and a miscount inside the counter
 
-Eighteen effects, taking `EffectType` from 183 to 201 (Deep Glow and Energy Beam, 2026-09-08, make it **203**; Plexus, 2026-09-09, **204**; Stroke and Scribble, 2026-09-15, **206**; Refine Soft / Hard Matte, 2026-10-06, **208 effects**). Fifteen ship
+Eighteen effects, taking `EffectType` from 183 to 201 (Deep Glow and Energy Beam, 2026-09-08, make it **203**; Plexus, 2026-09-09, **204**; Stroke and Scribble, 2026-09-15, **206**; Refine Soft / Hard Matte, 2026-10-06, **208**; Advanced Spill Suppressor, Key Cleaner, Remove Grain and Reshape, 2026-10-07, **212 effects**). Fifteen ship
 as a GPU shader in both dialects plus a retained Canvas2D kernel, which is the
 shape every port since round six has held; three ship as per-channel transfer
 tables and no shader at all.

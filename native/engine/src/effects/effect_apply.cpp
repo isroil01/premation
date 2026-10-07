@@ -457,11 +457,69 @@ void noise_fx(const Value& p, PixelPass& pass) {
   if (amount <= 0) return;
   run(pass, "noise", Args()("amount", amount)("evolution", js::round(n(p, "evolution")))("mono", flag(p, "monochrome", true) ? 1 : 0));
 }
+/// A mask's coverage over the frame by its index in the hand-off lists (maskPathsMeta: count, closed, mode, inverted).
+std::vector<float> handoff_mask_coverage(const Value& p, double index, int w, int h) {
+  if (index < 0) return {};
+  const std::vector<double> meta = numbers_of(p["maskPathsMeta"]);
+  const std::vector<double> xy = numbers_of(p["maskPathsXY"]);
+  std::size_t start = 0;
+  for (std::size_t m = 0; m * 4 + 3 < meta.size(); ++m) {
+    const auto count = static_cast<std::size_t>(meta[m * 4]);
+    if (static_cast<double>(m) == index) {
+      std::vector<float> cov = polygon_coverage(xy, start, count, w, h);
+      if (meta[m * 4 + 3] != 0) {
+        for (float& c : cov) c = 1 - c;  // an inverted mask covers its outside
+      }
+      return cov;
+    }
+    start += count;
+  }
+  return {};
+}
 void keylight_fx(const Value& p, PixelPass& pass) {
-  run(pass, "keylight",
-      Args().rgb("key", parse_hex(str(p, "screenColor", "#00ff00")))("balance", n(p, "balance") / 100)("gain", n(p, "gain") / 100)(
-          "clipBlack", n(p, "clipBlack") / 100)("clipWhite", n(p, "clipWhite") / 100)("despill", n(p, "despill") / 100)(
-          "choke", n(p, "choke"))("matteSoftness", n(p, "matteSoftness")));
+  // AE parity 5.2: Keylight 1.2's view, pre-blur, clip rollback and masks. At
+  // their neutral values this is the core key, byte for byte.
+  KeylightExtras x;
+  x.view = static_cast<int>(js::round(n(p, "view")));
+  x.preBlur = n(p, "screenPreBlur");
+  x.rollback = n(p, "clipRollback");
+  // The frame is read once, by whichever kernel runs (its getImageData is part of the recorded chain).
+  x.inside = handoff_mask_coverage(p, p["insideMaskIndex"].is_number() ? p["insideMaskIndex"].num() : -1, pass.w(), pass.h());
+  // Outside Mask is drawn AROUND what to keep: everything outside it goes.
+  x.outside = handoff_mask_coverage(p, p["outsideMaskIndex"].is_number() ? p["outsideMaskIndex"].num() : -1, pass.w(), pass.h());
+  for (float& c : x.outside) c = 1 - c;
+  const Rgb3 key = parse_hex(str(p, "screenColor", "#00ff00"));
+  const KeylightParams kp{{key[0], key[1], key[2]}, n(p, "balance") / 100, n(p, "gain") / 100, n(p, "clipBlack") / 100,
+                          n(p, "clipWhite") / 100, n(p, "despill") / 100, n(p, "choke"), n(p, "matteSoftness")};
+  if (x.neutral()) {
+    run(pass, "keylight",
+        Args().rgb("key", key)("balance", kp.balance)("gain", kp.gain)("clipBlack", kp.clip_black)("clipWhite", kp.clip_white)(
+            "despill", kp.despill)("choke", kp.choke)("matteSoftness", kp.matte_softness));
+    return;
+  }
+  keylight_full(pass.frame(), kp, x, pass.pool());
+}
+void advanced_spill_fx(const Value& p, PixelPass& pass) {
+  SpillParams sp;
+  sp.method = static_cast<int>(js::round(n(p, "method")));
+  const Rgb3 key = parse_hex(str(p, "keyColor", "#00ff00"));
+  sp.key = {key[0], key[1], key[2]};
+  sp.suppression = n(p, "suppression") / 100;
+  sp.tolerance = n(p, "tolerance") / 100;
+  sp.desaturate = n(p, "desaturate") / 100;
+  sp.spillRange = n(p, "spillRange") / 100;
+  sp.colorCorrection = n(p, "spillColorCorrection") / 100;
+  sp.lumaCorrection = n(p, "lumaCorrection") / 100;
+  if (sp.suppression <= 0) return;
+  advanced_spill_suppressor(pass.frame(), sp, pass.pool());
+}
+void key_cleaner_fx(const Value& p, PixelPass& pass) {
+  key_cleaner(pass.frame(), n(p, "edgeRadius"), flag(p, "reduceChatter", false), n(p, "alphaContrast") / 100, n(p, "strength") / 100,
+              pass.pool());
+}
+void remove_grain_fx(const Value& p, PixelPass& pass) {
+  remove_grain(pass.frame(), n(p, "noiseReduction") / 100, static_cast<int>(js::round(n(p, "radius"))), static_cast<int>(js::round(n(p, "passes"))),
+               n(p, "detail") / 100, n(p, "chroma") / 100, js::round(n(p, "viewingMode")) == 1, pass.pool());
 }
 
 // ── Round three ──
@@ -494,11 +552,47 @@ void polar_fx(const Value& p, PixelPass& pass) {
   run(pass, "polar-coordinates", Args()("interpolation", interpolation)("conversion", n(p, "conversion")));
 }
 void liquify_fx(const Value& p, PixelPass& pass) {
+  // AE parity 5.5: the painted field first (the brush strokes), then the
+  // single placed brush the effect always had.
+  const std::vector<double> grid = numbers_of(p["fieldGrid"]);
+  const std::vector<double> field = numbers_of(p["field"]);
+  if (grid.size() >= 2 && !field.empty()) {
+    const double amount = p["distortionPercentage"].is_number() ? n(p, "distortionPercentage") / 100 : 1.0;
+    liquify_field(pass.frame(), static_cast<int>(js::round(grid[0])), static_cast<int>(js::round(grid[1])), field, amount, pass.pool());
+  }
   run(pass, "liquify",
       Args()("centerX", cx_of(pass, p, "centerX"))("centerY", cy_of(pass, p, "centerY"))("radius", n(p, "brushSize"))("pushX", n(p, "pushX"))(
           "pushY", n(p, "pushY"))("twirl", n(p, "twirl"))("pinch", n(p, "pinch")));
 }
+void reshape_fx(const Value& p, PixelPass& pass) {
+  const double si = p["sourceMaskIndex"].is_number() ? p["sourceMaskIndex"].num() : -1;
+  const double di = p["destinationMaskIndex"].is_number() ? p["destinationMaskIndex"].num() : -1;
+  if (si < 0 || di < 0 || si == di) return;
+  const std::vector<double> meta = numbers_of(p["maskPathsMeta"]);
+  const std::vector<double> xy = numbers_of(p["maskPathsXY"]);
+  std::size_t start = 0, srcStart = 0, srcCount = 0, dstStart = 0, dstCount = 0;
+  for (std::size_t m = 0; m * 4 + 3 < meta.size(); ++m) {
+    const auto count = static_cast<std::size_t>(meta[m * 4]);
+    if (static_cast<double>(m) == si) { srcStart = start; srcCount = count; }
+    if (static_cast<double>(m) == di) { dstStart = start; dstCount = count; }
+    start += count;
+  }
+  const RgbaView img = pass.frame();
+  const std::vector<float> boundary = handoff_mask_coverage(p, p["boundaryMaskIndex"].is_number() ? p["boundaryMaskIndex"].num() : -1, img.w, img.h);
+  // Elasticity: Stiff … Super Fluid → the spline's smoothing.
+  constexpr std::array<double, 8> kElastic{8, 4, 2, 1, 0.5, 0.2, 0.05, 0};
+  const auto e = static_cast<std::size_t>(std::clamp(js::round(n(p, "elasticity")), 0.0, 7.0));
+  (void)reshape(img, xy, srcStart, srcCount, dstStart, dstCount, boundary, n(p, "percent") / 100, kElastic[e], pass.pool());
+}
 void mesh_warp_fx(const Value& p, PixelPass& pass) {
+  // AE parity 5.5: a variable rows × columns mesh (its offsets in `meshOffsets`).
+  const double rows = p["rows"].is_number() ? n(p, "rows") : 3;
+  const double cols = p["columns"].is_number() ? n(p, "columns") : 3;
+  const std::vector<double> offs = numbers_of(p["meshOffsets"]);
+  if (js::round(rows) != 3 || js::round(cols) != 3 || !offs.empty()) {
+    mesh_warp_grid(pass.frame(), static_cast<int>(js::round(cols)), static_cast<int>(js::round(rows)), offs, pass.pool());
+    return;
+  }
   Args a;
   bool all_zero = true;
   for (int i = 0; i < 16; ++i) {  // MESH_WARP_N = 4
@@ -1180,7 +1274,7 @@ void bubbles_fx(const Value& p, PixelPass& pass) {
           "evolution", n(p, "evolution"))("seed", n(p, "seed")));
 }
 
-constexpr std::array<std::pair<std::string_view, Adapter>, 141> kAdapters{{
+constexpr std::array<std::pair<std::string_view, Adapter>, 145> kAdapters{{
     {"venetian-blinds", venetian_blinds},
     {"gradient-wipe", gradient_wipe},
     {"card-wipe", card_wipe},
@@ -1213,12 +1307,16 @@ constexpr std::array<std::pair<std::string_view, Adapter>, 141> kAdapters{{
     {"sharpen", sharpen_fx},
     {"noise", noise_fx},
     {"keylight", keylight_fx},
+    {"advanced-spill-suppressor", advanced_spill_fx},
+    {"key-cleaner", key_cleaner_fx},
+    {"remove-grain", remove_grain_fx},
     {"photo-filter", photo_filter_fx},
     {"black-and-white", black_and_white_fx},
     {"tritone", tritone_fx},
     {"threshold", threshold_fx},
     {"polar-coordinates", polar_fx},
     {"liquify", liquify_fx},
+    {"reshape", reshape_fx},
     {"mesh-warp", mesh_warp_fx},
     {"optics-compensation", optics_fx},
     {"mirror", mirror_fx},

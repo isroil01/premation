@@ -360,3 +360,69 @@ TEST_CASE("gpu route: a faded effect the TS GPU chain cannot blend (a colour gra
   REQUIRE(op != nullptr);
   CHECK(std::abs(op->number - 0.4) < 1e-12);
 }
+
+TEST_CASE("gpu route (AE parity 5.3): Lumetri's pixel stage, Ultra spill and Keylight's views run as float passes", "[scene][e4][ae5]") {
+  sc::RLayer l = shape_layer();
+  SECTION("Lumetri saturation / vignette: its LUT, then lumetri-grade") {
+    l.effects.push_back(effect(R"({"id":"a","type":"lumetri","params":{"saturation":150,"vignetteAmount":-40}})"));
+    REQUIRE(sc::gpu_effect_route(l));
+    l.gpuEffects = true;
+    const auto chain = sc::extract_gpu_route_effects(l);
+    REQUIRE(chain.size() == 2);
+    CHECK(chain[0].type == "channel-lut");
+    CHECK(chain[1].type == "lumetri-grade");
+    const auto* sat = param(chain[1], "sat");
+    REQUIRE(sat != nullptr);
+    CHECK(std::abs(sat->number - 1.5) < 1e-12);
+    const auto* amount = param(chain[1], "vAmount");
+    REQUIRE(amount != nullptr);
+    CHECK(std::abs(amount->number + 0.4) < 1e-12);
+  }
+  SECTION("Advanced Spill Suppressor, Ultra") {
+    l.effects.push_back(effect(R"({"id":"a","type":"advanced-spill-suppressor","params":{"method":1,"keyColor":"#0000ff","suppression":80}})"));
+    REQUIRE(sc::gpu_effect_route(l));
+    l.gpuEffects = true;
+    const auto chain = sc::extract_gpu_route_effects(l);
+    REQUIRE(chain.size() == 1);
+    CHECK(chain[0].type == "advanced-spill");
+    CHECK(param(chain[0], "primary")->number == 2);
+    CHECK(std::abs(param(chain[0], "suppression")->number - 0.8) < 1e-12);
+  }
+  SECTION("Keylight Screen Matte: the key, then matte-view") {
+    l.effects.push_back(effect(R"({"id":"a","type":"keylight","params":{"view":2}})"));
+    REQUIRE(sc::gpu_effect_route(l));
+    l.gpuEffects = true;
+    const auto chain = sc::extract_gpu_route_effects(l);
+    REQUIRE(chain.size() == 2);
+    CHECK(chain[0].type == "keylight");
+    CHECK(chain[1].type == "matte-view");
+    CHECK(param(chain[1], "view")->number == 2);
+  }
+  SECTION("Keylight Source: nothing to draw") {
+    l.effects.push_back(effect(R"({"id":"a","type":"keylight","params":{"view":1}})"));
+    REQUIRE(sc::gpu_effect_route(l));
+    l.gpuEffects = true;
+    CHECK(sc::extract_gpu_route_effects(l).empty());
+  }
+}
+
+TEST_CASE("gpu route (AE parity 5.3): the keying / grade passes with no float twin keep the CPU bake", "[scene][e4][ae5]") {
+  sc::RLayer l = shape_layer();
+  SECTION("Lumetri Hue vs Saturation") {
+    l.effects.push_back(effect(R"({"id":"a","type":"lumetri","params":{"hueVsSat":[[0,128],[128,40],[255,128]]}})"));
+  }
+  SECTION("Advanced Spill Suppressor, Standard") {
+    l.effects.push_back(effect(R"({"id":"a","type":"advanced-spill-suppressor","params":{"method":0,"suppression":80}})"));
+  }
+  SECTION("Keylight Intermediate Result") {
+    l.effects.push_back(effect(R"({"id":"a","type":"keylight","params":{"view":4}})"));
+  }
+  SECTION("Keylight with clip rollback") {
+    l.effects.push_back(effect(R"({"id":"a","type":"keylight","params":{"clipRollback":4}})"));
+  }
+  SECTION("Key Cleaner") {
+    l.effects.push_back(effect(R"({"id":"a","type":"key-cleaner","params":{}})"));
+  }
+  CHECK(sc::layer_is_baked(l));
+  CHECK(sc::gpu_effect_route_blocker(l) != nullptr);
+}

@@ -366,6 +366,7 @@ export function trackMotionActions(ctx: TrackMotionContext) {
               origin: walk.origin,
               stabilize: false,
               excludeMasks: [],
+              ...(opts.maskMethod !== 'vertices' ? { maskMethod: opts.maskMethod } : {}),
               ...analysis,
             },
           },

@@ -33,6 +33,7 @@ import { edit } from '@core/engine/uiEdits';
 import { isLayer } from '@core/mirror/docFacts';
 import { maskToBezier } from '@core/engine/props';
 import { compTime, paths, ref, values } from '@core/engine/propRefs';
+import { interpolationTimes, smartInterpolate, type SmartMaskOptions } from '@core/masks/smartMaskInterpolation';
 import { engine } from '@core/engine/engineInstance';
 import {
   effectDefFor,
@@ -192,6 +193,7 @@ export function paramValue(nodeId: string | null, effectId: string, param: Effec
     case 'layer': return values.layer(typeof raw === 'string' ? raw : '');
     case 'maskPath': return values.string(typeof raw === 'string' ? raw : '');
     case 'curve': return Array.isArray(raw) ? values.json(raw) : null;
+    case 'data': return Array.isArray(raw) ? values.json(raw) : null;
     default: return null;
   }
 }
@@ -457,6 +459,40 @@ export function setMaskShapeAnimatedEdit(nodeId: string, firstMaskId: string, an
   return edit(animated ? 'Animate Mask Path' : 'Stop Animating Mask Path', {
     type: 'setAnimated', prop: ref(nodeId, paths.mask(firstMaskId, 'path')), animated, time: compTime(seconds),
   });
+}
+
+/**
+ * Smart Mask Interpolation (AE parity 5.4): in-between Mask Path keys for
+ * `maskId` between its keys at `t0` and `t1` (comp seconds), `rate` keys per
+ * second, shaped by `smartInterpolate`. ONE entry ("Smart Mask
+ * Interpolation"). Resolves the number of keys written (0 when the two keys
+ * could not be read).
+ */
+export async function smartMaskInterpolationEdit(
+  nodeId: string,
+  maskId: string,
+  t0: number,
+  t1: number,
+  rate: number,
+  options: Partial<SmartMaskOptions>,
+): Promise<number> {
+  const prop = ref(nodeId, paths.mask(maskId, 'path'));
+  const read = async (t: number) => {
+    const res = await engine().query({ type: 'getPropertyValues', props: [prop], time: compTime(t), evaluated: false });
+    const v = res.ok ? res.value.values[0]?.value : undefined;
+    return v?.kind === 'path' ? v.value : null;
+  };
+  const a = await read(t0);
+  const b = await read(t1);
+  if (!a || !b) return 0;
+  const times = interpolationTimes(t0, t1, rate);
+  if (times.length === 0) return 0;
+  const shapes = smartInterpolate(a, b, times.map((t) => (t - t0) / (t1 - t0)), options);
+  const res = await edit('Smart Mask Interpolation', {
+    type: 'addKeyframes',
+    keys: times.map((t, i) => ({ prop, time: compTime(t), value: { kind: 'path', value: shapes[i]! }, spatialIn: [], spatialOut: [] })),
+  });
+  return res.ok ? times.length : 0;
 }
 
 // ── Layer styles ───────────────────────────────────────────────────────

@@ -23,6 +23,7 @@
  *               and tracking applies directly as mask keyframes.
  */
 
+import type { MaskTrackMethod } from '@motion/engine-api';
 import { create } from 'zustand';
 import type { CompTrackSample } from '@core/tracking/trackVideoLayer';
 
@@ -238,6 +239,8 @@ interface TrackerStore {
   attach: Array<{ x: number; y: number }>;
   /** Analyse at full resolution (the job's analysisMaxEdge 0) instead of the 960 px tier. */
   fullResolution: boolean;
+  /** Track mask (AE parity 5.4): per vertex, or the whole mask by a fitted transform (AE's Mask Tracker methods). */
+  maskMethod: MaskTrackMethod;
   /** Stabilize mode: also stabilize rotation / scale (two points). */
   stabRotation: boolean;
   stabScale: boolean;
@@ -272,6 +275,7 @@ interface TrackerStore {
   setAutoPlan: (plan: AutoPlanSummary | null) => void;
   setAttach: (index: number, x: number, y: number) => void;
   setFullResolution: (on: boolean) => void;
+  setMaskMethod: (method: MaskTrackMethod) => void;
   setStabilize: (rotation: boolean, scale: boolean, sourceW: number, sourceH: number) => void;
   setWarp: (patch: Partial<WarpSettings>) => void;
   setApplyPath: (path: string) => void;
@@ -303,6 +307,7 @@ export const useTrackerStore = create<TrackerStore>((set, get) => ({
   autoPlan: null,
   attach: [],
   fullResolution: false,
+  maskMethod: 'vertices',
   stabRotation: false,
   stabScale: false,
   warp: { smoothness: 50, method: 'positionRotationScale', framing: 'stabilizeOnly', maxScale: 150 },
@@ -393,6 +398,7 @@ export const useTrackerStore = create<TrackerStore>((set, get) => ({
       return { ...s, attach };
     }),
   setFullResolution: (fullResolution) => set({ fullResolution }),
+  setMaskMethod: (maskMethod) => set({ maskMethod }),
   setStabilize: (stabRotation, stabScale, sourceW, sourceH) =>
     set((s) => {
       const two = stabRotation || stabScale;

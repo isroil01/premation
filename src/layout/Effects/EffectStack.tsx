@@ -1,4 +1,9 @@
 import { hasEffectHandles } from '@core/effects/effectHandles';
+import { Button } from '@components/Button';
+import { edit } from '@core/engine/uiEdits';
+import { paths, ref, values } from '@core/engine/propRefs';
+import { useLiquifyBrushStore } from '@stores/liquifyBrushStore';
+import { LIQUIFY_TOOLS, type LiquifyTool } from '@core/effects/liquifyField';
 import { useEffectHandleStore } from '@stores/effectHandleStore';
 import { useState } from 'react';
 /**
@@ -383,7 +388,7 @@ function EffectParamRow({
   // Spectrum's band magnitudes). Rendering a control for it would give the user
   // a field whose input is overwritten before it is ever read — the dead-control
   // shape this codebase keeps finding. It has no editor by construction.
-  if (param.type === 'resolved') return null;
+  if (param.type === 'resolved' || param.type === 'data') return null;
 
   if (param.type === 'color') {
     // Keyframeable through decomposed channel tracks (`effect.<id>.<key>_r`
@@ -535,8 +540,11 @@ function EffectParamRow({
           {/* A point drag (press → release) is one gesture: one undo entry. */}
           <div {...e.press(`Set ${label}`)}>
             <CurveEditor
-              value={Array.isArray(value) ? (value as CurvePoints) : [[0, 0], [255, 255]]}
+              value={Array.isArray(value) ? (value as CurvePoints) : (Array.isArray(param.default) ? (param.default as CurvePoints) : [[0, 0], [255, 255]])}
               onChange={send}
+              // Lumetri's Hue / Luma vs curves (AE parity 5.1): X is the hue / the luma.
+              variant={param.key.startsWith('hueVs') ? 'hue' : param.key === 'lumaVsSat' ? 'luma' : 'tone'}
+              {...(Array.isArray(param.default) ? { fallback: param.default as CurvePoints } : {})}
             />
           </div>
         </div>
@@ -729,6 +737,52 @@ function effectHeaderMenuItems(nodeId: string, effectId: string, name: string): 
     { id: 'fx-reset', label: 'Reset', onSelect: () => { void resetEffectEdit(nodeId, effectId, name); } },
     { id: 'fx-remove', label: 'Remove', danger: true, onSelect: () => { void removeEffectEdit(nodeId, effectId, name); } },
   ];
+}
+
+/**
+ * Liquify's brush (AE parity 5.5): the tool, size and pressure, Paint (arms
+ * the canvas brush, LiquifyBrushOverlay) and Reset Mesh (clears the painted
+ * field — one entry). The brush settings are editor state (liquifyBrushStore).
+ */
+function LiquifyBrushControls({ nodeId, effectId }: { nodeId: string; effectId: string }): JSX.Element {
+  const painting = useLiquifyBrushStore((st) => st.nodeId === nodeId && st.effectId === effectId);
+  const tool = useLiquifyBrushStore((st) => st.tool);
+  const size = useLiquifyBrushStore((st) => st.size);
+  const pressure = useLiquifyBrushStore((st) => st.pressure);
+  const brush = useLiquifyBrushStore.getState();
+  return (
+    <ParamGroup name="Liquify Brush">
+      <PropertyRow label="Tool" compact>
+        <select aria-label="Liquify tool" value={tool} onChange={(ev) => brush.setTool(ev.target.value as LiquifyTool)}>
+          {LIQUIFY_TOOLS.map((t) => <option key={t.tool} value={t.tool}>{t.label}</option>)}
+        </select>
+      </PropertyRow>
+      <PropertyRow label="Brush Size" compact>
+        <ValueField value={size} min={2} max={2000} precision={0} unit="px" onChange={brush.setSize} aria-label="Liquify brush size" />
+      </PropertyRow>
+      <PropertyRow label="Brush Pressure" compact>
+        <ValueField value={pressure} min={1} max={100} precision={0} unit="%" onChange={brush.setPressure} aria-label="Liquify brush pressure" />
+      </PropertyRow>
+      <PropertyRow label="" compact>
+        <span style={{ display: 'flex', gap: 6 }}>
+          <Button size="sm" variant={painting ? 'primary' : 'secondary'}
+            onClick={() => (painting ? brush.stop() : brush.start(nodeId, effectId))}
+            title={painting ? 'Stop painting (Esc)' : 'Paint the distortion on the canvas with the brush'}>
+            {painting ? 'Painting… (Esc)' : 'Paint'}
+          </Button>
+          <Button size="sm" variant="secondary" title="Clear the painted distortion"
+            onClick={() => {
+              void edit('Reset Liquify Mesh', [
+                { type: 'setProperty', prop: ref(nodeId, paths.effectParam(effectId, 'field')), value: values.json([]) },
+                { type: 'setProperty', prop: ref(nodeId, paths.effectParam(effectId, 'fieldGrid')), value: values.json([]) },
+              ]);
+            }}>
+            Reset Mesh
+          </Button>
+        </span>
+      </PropertyRow>
+    </ParamGroup>
+  );
 }
 
 /** The root group of the layer's property tree the stack reads. */
@@ -950,6 +1004,7 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
                     ? <ParamGroup key={`g:${section.group}:${si}`} name={section.group}>{rows}</ParamGroup>
                     : <Fragment key={`u:${si}`}>{rows}</Fragment>;
                 })}
+                {e.type === 'liquify' && <LiquifyBrushControls nodeId={nodeId} effectId={e.id} />}
                 <CompositingOptions nodeId={nodeId} effect={e} />
               </div>
             )}

@@ -1404,7 +1404,7 @@ const CATALOG_PARTS = [
   'effects', 'staticMeta', 'layerStyles', 'pathOps', 'pathOpParams', 'polystar', 'animators', 'paint',
   'strokeTracks', 'latent', 'fields', 'maskKeys', 'textPathParams', 'labels', 'blendModes', 'presets', 'factory',
 ];
-const EFFECT_PARAM_TYPES = ['number', 'color', 'checkbox', 'curve', 'layer', 'resolved', 'enum', 'maskPath'];
+const EFFECT_PARAM_TYPES = ['number', 'color', 'checkbox', 'curve', 'layer', 'resolved', 'enum', 'maskPath', 'data'];
 
 function readCatalog(dir = CATALOG_DIR) {
   const parts = {};

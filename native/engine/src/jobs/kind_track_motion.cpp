@@ -71,6 +71,7 @@
 #include "job_inputs.hpp"
 #include "job_kinds.hpp"
 #include "jsmath.hpp"
+#include "mask_fit.hpp"
 #include "mask_sampling.hpp"
 #include "media_input.hpp"
 #include "props.hpp"
@@ -302,6 +303,8 @@ struct MaskShape {
 struct MaskJob {
   tw::WalkSpec walk;
   std::vector<MaskShape> masks;
+  /// AE parity 5.4: per-vertex, or the whole mask by one fitted transform per frame.
+  maskfit::Method method = maskfit::Method::vertices;
   /// The layer's drawn box (readGeometry) the vertices scale into.
   double boxW = 0;
   double boxH = 0;
@@ -418,10 +421,51 @@ std::unique_ptr<JobResult> run_mask_track(const MaskJob& job, JobControl& contro
       for (std::size_t k = 0; k < slotAt.size(); ++k) deltas.push_back(ms::Pt{slotAt[k].x - rest[k].x, slotAt[k].y - rest[k].y});
       blended = ms::blend_vertex_deltas(sampling, deltas);
     }
-    // The base shape, each vertex displaced by its tracked delta (the handles
-    // are relative in a BezierPath: they travel rigidly with their vertex).
     std::vector<api::BezierPath> paths;
     for (const MaskShape& m : job.masks) paths.push_back(m.path);
+    if (job.method != maskfit::Method::vertices) {
+      // AE parity 5.4: the whole mask by one transform fitted to every tracked
+      // point (display px), applied to the shape in display px and back.
+      std::vector<tracking::Pt> src;
+      std::vector<tracking::Pt> dst;
+      for (std::size_t k = 0; k < rest.size(); ++k) {
+        src.push_back(tracking::Pt{rest[k].x, rest[k].y});
+        dst.push_back(tracking::Pt{slotAt[k].x, slotAt[k].y});
+      }
+      const auto toDisplay = [&](api::BezierPath& path, bool forward) {
+        const double kx = forward ? sw / gw : gw / sw;
+        const double ky = forward ? sh / gh : gh / sh;
+        for (std::size_t i = 0; i + 1 < path.vertices.size(); i += 2) {
+          path.vertices[i] = forward ? (path.vertices[i] / gw + 0.5) * sw : (path.vertices[i] / sw - 0.5) * gw;
+          path.vertices[i + 1] = forward ? (path.vertices[i + 1] / gh + 0.5) * sh : (path.vertices[i + 1] / sh - 0.5) * gh;
+        }
+        for (std::vector<double>* tan : {&path.in_tangents, &path.out_tangents}) {
+          for (std::size_t i = 0; i + 1 < tan->size(); i += 2) {
+            (*tan)[i] *= kx;
+            (*tan)[i + 1] *= ky;
+          }
+        }
+      };
+      std::optional<maskfit::Affine> aff;
+      std::optional<tracking::Mat3> hom;
+      if (job.method == maskfit::Method::perspective) {
+        if (src.size() >= 4) hom = tracking::fit_homography(src, dst);
+        if (!hom) aff = maskfit::fit_affine(src, dst, src.size() >= 3 ? maskfit::Method::affine : maskfit::Method::position);
+      } else {
+        aff = maskfit::fit_affine(src, dst, job.method);
+        if (!aff) aff = maskfit::fit_affine(src, dst, maskfit::Method::position);
+      }
+      for (api::BezierPath& path : paths) {
+        toDisplay(path, true);
+        if (hom) maskfit::transform_path(path, *hom);
+        else if (aff) maskfit::transform_path(path, *aff);
+        toDisplay(path, false);
+      }
+      for (std::size_t p = 0; p < paths.size(); ++p) keys[p].keys.push_back(ta::PathKey{compTime, std::move(paths[p])});
+      continue;
+    }
+    // The base shape, each vertex displaced by its tracked delta (the handles
+    // are relative in a BezierPath: they travel rigidly with their vertex).
     for (std::size_t v = 0; v < refs.size(); ++v) {
       const int slot = sampling.slotOf[v];
       const ms::Pt at = slot >= 0 ? slotAt[static_cast<std::size_t>(slot)]
@@ -661,6 +705,7 @@ PreparedJob prepare_track_motion(const api::TrackMotionJob& spec, const JobDocCo
       }
     }
     mj.masks = masks_at(ctx, walk.fl, static_cast<double>(walk.origin) / walk.fps, only);
+    mj.method = maskfit::method_of(spec.mask_method.value_or(api::MaskTrackMethod::vertices));
     if (const std::optional<ta::Geometry> g = ta::DocView(ctx.doc, walk.fl.comp).geometry(spec.layer)) {
       mj.boxW = g->width.value_or(walk.fl.width);
       mj.boxH = g->height.value_or(walk.fl.height);

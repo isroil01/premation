@@ -37,6 +37,12 @@ struct ChannelLut {
 /// `isLutEffect(type)` — the LUT_BUILDERS membership.
 [[nodiscard]] bool is_lut_effect_type(std::string_view type);
 
+/// AE parity 5.1: the colour effect reaches past its LUT / CSS / matrix route
+/// (effects::color_grade_needs_pixels over paramsOf(e)) — it bakes on the CPU.
+[[nodiscard]] bool color_grade_needs_pixels(const Json& e);
+/// AE parity 5.3: effects::color_grade_gpu_capable over paramsOf(e).
+[[nodiscard]] bool color_grade_gpu_capable(const Json& e);
+
 /// `buildChannelLut(effects)`: the enabled LUT effects composed in order; nullopt
 /// when there is none.
 [[nodiscard]] std::optional<ChannelLut> build_channel_lut(const std::vector<Json>& effects);

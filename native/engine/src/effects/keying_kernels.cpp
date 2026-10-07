@@ -12,13 +12,9 @@
 
 namespace premation::effects {
 
-namespace {
-
 // ── keylight.ts ─────────────────────────────────────────────────────────────
-
-struct KeyChannels {
-  std::size_t p, a, b;
-};
+// (key_channels / screen_amount / clip_matte / soften_alpha are shared with
+// keying_more_kernels.cpp — AE parity 5.2 — through kernels.hpp.)
 
 KeyChannels key_channels(double r, double g, double bl) {
   if (g >= r && g >= bl) return {1, 0, 2};
@@ -78,6 +74,8 @@ void soften_alpha(RgbaView img, double px, ThreadPool* pool) {
     }
   });
 }
+
+namespace {
 
 // ── keyingEffects.ts helpers ────────────────────────────────────────────────
 

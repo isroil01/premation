@@ -44,6 +44,7 @@ import {
   collectEffectHandles,
   hitTestEffectHandle,
   handleDragValues,
+  withDataOffset,
   effectToLayer,
   layerToEffect,
   hasEffectHandles,
@@ -52,6 +53,7 @@ import {
   type HandlePoint,
 } from '@core/effects/effectHandles';
 import { GestureSession } from '@core/engine/uiEdits';
+import { paths, ref, values as apiValues } from '@core/engine/propRefs';
 import { trackValueCommands } from './viewportEdits';
 
 /** Drawn radius. Smaller than the PICK radius on purpose — see the note below. */
@@ -190,6 +192,18 @@ export function EffectHandleOverlay({ host }: { host?: TrackPointHost } = {}): J
         return;
       }
       const target = fromScreen(local(e));
+      // AE parity 5.5: a data-backed handle (Mesh Warp's variable mesh) writes
+      // the whole offsets array — a static param, one value per move.
+      const spec = drag.handle.spec;
+      if (spec.dataKey !== undefined && spec.dataIndex !== undefined) {
+        const count = handles.filter((h) => h.spec.dataKey === spec.dataKey).length;
+        const next = withDataOffset(effect.params?.[spec.dataKey], count, spec.dataIndex, {
+          x: target.x - drag.handle.rest.x,
+          y: target.y - drag.handle.rest.y,
+        });
+        drag.gesture.send([{ type: 'setProperty', prop: ref(drag.nodeId, paths.effectParam(drag.effectId, spec.dataKey)), value: apiValues.json(next) }]);
+        return;
+      }
       const values = handleDragValues(drag.handle, target);
       // The numeric field's rule (writeEffectParams): an animated param keys at
       // the playhead, a static one takes the value — per param, absolute.

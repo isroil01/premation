@@ -198,13 +198,13 @@ export function scaleEffectLengths(
   return effects.map((e) => {
     const def = catalogEffect(e.type);
     if (!def) return e;
-    const lengths = def.params.filter((p) => (p.type === 'number' || p.type === 'resolved') && p.unit === 'px');
+    const lengths = def.params.filter((p) => (p.type === 'number' || p.type === 'resolved' || p.type === 'data') && p.unit === 'px');
     if (lengths.length === 0) return e;
     const params: Record<string, EffectParamValue> = { ...paramsOf(e) };
     for (const p of lengths) {
       const v = params[p.key];
       if (typeof v === 'number') params[p.key] = v * k;
-      else if (p.type === 'resolved' && Array.isArray(v)) {
+      else if ((p.type === 'resolved' || p.type === 'data') && Array.isArray(v)) {
         params[p.key] = (v as readonly unknown[]).map((x) => (typeof x === 'number' ? x * k : x)) as number[];
       }
     }

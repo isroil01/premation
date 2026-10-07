@@ -220,13 +220,27 @@ void resolve_effect_handoffs(std::vector<Json>& effects, const doc::Node& n, con
       continue;
     }
     bool extra = false;
-    const bool allMasks = t == "path-stroke" || t == "scribble" || (t == "vegas" && p.at("allMasks").is_bool() && p.at("allMasks").b());
+    // AE parity 5.2: Keylight's Inside / Outside Mask read the layer's masks too.
+    const auto maskIdOf = [&](std::string_view key) { return p.at(key).is_string() ? p.at(key).str() : std::string(); };
+    const std::string insideId = t == "keylight" ? maskIdOf("insideMaskId") : std::string();
+    const std::string outsideId = t == "keylight" ? maskIdOf("outsideMaskId") : std::string();
+    // AE parity 5.5: Reshape's Source / Destination / Boundary masks.
+    const std::string sourceId = t == "reshape" ? maskIdOf("sourceMaskId") : std::string();
+    const std::string destId = t == "reshape" ? maskIdOf("destinationMaskId") : std::string();
+    const std::string boundaryId = t == "reshape" ? maskIdOf("boundaryMaskId") : std::string();
+    const bool allMasks = t == "path-stroke" || t == "scribble" || (t == "vegas" && p.at("allMasks").is_bool() && p.at("allMasks").b()) ||
+                          !insideId.empty() || !outsideId.empty() || !sourceId.empty() || !destId.empty();
     if (allMasks) {
       if (!tracked) tracked = apply_mask_property_tracks(mask_now(n, layerTimeSec), a);
       std::vector<double> meta;
       std::vector<double> xy;
       const Json& paths = tracked->at("paths");
       double pick = -1;
+      double insidePick = -1;
+      double outsidePick = -1;
+      double sourcePick = -1;
+      double destPick = -1;
+      double boundaryPick = -1;
       const std::string pickId = p.at("pathMaskId").is_string() ? p.at("pathMaskId").str() : "";
       if (paths.is_array()) {
         std::size_t i = 0;
@@ -238,12 +252,26 @@ void resolve_effect_handoffs(std::vector<Json>& effects, const doc::Node& n, con
           meta.push_back(truthy(mp.at("inverted")) ? 1 : 0);
           xy.insert(xy.end(), flat.begin(), flat.end());
           if (pick < 0 && !pickId.empty() && mp.at("id").is_string() && mp.at("id").str() == pickId) pick = static_cast<double>(i);
+          if (mp.at("id").is_string() && !insideId.empty() && mp.at("id").str() == insideId) insidePick = static_cast<double>(i);
+          if (mp.at("id").is_string() && !outsideId.empty() && mp.at("id").str() == outsideId) outsidePick = static_cast<double>(i);
+          if (mp.at("id").is_string() && !sourceId.empty() && mp.at("id").str() == sourceId) sourcePick = static_cast<double>(i);
+          if (mp.at("id").is_string() && !destId.empty() && mp.at("id").str() == destId) destPick = static_cast<double>(i);
+          if (mp.at("id").is_string() && !boundaryId.empty() && mp.at("id").str() == boundaryId) boundaryPick = static_cast<double>(i);
           ++i;
         }
       }
       p.set("maskPathsMeta", numbers(meta));
       p.set("maskPathsXY", numbers(xy));
       p.set("pathMaskIndex", Json::number(pickId.empty() ? -1 : pick));
+      if (t == "keylight") {
+        p.set("insideMaskIndex", Json::number(insidePick));
+        p.set("outsideMaskIndex", Json::number(outsidePick));
+      }
+      if (t == "reshape") {
+        p.set("sourceMaskIndex", Json::number(sourcePick));
+        p.set("destinationMaskIndex", Json::number(destPick));
+        p.set("boundaryMaskIndex", Json::number(boundaryPick));
+      }
       extra = true;
     }
     if (t == "scribble") {

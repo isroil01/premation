@@ -271,6 +271,62 @@ nothing was drawn. `kind_model_import.cpp` (the job wrapper) only passed
       3D layers with distance, also inside a collapsed precomp; Reflect Layers
       on a floor shows the layers above it mirrored.
 
+## AE parity step 5 (2026-10-07) — needs the GPU box
+
+Run in the Linux session: the headless engine and ctest (13 suites; the D1 and
+undo parity fixtures re-blessed ONLY for the catalog changes of this step —
+the new params of Lumetri, Levels, Hue/Saturation, Keylight, Mesh Warp and
+Liquify, and the new effects Advanced Spill Suppressor, Key Cleaner, Remove
+Grain and Reshape — so their known gaps stay at 9 and 227), engine_effects_tests
+(the CPU kernels: test_color_grade, test_keying_more, test_warp_more; the
+effect-chain parity unchanged), engine_jobs_tests (test_mask_fit), tsc, lint
+(495 warnings, the baseline), lint:engine-writes / -reads (0) and jest (the 4
+known graphEditorTools.native failures). The scene files (`effects_port.cpp`,
+`effects_spatial_a.cpp`, `lut_port.cpp`, `effect_handoff.cpp`,
+`bake_chain.cpp`), the render graph (`effect_chain.cpp`) and the tracker job
+(`kind_track_motion.cpp`) only passed `clang++ -fsyntax-only` with the
+engine's -Werror flags (engine_scene is not built without Dawn), and the three
+new WGSL shaders only `naga --validate`. The new GPU-route cases in
+`tests/test_gpu_effect_route.cpp` compile but were not linked or run. Not run:
+
+- [ ] Build engine_scene_tests and run `[ae5]` (test_gpu_effect_route.cpp):
+      Lumetri → channel-lut + lumetri-grade; Ultra spill → advanced-spill;
+      Keylight Screen Matte → keylight + matte-view; Source → nothing; the
+      CPU-only cases keep the bake.
+- [ ] Golden render tests (`packages/render-tests`): three new materials
+      (`lumetri-grade.wgsl`, `advanced-spill.wgsl`, `matte-view.wgsl`). Add
+      goldens for each and check them against the CPU bake of the same layer
+      (8-bit vs float: expect differences of a few levels, never a shift in
+      hue or matte).
+- [ ] 5.1 Lumetri on footage: Curves (RGB + per channel), the three colour
+      wheels, Faded Film, Split Toning, Hue vs Sat / Hue vs Hue / Hue vs Luma /
+      Luma vs Sat (CPU bake), HSL Secondary with Show Mask, Vignette
+      (Midpoint / Roundness / Feather). Per-channel Levels incl. alpha; Hue /
+      Saturation channel ranges and Colorize.
+- [ ] 5.2 Keylight on green-screen footage: each View (Final Result, Source,
+      Screen Matte, Status, Intermediate Result), Screen Pre-blur, Clip
+      Rollback, Inside / Outside masks. Advanced Spill Suppressor (Standard
+      and Ultra), Key Cleaner, Remove Grain (Final Output / Noise Samples).
+- [ ] 5.3 With the GPU effect route on: Lumetri without Hue vs curves, Ultra
+      spill and Keylight's Source / Screen Matte / Status views draw on the
+      GPU (no CPU bake in the viewport HUD) and match the bake; Corner Pin and
+      the fixed warps (Bulge, Twirl, Spherize, Ripple …) stay on the GPU chain.
+      What still bakes on the CPU in 8-bit (Hue vs curves, Standard spill,
+      Key Cleaner, Remove Grain, Keylight's Intermediate Result / pre-blur /
+      rollback / masks, Levels alpha, Hue/Sat ranges, Mesh Warp variable
+      mesh, Liquify field, Reshape) is the list for the next float round.
+- [ ] 5.4 Properties ▸ Masks (mode, feather, opacity, expansion, invert);
+      Layer ▸ Mask ▸ New Mask (Ctrl+Shift+N), Mode, Inverted (Ctrl+Shift+I),
+      Remove Mask / Remove All Masks; Smart Mask Interpolation between two
+      path keys; Track Mask with each Method (Position … Perspective) on
+      footage.
+- [ ] 5.5 Puppet pins on a video layer; the Liquify brush (each tool, size,
+      pressure, Reset Mesh) on an image; Mesh Warp with 5 × 7 and dragged
+      vertex handles; Reshape from one mask to another (Percent, Elasticity,
+      boundary mask).
+- [ ] 5.6 Properties ▸ Crop (insets, Edge Feather, Reset Crop) on image /
+      video / precomp; Properties ▸ Paint and ▸ Puppet sections.
+
 ## Status on the Windows RTX 4060 box (2026-09-28)
 
 Built and run there after the `wip-stopped` merges: `windows-clang-cl-engine`

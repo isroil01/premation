@@ -5,6 +5,10 @@
  * to add a point; Alt-click a point to remove it. Points are `[inputX, outputY]`
  * in 0–255, which feed the colour LUT (see core/effects/colorLut). The two
  * endpoints stay pinned in X (0 and 255) so the curve always spans the range.
+ *
+ * AE parity 5.1: the `hue` and `luma` variants are Lumetri's Hue / Luma vs
+ * curves — X is the hue (0–360°) or the luma, the neutral is the horizontal
+ * midline (128), and a strip under the frame shows what X means.
  */
 
 import { useRef, useState } from 'react';
@@ -62,17 +66,33 @@ export function movePoint(pts: CurvePoints, i: number, x: number, y: number): [n
   return arr.sort((a, b) => a[0] - b[0]);
 }
 
+export type CurveVariant = 'tone' | 'hue' | 'luma';
+
+/** The strip under a hue / luma curve: what its X axis means. */
+const STRIP: Record<Exclude<CurveVariant, 'tone'>, ReadonlyArray<[number, string]>> = {
+  hue: [[0, 'hsl(0 90% 55%)'], [1 / 6, 'hsl(60 90% 55%)'], [2 / 6, 'hsl(120 90% 45%)'], [3 / 6, 'hsl(180 90% 45%)'],
+    [4 / 6, 'hsl(240 90% 60%)'], [5 / 6, 'hsl(300 90% 55%)'], [1, 'hsl(360 90% 55%)']],
+  luma: [[0, 'hsl(0 0% 0%)'], [1, 'hsl(0 0% 100%)']],
+};
+
 export function CurveEditor({
   value,
   onChange,
+  variant = 'tone',
+  fallback,
 }: {
   value: CurvePoints;
   onChange: (points: CurvePoints) => void;
+  /** `tone` (input → output), or a Lumetri Hue / Luma vs curve. */
+  variant?: CurveVariant;
+  /** The param's default, drawn when the stored value is missing. */
+  fallback?: CurvePoints;
 }): JSX.Element {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const neutral: CurvePoints = fallback ?? (variant === 'tone' ? [[0, 0], [255, 255]] : [[0, 128], [255, 128]]);
 
-  const points = sortPoints(value.length >= 2 ? value : [[0, 0], [255, 255]]);
+  const points = sortPoints(value.length >= 2 ? value : neutral);
 
   const localPoint = (e: { clientX: number; clientY: number }): { x: number; y: number } => {
     const rect = svgRef.current!.getBoundingClientRect();
@@ -103,6 +123,8 @@ export function CurveEditor({
     onChange(addPoint(points, fromX(p.x), fromY(p.y)));
   };
 
+  const gradientId = `curve-strip-${variant}`;
+
   const path = points.map((pt, i) => `${i === 0 ? 'M' : 'L'}${toX(pt[0]).toFixed(1)},${toY(pt[1]).toFixed(1)}`).join(' ');
 
   return (
@@ -111,7 +133,7 @@ export function CurveEditor({
       width={SIZE}
       height={SIZE}
       role="img"
-      aria-label="Tone curve"
+      aria-label={variant === 'hue' ? 'Hue curve' : variant === 'luma' ? 'Luma curve' : 'Tone curve'}
       style={{ touchAction: 'none', cursor: 'crosshair', background: 'var(--color-surface-1)', borderRadius: 4 }}
       onPointerDown={onBackgroundDown}
       onPointerMove={onPointerMove}
@@ -125,7 +147,19 @@ export function CurveEditor({
           <line x1={PAD} y1={PAD + f * INNER} x2={PAD + INNER} y2={PAD + f * INNER} />
         </g>
       ))}
-      <line x1={PAD} y1={PAD + INNER} x2={PAD + INNER} y2={PAD} stroke="var(--color-border)" strokeDasharray="2 3" />
+      {variant === 'tone' ? (
+        <line x1={PAD} y1={PAD + INNER} x2={PAD + INNER} y2={PAD} stroke="var(--color-border)" strokeDasharray="2 3" />
+      ) : (
+        <>
+          <line x1={PAD} y1={toY(128)} x2={PAD + INNER} y2={toY(128)} stroke="var(--color-border)" strokeDasharray="2 3" />
+          <defs>
+            <linearGradient id={gradientId} x1="0" x2="1" y1="0" y2="0">
+              {STRIP[variant].map(([o, c]) => <stop key={o} offset={o} stopColor={c} />)}
+            </linearGradient>
+          </defs>
+          <rect x={PAD} y={PAD + INNER - 4} width={INNER} height={4} fill={`url(#${gradientId})`} pointerEvents="none" />
+        </>
+      )}
 
       {/* the curve */}
       <path d={path} fill="none" stroke="var(--color-primary, #4c8dff)" strokeWidth={1.5} />

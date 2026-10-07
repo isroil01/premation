@@ -1093,6 +1093,28 @@ bool from_u32(std::uint32_t n, TrackDirection& out) noexcept {
     default: return false;
   }
 }
+std::string_view to_string(MaskTrackMethod v) noexcept {
+  switch (v) {
+    case MaskTrackMethod::vertices: return "vertices";
+    case MaskTrackMethod::position: return "position";
+    case MaskTrackMethod::position_rotation: return "positionRotation";
+    case MaskTrackMethod::position_scale_rotation: return "positionScaleRotation";
+    case MaskTrackMethod::affine: return "affine";
+    case MaskTrackMethod::perspective: return "perspective";
+  }
+  return {};
+}
+bool from_u32(std::uint32_t n, MaskTrackMethod& out) noexcept {
+  switch (n) {
+    case 0: out = MaskTrackMethod::vertices; return true;
+    case 1: out = MaskTrackMethod::position; return true;
+    case 2: out = MaskTrackMethod::position_rotation; return true;
+    case 3: out = MaskTrackMethod::position_scale_rotation; return true;
+    case 4: out = MaskTrackMethod::affine; return true;
+    case 5: out = MaskTrackMethod::perspective; return true;
+    default: return false;
+  }
+}
 std::string_view to_string(StabilizeFraming v) noexcept {
   switch (v) {
     case StabilizeFraming::stabilize_only: return "stabilizeOnly";
@@ -10870,6 +10892,7 @@ void encode(wire::Writer& w, const TrackMotionJob& v) {
   if (v.planar_grid.has_value()) { w.varint(13680U); w.varint(*v.planar_grid); }
   if (v.auto_feature.has_value()) { w.varint(13760U); w.boolean(*v.auto_feature); }
   for (const auto& e : v.exclude_masks) { w.varint(13770U); w.str(e); }
+  if (v.mask_method.has_value()) { w.varint(13776U); w.varint(static_cast<std::uint32_t>(*v.mask_method)); }
 }
 
 Status decode(wire::Reader& r, TrackMotionJob& out) {
@@ -10957,6 +10980,12 @@ Status decode(wire::Reader& r, TrackMotionJob& out) {
       case 13770U: {
         auto& e = out.exclude_masks.emplace_back();
         if (!r.str(e)) return Status::truncated;
+        break;
+      }
+      case 13776U: {
+        MaskTrackMethod e = MaskTrackMethod::vertices;
+        { std::uint32_t n = 0; if (!r.u32(n)) return Status::bad_value; if (!from_u32(n, e)) return Status::bad_enum; }
+        out.mask_method = std::move(e);
         break;
       }
       default:

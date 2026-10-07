@@ -106,6 +106,89 @@ function Select<V extends string>({ value, options, onChange, label }: {
 
 const pct = (v: number): number => Math.round(v * 1000) / 10;
 
+/**
+ * The layer's paint strokes: select one to redraw its Path, its video switch,
+ * key its Path, delete it; then Paint on Transparent. Shared by the Paint
+ * panel and Properties ▸ Paint (AE parity 5.6).
+ */
+export function PaintStrokeList({ layerId }: { layerId: string }): JSX.Element | null {
+  const paint = usePaintStore();
+  const tree = useMirrorTree(layerId);
+  useMirrorKeys(useMemo(() => [`keys:${layerId}`, `layer:${layerId}`], [layerId]));
+  const m = documentMirror();
+  const strokes = tree ? mirrorPaintStrokes(m, layerId) : [];
+  const onTransparent = mirrorPaintOnTransparent(tree);
+  if (strokes.length === 0) return null;
+  return (
+    <>
+      <div className={styles.strokeList} role="listbox" aria-label="Paint strokes">
+        {strokes.map((s) => {
+          const selected = paint.selectedStroke?.nodeId === layerId && paint.selectedStroke.strokeId === s.id;
+          const keyed = s.pathKeyed;
+          return (
+            <div
+              key={s.id}
+              role="option"
+              aria-selected={selected}
+              className={selected ? styles.strokeRowSelected : styles.strokeRow}
+              onClick={() => paint.set({ selectedStroke: selected ? null : { nodeId: layerId, strokeId: s.id } })}
+            >
+              <button
+                type="button"
+                className={styles.iconButton}
+                aria-label={s.visible === false ? 'Show stroke' : 'Hide stroke'}
+                title="Video switch"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void setPaintStrokeVisible(layerId, s.id, s.visible === false);
+                }}
+              >
+                <Icon name={s.visible === false ? 'eye-off' : 'eye'} size="sm" />
+              </button>
+              <span>{s.name}</span>
+              <button
+                type="button"
+                className={styles.iconButton}
+                aria-label={keyed ? 'Stop animating path' : 'Animate path'}
+                aria-pressed={keyed}
+                title={keyed ? 'Path is keyframed — click to remove its keyframes' : 'Key the Path at the current time'}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void setPaintPathAnimated(layerId, s.id, !keyed, playheadSeconds());
+                }}
+              >
+                <Icon name={keyed ? 'keyframe' : 'stopwatch'} size="sm" />
+              </button>
+              <button
+                type="button"
+                className={styles.iconButton}
+                aria-label="Delete stroke"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (selected) paint.set({ selectedStroke: null });
+                  void deletePaintStroke(layerId, s.id);
+                }}
+              >
+                <Icon name="trash" size="sm" />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      {paint.selectedStroke?.nodeId === layerId && (
+        <span className={styles.hint}>Drawing now replaces the selected stroke's Path. Click it again to deselect.</span>
+      )}
+      <Checkbox
+        label="Paint on Transparent"
+        checked={onTransparent}
+        onChange={() => {
+          void setPaintOnTransparent(layerId, !onTransparent);
+        }}
+      />
+    </>
+  );
+}
+
 export function PaintPanel(): JSX.Element {
   const paint = usePaintStore();
   const activeTool = useUIStore((s) => s.activeTool);
@@ -131,7 +214,6 @@ export function PaintPanel(): JSX.Element {
   const layer = layerId ? m.layer(layerId) : undefined;
   const paintable = isPaintableLayer(layer);
   const strokes = layerId && tree ? mirrorPaintStrokes(m, layerId) : [];
-  const onTransparent = mirrorPaintOnTransparent(tree);
   const compLayers = (compId ? m.comp(compId)?.layers ?? [] : [])
     .map((id) => m.layer(id))
     .filter((l): l is NonNullable<typeof l> => !!l && !l.parent && isPaintableLayer(l));
@@ -256,74 +338,7 @@ export function PaintPanel(): JSX.Element {
         {!layerId && <span className={styles.hint}>Select one layer to see its paint.</span>}
         {layerId && !paintable && <span className={styles.hint}>This layer cannot be painted on.</span>}
         {layerId && paintable && strokes.length === 0 && <span className={styles.hint}>No strokes yet.</span>}
-        {layerId && strokes.length > 0 && (
-          <>
-            <div className={styles.strokeList} role="listbox" aria-label="Paint strokes">
-              {strokes.map((s) => {
-                const selected = paint.selectedStroke?.nodeId === layerId && paint.selectedStroke.strokeId === s.id;
-                const keyed = s.pathKeyed;
-                return (
-                  <div
-                    key={s.id}
-                    role="option"
-                    aria-selected={selected}
-                    className={selected ? styles.strokeRowSelected : styles.strokeRow}
-                    onClick={() => paint.set({ selectedStroke: selected ? null : { nodeId: layerId, strokeId: s.id } })}
-                  >
-                    <button
-                      type="button"
-                      className={styles.iconButton}
-                      aria-label={s.visible === false ? 'Show stroke' : 'Hide stroke'}
-                      title="Video switch"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void setPaintStrokeVisible(layerId, s.id, s.visible === false);
-                      }}
-                    >
-                      <Icon name={s.visible === false ? 'eye-off' : 'eye'} size="sm" />
-                    </button>
-                    <span>{s.name}</span>
-                    <button
-                      type="button"
-                      className={styles.iconButton}
-                      aria-label={keyed ? 'Stop animating path' : 'Animate path'}
-                      aria-pressed={keyed}
-                      title={keyed ? 'Path is keyframed — click to remove its keyframes' : 'Key the Path at the current time'}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void setPaintPathAnimated(layerId, s.id, !keyed, playheadSeconds());
-                      }}
-                    >
-                      <Icon name={keyed ? 'keyframe' : 'stopwatch'} size="sm" />
-                    </button>
-                    <button
-                      type="button"
-                      className={styles.iconButton}
-                      aria-label="Delete stroke"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (selected) paint.set({ selectedStroke: null });
-                        void deletePaintStroke(layerId, s.id);
-                      }}
-                    >
-                      <Icon name="trash" size="sm" />
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-            {paint.selectedStroke?.nodeId === layerId && (
-              <span className={styles.hint}>Drawing now replaces the selected stroke's Path. Click it again to deselect.</span>
-            )}
-            <Checkbox
-              label="Paint on Transparent"
-              checked={onTransparent}
-              onChange={() => {
-                void setPaintOnTransparent(layerId, !onTransparent);
-              }}
-            />
-          </>
-        )}
+        {layerId && strokes.length > 0 && <PaintStrokeList layerId={layerId} />}
       </div>
     </div>
   );

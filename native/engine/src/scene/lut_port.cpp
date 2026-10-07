@@ -40,6 +40,28 @@ Table identity_table() {
   return t;
 }
 
+}  // namespace
+
+bool color_grade_needs_pixels(const Json& e) {
+  const std::string t = type_of(e);
+  if (t != "lumetri" && t != "levels" && t != "hue-saturation") return false;
+  rj::Value params;
+  std::string err;
+  if (!rj::parse(js::stringify(doc::params_of(e)), params, err)) return false;
+  return effects::color_grade_needs_pixels(t, params);
+}
+
+bool color_grade_gpu_capable(const Json& e) {
+  const std::string t = type_of(e);
+  if (t != "lumetri") return false;
+  rj::Value params;
+  std::string err;
+  if (!rj::parse(js::stringify(doc::params_of(e)), params, err)) return false;
+  return effects::color_grade_gpu_capable(t, params);
+}
+
+namespace {
+
 /// buildChannelLut's per-effect table — the E4 chain's builders (effect_color.cpp,
 /// byte-exact against colorLut.ts in effect_chain_parity.json) over paramsOf(e).
 std::optional<ChannelLut> tables_for(const Json& e) {

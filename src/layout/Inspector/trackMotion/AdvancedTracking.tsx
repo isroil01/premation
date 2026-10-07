@@ -8,6 +8,7 @@
  * IS the section; this is everything one disclosure down.
  */
 
+import type { MaskTrackMethod } from '@motion/engine-api';
 import { Button } from '@components/Button';
 import { InspectorRow } from '@components/Inspector';
 import { ValueField } from '@components/ValueField/ValueField';
@@ -54,6 +55,7 @@ export function AdvancedTracking({
   const store = useTrackerStore;
   const time = useActiveWorkspace()?.time ?? 0;
   const fullResolution = useTrackerStore((s) => s.fullResolution);
+  const maskMethod = useTrackerStore((s) => s.maskMethod);
   const stabRotation = useTrackerStore((s) => s.stabRotation);
   const stabScale = useTrackerStore((s) => s.stabScale);
   const warp = useTrackerStore((s) => s.warp);
@@ -288,6 +290,24 @@ export function AdvancedTracking({
         <InspectorRow label="Attach offset">
           <ValueField aria-label="Attach offset X" value={attach[0]?.x ?? 0} step={1} unit="px" onChange={(v) => store.getState().setAttach(0, v, attach[0]?.y ?? 0)} />
           <ValueField aria-label="Attach offset Y" value={attach[0]?.y ?? 0} step={1} unit="px" onChange={(v) => store.getState().setAttach(0, attach[0]?.x ?? 0, v)} />
+        </InspectorRow>
+      )}
+      {mode === 'mask' && (
+        <InspectorRow label="Method">
+          {/* AE parity 5.4: AE's Mask Tracker methods — the mask follows each vertex, or moves as one shape. */}
+          <select
+            aria-label="Mask tracking method"
+            value={maskMethod}
+            onChange={(e) => store.getState().setMaskMethod(e.target.value as MaskTrackMethod)}
+            title="Vertices: each vertex follows its own feature. The others move the whole mask by the transform fitted to every tracked point."
+          >
+            <option value="vertices">Vertices</option>
+            <option value="position">Position</option>
+            <option value="positionRotation">Position &amp; Rotation</option>
+            <option value="positionScaleRotation">Position, Scale &amp; Rotation</option>
+            <option value="affine">Position, Scale, Rotation &amp; Skew</option>
+            <option value="perspective">Perspective</option>
+          </select>
         </InspectorRow>
       )}
       <InspectorRow label="Full resolution">

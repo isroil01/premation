@@ -510,6 +510,11 @@ bool warps(std::string_view t, const Params& P, double lw, double lh, Out& out) 
 
 bool keying(std::string_view t, const Params& P, double lw, double lh, Out& out) {
   if (t == "keylight") {
+    // AE parity 5.3: View ▸ Source shows the layer untouched; Screen Matte and
+    // Status draw the key's matte after it (matte-view). Intermediate Result,
+    // pre-blur, rollback and the garbage masks stay in the CPU bake.
+    const double view = mjs::round(P.n("view"));
+    if (view == 1) return true;
     const Vec3 key = P.hex("screenColor");
     const double kr = key[0], kg = key[1], kb = key[2];
     std::size_t p = 0, a = 1, b = 2;
@@ -538,6 +543,24 @@ bool keying(std::string_view t, const Params& P, double lw, double lh, Out& out)
     w.num("softPx", jmin(25, mjs::round(jmax(0, P.n("matteSoftness")))));
     w.num("lw", lw).num("lh", lh);
     out.push_back(w.done());
+    if (view == 2 || view == 3) out.push_back(FxWriter("matte-view").num("view", view).done());
+    return true;
+  }
+  if (t == "advanced-spill-suppressor") {
+    // AE parity 5.3: Ultra's spill pass on the GPU (Standard's frame-wide
+    // green / blue vote stays in the CPU bake).
+    const double suppression = jclamp(P.n("suppression") / 100, 0, 1);
+    if (mjs::round(P.n("method")) == 1 && suppression > 0) {
+      const Vec3 key = P.hex("keyColor");
+      const double primary = (key[1] >= key[0] && key[1] >= key[2]) ? 1 : (key[2] >= key[0] && key[2] >= key[1]) ? 2 : 0;
+      FxWriter w("advanced-spill");
+      w.num("primary", primary).num("suppression", suppression);
+      w.num("range", jclamp(P.n("spillRange") / 100, 0, 1)).num("tolerance", jclamp(P.n("tolerance") / 100, 0, 1));
+      w.num("desat", jclamp(P.n("desaturate") / 100, 0, 1));
+      w.num("colorFix", jclamp(P.n("spillColorCorrection") / 100, 0, 1));
+      w.num("lumaFix", jclamp(P.n("lumaCorrection") / 100, 0, 1));
+      out.push_back(w.done());
+    }
     return true;
   }
   if (t == "linear-color-key") {
@@ -1160,11 +1183,11 @@ bool round_eleven_b(std::string_view t, const Params& P, double lw, double lh, O
   return false;
 }
 
-constexpr std::array<std::string_view, 78> kHandled = {
+constexpr std::array<std::string_view, 79> kHandled = {
     "deep-glow", "beam", "light-sweep", "lens-flare", "light-rays", "vignette", "black-and-white", "tritone",
     "photo-filter", "threshold", "vibrance", "mirror", "offset", "bulge", "twirl", "spherize", "kaleidoscope",
     "ripple", "chromatic-aberration", "magnify", "mosaic", "gaussian-blur", "fast-box-blur", "radial-blur",
-    "corner-pin", "transform", "keylight", "linear-color-key", "luma-key", "color-key", "color-range", "extract",
+    "corner-pin", "transform", "keylight", "advanced-spill-suppressor", "linear-color-key", "luma-key", "color-key", "color-range", "extract",
     "spill-suppressor", "simple-choker", "matte-choker", "wave-warp", "directional-blur", "linear-wipe",
     "shift-channels", "alpha-levels", "solid-composite", "channel-combiner", "remove-color-matting",
     "change-color", "change-to-color", "leave-color", "toner", "venetian-blinds", "radial-wipe", "iris-wipe",

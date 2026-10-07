@@ -141,6 +141,7 @@ export const EFFECT_CATEGORY: Record<EffectType, string> = {
   'polar-coordinates': 'Distort',
   'optics-compensation': 'Distort',
   'mesh-warp': 'Distort',
+  reshape: 'Distort',
   liquify: 'Distort',
   mirror: 'Distort',
   offset: 'Distort',
@@ -204,6 +205,9 @@ export const EFFECT_CATEGORY: Record<EffectType, string> = {
   'color-range': 'Keying',
   extract: 'Keying',
   'spill-suppressor': 'Keying',
+  'advanced-spill-suppressor': 'Keying',
+  'key-cleaner': 'Keying',
+  'remove-grain': 'Stylize',  // beside Add Grain and Dust & Scratches (AE's Noise & Grain family)
   'matte-choker': 'Keying',
   'refine-soft-matte': 'Keying',
   'refine-hard-matte': 'Keying',

@@ -16,6 +16,8 @@ family "Jobs";
 /// `planarRegion` (AE parity 3.4, Mocha class): `points` 0–3 are a region of a flat surface (TL, TR, BR, BL), tracked as one homography per frame from every feature inside it (exclusions: `excludeMasks`); `points` 4–7, when given, are the SURFACE whose corners the result follows (else the region's). The result is four tracks (the surface corners), applied as a corner pin.
 enum TrackKind { position = 0; positionRotation = 1; positionRotationScale = 2; perspectiveCorner = 3; mask = 4; planar = 5; planarRegion = 6; }
 enum TrackDirection { forward = 0; backward = 1; both = 2; }
+/// AE parity 5.4 — how a `mask` track moves the mask: `vertices` (each vertex follows its own feature, the default) or AS ONE SHAPE by the transform fitted to every tracked point per frame (AE's Mask Tracker methods).
+enum MaskTrackMethod { vertices = 0; position = 1; positionRotation = 2; positionScaleRotation = 3; affine = 4; perspective = 5; }
 
 struct TrackPointSpec {
   /// Feature region centre + size, search region size, in layer pixels.
@@ -49,6 +51,8 @@ struct TrackMotionJob {
   autoFeature?: bool = 1720;
   /// Kind `planarRegion`: masks of the layer (ids) whose area is never tracked (an occluder, a reflection), followed as they animate.
   excludeMasks: string[] = 1721;
+  /// Kind `mask` (AE parity 5.4): absent = `vertices`.
+  maskMethod?: MaskTrackMethod = 1722;
 }
 
 /// `method`: `position` (translate only), `positionRotation`, `positionRotationScale` (default). `smoothness` 0…100 (%).
