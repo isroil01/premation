@@ -1,5 +1,6 @@
 #include "native_scene.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <string_view>
@@ -72,11 +73,23 @@ NativeFrame native_frame_of(const doc::Document& d, Snapshot snap, const ViewSpe
   v.clear_color = view.clear;
   if (view.clipToComp) {
     const auto toScreen = [&](double world, double center, double css) { return ((world - center) * view.zoom + css / 2) * view.dpr; };
+    // The comp rect, or the part of it inside the region of interest.
+    double x0 = 0;
+    double y0 = 0;
+    double x1 = clipWidth;
+    double y1 = clipHeight;
+    if (view.regionOfInterest) {
+      const api::Rect& r = *view.regionOfInterest;
+      x0 = std::clamp(r.x, 0.0, clipWidth);
+      y0 = std::clamp(r.y, 0.0, clipHeight);
+      x1 = std::clamp(r.x + r.width, x0, clipWidth);
+      y1 = std::clamp(r.y + r.height, y0, clipHeight);
+    }
     api::Rect clip;
-    clip.x = toScreen(0, view.centerX, view.cssWidth);
-    clip.y = toScreen(0, view.centerY, view.cssHeight);
-    clip.width = clipWidth * view.zoom * view.dpr;
-    clip.height = clipHeight * view.zoom * view.dpr;
+    clip.x = toScreen(x0, view.centerX, view.cssWidth);
+    clip.y = toScreen(y0, view.centerY, view.cssHeight);
+    clip.width = (x1 - x0) * view.zoom * view.dpr;
+    clip.height = (y1 - y0) * view.zoom * view.dpr;
     v.frame_clip = clip;
   }
   v.overlays_active = false;
@@ -97,6 +110,7 @@ NativeFrame native_frame_of(const doc::Document& d, Snapshot snap, const ViewSpe
   v.surface_format = view.surfaceFormat;
   v.viewer_lut_active = false;
   if (view.channel != api::ChannelView::rgb) v.channel = view.channel;
+  if (view.exposure != 0) v.exposure = view.exposure;
   f.scene = std::move(fb.scene);
   // The 1×1 white every textured draw may fall back to (frameSceneExport's `texture:white`).
   {
@@ -126,6 +140,8 @@ NativeFrame build_native_frame(const BuildContext& c, std::string_view comp, dou
   if (overrides.transparent) sc.transparent = *overrides.transparent;
   if (overrides.camera3dMode) sc.camera3dMode = *overrides.camera3dMode;
   if (overrides.customViewCamera) sc.customViewCamera = overrides.customViewCamera;
+  if (overrides.draft3d) sc.draft3d = true;
+  if (overrides.transparencyGrid) sc.transparencyGrid = true;
   std::optional<MotionBlurCfg> mb;
   if (motionBlur) mb = motion_blur_of(c.d, comp);
   Snapshot snap = build_snapshot(c, sc, t, mb);

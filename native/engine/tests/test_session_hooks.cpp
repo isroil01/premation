@@ -346,6 +346,57 @@ TEST_CASE("session hooks: setViewportFocus reaches the frame builder, per viewpo
   CHECK(builder.lastViewport.focusLayers.empty());
 }
 
+TEST_CASE("session hooks: the viewer's preview settings reach the frame builder", "[session][frames]") {
+  Harness h(64);
+  FakeBuilder builder;
+  h.session.set_frame_builder(&builder);
+  (void)h.hello();
+  (void)open_comp(h);
+  CHECK_FALSE(builder.lastViewport.draft3d);
+  CHECK(builder.lastViewport.previewMotionBlur);
+  CHECK(builder.lastViewport.viewerLut == nullptr);
+
+  // Draft 3D and Draft Quality (no motion-blur samples) ride setPreviewQuality.
+  api::SetPreviewQuality q;
+  q.resolution = api::PreviewResolution::full;
+  q.draft3d = true;
+  q.motion_blur = false;
+  REQUIRE(is_ok(h.run(cmd(q))));
+  CHECK(builder.lastViewport.draft3d);
+  CHECK_FALSE(builder.lastViewport.previewMotionBlur);
+
+  // Exposure, the transparency grid and the region of interest ride setViewport;
+  // the quality settings above are kept across it.
+  api::SetViewport v;
+  v.viewport = 1;
+  v.width = 640;
+  v.height = 360;
+  v.device_pixel_ratio = 1.0;
+  v.zoom = 2.0;
+  v.exposure = 1.5;
+  v.transparency_grid = true;
+  v.region_of_interest = api::Rect{10, 20, 100, 50};
+  REQUIRE(is_ok(h.run(cmd(v))));
+  CHECK(builder.lastViewport.exposure == 1.5);
+  CHECK(builder.lastViewport.transparencyGrid);
+  REQUIRE(builder.lastViewport.regionOfInterest.has_value());
+  CHECK(builder.lastViewport.regionOfInterest->width == 100);
+  CHECK(builder.lastViewport.draft3d);
+
+  // The viewer LUT: a stored table reaches every frame until cleared; junk is refused.
+  api::SetViewerLut lut;
+  lut.lut = R"({"size":0,"size1d":2,"data":[0,0,0,1,1,1],"domainMin":[0,0,0],"domainMax":[1,1,1]})";
+  lut.intensity = 0.5;
+  REQUIRE(is_ok(h.run(cmd(lut))));
+  REQUIRE(builder.lastViewport.viewerLut != nullptr);
+  CHECK(builder.lastViewport.viewerLut->intensity == 0.5);
+  lut.lut = "not json";
+  CHECK(is_error(h.run(cmd(lut)), api::ErrorCode::invalid_argument));
+  lut.lut.clear();
+  REQUIRE(is_ok(h.run(cmd(lut))));
+  CHECK(builder.lastViewport.viewerLut == nullptr);
+}
+
 TEST_CASE("session hooks: getLayerErrors answers the set last announced (D5)", "[session][frames]") {
   Harness h(64);
   FakeBuilder builder;

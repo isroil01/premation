@@ -78,11 +78,16 @@ class EffectPass final : public RenderPass {
                                : channel == api::ChannelView::rgb_straight ? 5
                                                                           : 0;
     const bool lut = lutMeta != nullptr && lutTex;
+    // View ▸ Adjust Exposure (RenderView.exposure, stops) → cr1.y, a linear gain
+    // before the display transform (1 = none, the value every other blit packs).
+    const double exposure = ctx.file.view.exposure.value_or(0.0);
+    const double gain = std::isfinite(exposure) ? std::exp2(exposure) : 1.0;
     cmds_.clear();
     if (ctx.colorSystem != nullptr && ctx.colorSystem->active()) {
       // D3: working → display/output through the OCIO program, then the viewer LUT.
+      // (Exposure is not applied on the OCIO route: the OCIO program owns the encode.)
       ctx.colorSystem->emit_display(ctx, cmds_, src->tex(), lutTex, lutMeta);
-    } else if (lut || channelCode != 0) {
+    } else if (lut || channelCode != 0 || gain != 1.0) {
       // emitSceneBlit with a viewer LUT (scene-blit-lut, packSceneBlitLut) and/or a channel view.
       ColorTransform ct;
       ct.m = {0, 0, 0, 0, 1, 0, 0, 0, 1};  // size 0: no grade
@@ -92,6 +97,7 @@ class EffectPass final : public RenderPass {
         ct.offset = {lutMeta->domain_max, 0, 0};
       }
       ct.m[3] = channelCode;
+      ct.m[4] = gain;
       DrawItem& it = cmds_.add(Mat::SCENE_BLIT_LUT_MATERIAL, Blend::none,
                                pack_textured(ctx.packer(), screen_mvp(), {0, 0, 1, 1}, Color::white(), 1, ct, false));
       it.texture = src->tex();

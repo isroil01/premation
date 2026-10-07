@@ -314,6 +314,12 @@ class Session {
   std::map<std::uint32_t, std::vector<std::string>> focusLayers_;
   [[nodiscard]] bool any_viewport_open() const noexcept { return !surfaces_.empty(); }
   double resolution_ = 1.0;
+  /// setPreviewQuality `draft3d`, applied to every viewport.
+  bool draft3d_ = false;
+  /// setPreviewQuality `motionBlur`, applied to every viewport.
+  bool previewMotionBlur_ = true;
+  /// setViewerLut (editor state): null = none. Shared with the frame jobs (see ViewportConfig::viewerLut).
+  std::shared_ptr<const ViewerLut> viewerLut_;
   bool renderDirty_ = false;
   /// B4 round 2: the overlay geometry push (setOverlayGeometry) — at most one subscription per viewport.
   std::vector<doc::OverlaySubscription> overlays_;

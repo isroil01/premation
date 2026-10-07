@@ -2111,11 +2111,40 @@ Snapshot Walk::run() {
   };
   resolveMattes(layers_);
 
+  // The viewer's transparency grid (AE's Toggle Transparency Grid): the
+  // composition over a checkerboard instead of its background colour, so what
+  // is transparent in it reads as transparent. The same backdrop the Layer
+  // panel's grid uses, the size of the comp, under everything.
+  if (comp_.transparencyGrid && comp_.width > 0 && comp_.height > 0) {
+    RLayer grid;
+    grid.id = comp_.rootId + "::transparency-grid";
+    grid.kind = LayerKind::shape;
+    grid.primitive = "rect";
+    grid.width = comp_.width;
+    grid.height = comp_.height;
+    grid.fill = "#3d3d3d";
+    Json params = Json::object();
+    params.set("width", Json::number(16));
+    params.set("height", Json::number(16));
+    params.set("anchorX", Json::number(0));
+    params.set("anchorY", Json::number(0));
+    params.set("colorA", Json::string("#3d3d3d"));
+    params.set("colorB", Json::string("#2b2b2b"));
+    params.set("opacity", Json::number(100));
+    Json fx = Json::object();
+    fx.set("id", Json::string("transparency-grid"));
+    fx.set("type", Json::string("checkerboard"));
+    fx.set("enabled", Json::boolean(true));
+    fx.set("params", std::move(params));
+    grid.effects.push_back(std::move(fx));
+    layers_.insert(layers_.begin(), std::move(grid));
+  }
+
   Snapshot s;
   s.width = comp_.width;
   s.height = comp_.height;
   s.background = comp_.background;
-  s.transparent = comp_.transparent;
+  s.transparent = comp_.transparent || comp_.transparencyGrid;
   s.time = t_;
   s.fps = fps_;
   s.layers = std::move(layers_);
@@ -2142,6 +2171,8 @@ SnapshotComp snapshot_comp_of(const Document& d, std::string_view comp) {
 }
 
 SnapshotComp with_viewport_view(SnapshotComp sc, const ViewportConfig& viewport) {
+  sc.draft3d = viewport.draft3d;
+  sc.transparencyGrid = viewport.transparencyGrid && viewport.layer.empty();
   if (viewport.view.empty() || viewport.view == "active") return sc;
   if (viewport.view != "custom") {
     sc.camera3dMode = viewport.view;

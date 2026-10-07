@@ -157,6 +157,8 @@ command setInteracting = 812 [control] { interacting: bool = 1; }
 command setViewportHiddenLayers = 813 [control] { viewport: u32 = 1; layers: LayerId[] = 2; }
 /// Focus Mode — editor state, not document state: the layers the user is working inside. Every other layer of that viewport's frames is drawn as a dim reference (12 % of its opacity); exports, thumbnails and other viewports are untouched. Replaces the viewport's previous set; empty = no focus, every layer draws as authored. A control: no history, no revision.
 command setViewportFocus = 814 [control] { viewport: u32 = 1; layers: LayerId[] = 2; }
+/// The viewer LUT (View ▸ Viewer LUT) — editor state, not document state: a `.cube` table applied after the display transform on every viewport's frames (never in an export or a thumbnail). `lut` is the stored table as JSON text (cubeLut.ts StoredLut: size, size1d, data, domainMin, domainMax); '' clears it. `intensity` 0..1. A table that does not parse: `invalidArgument`. A control: no history, no revision.
+command setViewerLut = 815 [control] { lut: string = 1; intensity: f64 = 2; }
 
 /// B4 — what the overlay geometry push carries for each subscribed layer (FrameGeometry, 95_frames).
 enum OverlayKind { transform = 0; bounds = 1; motionPath = 2; rig = 3; textBox = 4; scene3d = 8; }

@@ -1009,8 +1009,12 @@ struct ControlVisitor {
   }
   R operator()(const api::SetPreviewQuality& c) const {
     s.resolution_ = resolution_factor(c.resolution);
+    s.draft3d_ = c.draft3d;
+    s.previewMotionBlur_ = c.motion_blur;
     for (auto& [id, v] : s.surfaces_) {
       v.resolution = s.resolution_;
+      v.draft3d = s.draft3d_;
+      v.previewMotionBlur = s.previewMotionBlur_;
       s.sink_.configure(v);
     }
     if (s.any_viewport_open()) s.request_render();
@@ -1032,6 +1036,8 @@ struct ControlVisitor {
     v.width = static_cast<std::uint32_t>(w);
     v.height = static_cast<std::uint32_t>(h);
     v.resolution = s.resolution_;
+    v.draft3d = s.draft3d_;
+    v.previewMotionBlur = s.previewMotionBlur_;
     v.open = true;
     // D5: the page's camera (zoom ≤ 0 = fit). Only finite values; the pan is the
     // comp point at the viewport centre.
@@ -1041,6 +1047,12 @@ struct ControlVisitor {
     v.devicePixelRatio = dpr;
     // View ▸ Show Channel: applied on the final blit (RenderView.channel).
     v.channel = c.channel;
+    // Adjust Exposure (stops) on the final blit; ±40 covers any useful view.
+    v.exposure = std::isfinite(c.exposure) ? std::clamp(c.exposure, -40.0, 40.0) : 0.0;
+    if (c.region_of_interest && std::isfinite(c.region_of_interest->x) && std::isfinite(c.region_of_interest->y)
+        && c.region_of_interest->width > 0 && c.region_of_interest->height > 0) {
+      v.regionOfInterest = *c.region_of_interest;
+    }
     // The pane's 3D view: '' = the composition's camera; a custom view carries its own orbit.
     v.view = c.view && !c.view->empty() ? *c.view : std::string("active");
     if (v.view == "custom" && c.custom_view) {
@@ -1064,6 +1076,8 @@ struct ControlVisitor {
         }
         v.layerAlphaView = av;
       }
+    } else {
+      v.transparencyGrid = c.transparency_grid;
     }
     if (c.time && *c.time >= 0) v.time = *c.time;
     if (c.layer_source_time && v.time) v.layerSourceTime = *c.layer_source_time;
@@ -1122,6 +1136,23 @@ struct ControlVisitor {
     }
     if (s.any_viewport_open()) s.request_render();
     return result_for<api::SetViewportFocus>();
+  }
+  R operator()(const api::SetViewerLut& c) const {
+    // Editor state for every viewport (never an export): '' clears it.
+    if (c.lut.empty()) {
+      s.viewerLut_.reset();
+    } else {
+      std::optional<js::Json> table = js::parse(c.lut);
+      const bool shaped = table && table->is_object() && table->at("data").is_array()
+                          && (table->at("size").is_number() || table->at("size1d").is_number());
+      if (!shaped) fail(ErrorCode::invalid_argument, "viewer LUT is not a stored .cube table");
+      auto lut = std::make_shared<ViewerLut>();
+      lut->table = std::move(*table);
+      lut->intensity = std::isfinite(c.intensity) ? std::clamp(c.intensity, 0.0, 1.0) : 1.0;
+      s.viewerLut_ = std::move(lut);
+    }
+    if (s.any_viewport_open()) s.request_render();
+    return result_for<api::SetViewerLut>();
   }
   R operator()(const api::SetOverlayGeometry& c) const {
     // B4 round 2: replace this viewport's subscription (none = unsubscribe); the next frame carries it.
@@ -1704,6 +1735,7 @@ void Session::submit_frame_to(const ViewportConfig& surface, const std::string& 
   ViewportConfig port = surface;
   if (const auto hidden = hiddenLayers_.find(surface.viewport); hidden != hiddenLayers_.end()) port.hiddenLayers = hidden->second;
   if (const auto focus = focusLayers_.find(surface.viewport); focus != focusLayers_.end()) port.focusLayers = focus->second;
+  port.viewerLut = viewerLut_;
   // A held viewport (the Layer panel's own ruler) renders at its time, not the clock's.
   const api::Time t = port.time.value_or(time_);
   if (frameBuilder_ != nullptr) {

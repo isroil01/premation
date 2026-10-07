@@ -2837,6 +2837,12 @@ export interface SetViewportFocus {
   layers: LayerId[];
 }
 
+/** The viewer LUT (View ▸ Viewer LUT) — editor state, not document state: a `.cube` table applied after the display transform on every viewport's frames (never in an export or a thumbnail). `lut` is the stored table as JSON text (cubeLut.ts StoredLut: size, size1d, data, domainMin, domainMax); '' clears it. `intensity` 0..1. A table that does not parse: `invalidArgument`. A control: no history, no revision. */
+export interface SetViewerLut {
+  lut: string;
+  intensity: number;
+}
+
 /** B4 round 5 — one overlay's share of a subscription (setOverlayGeometry `groups`): its layers get ITS kinds, not every kind another overlay asked for. */
 export interface OverlayRequest {
   layers: LayerId[];
@@ -5206,6 +5212,11 @@ export interface RenderView {
    * an opaque grey image on the final blit; rgbStraight shows the colour without its alpha. Absent = rgb.
    */
   channel?: ChannelView;
+  /**
+   * The viewer's exposure in stops (viewport-only; AE's Adjust Exposure): the linear working colour is scaled by 2^exposure before
+   * the display transform. Absent = 0. Exports leave it off.
+   */
+  exposure?: number;
 }
 
 /** A texture key the scene samples → the content it resolved to when the frame was rendered. */
@@ -5442,6 +5453,7 @@ export type Command =
   | ({ type: 'setInteracting' } & SetInteracting)
   | ({ type: 'setViewportHiddenLayers' } & SetViewportHiddenLayers)
   | ({ type: 'setViewportFocus' } & SetViewportFocus)
+  | ({ type: 'setViewerLut' } & SetViewerLut)
   | ({ type: 'setOverlayGeometry' } & SetOverlayGeometry)
   | ({ type: 'setLayerTrackers' } & SetLayerTrackers)
   | ({ type: 'setCameraSolve' } & SetCameraSolve)
@@ -5613,6 +5625,7 @@ export type CommandResult =
   | ({ type: 'setInteracting' } & Empty)
   | ({ type: 'setViewportHiddenLayers' } & Empty)
   | ({ type: 'setViewportFocus' } & Empty)
+  | ({ type: 'setViewerLut' } & Empty)
   | ({ type: 'setOverlayGeometry' } & Empty)
   | ({ type: 'setLayerTrackers' } & Empty)
   | ({ type: 'setCameraSolve' } & Empty)
@@ -5937,6 +5950,7 @@ export interface CommandArgs {
   setInteracting: SetInteracting;
   setViewportHiddenLayers: SetViewportHiddenLayers;
   setViewportFocus: SetViewportFocus;
+  setViewerLut: SetViewerLut;
   setOverlayGeometry: SetOverlayGeometry;
   setLayerTrackers: SetLayerTrackers;
   setCameraSolve: SetCameraSolve;
@@ -6108,6 +6122,7 @@ export interface CommandResults {
   setInteracting: Empty;
   setViewportHiddenLayers: Empty;
   setViewportFocus: Empty;
+  setViewerLut: Empty;
   setOverlayGeometry: Empty;
   setLayerTrackers: Empty;
   setCameraSolve: Empty;

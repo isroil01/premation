@@ -293,6 +293,10 @@ struct SnapshotComp {  // NOLINT(bugprone-exception-escape): MSVC's std::map all
   std::optional<motion::xf::Camera> customViewCamera;
   /// SnapshotComp.draft3d.
   bool draft3d = false;
+  /// A viewer's transparency grid (setViewport `transparencyGrid`): the root
+  /// comp draws a checkerboard where it is transparent instead of its
+  /// background. Viewer-only — never in an export, a thumbnail or a precomp.
+  bool transparencyGrid = false;
 };
 
 /// MotionBlurConfig (effects/motionBlur.ts).

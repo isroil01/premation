@@ -7732,6 +7732,30 @@ function decS_SetViewportFocus(r: Reader, end: number, o: any): T.SetViewportFoc
   o.layers = l_layers;
   return o;
 }
+function encS_SetViewerLut(w: Writer, v: T.SetViewerLut): void {
+  w.byte(10); w.str(v.lut);
+  w.byte(17); w.f64(v.intensity);
+}
+function decS_SetViewerLut(r: Reader, end: number, o: any): T.SetViewerLut {
+  let h_lut = false;
+  let h_intensity = false;
+  let v_lut: string | undefined;
+  let v_intensity: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_lut = r.str(); h_lut = true; break;
+      case 17: v_intensity = r.f64(); h_intensity = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_lut) throw new DecodeError('SetViewerLut.lut: missing', 'missingField');
+  if (!h_intensity) throw new DecodeError('SetViewerLut.intensity: missing', 'missingField');
+  o.lut = v_lut;
+  o.intensity = v_intensity;
+  return o;
+}
 function encS_OverlayRequest(w: Writer, v: T.OverlayRequest): void {
   { const a = v.layers; for (let i = 0; i < a.length; i++) { w.byte(10); w.str(a[i]!); } }
   { const a = v.kinds; if (a.length) { w.byte(18); const s = w.beginLd(); for (let i = 0; i < a.length; i++) w.varint(enc_OverlayKind(a[i]!)); w.endLd(s); } }
@@ -16717,6 +16741,7 @@ function encS_RenderView(w: Writer, v: T.RenderView): void {
   if (v.viewerLut !== undefined) { w.varint(154); { const s = w.beginLd(); encS_RenderViewerLut(w, v.viewerLut); w.endLd(s); } }
   if (v.colorManagement !== undefined) { w.varint(162); { const s = w.beginLd(); encS_RenderColorManagement(w, v.colorManagement); w.endLd(s); } }
   if (v.channel !== undefined) { w.varint(168); w.varint(enc_ChannelView(v.channel)); }
+  if (v.exposure !== undefined) { w.varint(177); w.f64(v.exposure); }
 }
 function decS_RenderView(r: Reader, end: number, o: any): T.RenderView {
   let h_cssWidth = false;
@@ -16755,6 +16780,7 @@ function decS_RenderView(r: Reader, end: number, o: any): T.RenderView {
   let v_viewerLut: T.RenderViewerLut | undefined;
   let v_colorManagement: T.RenderColorManagement | undefined;
   let v_channel: T.ChannelView | undefined;
+  let v_exposure: number | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -16779,6 +16805,7 @@ function decS_RenderView(r: Reader, end: number, o: any): T.RenderView {
       case 154: v_viewerLut = decS_RenderViewerLut(r, r.ldEnd(), {}); break;
       case 162: v_colorManagement = decS_RenderColorManagement(r, r.ldEnd(), {}); break;
       case 168: v_channel = dec_ChannelView(r.varint()); break;
+      case 177: v_exposure = r.f64(); break;
       default: r.skip(key);
     }
   }
@@ -16819,6 +16846,7 @@ function decS_RenderView(r: Reader, end: number, o: any): T.RenderView {
   if (v_viewerLut !== undefined) o.viewerLut = v_viewerLut;
   if (v_colorManagement !== undefined) o.colorManagement = v_colorManagement;
   if (v_channel !== undefined) o.channel = v_channel;
+  if (v_exposure !== undefined) o.exposure = v_exposure;
   return o;
 }
 function encS_RenderTextureRef(w: Writer, v: T.RenderTextureRef): void {
@@ -17440,6 +17468,7 @@ function encU_Command(w: Writer, v: T.Command): void {
     case 'setInteracting': w.varint(6498); { const s = w.beginLd(); encS_SetInteracting(w, v); w.endLd(s); } return;
     case 'setViewportHiddenLayers': w.varint(6506); { const s = w.beginLd(); encS_SetViewportHiddenLayers(w, v); w.endLd(s); } return;
     case 'setViewportFocus': w.varint(6514); { const s = w.beginLd(); encS_SetViewportFocus(w, v); w.endLd(s); } return;
+    case 'setViewerLut': w.varint(6522); { const s = w.beginLd(); encS_SetViewerLut(w, v); w.endLd(s); } return;
     case 'startJob': w.varint(6802); { const s = w.beginLd(); encS_StartJob(w, v); w.endLd(s); } return;
     case 'cancelJob': w.varint(6810); { const s = w.beginLd(); encS_CancelJob(w, v); w.endLd(s); } return;
     case 'applyJobResult': w.varint(6818); { const s = w.beginLd(); encS_ApplyJobResult(w, v); w.endLd(s); } return;
@@ -17616,6 +17645,7 @@ function decU_Command(r: Reader, end: number): T.Command {
       case 6498: out = decS_SetInteracting(r, r.ldEnd(), { type: 'setInteracting' }) as T.Command; break;
       case 6506: out = decS_SetViewportHiddenLayers(r, r.ldEnd(), { type: 'setViewportHiddenLayers' }) as T.Command; break;
       case 6514: out = decS_SetViewportFocus(r, r.ldEnd(), { type: 'setViewportFocus' }) as T.Command; break;
+      case 6522: out = decS_SetViewerLut(r, r.ldEnd(), { type: 'setViewerLut' }) as T.Command; break;
       case 6802: out = decS_StartJob(r, r.ldEnd(), { type: 'startJob' }) as T.Command; break;
       case 6810: out = decS_CancelJob(r, r.ldEnd(), { type: 'cancelJob' }) as T.Command; break;
       case 6818: out = decS_ApplyJobResult(r, r.ldEnd(), { type: 'applyJobResult' }) as T.Command; break;
@@ -17792,6 +17822,7 @@ function encU_CommandResult(w: Writer, v: T.CommandResult): void {
     case 'setInteracting': w.varint(6498); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'setViewportHiddenLayers': w.varint(6506); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'setViewportFocus': w.varint(6514); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
+    case 'setViewerLut': w.varint(6522); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'startJob': w.varint(6802); { const s = w.beginLd(); encS_JobRef(w, v); w.endLd(s); } return;
     case 'cancelJob': w.varint(6810); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'applyJobResult': w.varint(6818); { const s = w.beginLd(); encS_ItemList(w, v); w.endLd(s); } return;
@@ -17968,6 +17999,7 @@ function decU_CommandResult(r: Reader, end: number): T.CommandResult {
       case 6498: out = decS_Empty(r, r.ldEnd(), { type: 'setInteracting' }) as T.CommandResult; break;
       case 6506: out = decS_Empty(r, r.ldEnd(), { type: 'setViewportHiddenLayers' }) as T.CommandResult; break;
       case 6514: out = decS_Empty(r, r.ldEnd(), { type: 'setViewportFocus' }) as T.CommandResult; break;
+      case 6522: out = decS_Empty(r, r.ldEnd(), { type: 'setViewerLut' }) as T.CommandResult; break;
       case 6802: out = decS_JobRef(r, r.ldEnd(), { type: 'startJob' }) as T.CommandResult; break;
       case 6810: out = decS_Empty(r, r.ldEnd(), { type: 'cancelJob' }) as T.CommandResult; break;
       case 6818: out = decS_ItemList(r, r.ldEnd(), { type: 'applyJobResult' }) as T.CommandResult; break;
@@ -18595,6 +18627,7 @@ export const codecs = {
   SetInteracting: mk<T.SetInteracting>(encS_SetInteracting, (r, e) => decS_SetInteracting(r, e, {})),
   SetViewportHiddenLayers: mk<T.SetViewportHiddenLayers>(encS_SetViewportHiddenLayers, (r, e) => decS_SetViewportHiddenLayers(r, e, {})),
   SetViewportFocus: mk<T.SetViewportFocus>(encS_SetViewportFocus, (r, e) => decS_SetViewportFocus(r, e, {})),
+  SetViewerLut: mk<T.SetViewerLut>(encS_SetViewerLut, (r, e) => decS_SetViewerLut(r, e, {})),
   OverlayRequest: mk<T.OverlayRequest>(encS_OverlayRequest, (r, e) => decS_OverlayRequest(r, e, {})),
   SetOverlayGeometry: mk<T.SetOverlayGeometry>(encS_SetOverlayGeometry, (r, e) => decS_SetOverlayGeometry(r, e, {})),
   OverlayRigOptions: mk<T.OverlayRigOptions>(encS_OverlayRigOptions, (r, e) => decS_OverlayRigOptions(r, e, {})),

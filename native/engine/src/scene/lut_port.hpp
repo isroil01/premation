@@ -65,6 +65,14 @@ struct CubeLut {
 /// `readCubeLutParam(e)` (fromStoredLut(e.params.lut)).
 [[nodiscard]] std::optional<CubeLut> read_cube_lut_param(const Json& e);
 
+/// `fromStoredLut(raw)`: a stored table (size, size1d, data, domainMin,
+/// domainMax) → the LUT; nullopt when it does not parse.
+[[nodiscard]] std::optional<CubeLut> parse_stored_cube_lut(const Json& stored);
+
+/// AppTextureProvider.setCubeLut: the table as the slice strip the LUT shaders
+/// sample (n² × n for 3D, n × 1 for 1D), keyed `key`; nullopt when empty.
+[[nodiscard]] std::optional<TextureRequest> cube_lut_strip(const CubeLut& lut, std::string key);
+
 /// The texture requests MotionRendererBackend feeds for a layer's colour LUTs:
 /// `lut:<id>` when a per-channel LUT effect is enabled, `cubelut:<id>` for the
 /// first enabled Apply Color LUT whose table parses. Appended to `out`.
