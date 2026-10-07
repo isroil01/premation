@@ -51,9 +51,11 @@ function resolveAliases(value: unknown, aliases: ReadonlyMap<string, string>): u
   if (typeof out.opId === 'string') out.opId = aliases.get(out.opId) ?? out.opId;
   if (typeof out.prop === 'string') out.prop = resolvePathOpProp(out.prop, aliases);
   // Nested batches — `set_keyframes.keyframes[]`, `set_easing.targets[]` — each
-  // carry their own nodeId, so the walk has to go down.
+  // carry their own nodeId, so the walk has to go down. So do nested objects:
+  // `update_layer.matte.sourceId` names a layer one level in, and an
+  // unresolved handle there pointed the matte at nothing.
   for (const [k, v] of Object.entries(out)) {
-    if (Array.isArray(v)) out[k] = resolveAliases(v, aliases);
+    if (Array.isArray(v) || (v && typeof v === 'object')) out[k] = resolveAliases(v, aliases);
   }
   return out;
 }

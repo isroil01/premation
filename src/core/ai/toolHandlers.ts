@@ -1835,6 +1835,7 @@ const addPathOperatorHandler: AiTool['handler'] = async (input, ctx) => {
     amount?: number;
     detail?: number;
     wigglesPerSecond?: number;
+    id?: string;
   };
   if (!await ctx.scene.has(i.nodeId)) return fail((await unknownNode(ctx, i.nodeId)));
 
@@ -1856,6 +1857,7 @@ const addPathOperatorHandler: AiTool['handler'] = async (input, ctx) => {
     ...(i.detail !== undefined ? { detail: i.detail } : {}),
     ...(i.wigglesPerSecond !== undefined ? { wigglesPerSecond: Math.max(0, i.wigglesPerSecond) } : {}),
   });
+  bindAlias(ctx, i.id, opId);
 
   const chain = await pathOperators(ctx.engine, i.nodeId);
   return ok(

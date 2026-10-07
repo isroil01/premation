@@ -1,0 +1,11 @@
+{
+  "name": "@motion/author",
+  "version": "1.0.0",
+  "description": "Author mode: the scene-script a model writes, its coercion and deterministic compiler to ToolCall[], the caster linters as advisors, and the prompts. Pure: no network, no document.",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "sideEffects": false,
+  "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json", "test": "jest --config jest.config.cjs" },
+  "license": "MIT"
+}

@@ -64,6 +64,7 @@ module.exports = {
     '^@motion/technique-library$': '<rootDir>/packages/technique-library/src/index.ts',
     '^@motion/product-motion$': '<rootDir>/packages/product-motion/src/index.ts',
     '^@motion/caster$': '<rootDir>/packages/caster/src/index.ts',
+    '^@motion/author$': '<rootDir>/packages/author/src/index.ts',
     '^@motion/audio$': '<rootDir>/packages/audio/src/index.ts',
     '^@motion/engine-api$': '<rootDir>/packages/engine-api/src/index.ts',
     '^@core(.*)$': '<rootDir>/src/core$1',

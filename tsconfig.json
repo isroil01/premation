@@ -68,6 +68,7 @@
       "@motion/technique-library": ["./packages/technique-library/src/index.ts"],
       "@motion/product-motion": ["./packages/product-motion/src/index.ts"],
       "@motion/caster": ["./packages/caster/src/index.ts"],
+      "@motion/author": ["./packages/author/src/index.ts"],
       "@motion/audio": ["./packages/audio/src/index.ts"],
       "@motion/engine-api": ["./packages/engine-api/src/index.ts"]
     }

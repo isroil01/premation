@@ -1032,6 +1032,7 @@ export const addPathOperatorDef: AiToolDef = {
     required: ['nodeId', 'op'],
     properties: {
       nodeId: { type: 'string', description: 'ID of the shape layer.' },
+      id: OP_ALIAS_PROP,
       op: {
         type: 'string',
         enum: ['zigzag', 'pucker', 'puckerBloat', 'twist', 'roundCorners', 'offset', 'roughen', 'wiggleTransform'],

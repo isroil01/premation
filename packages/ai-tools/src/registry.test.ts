@@ -6,7 +6,7 @@
 
 import { ToolRegistry } from './registry';
 import { toOpenAiTools, toAnthropicTools, toGeminiDeclarations, toMcpToolList, stripUnsupported } from './emit';
-import { ALL_TOOL_DEFS, addRepeaterDef, setKeyframesDef } from './tools';
+import { ALL_TOOL_DEFS, addRepeaterDef, setKeyframesDef, updateLayerDef } from './tools';
 import { mutates } from './types';
 import type { AiTool, ToolContext, ToolResult } from './types';
 
@@ -124,6 +124,14 @@ describe('ToolRegistry.execute', () => {
     ]);
     const rep = await reg.execute('add_repeater', { nodeId: 'ring', opId: 'trim_a' }, aliased);
     expect(JSON.parse(rep.content)).toMatchObject({ nodeId: 'layer_7', opId: 'op_42' });
+  });
+
+  it('resolves a handle one object deep (update_layer.matte.sourceId)', async () => {
+    const reg = new ToolRegistry();
+    reg.register(echo(updateLayerDef));
+    const aliased = { aliases: new Map([['card', 'layer_1'], ['mask', 'layer_2']]) } as unknown as ToolContext;
+    const res = await reg.execute('update_layer', { nodeId: 'card', matte: { mode: 'alpha', sourceId: 'mask' } }, aliased);
+    expect(JSON.parse(res.content)).toEqual({ nodeId: 'layer_1', matte: { mode: 'alpha', sourceId: 'layer_2' } });
   });
 });
 

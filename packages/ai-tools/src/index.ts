@@ -69,3 +69,4 @@ export {
   stripUnsupported,
 } from './emit';
 export * from './tools';
+export { CRAFT_RULES, NEVER_RULES } from './craftRules';
