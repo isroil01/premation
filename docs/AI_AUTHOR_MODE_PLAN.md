@@ -245,9 +245,12 @@ Follow-ups:
   eval `src/core/ai/author/eval/authorEval.native.test.ts` (needs `AI_EVAL=1`,
   and `AI_EVAL_RECORD=1` + `ANTHROPIC_API_KEY` for its first run — no fixtures
   are committed yet).
-- **motion-back parity** (separate repository): `/ai/video` should accept
-  `model` and `aspect` and allowlist the same `FAL_VIDEO_MODELS`; until then
-  the server edition sends them and the gateway ignores them.
+- **motion-back parity**: done on motion-back's `native-core-ail2wg` branch
+  (`src/ai/media-generation.ts` `FAL_VIDEO_MODELS`, `GenerateVideoDto.model` /
+  `.aspect`). Until it is deployed, the server edition strips the two fields
+  and makes the default model's clip. Three lists must stay in step: the
+  package's `FAL_VIDEO_MODELS`, `electron/falVideoModels.ts` (tested against
+  it) and motion-back's table (not tested across repositories).
 - **Tune from the eval**: chunk size, token caps and `MAX_AUTHOR_ROUNDS` are
   first guesses; the eval's author-vs-library table is what should move them,
   and whether `authorModeDefault()` stays `author`.

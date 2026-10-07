@@ -1206,7 +1206,9 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  generateVideo: (body: { prompt: string; durationSec?: number }) =>
+  // `model` / `aspect`: motion-back's GenerateVideoDto allowlists the same
+  // fal models (motion-back src/ai/media-generation.ts FAL_VIDEO_MODELS).
+  generateVideo: (body: { prompt: string; durationSec?: number; model?: string; aspect?: 'landscape' | 'portrait' | 'square' }) =>
     request<{ ok: boolean; base64?: string; mime?: string; extension?: string; message?: string }>('/ai/video', {
       method: 'POST',
       body: JSON.stringify(body),
