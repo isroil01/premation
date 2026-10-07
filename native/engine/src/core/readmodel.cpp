@@ -492,6 +492,7 @@ api::CompSettings comp_settings(const Document& d, std::string_view comp) {
   s.global_light_angle = num("globalLightAngle", 90);
   s.global_light_altitude = num("globalLightAltitude", 45);
   s.drop_frame = c.at("dropFrame").is_bool() && c.at("dropFrame").b();
+  s.frame_blending = !(c.at("frameBlending").is_bool() && !c.at("frameBlending").b());  // absent = on
   s.preserve_frame_rate = c.at("preserveFrameRate").is_bool() && c.at("preserveFrameRate").b();
   s.preserve_resolution = c.at("preserveResolution").is_bool() && c.at("preserveResolution").b();
   Json world = Json::object();

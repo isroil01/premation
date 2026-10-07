@@ -1541,7 +1541,7 @@ void Walk::build_node(const doc::Node& n) {
   if (layerKind == LayerKind::video) {
     // Frame blending: the source frames bracketing the (retimed) source time, on
     // the source's own rate (Interpret Footage conform, then the probe, then the comp).
-    if (const auto cfg = doc::read_node_layer_time(n); cfg && (cfg->frameBlend == "mix" || cfg->frameBlend == "pixelMotion")) {
+    if (const auto cfg = doc::read_node_layer_time(n); comp_.frameBlending && cfg && (cfg->frameBlend == "mix" || cfg->frameBlend == "pixelMotion")) {
       double sourceFps = fps_;
       if (base.assetId) {
         if (const Json* asset = doc::find_asset(d_, *base.assetId)) {
@@ -2164,6 +2164,7 @@ SnapshotComp snapshot_comp_of(const Document& d, std::string_view comp) {
   s.height = jnum(rec->at("height")).value_or(1080);
   if (rec->at("background").is_string()) s.background = rec->at("background").str();
   s.transparent = rec->at("transparent").is_bool() && rec->at("transparent").b();
+  s.frameBlending = !(rec->at("frameBlending").is_bool() && !rec->at("frameBlending").b());
   s.globalLightAngle = jnum(rec->at("globalLightAngle")).value_or(90);
   s.globalLightAltitude = jnum(rec->at("globalLightAltitude")).value_or(45);
   if (auto ds = jnum(rec->at("durationSeconds"))) s.durationSeconds = ds;

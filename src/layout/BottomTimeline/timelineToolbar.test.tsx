@@ -237,7 +237,7 @@ describe('the shed ladder', () => {
       expect(within(left).getByRole('button', { name: 'Toggle Graph Editor' })).toBeInTheDocument();
       expect(within(left).getByRole('button', { name: 'Snap in timeline' })).toBeInTheDocument();
       const more = within(left).getByRole('button', { name: 'More timeline tools' });
-      expect(within(left).getAllByRole('button')).toHaveLength(7); // timecode, snap, shy, motion blur, draft 3D, graph editor, ⋯
+      expect(within(left).getAllByRole('button')).toHaveLength(8); // timecode, snap, shy, frame blending, motion blur, auto-key, graph editor, ⋯
       // The navigator never leaves its own column.
       expect(within(navCol(t)).getByRole('scrollbar', { name: 'Time navigator' })).toBeInTheDocument();
 

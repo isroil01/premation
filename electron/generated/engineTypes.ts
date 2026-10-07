@@ -1571,6 +1571,8 @@ export interface CompSettings {
   pristine?: boolean;
   /** B4 — the Essential Properties the composition PUBLISHES to the layers that place it (AE Master Properties), as stored on its root (`__essentialProps`: `<layerId>/<editorProp>` keys), in publish order. Empty = none published (an instance then lists every overridable property of the comp's top layers). Read-only here: not in CompSettingsPatch. */
   essentialProps: string[];
+  /** AE's Enable Frame Blending comp switch: off = no layer of this composition frame-blends, whatever its own switch says. Absent in a stored comp = on. */
+  frameBlending: boolean;
 }
 
 export interface CompSettingsPatch {
@@ -1602,6 +1604,7 @@ export interface CompSettingsPatch {
   backgroundPaint?: string;
   /** B3 — true marks the composition as the empty project's placeholder (AE's "no compositions" state: New Composition adopts it, the start screen treats the project as empty); false clears the mark. Any other settings change clears it too. */
   pristine?: boolean;
+  frameBlending?: boolean;
 }
 
 /** Create a composition. `fromItems` makes it from footage (size/duration/rate from the first item, one layer per item). */

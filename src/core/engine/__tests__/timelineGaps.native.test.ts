@@ -120,6 +120,18 @@ describe('transitions', () => {
   });
 });
 
+describe('comp switches', () => {
+  it('Enable Frame Blending is a composition setting, on unless turned off', async () => {
+    const read = async (): Promise<boolean> => {
+      const doc = await h.query({ type: 'getDocument', includeProperties: false, includeKeyframes: false });
+      return doc.comps.find((c) => c.id === s.comp)!.settings.frameBlending;
+    };
+    expect(await read()).toBe(true);
+    await exact({ type: 'setCompositionSettings', comp: s.comp, patch: { frameBlending: false } });
+    expect(await read()).toBe(false);
+  });
+});
+
 describe('markers, work area, freeze', () => {
   it('stores a marker colour token and reports it', async () => {
     const token = 'var(--color-timeline-marker-green)';

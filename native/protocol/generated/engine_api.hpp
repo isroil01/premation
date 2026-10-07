@@ -2014,6 +2014,7 @@ struct CompSettingsPatch {
   std::optional<std::string> template_fields;
   std::optional<std::string> background_paint;
   std::optional<bool> pristine;
+  std::optional<bool> frame_blending;
   bool operator==(const CompSettingsPatch&) const = default;
 };
 
@@ -4491,6 +4492,7 @@ struct CompSettings {
   std::optional<std::string> background_paint;
   std::optional<bool> pristine;
   std::vector<std::string> essential_props;
+  bool frame_blending = false;
   bool operator==(const CompSettings&) const = default;
 };
 

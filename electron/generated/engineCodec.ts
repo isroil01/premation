@@ -2977,6 +2977,7 @@ function encS_CompSettings(w: Writer, v: T.CompSettings): void {
   if (v.templateFields !== undefined) { w.varint(178); w.str(v.templateFields); }
   if (v.backgroundPaint !== undefined) { w.varint(186); w.str(v.backgroundPaint); }
   if (v.pristine !== undefined) { w.varint(192); w.bool(v.pristine); }
+  w.varint(208); w.bool(v.frameBlending);
   { const a = v.essentialProps; for (let i = 0; i < a.length; i++) { w.varint(1002); w.str(a[i]!); } }
 }
 function decS_CompSettings(r: Reader, end: number, o: any): T.CompSettings {
@@ -2998,6 +2999,7 @@ function decS_CompSettings(r: Reader, end: number, o: any): T.CompSettings {
   let h_dropFrame = false;
   let h_preserveFrameRate = false;
   let h_preserveResolution = false;
+  let h_frameBlending = false;
   let v_name: string | undefined;
   let v_width: number | undefined;
   let v_height: number | undefined;
@@ -3021,6 +3023,7 @@ function decS_CompSettings(r: Reader, end: number, o: any): T.CompSettings {
   let v_templateFields: string | undefined;
   let v_backgroundPaint: string | undefined;
   let v_pristine: boolean | undefined;
+  let v_frameBlending: boolean | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -3047,6 +3050,7 @@ function decS_CompSettings(r: Reader, end: number, o: any): T.CompSettings {
       case 178: v_templateFields = r.str(); break;
       case 186: v_backgroundPaint = r.str(); break;
       case 192: v_pristine = r.bool(); break;
+      case 208: v_frameBlending = r.bool(); h_frameBlending = true; break;
       case 1002: l_essentialProps.push(r.str()); break;
       default: r.skip(key);
     }
@@ -3069,6 +3073,7 @@ function decS_CompSettings(r: Reader, end: number, o: any): T.CompSettings {
   if (!h_dropFrame) throw new DecodeError('CompSettings.dropFrame: missing', 'missingField');
   if (!h_preserveFrameRate) throw new DecodeError('CompSettings.preserveFrameRate: missing', 'missingField');
   if (!h_preserveResolution) throw new DecodeError('CompSettings.preserveResolution: missing', 'missingField');
+  if (!h_frameBlending) throw new DecodeError('CompSettings.frameBlending: missing', 'missingField');
   o.name = v_name;
   o.width = v_width;
   o.height = v_height;
@@ -3092,6 +3097,7 @@ function decS_CompSettings(r: Reader, end: number, o: any): T.CompSettings {
   if (v_templateFields !== undefined) o.templateFields = v_templateFields;
   if (v_backgroundPaint !== undefined) o.backgroundPaint = v_backgroundPaint;
   if (v_pristine !== undefined) o.pristine = v_pristine;
+  o.frameBlending = v_frameBlending;
   o.essentialProps = l_essentialProps;
   return o;
 }
@@ -3120,6 +3126,7 @@ function encS_CompSettingsPatch(w: Writer, v: T.CompSettingsPatch): void {
   if (v.templateFields !== undefined) { w.varint(178); w.str(v.templateFields); }
   if (v.backgroundPaint !== undefined) { w.varint(186); w.str(v.backgroundPaint); }
   if (v.pristine !== undefined) { w.varint(192); w.bool(v.pristine); }
+  if (v.frameBlending !== undefined) { w.varint(208); w.bool(v.frameBlending); }
 }
 function decS_CompSettingsPatch(r: Reader, end: number, o: any): T.CompSettingsPatch {
   let v_name: string | undefined;
@@ -3146,6 +3153,7 @@ function decS_CompSettingsPatch(r: Reader, end: number, o: any): T.CompSettingsP
   let v_templateFields: string | undefined;
   let v_backgroundPaint: string | undefined;
   let v_pristine: boolean | undefined;
+  let v_frameBlending: boolean | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -3173,6 +3181,7 @@ function decS_CompSettingsPatch(r: Reader, end: number, o: any): T.CompSettingsP
       case 178: v_templateFields = r.str(); break;
       case 186: v_backgroundPaint = r.str(); break;
       case 192: v_pristine = r.bool(); break;
+      case 208: v_frameBlending = r.bool(); break;
       default: r.skip(key);
     }
   }
@@ -3201,6 +3210,7 @@ function decS_CompSettingsPatch(r: Reader, end: number, o: any): T.CompSettingsP
   if (v_templateFields !== undefined) o.templateFields = v_templateFields;
   if (v_backgroundPaint !== undefined) o.backgroundPaint = v_backgroundPaint;
   if (v_pristine !== undefined) o.pristine = v_pristine;
+  if (v_frameBlending !== undefined) o.frameBlending = v_frameBlending;
   return o;
 }
 function encS_CreateComposition(w: Writer, v: T.CreateComposition): void {

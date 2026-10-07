@@ -4797,6 +4797,7 @@ void encode(wire::Writer& w, const CompSettingsPatch& v) {
   if (v.template_fields.has_value()) { w.varint(178U); w.str(*v.template_fields); }
   if (v.background_paint.has_value()) { w.varint(186U); w.str(*v.background_paint); }
   if (v.pristine.has_value()) { w.varint(192U); w.boolean(*v.pristine); }
+  if (v.frame_blending.has_value()) { w.varint(208U); w.boolean(*v.frame_blending); }
 }
 
 Status decode(wire::Reader& r, CompSettingsPatch& out) {
@@ -4946,6 +4947,12 @@ Status decode(wire::Reader& r, CompSettingsPatch& out) {
         bool e = false;
         if (!r.boolean(e)) return Status::truncated;
         out.pristine = std::move(e);
+        break;
+      }
+      case 208U: {
+        bool e = false;
+        if (!r.boolean(e)) return Status::truncated;
+        out.frame_blending = std::move(e);
         break;
       }
       default:
@@ -19906,6 +19913,7 @@ void encode(wire::Writer& w, const CompSettings& v) {
   if (v.template_fields.has_value()) { w.varint(178U); w.str(*v.template_fields); }
   if (v.background_paint.has_value()) { w.varint(186U); w.str(*v.background_paint); }
   if (v.pristine.has_value()) { w.varint(192U); w.boolean(*v.pristine); }
+  w.varint(208U); w.boolean(v.frame_blending);
   for (const auto& e : v.essential_props) { w.varint(1002U); w.str(e); }
 }
 
@@ -19927,6 +19935,7 @@ Status decode(wire::Reader& r, CompSettings& out) {
   bool has_drop_frame = false;
   bool has_preserve_frame_rate = false;
   bool has_preserve_resolution = false;
+  bool has_frame_blending = false;
   while (!r.at_end()) {
     std::uint64_t key = 0;
     if (!r.varint(key)) return Status::truncated;
@@ -20052,6 +20061,11 @@ Status decode(wire::Reader& r, CompSettings& out) {
         out.pristine = std::move(e);
         break;
       }
+      case 208U: {
+        if (!r.boolean(out.frame_blending)) return Status::truncated;
+        has_frame_blending = true;
+        break;
+      }
       case 1002U: {
         auto& e = out.essential_props.emplace_back();
         if (!r.str(e)) return Status::truncated;
@@ -20079,6 +20093,7 @@ Status decode(wire::Reader& r, CompSettings& out) {
   if (!has_drop_frame) return Status::missing_field;
   if (!has_preserve_frame_rate) return Status::missing_field;
   if (!has_preserve_resolution) return Status::missing_field;
+  if (!has_frame_blending) return Status::missing_field;
   return Status::ok;
 }
 

@@ -1,6 +1,7 @@
 /**
  * The composition switches in the timeline header (2026-10-07): Hide Shy
- * Layers and Enable Motion Blur — AE's two — and Auto-Keyframe, the timeline's
+ * Layers, Enable Frame Blending and Enable Motion Blur — AE's three — and
+ * Auto-Keyframe, the timeline's
  * recording mode (AE keeps it in the Timeline panel menu; here it needs a
  * lit state you can see while you drag, so it is a switch). Each is a toggle
  * lit while on.
@@ -14,7 +15,7 @@ import { cn } from '@utils/cn';
 import { useUIStore } from '@stores/uiStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { documentMirror } from '@stores/documentMirror';
-import { activeCompIdNow } from '@hooks/useMirror';
+import { activeCompIdNow, useMirrorSelect } from '@hooks/useMirror';
 import { useActiveMotionBlur } from '@hooks/useMirrorFrame';
 import { edit } from '@core/engine/uiEdits';
 import styles from './BottomTimeline.module.css';
@@ -24,6 +25,16 @@ export function TimelineCompSwitches(): JSX.Element {
   const setGlobalShy = useUIStore((s) => s.setGlobalShy);
   const autoKeyframe = usePreferenceStore((s) => s.timelineAutoKeyframe);
   const motionBlur = useActiveMotionBlur().enabled === true;
+  // The comp's Enable Frame Blending (CompSettings.frameBlending; absent = on).
+  const frameBlending = useMirrorSelect(['doc'], (m) => {
+    const comp = activeCompIdNow();
+    return comp ? m.comp(comp)?.settings.frameBlending !== false : true;
+  });
+  const setFrameBlending = (on: boolean): void => {
+    const comp = activeCompIdNow();
+    if (!comp) return;
+    void edit(on ? 'Enable Frame Blending' : 'Disable Frame Blending', { type: 'setCompositionSettings', comp, patch: { frameBlending: on } });
+  };
   const setMotionBlur = (on: boolean): void => {
     // `setCompositionSettings{motionBlur}` (B4), as the Preview menu writes it.
     const comp = activeCompIdNow();
@@ -42,6 +53,16 @@ export function TimelineCompSwitches(): JSX.Element {
         onClick={() => setGlobalShy(!globalShy)}
       >
         <Icon name="shy" size="sm" />
+      </button>
+      <button
+        type="button"
+        className={cn(styles.compSwitch, frameBlending && styles.compSwitchOn)}
+        aria-pressed={frameBlending}
+        aria-label="Enable Frame Blending"
+        title={frameBlending ? 'Frame blending on for layers with their Frame Blending switch set — click to turn off' : 'Enable frame blending for all layers with the Frame Blending switch set'}
+        onClick={() => setFrameBlending(!frameBlending)}
+      >
+        <Icon name="video" size="sm" />
       </button>
       <button
         type="button"
