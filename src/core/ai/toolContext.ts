@@ -134,6 +134,27 @@ export const CAMERA_PROPS = [
  */
 export const GRADIENT_FILL_PROPS = ['fillAngle', 'fillCenterX', 'fillCenterY', 'fillRadius'] as const;
 
+/**
+ * Layer tracks the renderer samples beyond the transform core — an EXPLICIT
+ * list, deliberately not derived from the catalog.
+ *
+ * The obvious derivation ("every STATIC_PROPERTY_META row that is
+ * keyframeable") is no filter at all: the catalog carries no
+ * `keyframeable: false` entry, so it would admit `fontFamily`-adjacent rows,
+ * material switches and audio levels alike, and the gate would stop meaning
+ * "this animates". Each name here is one the native suite
+ * (`animatableCatalog.native.test.ts`) keys on a real layer of the kind that
+ * draws it and reads back as animated, so the list cannot claim a track the
+ * engine does not address.
+ */
+export const SAMPLED_LAYER_PROPS = [
+  'anchorX', 'anchorY',
+  'skew', 'skewAxis',
+  'fillOpacity',
+  'strokeWidth', 'strokeOpacity', 'strokeDashOffset',
+  'letterSpacing',
+] as const;
+
 const isPrefixed = (prop: string): boolean =>
   // 'pathop.' LOWERCASE: that is what `pathOpPropPath` writes and what the
   // renderer samples. This gate said `pathOp.` (camelCase) — a prefix no real
@@ -173,6 +194,7 @@ export function isAnimatableProp(prop: string): boolean {
     (SPECIAL_PROPS as readonly string[]).includes(prop) ||
     (CAMERA_PROPS as readonly string[]).includes(prop) ||
     (GRADIENT_FILL_PROPS as readonly string[]).includes(prop) ||
+    (SAMPLED_LAYER_PROPS as readonly string[]).includes(prop) ||
     isPrefixed(prop) ||
     isPuppetScalar(prop) ||
     isSkeletonScalar(prop)

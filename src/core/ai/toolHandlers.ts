@@ -69,7 +69,7 @@ import {
   recipePathMorph,
 } from './recipes';
 import { selectScene } from './sceneWindow';
-import { TRANSFORM_PROPS, THREE_D_PROPS, SPECIAL_PROPS, CAMERA_PROPS, isAnimatableProp } from './toolContext';
+import { TRANSFORM_PROPS, THREE_D_PROPS, SPECIAL_PROPS, CAMERA_PROPS, SAMPLED_LAYER_PROPS, isAnimatableProp } from './toolContext';
 import { readMatte } from '@core/effects/matte';
 import { CRAFT_HANDLERS } from './craftHandlers';
 import { mapSeq, filterSeq } from './asyncList';
@@ -78,11 +78,13 @@ import { activePlayheadSeconds, trackMatteCommand } from '@core/engine/trackWrit
 import { componentOfType, fieldWrite, memberWrite } from '@core/engine/propRefs';
 import { maskToBezier } from '@core/engine/props';
 import {
-  addMaskFromPath, addPathOperator, addTextAnimatorGroup, convertSvgLayer, ensurePathOperator, importAssetBytes,
+  addMaskFromPath, addPathOperator, addTextAnimatorGroup, applyLayerTiming, convertSvgLayer, ensurePathOperator, importAssetBytes,
   insertAssetLayer, insertModelPlaceholder, insertSvgMarkupLayer, patchLayerStyle, patchPathOperator, patchTextAnimator,
-  pathOperators, textAnimators,
+  pathOperators, textAnimators, type LayerTimingSeconds,
 } from './hostWrites';
-import type { Command, PropertyWrite } from '@motion/engine-api';
+import { flicksToSeconds, type Command, type PropertyWrite } from '@motion/engine-api';
+import { defaultStroke, normalizeStroke } from '@core/paint/stroke';
+import { mirrorStrokes } from '@core/mirror/paintFields';
 
 const def = (name: string) => {
   const d = ALL_TOOL_DEFS.find((t) => t.name === name);
@@ -205,6 +207,7 @@ const listCapabilities: AiTool['handler'] = async (input, ctx) => {
     payload.animatableProps = {
       transform: TRANSFORM_PROPS,
       threeD: { props: THREE_D_PROPS, note: "Requires the layer's 3D switch — set it via update_layer { threeD: true }." },
+      layer: { props: SAMPLED_LAYER_PROPS, note: 'Anchor, skew, fill/stroke opacity, stroke width and dash offset, text tracking.' },
       effects: 'effect.<effectId> — the id returned by add_effect',
       textAnimators: 'ta.<index>.<param> — index from text_animator',
       special: SPECIAL_PROPS,
@@ -398,6 +401,9 @@ const updateLayer: AiTool['handler'] = async (input, ctx) => {
     blendMode?: string;
     matte?: { mode: string; inverted?: boolean; sourceId?: string } | string;
     removeMatte?: boolean;
+    stroke?: string;
+    strokeWidth?: number;
+    strokeOpacity?: number;
   };
   if (!await ctx.scene.has(i.nodeId)) return fail((await unknownNode(ctx, i.nodeId)));
 
@@ -489,6 +495,10 @@ const updateLayer: AiTool['handler'] = async (input, ctx) => {
     // an animation track — so a technique that later animated z inherited a
     // keyframe it did not author and started from the wrong place.
     'z', 'rotationX', 'rotationY',
+    // Transform extras the catalog addresses as numbers (STATIC_PROPERTY_META):
+    // a pivot that is not the centre, a slant, a fill that fades apart from
+    // its stroke. `setProp` refuses one the layer's tree does not carry.
+    'anchorX', 'anchorY', 'skew', 'skewAxis', 'fillOpacity',
     // Camera. These were keyframeable and NOT settable, which meant every
     // library-emitted camera ran on the engine's default lens — `emitCamera`
     // picked one and its `update_layer` call was rejected for an unknown
@@ -513,6 +523,33 @@ const updateLayer: AiTool['handler'] = async (input, ctx) => {
       );
     }
     if (await ctx.scene.setProp(i.nodeId, map[key] ?? key, i[key])) applied.push(key);
+  }
+
+  // Stroke 1 of the layer's stroke stack (`layer/strokes`, Contents ▸ Stroke),
+  // patched whole as the Inspector's stroke rows patch it: created from the
+  // default when the layer has none. Text strokes live elsewhere, and a kind
+  // with no shape path has no outline to stroke — both refused, not dropped.
+  const strokePatch: { color?: string; width?: number; opacity?: number } = {};
+  if (typeof i.stroke === 'string') strokePatch.color = i.stroke;
+  if (typeof i.strokeWidth === 'number') strokePatch.width = Math.max(0, i.strokeWidth);
+  if (typeof i.strokeOpacity === 'number') strokePatch.opacity = Math.max(0, Math.min(100, i.strokeOpacity)) / 100;
+  if (Object.keys(strokePatch).length > 0 && node) {
+    const kind = (await ctx.scene.get(i.nodeId))?.kind ?? 'shape';
+    if (NO_PATH_PIPELINE.has(kind)) {
+      return fail(
+        `stroke / strokeWidth / strokeOpacity apply to shape and solid layers; '${i.nodeId}' is a ${kind}. ` +
+          (kind === 'text' ? 'Give type an outline with a text_animator or an effect (stroke) instead.' : 'Stroke a shape layer instead.'),
+      );
+    }
+    const stack = mirrorStrokes(documentMirror(), i.nodeId);
+    const next = stack.length > 0 ? [...stack] : [defaultStroke()];
+    next[0] = normalizeStroke({ ...(next[0] ?? defaultStroke()), ...strokePatch, enabled: true });
+    await ctx.engine.apply([{
+      type: 'setProperty',
+      prop: { layer: i.nodeId, path: 'layer/strokes' },
+      value: { kind: 'json', value: JSON.stringify(next) },
+    } as Command]);
+    applied.push(...Object.keys(strokePatch).map((k) => (k === 'color' ? 'stroke' : `stroke${k[0]!.toUpperCase()}${k.slice(1)}`)));
   }
 
   if (!applied.length) return fail('Nothing to update — pass at least one property besides nodeId.');
@@ -729,6 +766,45 @@ const setExpression: AiTool['handler'] = async (input, ctx) => {
     );
   }
   return ok(`Applied expression to ${nodeId}.${prop}. It now overrides any keyframed value.`);
+};
+
+/**
+ * Bars, in composition seconds — one `setLayerTiming` for the whole batch.
+ *
+ * Validated against the bar as it stands, so `outSec` alone may shorten a
+ * layer and `inSec` alone may delay it; what is refused is a bar that would
+ * end at or before it starts. Partial success: the valid items go through.
+ */
+const setLayerTiming: AiTool['handler'] = async (input, ctx) => {
+  const { items } = input as { items: LayerTimingSeconds[] };
+  const bad: string[] = [];
+  const good: LayerTimingSeconds[] = [];
+  for (const [n, it] of items.entries()) {
+    if (!await ctx.scene.has(it.nodeId)) { bad.push(`items[${n}]: ${await unknownNode(ctx, it.nodeId)}`); continue; }
+    if (it.startSec === undefined && it.inSec === undefined && it.outSec === undefined) {
+      bad.push(`items[${n}]: nothing to set on ${it.nodeId} — give inSec, outSec or startSec.`);
+      continue;
+    }
+    const t = layerInfo(it.nodeId)?.timing;
+    const inSec = it.inSec ?? (t ? flicksToSeconds(t.inPoint) : 0);
+    const outSec = it.outSec ?? (t ? flicksToSeconds(t.outPoint) : Number.POSITIVE_INFINITY);
+    if (outSec <= inSec) {
+      bad.push(
+        `items[${n}]: ${it.nodeId} would end (${outSec}s) at or before it starts (${inSec}s) — ` +
+          `outSec must be after inSec.`,
+      );
+      continue;
+    }
+    good.push(it);
+  }
+  const applied = good.length > 0 ? await applyLayerTiming(ctx.engine, good) : 0;
+  const summary = good
+    .slice(0, 6)
+    .map((g) => `${g.nodeId} ${g.inSec ?? '…'}s→${g.outSec ?? '…'}s`)
+    .join(', ');
+  const done = `Set the bar of ${applied} layer(s)${summary ? `: ${summary}${good.length > 6 ? ', …' : ''}` : ''}.`;
+  if (bad.length) return { ok: false, content: `${done} Rejected:\n- ${bad.join('\n- ')}` };
+  return ok(`${done} Outside its bar a layer does not render; keyframes keep their composition times.`, { applied });
 };
 
 // ── Write: effects + text ─────────────────────────────────────────
@@ -1552,7 +1628,7 @@ async function shapeDescendants(ctx: ToolContext, rootId: string): Promise<strin
 }
 
 const setTrimPathHandler: AiTool['handler'] = async (input, ctx) => {
-  const i = input as { nodeId: string; start?: number; end?: number; offset?: number; convertSvg?: boolean };
+  const i = input as { nodeId: string; id?: string; start?: number; end?: number; offset?: number; convertSvg?: boolean };
   if (!await ctx.scene.has(i.nodeId)) return fail((await unknownNode(ctx, i.nodeId)));
   if (i.start === undefined && i.end === undefined && i.offset === undefined) {
     return fail(`Nothing to set — give at least one of start, end or offset (percentages, 0..100).`);
@@ -1606,6 +1682,8 @@ const setTrimPathHandler: AiTool['handler'] = async (input, ctx) => {
   // ordered stack the deformers live in — so this creates the entry if the
   // layer has none and then patches it by id.
   const opId = await applyTrim(ctx, i.nodeId, i);
+  // The caller's handle for `pathop.<handle>.…` later in the same batch.
+  bindAlias(ctx, i.id, opId);
   const t = (await pathOperators(ctx.engine, i.nodeId)).find((o) => o.id === opId)?.params;
   return ok(
     `Trim path on '${i.nodeId}' is now start ${t?.start ?? 0}%, end ${t?.end ?? 100}%, offset ${t?.offset ?? 0}%. ` +
@@ -1642,6 +1720,7 @@ const addRepeaterHandler: AiTool['handler'] = async (input, ctx) => {
     startOpacity?: number;
     endOpacity?: number;
     opId?: string;
+    id?: string;
   };
   if (!await ctx.scene.has(i.nodeId)) return fail((await unknownNode(ctx, i.nodeId)));
 
@@ -1709,6 +1788,7 @@ const addRepeaterHandler: AiTool['handler'] = async (input, ctx) => {
     ...(i.anchorX !== undefined ? { anchorX: i.anchorX } : {}),
     ...(i.anchorY !== undefined ? { anchorY: i.anchorY } : {}),
   });
+  bindAlias(ctx, i.id, repOpId);
 
   const closes = Math.abs(copies * (i.rotation ?? 0) - 360) < 1;
   const total = repeaters.reduce((n, o) => n * Math.max(1, Math.round(o.copies ?? 1)), copies);
@@ -1950,7 +2030,7 @@ const addPathMorph: AiTool['handler'] = async (input, ctx) => {
  */
 export const ENGINE_ROUTED_TOOLS: ReadonlySet<string> = new Set([
   'create_layer', 'delete_layer', 'reparent_layer', 'update_layer',
-  'set_keyframes', 'remove_keyframes', 'set_easing', 'set_expression',
+  'set_keyframes', 'remove_keyframes', 'set_easing', 'set_expression', 'set_layer_timing',
   'add_effect', 'update_effect', 'update_effect_param', 'update_composition', 'apply_preset',
   'set_spring', 'set_motion_blur', 'create_precomp', 'set_time_remap', 'set_light', 'set_shadow_stack',
   'create_puppet_rig', 'set_puppet_pin_keyframes', 'pose_skeleton',
@@ -1997,6 +2077,7 @@ const HANDLERS: Record<string, AiTool['handler']> = {
   remove_keyframes: removeKeyframes,
   set_easing: setEasing,
   set_expression: setExpression,
+  set_layer_timing: setLayerTiming,
   add_effect: addEffectHandler,
   update_effect: updateEffectHandler,
   text_animator: textAnimator,

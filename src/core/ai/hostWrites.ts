@@ -13,7 +13,7 @@
  */
 
 import { AiEngineError, type AiEngineSession } from '@motion/ai-tools';
-import type { BezierPath, Command, MaskMode as ApiMaskMode, PropertyInfo, PropertyWrite, Value } from '@motion/engine-api';
+import { secondsToFlicks, type BezierPath, type Command, type MaskMode as ApiMaskMode, type PropertyInfo, type PropertyWrite, type Value } from '@motion/engine-api';
 import { pathOpPropPath, type PathOpType } from '@core/scene/pathOps';
 import { layerStyleEffectId, LAYER_STYLE_COLOR_PARAMS, LAYER_STYLE_NUMBER_PARAMS, type LayerStyles } from '@core/effects/layerStyles';
 import { effectPropPath, parseColorChannels } from '@core/effects/effects';
@@ -450,4 +450,37 @@ export async function insertModelPlaceholder(session: AiEngineSession, name: str
   const b = new FragmentBuilder({ idPrefix: 'ai' });
   b.addChild(null, node);
   return pasteFragment(session, comp, b.build());
+}
+
+// ── Layer bars ───────────────────────────────────────────────────────
+
+/** One layer's bar, COMPOSITION seconds (`set_layer_timing`'s item). */
+export interface LayerTimingSeconds {
+  nodeId: string;
+  /** Comp time at which the layer's source time 0 plays (AE Start Time). */
+  startSec?: number;
+  /** Comp time the bar starts. */
+  inSec?: number;
+  /** Comp time the bar ends. */
+  outSec?: number;
+}
+
+/**
+ * Bars as ONE absolute `setLayerTiming` (the timeline's own trim / move
+ * primitive, ENGINE_API.md §3.1), seconds → flicks. Fields left out stay as
+ * they are. Resolves to the number of layers the command carried; zero items
+ * sends nothing.
+ */
+export async function applyLayerTiming(session: AiEngineSession, items: readonly LayerTimingSeconds[]): Promise<number> {
+  const patches = items
+    .map((i) => ({
+      layer: i.nodeId,
+      ...(i.startSec !== undefined ? { startTime: secondsToFlicks(i.startSec) } : {}),
+      ...(i.inSec !== undefined ? { inPoint: secondsToFlicks(i.inSec) } : {}),
+      ...(i.outSec !== undefined ? { outPoint: secondsToFlicks(i.outSec) } : {}),
+    }))
+    .filter((p) => Object.keys(p).length > 1);
+  if (patches.length === 0) return 0;
+  await session.apply([{ type: 'setLayerTiming', items: patches } as Command]);
+  return patches.length;
 }

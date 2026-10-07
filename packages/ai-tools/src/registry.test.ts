@@ -6,7 +6,7 @@
 
 import { ToolRegistry } from './registry';
 import { toOpenAiTools, toAnthropicTools, toGeminiDeclarations, toMcpToolList, stripUnsupported } from './emit';
-import { ALL_TOOL_DEFS, setKeyframesDef } from './tools';
+import { ALL_TOOL_DEFS, addRepeaterDef, setKeyframesDef } from './tools';
 import { mutates } from './types';
 import type { AiTool, ToolContext, ToolResult } from './types';
 
@@ -107,6 +107,24 @@ describe('ToolRegistry.execute', () => {
     reg.register(echo(setKeyframesDef));
     expect(() => reg.register(echo(setKeyframesDef))).toThrow(/Duplicate/);
   });
+
+  it('rewrites operator handles inside track paths and opIds, and leaves real ids alone', async () => {
+    const reg = new ToolRegistry();
+    reg.register(echo(setKeyframesDef));
+    reg.register(echo(addRepeaterDef));
+    const aliased = { aliases: new Map([['ring', 'layer_7'], ['trim_a', 'op_42']]) } as unknown as ToolContext;
+    const kf = await reg.execute('set_keyframes', { keyframes: [
+      { nodeId: 'ring', prop: 'pathop.trim_a.end', t: 0, value: 0 },
+      { nodeId: 'ring', prop: 'pathop.op_9.end', t: 1, value: 100 },
+      { nodeId: 'ring', prop: 'opacity', t: 1, value: 100 },
+    ] }, aliased);
+    const out = JSON.parse(kf.content) as { keyframes: { nodeId: string; prop: string }[] };
+    expect(out.keyframes.map((k) => [k.nodeId, k.prop])).toEqual([
+      ['layer_7', 'pathop.op_42.end'], ['layer_7', 'pathop.op_9.end'], ['layer_7', 'opacity'],
+    ]);
+    const rep = await reg.execute('add_repeater', { nodeId: 'ring', opId: 'trim_a' }, aliased);
+    expect(JSON.parse(rep.content)).toMatchObject({ nodeId: 'layer_7', opId: 'op_42' });
+  });
 });
 
 describe('emitters', () => {
@@ -170,9 +188,11 @@ describe('the tool surface itself', () => {
     // 62 → 61: `set_text_on_path` removed. Nothing in the repository reads the
     // keys it wrote, so it spent a turn, reported success and changed nothing —
     // the budget above is exactly why a tool that cannot work is not free.
-    expect(ALL_TOOL_DEFS).toHaveLength(65);
+    // 65 → 66: `set_layer_timing`. Without it no layer could start or end, so
+    // an authored beat could not own its slice of the timeline.
+    expect(ALL_TOOL_DEFS).toHaveLength(66);
     expect(ALL_TOOL_DEFS.filter((t) => t.kind === 'read')).toHaveLength(8);
-    expect(ALL_TOOL_DEFS.filter((t) => t.kind === 'write')).toHaveLength(41);
+    expect(ALL_TOOL_DEFS.filter((t) => t.kind === 'write')).toHaveLength(42);
     expect(ALL_TOOL_DEFS.filter((t) => t.kind === 'compose')).toHaveLength(16);
   });
 
@@ -197,7 +217,7 @@ describe('the tool surface itself', () => {
     // 'write' silently drops the compose tools — and it was a literal 'write'
     // test that decided which calls appear in the user's pending-changes list.
     const mutating = ALL_TOOL_DEFS.filter((t) => mutates(t.kind));
-    expect(mutating).toHaveLength(57);
+    expect(mutating).toHaveLength(58);
     expect(mutating.map((t) => t.name)).toContain('add_title');
     expect(mutating.map((t) => t.name)).toContain('set_spring');
   });

@@ -108,6 +108,7 @@ const TOOL_ACTIVITY: Record<string, string> = {
   set_time_remap: 'Retiming',
   set_expression: 'Writing expressions',
   set_motion_blur: 'Setting the shutter',
+  set_layer_timing: 'Timing the beats',
 
   // ── Look ──
   add_effect: 'Applying effects',

@@ -23,6 +23,14 @@ const NODE_REF_FIELDS = [
 ] as const;
 const NODE_REF_ARRAY_FIELDS = ['nodeIds', 'layerIds'] as const;
 
+/** `pathop.<handle>.<param>` with the handle replaced by its real operator id (unchanged otherwise). */
+export function resolvePathOpProp(prop: string, aliases: ReadonlyMap<string, string>): string {
+  const m = /^pathop\.([^.]+)\.(.+)$/.exec(prop);
+  if (!m) return prop;
+  const real = aliases.get(m[1]!);
+  return real ? `pathop.${real}.${m[2]!}` : prop;
+}
+
 /** Rewrite alias handles to real engine ids, recursively through arrays of objects. */
 function resolveAliases(value: unknown, aliases: ReadonlyMap<string, string>): unknown {
   if (Array.isArray(value)) return value.map((v) => resolveAliases(v, aliases));
@@ -37,6 +45,11 @@ function resolveAliases(value: unknown, aliases: ReadonlyMap<string, string>): u
     const v = out[field];
     if (Array.isArray(v)) out[field] = v.map((id) => (typeof id === 'string' ? aliases.get(id) ?? id : id));
   }
+  // Shape-operator handles (`set_trim_path { id }`, `add_repeater { id }`): the
+  // engine mints operator ids, so a batch names them by handle — inside a
+  // track path (`pathop.<handle>.end`) or as an `opId`.
+  if (typeof out.opId === 'string') out.opId = aliases.get(out.opId) ?? out.opId;
+  if (typeof out.prop === 'string') out.prop = resolvePathOpProp(out.prop, aliases);
   // Nested batches — `set_keyframes.keyframes[]`, `set_easing.targets[]` — each
   // carry their own nodeId, so the walk has to go down.
   for (const [k, v] of Object.entries(out)) {
