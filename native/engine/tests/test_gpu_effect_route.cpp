@@ -406,23 +406,119 @@ TEST_CASE("gpu route (AE parity 5.3): Lumetri's pixel stage, Ultra spill and Key
   }
 }
 
-TEST_CASE("gpu route (AE parity 5.3): the keying / grade passes with no float twin keep the CPU bake", "[scene][e4][ae5]") {
-  sc::RLayer l = shape_layer();
-  SECTION("Lumetri Hue vs Saturation") {
-    l.effects.push_back(effect(R"({"id":"a","type":"lumetri","params":{"hueVsSat":[[0,128],[128,40],[255,128]]}})"));
-  }
-  SECTION("Advanced Spill Suppressor, Standard") {
-    l.effects.push_back(effect(R"({"id":"a","type":"advanced-spill-suppressor","params":{"method":0,"suppression":80}})"));
-  }
-  SECTION("Keylight Intermediate Result") {
-    l.effects.push_back(effect(R"({"id":"a","type":"keylight","params":{"view":4}})"));
-  }
-  SECTION("Keylight with clip rollback") {
-    l.effects.push_back(effect(R"({"id":"a","type":"keylight","params":{"clipRollback":4}})"));
-  }
-  SECTION("Key Cleaner") {
-    l.effects.push_back(effect(R"({"id":"a","type":"key-cleaner","params":{}})"));
-  }
+namespace {
+
+/// The route's chain for a one-effect layer (asserting it routes).
+std::vector<api::RenderEffect> routed(sc::RLayer& l) {
   CHECK(sc::layer_is_baked(l));
-  CHECK(sc::gpu_effect_route_blocker(l) != nullptr);
+  INFO((sc::gpu_effect_route_blocker(l) != nullptr ? sc::gpu_effect_route_blocker(l) : ""));
+  REQUIRE(sc::gpu_effect_route(l));
+  l.gpuEffects = true;
+  return sc::extract_gpu_route_effects(l);
+}
+
+double num(const api::RenderEffect& e, std::string_view name) {
+  const auto* p = param(e, name);
+  REQUIRE(p != nullptr);
+  return p->number;
+}
+
+bool has_data(const sc::RLayer& l, std::string_view key, std::size_t floats) {
+  for (const auto& [k, v] : sc::gpu_route_data_textures(l)) {
+    if (k == key) return v.size() == floats;
+  }
+  return false;
+}
+
+}  // namespace
+
+TEST_CASE("gpu route (AE parity 5.3): every keying / grade / deformation pass that baked now draws on the GPU", "[scene][e4][ae5]") {
+  sc::RLayer l = shape_layer();
+  SECTION("Lumetri Hue vs Saturation: the curve tables ride in a data texture") {
+    l.effects.push_back(effect(R"({"id":"a","type":"lumetri","params":{"hueVsSat":[[0,128],[128,40],[255,128]]}})"));
+    const auto chain = routed(l);
+    REQUIRE(chain.size() == 2);
+    CHECK(chain[0].type == "channel-lut");
+    CHECK(chain[1].type == "lumetri-grade");
+    CHECK(num(chain[1], "cSat") == 1);
+    CHECK(num(chain[1], "cHue") == 0);
+    CHECK(chain[1].params.back().text == "fxdata:L:a");
+    CHECK(has_data(l, "fxdata:L:a", 1024));
+  }
+  SECTION("Levels alpha: its LUT, then alpha-levels") {
+    l.effects.push_back(effect(R"({"id":"a","type":"levels","params":{"alphaInputBlack":20,"alphaGamma":2}})"));
+    const auto chain = routed(l);
+    REQUIRE(chain.size() == 2);
+    CHECK(chain[1].type == "alpha-levels");
+    CHECK(num(chain[1], "inBlack") == 20);
+    CHECK(std::abs(num(chain[1], "invGamma") - 0.5) < 1e-12);
+  }
+  SECTION("Hue/Saturation Colorize: hue-sat-ranges instead of the matrix") {
+    l.effects.push_back(effect(R"({"id":"a","type":"hue-saturation","params":{"colorize":true,"colorizeHue":200}})"));
+    const auto chain = routed(l);
+    REQUIRE(chain.size() == 1);
+    CHECK(chain[0].type == "hue-sat-ranges");
+    CHECK(num(chain[0], "colorize") == 1);
+    CHECK(num(chain[0], "ch") == 200);
+    CHECK(num(chain[0], "r2c") == 120);
+  }
+  SECTION("Advanced Spill Suppressor, Standard: the vote flag") {
+    l.effects.push_back(effect(R"({"id":"a","type":"advanced-spill-suppressor","params":{"method":0,"suppression":80}})"));
+    const auto chain = routed(l);
+    REQUIRE(chain.size() == 1);
+    CHECK(chain[0].type == "advanced-spill");
+    CHECK(num(chain[0], "standard") == 1);
+  }
+  SECTION("Keylight Intermediate Result: keylight-ex") {
+    l.effects.push_back(effect(R"({"id":"a","type":"keylight","params":{"view":4}})"));
+    const auto chain = routed(l);
+    REQUIRE(chain.size() == 1);
+    CHECK(chain[0].type == "keylight-ex");
+    CHECK(num(chain[0], "intermediate") == 1);
+  }
+  SECTION("Keylight with clip rollback, pre-blur and an inside mask, viewed as Status") {
+    l.mask = effect(R"({"paths":[{"id":"m1","mode":"add","closed":true,"points":[{"x":0,"y":0},{"x":10,"y":0},{"x":0,"y":10}]}]})");
+    l.effects.push_back(effect(R"({"id":"a","type":"keylight","params":{"clipRollback":4,"screenPreBlur":2,"insideMaskId":"m1","view":3}})"));
+    const auto chain = routed(l);
+    REQUIRE(chain.size() == 2);
+    CHECK(chain[0].type == "keylight-ex");
+    CHECK(num(chain[0], "rollbackPx") == 4);
+    CHECK(num(chain[0], "preBlurPx") == 2);
+    CHECK(chain[1].type == "matte-view");
+    const auto masks = sc::gpu_route_scope_masks(l);
+    REQUIRE(masks.size() == 1);
+    CHECK(masks[0].first == "fxmask:L:m1");
+  }
+  SECTION("Key Cleaner, Remove Grain, Refine Soft Matte") {
+    l.effects.push_back(effect(R"({"id":"a","type":"key-cleaner","params":{"edgeRadius":6,"strength":100,"alphaContrast":150}})"));
+    l.effects.push_back(effect(R"({"id":"b","type":"remove-grain","params":{"noiseReduction":50,"radius":3,"passes":2}})"));
+    l.effects.push_back(effect(R"({"id":"c","type":"refine-soft-matte","params":{"edgeRadius":10}})"));
+    const auto chain = routed(l);
+    REQUIRE(chain.size() == 3);
+    CHECK(chain[0].type == "key-cleaner");
+    CHECK(std::abs(num(chain[0], "contrast") - 1.5) < 1e-12);
+    CHECK(chain[1].type == "remove-grain");
+    CHECK(num(chain[1], "passes") == 2);
+    CHECK(chain[2].type == "refine-matte");
+    CHECK(num(chain[2], "radius") == 10);
+    CHECK(num(chain[2], "eps") == 2e-3);
+  }
+  SECTION("Mesh Warp 2 x 1 with a moved vertex: field-warp over its mesh") {
+    l.effects.push_back(effect(R"({"id":"a","type":"mesh-warp","params":{"rows":1,"columns":2,"meshOffsets":[0,0,5,0,0,0,0,0,0,0,0,0]}})"));
+    const auto chain = routed(l);
+    REQUIRE(chain.size() == 1);
+    CHECK(chain[0].type == "field-warp");
+    CHECK(num(chain[0], "cols") == 2);
+    CHECK(num(chain[0], "rows") == 1);
+    CHECK(has_data(l, "fxdata:L:a", 12));
+  }
+  SECTION("Reshape between two masks: the spline in a data texture") {
+    l.effects.push_back(effect(R"({"id":"a","type":"reshape","params":{"percent":50,"elasticity":3,"sourceMaskIndex":0,"destinationMaskIndex":1,
+      "maskPathsMeta":[4,1,1,0,4,1,1,0],"maskPathsXY":[40,20,80,20,80,60,40,60, 100,20,140,20,140,60,100,60]}})"));
+    const auto chain = routed(l);
+    REQUIRE(chain.size() == 1);
+    CHECK(chain[0].type == "reshape-tps");
+    CHECK(num(chain[0], "scale") == 200);
+    CHECK(has_data(l, "fxdata:L:a", 1 + 40 * 2 + 43 * 2));
+  }
 }

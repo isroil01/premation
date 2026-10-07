@@ -3,6 +3,7 @@
 #include "text_port.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstring>
 #include <functional>
@@ -555,6 +556,25 @@ void Flattener::feed(const RLayer& l) {
     }
   }
   if (l.gpuEffects) {
+    // AE parity 5.3: data textures of the float passes (curve tables, meshes,
+    // splines): one float32 per RGBA8 texel, little-endian, 1024 a row
+    // (matte / grade shaders' `fetch`, as contour_texture.hpp packs Vegas).
+    for (auto& [key, floats] : gpu_route_data_textures(l)) {
+      constexpr std::uint32_t kRow = 1024;
+      const auto n = static_cast<std::uint32_t>(floats.size());
+      TextureRequest r;
+      r.key = std::move(key);
+      r.kind = TexKind::pixels;
+      r.pxWidth = kRow;
+      r.pxHeight = std::max<std::uint32_t>(1, (n + kRow - 1) / kRow);
+      r.pixels.assign(static_cast<std::size_t>(r.pxWidth) * r.pxHeight * 4, 0);
+      for (std::size_t i = 0; i < floats.size(); ++i) {
+        const auto bits = std::bit_cast<std::uint32_t>(floats[i]);
+        for (std::size_t b = 0; b < 4; ++b) r.pixels[i * 4 + b] = static_cast<std::uint8_t>((bits >> (8U * b)) & 0xFFU);
+      }
+      r.layerId = l.id;
+      textures_.push_back(std::move(r));
+    }
     for (const StampTexture& s : stamp_textures(l)) {  // E4: Plexus / Write-on brush stamps
       TextureRequest r;
       r.key = s.key;

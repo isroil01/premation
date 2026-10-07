@@ -42,6 +42,8 @@ struct ChannelLut {
 [[nodiscard]] bool color_grade_needs_pixels(const Json& e);
 /// AE parity 5.3: effects::color_grade_gpu_capable over paramsOf(e).
 [[nodiscard]] bool color_grade_gpu_capable(const Json& e);
+/// AE parity 5.3: effects::lumetri_curve_data over paramsOf(e) (empty when none is bent).
+[[nodiscard]] std::vector<float> lumetri_curves_for(const Json& e, std::array<bool, 4>& present);
 
 /// `buildChannelLut(effects)`: the enabled LUT effects composed in order; nullopt
 /// when there is none.

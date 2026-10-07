@@ -3,7 +3,7 @@ struct Object { mvp: mat3x3<f32>, uvRect: vec4<f32>, p0: vec4<f32>, p1: vec4<f32
 @group(0) @binding(0) var<uniform> obj : Object;
 @group(0) @binding(1) var tex : texture_2d<f32>;
 @group(0) @binding(2) var smp : sampler;
-@group(0) @binding(3) var texB : texture_2d<f32>;
+@group(0) @binding(3) var data : texture_2d<f32>;
 struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
 @vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
   var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
@@ -129,40 +129,42 @@ fn encodeOut(c : vec3<f32>, a : f32) -> vec4<f32> {
   return vec4<f32>(srgbToLinearRgb(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0))) * a, a);
 }
 
-fn lum709(c : vec3<f32>) -> f32 { return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722)); }
-fn chan(c : vec3<f32>, i : f32) -> f32 { return select(select(c.b, c.g, i < 1.5), c.r, i < 0.5); }
+// One float32 per RGBA8 texel, little-endian bytes in r g b a (effects_port.cpp pack_float_texture).
+const DATA_ROW : u32 = 1024u;
+fn fetch(i : u32) -> f32 {
+  let t = textureLoad(data, vec2<i32>(i32(i % DATA_ROW), i32(i / DATA_ROW)), 0);
+  let b = vec4<u32>(round(t * 255.0));
+  return bitcast<f32>(b.x | (b.y << 8u) | (b.z << 16u) | (b.w << 24u));
+}
+fn layerPx(uv : vec2<f32>, lwh : vec2<f32>) -> vec2<f32> {
+  return (fieldQ(uv) - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001)) * lwh;
+}
+fn gridAt(ii : i32, jj : i32, c : i32, cols : i32) -> f32 { return fetch(u32((jj * (cols + 1) + ii) * 2 + c)); }
+
+// AE parity 5.3: Mesh Warp's variable mesh and Liquify's painted field
+// (warp_more_kernels.cpp mesh_warp_grid / liquify_field). The data texture
+// holds (cols + 1) × (rows + 1) vertex offsets (layer px, flat x, y); a pixel
+// shows the source at p − offset × amount, bilinear between the vertices.
+// p0 = (cols, rows, amount, 0), p1 = (lw, lh, 0, 0).
 @fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   let s = textureSampleLevel(tex, smp, uv, 0.0);
-  let a0 = s.a;
-  if (a0 <= 0.0) { return s; }
-  var c = linearToSrgbRgb(s.rgb / a0);
-  // Standard (p1.w): the screen is whichever of green / blue dominates the layer
-  // (texB texel 0 = the vote: mean green, mean blue spill); Ultra: p0.x.
-  var pi = obj.p0.x;
-  if (obj.p1.w > 0.5) {
-    let vote = textureLoad(texB, vec2<i32>(0, 0), 0);
-    pi = select(1.0, 2.0, vote.y > vote.x);
+  let lwh = max(obj.p1.xy, vec2<f32>(1.0, 1.0));
+  let pp = layerPx(uv, lwh);
+  if (pp.x < 0.0 || pp.y < 0.0 || pp.x > lwh.x || pp.y > lwh.y) { return s; }
+  let cols = i32(obj.p0.x + 0.5);
+  let rows = i32(obj.p0.y + 0.5);
+  if (cols < 1 || rows < 1) { return s; }
+  let fx = clamp(pp.x / lwh.x * f32(cols), 0.0, f32(cols));
+  let fy = clamp(pp.y / lwh.y * f32(rows), 0.0, f32(rows));
+  let i = min(cols - 1, i32(floor(fx)));
+  let j = min(rows - 1, i32(floor(fy)));
+  let tx = fx - f32(i);
+  let ty = fy - f32(j);
+  var o = vec2<f32>(0.0);
+  for (var c = 0; c < 2; c = c + 1) {
+    let top = gridAt(i, j, c, cols) + (gridAt(i + 1, j, c, cols) - gridAt(i, j, c, cols)) * tx;
+    let bot = gridAt(i, j + 1, c, cols) + (gridAt(i + 1, j + 1, c, cols) - gridAt(i, j + 1, c, cols)) * tx;
+    o[c] = top + (bot - top) * ty;
   }
-  let ai = select(0.0, 1.0, pi < 0.5);
-  let bi = select(2.0, select(2.0, 1.0, pi > 1.5), pi > 0.5);
-  let cp = chan(c, pi);
-  let ca = chan(c, ai);
-  let cb = chan(c, bi);
-  let before = lum709(c);
-  let limit = (1.0 - obj.p0.z) * max(ca, cb) + obj.p0.z * (ca + cb) * 0.5;
-  var spill = max(0.0, cp - limit);
-  // Ultra only: Tolerance widens the spill a pixel may carry before it counts in full.
-  if (obj.p1.w < 0.5) { spill = spill * min(1.0, spill / max(1e-3, 0.02 + 0.5 * (1.0 - obj.p0.w))); }
-  spill = spill * obj.p0.y;
-  if (spill <= 0.0) { return s; }
-  let fix = spill * obj.p1.y * 0.5;
-  var d = vec3<f32>(fix);
-  if (pi < 0.5) { d.r = -spill; } else if (pi < 1.5) { d.g = -spill; } else { d.b = -spill; }
-  c = c + d;
-  if (obj.p1.x > 0.0) {
-    let L = lum709(c);
-    c = vec3<f32>(L) + (c - vec3<f32>(L)) * (1.0 - min(1.0, obj.p1.x * spill * 4.0));
-  }
-  if (obj.p1.z > 0.0) { c = c + vec3<f32>((before - lum709(c)) * obj.p1.z); }
-  return encodeOut(c, a0);
+  return samplePx(pp - o * obj.p0.z, lwh);
 }

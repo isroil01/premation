@@ -311,10 +311,7 @@ new WGSL shaders only `naga --validate`. The new GPU-route cases in
       spill and Keylight's Source / Screen Matte / Status views draw on the
       GPU (no CPU bake in the viewport HUD) and match the bake; Corner Pin and
       the fixed warps (Bulge, Twirl, Spherize, Ripple …) stay on the GPU chain.
-      What still bakes on the CPU in 8-bit (Hue vs curves, Standard spill,
-      Key Cleaner, Remove Grain, Keylight's Intermediate Result / pre-blur /
-      rollback / masks, Levels alpha, Hue/Sat ranges, Mesh Warp variable
-      mesh, Liquify field, Reshape) is the list for the next float round.
+      (The rest moved to the GPU in the follow-up below.)
 - [ ] 5.4 Properties ▸ Masks (mode, feather, opacity, expansion, invert);
       Layer ▸ Mask ▸ New Mask (Ctrl+Shift+N), Mode, Inverted (Ctrl+Shift+I),
       Remove Mask / Remove All Masks; Smart Mask Interpolation between two
@@ -326,6 +323,55 @@ new WGSL shaders only `naga --validate`. The new GPU-route cases in
       boundary mask).
 - [ ] 5.6 Properties ▸ Crop (insets, Edge Feather, Reset Crop) on image /
       video / precomp; Properties ▸ Paint and ▸ Puppet sections.
+
+## AE parity 5.3 follow-up (2026-10-07) — the rest of the CPU-only effects on the GPU route
+
+What changed: every effect that still forced a layer onto the 8-bit CPU bake
+because of a step 5 control now has float passes on the GPU effect route —
+Lumetri's Hue vs Sat / Hue / Luma and Luma vs Sat (curve tables in a data
+texture read by `lumetri-grade`), Levels' alpha (`alpha-levels` after the
+LUT), Hue/Saturation's colour ranges and Colorize (`hue-sat-ranges`),
+Advanced Spill Suppressor ▸ Standard (a 64 × 64 green / blue vote drawn into
+one texel, then `advanced-spill`), Keylight's Screen Pre-blur / Clip Rollback /
+Inside and Outside masks / Intermediate Result (`keylight-ex`), Key Cleaner,
+Remove Grain, Refine Soft / Hard Matte (all through `matte-ops.wgsl`), Mesh
+Warp's variable mesh and Liquify's painted field (`field-warp`) and Reshape
+(the thin-plate spline solved in the scene, `reshape-tps`). Four scratch
+targets `fx-aux-0…3` are declared with the new `rgba16float-data` format:
+32-bit float where the device has float32-filterable + blendable, else 16-bit,
+whatever the project bit depth. Lumetri's vignette now measures the layer box
+(it measured the chain buffer before). The CPU kernels stay for layers the
+route cannot take (a precomp container, a Canvas2D-only effect in the stack).
+
+Run in the Linux session: ctest (all green but the two parity suites, still
+at 9 / 227 mismatches — no catalog change); engine_effects_tests (Reshape on
+the shared spline solver); the route cases `[ae5]` of
+`test_gpu_effect_route.cpp` linked by hand against the scene objects and run —
+all 118 assertions pass (the file's other cases were run the same way: the
+two Canvas2D overlay cases fail identically on HEAD in that partial link,
+which has no raster stack). Six WGSL files pass `naga --validate`; the render
+graph and scene files pass `clang++ -fsyntax-only` with the engine's warning
+flags. Nothing was drawn. Not run:
+
+- [ ] Build engine_scene_tests on the GPU box and run the whole
+      `test_gpu_effect_route.cpp`.
+- [ ] Golden render tests: new materials `matte-ops`, `hue-sat-ranges`,
+      `field-warp`, `reshape-tps`; changed `lumetri-grade` (curves, vignette
+      over the layer box) and `advanced-spill` (Standard). Add a golden per
+      effect and compare with the CPU bake of the same layer: expect a few
+      levels of difference (8-bit vs float), no shifted matte or hue.
+- [ ] With the GPU route on, none of these bake (viewport HUD): Lumetri with a
+      Hue vs Sat curve; Levels alpha; Hue/Saturation Colorize; Standard
+      spill on green and on blue screen (the vote picks the right one);
+      Keylight with pre-blur 5, rollback 10, an inside and an outside mask,
+      and View ▸ Intermediate Result; Key Cleaner with Reduce Chatter;
+      Remove Grain 2 passes and View ▸ Noise Samples; Refine Soft Matte and
+      Refine Hard Matte with decontamination; Mesh Warp 5 × 7 with dragged
+      vertices; Liquify after a few brush strokes; Reshape with a boundary
+      mask. Scrub each: no stalls (Refine Matte at radius 200 and Remove
+      Grain at radius 8 × 4 passes are the heaviest — note their frame times).
+- [ ] An 8-bit project: the same layers still look right (the scratch
+      targets are float regardless).
 
 ## Status on the Windows RTX 4060 box (2026-09-28)
 

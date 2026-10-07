@@ -16,6 +16,7 @@
 #pragma once
 
 #include <array>
+#include <optional>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -150,6 +151,19 @@ void liquify_field(RgbaView img, int columns, int rows, std::span<const double> 
 /// frame's edges hold still; `elasticity` ≥ 0 stiffens it). `boundary` (w × h
 /// coverage, empty = none) leaves everything outside it untouched. False when
 /// it could not solve (degenerate outlines).
+/// AE parity 5.3: Reshape's thin-plate spline, shared by the CPU kernel and
+/// the GPU route (the scene packs it into reshape-tps.wgsl's data texture).
+/// Coordinates are layer px divided by `scale` (1 = px; the GPU solves in units
+/// of the layer's longer side so float32 keeps the r² log r² terms). The map
+/// takes an output point p to the source point bx/by · [U(|p − from_i|²)…, 1, x, y].
+struct ReshapeTps {
+  std::vector<std::array<double, 2>> from;
+  std::vector<double> bx;  ///< from.size() + 3
+  std::vector<double> by;
+};
+[[nodiscard]] std::optional<ReshapeTps> reshape_tps(std::span<const double> xy, std::size_t srcStart, std::size_t srcCount,
+                                                    std::size_t dstStart, std::size_t dstCount, double percent, double elasticity,
+                                                    double w, double h, double scale);
 bool reshape(RgbaView img, std::span<const double> xy, std::size_t srcStart, std::size_t srcCount, std::size_t dstStart, std::size_t dstCount,
              std::span<const float> boundary, double percent, double elasticity, ThreadPool* pool);
 

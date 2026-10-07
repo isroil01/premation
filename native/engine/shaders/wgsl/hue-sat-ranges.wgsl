@@ -1,9 +1,8 @@
 
-struct Object { mvp: mat3x3<f32>, uvRect: vec4<f32>, p0: vec4<f32>, p1: vec4<f32>, fxBox: vec4<f32> };
+struct Object { mvp: mat3x3<f32>, uvRect: vec4<f32>, p0: vec4<f32>, p1: vec4<f32>, p2: vec4<f32>, p3: vec4<f32>, p4: vec4<f32>, p5: vec4<f32>, p6: vec4<f32>, p7: vec4<f32>, fxBox: vec4<f32> };
 @group(0) @binding(0) var<uniform> obj : Object;
 @group(0) @binding(1) var tex : texture_2d<f32>;
 @group(0) @binding(2) var smp : sampler;
-@group(0) @binding(3) var texB : texture_2d<f32>;
 struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
 @vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
   var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
@@ -130,39 +129,95 @@ fn encodeOut(c : vec3<f32>, a : f32) -> vec4<f32> {
 }
 
 fn lum709(c : vec3<f32>) -> f32 { return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722)); }
-fn chan(c : vec3<f32>, i : f32) -> f32 { return select(select(c.b, c.g, i < 1.5), c.r, i < 0.5); }
+fn smooth01(a : f32, b : f32, x : f32) -> f32 {
+  if (b <= a) { return select(1.0, 0.0, x < a); }
+  let t = clamp((x - a) / (b - a), 0.0, 1.0);
+  return t * t * (3.0 - 2.0 * t);
+}
+fn rgbToHsl(c : vec3<f32>) -> vec3<f32> {
+  let mx = max(c.r, max(c.g, c.b));
+  let mn = min(c.r, min(c.g, c.b));
+  let l = (mx + mn) * 0.5;
+  let d = mx - mn;
+  if (d < 1e-6) { return vec3<f32>(0.0, 0.0, l); }
+  let s = select(d / (mx + mn), d / (2.0 - mx - mn), l > 0.5);
+  var h = 0.0;
+  if (mx == c.r) { h = (c.g - c.b) / d + select(0.0, 6.0, c.g < c.b); }
+  else if (mx == c.g) { h = (c.b - c.r) / d + 2.0; }
+  else { h = (c.r - c.g) / d + 4.0; }
+  return vec3<f32>(h * 60.0, s, l);
+}
+fn hueChan(p : f32, q : f32, t0 : f32) -> f32 {
+  var t = t0;
+  if (t < 0.0) { t = t + 1.0; }
+  if (t > 1.0) { t = t - 1.0; }
+  if (t < 1.0 / 6.0) { return p + (q - p) * 6.0 * t; }
+  if (t < 0.5) { return q; }
+  if (t < 2.0 / 3.0) { return p + (q - p) * (2.0 / 3.0 - t) * 6.0; }
+  return p;
+}
+fn hslToRgb(h0 : f32, s : f32, l : f32) -> vec3<f32> {
+  var h = h0 % 360.0;
+  if (h < 0.0) { h = h + 360.0; }
+  if (s <= 0.0) { return vec3<f32>(l); }
+  let q = select(l + s - l * s, l * (1.0 + s), l < 0.5);
+  let p = 2.0 * l - q;
+  let hk = h / 360.0;
+  return vec3<f32>(hueChan(p, q, hk + 1.0 / 3.0), hueChan(p, q, hk), hueChan(p, q, hk - 1.0 / 3.0));
+}
+fn hueDistDeg(a : f32, b : f32) -> f32 {
+  let d = abs(a - b) % 360.0;
+  return select(d, 360.0 - d, d > 180.0);
+}
+/// Layer px of a fragment (the box is fxBox in field space).
+fn layerPx(uv : vec2<f32>, lwh : vec2<f32>) -> vec2<f32> {
+  return (fieldQ(uv) - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001)) * lwh;
+}
+fn straightOf(s : vec4<f32>) -> vec4<f32> {
+  if (s.a <= 0.0) { return vec4<f32>(0.0); }
+  return vec4<f32>(linearToSrgbRgb(s.rgb / s.a), s.a);
+}
+fn aeSat(s : f32, amount : f32) -> f32 {
+  return clamp(select(s * (1.0 + amount), s + (1.0 - s) * amount * s, amount >= 0.0), 0.0, 1.0);
+}
+fn aeLight(l : f32, amount : f32) -> f32 {
+  return clamp(select(l * (1.0 + amount), l + (1.0 - l) * amount, amount >= 0.0), 0.0, 1.0);
+}
+fn rangeWeight(hue : f32, centre : f32) -> f32 {
+  let d = hueDistDeg(hue, centre);
+  if (d <= 15.0) { return 1.0; }
+  if (d >= 45.0) { return 0.0; }
+  return 1.0 - (d - 15.0) / 30.0;
+}
+
+// AE parity 5.3: Hue/Saturation's six colour ranges and Colorize
+// (effect_color.cpp apply_hue_saturation_ranges). p0 master hue / sat / light +
+// colorize, p1 colorize hue / sat / light, p2..p7 a range's hue / sat / light / centre.
 @fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   let s = textureSampleLevel(tex, smp, uv, 0.0);
   let a0 = s.a;
   if (a0 <= 0.0) { return s; }
-  var c = linearToSrgbRgb(s.rgb / a0);
-  // Standard (p1.w): the screen is whichever of green / blue dominates the layer
-  // (texB texel 0 = the vote: mean green, mean blue spill); Ultra: p0.x.
-  var pi = obj.p0.x;
-  if (obj.p1.w > 0.5) {
-    let vote = textureLoad(texB, vec2<i32>(0, 0), 0);
-    pi = select(1.0, 2.0, vote.y > vote.x);
+  let c = clamp(linearToSrgbRgb(s.rgb / a0), vec3<f32>(0.0), vec3<f32>(1.0));
+  let hsl = rgbToHsl(c);
+  var h = hsl.x;
+  var sv = hsl.y;
+  var l = hsl.z;
+  if (obj.p0.w > 0.5) {
+    h = obj.p1.x;
+    sv = obj.p1.y;
+    l = aeLight(l, obj.p1.z);
+  } else {
+    var d = obj.p0.xyz;
+    let ranges = array<vec4<f32>, 6>(obj.p2, obj.p3, obj.p4, obj.p5, obj.p6, obj.p7);
+    for (var k = 0; k < 6; k = k + 1) {
+      let r = ranges[k];
+      let w = select(0.0, rangeWeight(h, r.w), sv > 0.0);
+      if (w <= 0.0) { continue; }
+      d = d + w * r.xyz;
+    }
+    h = h + d.x;
+    sv = aeSat(sv, clamp(d.y, -1.0, 1.0));
+    l = aeLight(l, clamp(d.z, -1.0, 1.0));
   }
-  let ai = select(0.0, 1.0, pi < 0.5);
-  let bi = select(2.0, select(2.0, 1.0, pi > 1.5), pi > 0.5);
-  let cp = chan(c, pi);
-  let ca = chan(c, ai);
-  let cb = chan(c, bi);
-  let before = lum709(c);
-  let limit = (1.0 - obj.p0.z) * max(ca, cb) + obj.p0.z * (ca + cb) * 0.5;
-  var spill = max(0.0, cp - limit);
-  // Ultra only: Tolerance widens the spill a pixel may carry before it counts in full.
-  if (obj.p1.w < 0.5) { spill = spill * min(1.0, spill / max(1e-3, 0.02 + 0.5 * (1.0 - obj.p0.w))); }
-  spill = spill * obj.p0.y;
-  if (spill <= 0.0) { return s; }
-  let fix = spill * obj.p1.y * 0.5;
-  var d = vec3<f32>(fix);
-  if (pi < 0.5) { d.r = -spill; } else if (pi < 1.5) { d.g = -spill; } else { d.b = -spill; }
-  c = c + d;
-  if (obj.p1.x > 0.0) {
-    let L = lum709(c);
-    c = vec3<f32>(L) + (c - vec3<f32>(L)) * (1.0 - min(1.0, obj.p1.x * spill * 4.0));
-  }
-  if (obj.p1.z > 0.0) { c = c + vec3<f32>((before - lum709(c)) * obj.p1.z); }
-  return encodeOut(c, a0);
+  return encodeOut(hslToRgb(h, sv, l), a0);
 }

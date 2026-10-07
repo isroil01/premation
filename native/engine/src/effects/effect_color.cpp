@@ -787,9 +787,19 @@ bool color_grade_needs_pixels(std::string_view type, const Value& params) {
   return false;
 }
 
-bool color_grade_gpu_capable(std::string_view type, const Value& params) {
-  return type == "lumetri" && curve_is_flat(params, "hueVsSat", 128) && curve_is_flat(params, "hueVsHue", 128) &&
-         curve_is_flat(params, "hueVsLuma", 128) && curve_is_flat(params, "lumaVsSat", 128);
+std::vector<float> lumetri_curve_data(const Value& params, std::array<bool, 4>& present) {
+  std::vector<float> out(std::size_t{4} * 256, 128.0F);
+  const std::array<std::string_view, 4> keys{"hueVsSat", "hueVsHue", "hueVsLuma", "lumaVsSat"};
+  for (std::size_t k = 0; k < keys.size(); ++k) {
+    const auto t = curve_table_of(params, keys[k]);
+    present[k] = t.has_value();
+    if (t) std::copy(t->begin(), t->end(), out.begin() + static_cast<std::ptrdiff_t>(k * 256));
+  }
+  return out;
+}
+
+bool color_grade_gpu_capable(std::string_view type, const Value& /*params*/) {
+  return type == "lumetri" || type == "levels" || type == "hue-saturation";
 }
 
 void apply_color_grade(std::string_view type, const Value& params, RgbaView img, ThreadPool* pool) {

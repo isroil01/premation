@@ -453,10 +453,13 @@ works per channel (alpha too); Hue/Saturation has its six colour ranges and
 Colorize (`effects/effect_color.cpp`; the curve editor's tone / hue / luma
 variants). **Keying**: Keylight 1.2's View, Screen Pre-blur, Clip Rollback and
 Inside / Outside masks; Advanced Spill Suppressor, Key Cleaner and Remove Grain
-(`effects/keying_more_kernels.cpp`). **Precision**: Lumetri without Hue vs
-curves, Ultra spill and Keylight's Source / Screen Matte / Status views run as
-float passes on the GPU effect route (`lumetri-grade`, `advanced-spill`,
-`matte-view`); the rest of those effects bakes 8-bit on the CPU. **Masks**:
+(`effects/keying_more_kernels.cpp`). **Precision**: all of the
+above run as float passes on the GPU effect route — `lumetri-grade` (with the
+Hue / Luma vs curves in a data texture), `alpha-levels`, `hue-sat-ranges`,
+`advanced-spill` (Standard votes green / blue on the GPU), `keylight-ex` and
+`matte-view`, Key Cleaner / Remove Grain / Refine Matte through
+`matte-ops.wgsl`, `field-warp` (Mesh Warp, Liquify) and `reshape-tps`; the
+8-bit CPU kernels remain for layers the route cannot take (a precomp container, a Canvas2D-only effect in the same stack). **Masks**:
 Properties ▸ Masks (the mask cards moved out of the Effects panel), Layer ▸
 Mask (New Mask Ctrl+Shift+N, Mode, Inverted Ctrl+Shift+I, Remove Mask, Remove
 All Masks, Smart Mask Interpolation…, Track Mask…), Smart Mask Interpolation

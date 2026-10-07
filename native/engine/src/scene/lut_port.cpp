@@ -51,9 +51,19 @@ bool color_grade_needs_pixels(const Json& e) {
   return effects::color_grade_needs_pixels(t, params);
 }
 
+std::vector<float> lumetri_curves_for(const Json& e, std::array<bool, 4>& present) {
+  present = {false, false, false, false};
+  rj::Value params;
+  std::string err;
+  if (type_of(e) != "lumetri" || !rj::parse(js::stringify(doc::params_of(e)), params, err)) return {};
+  std::vector<float> data = effects::lumetri_curve_data(params, present);
+  if (!present[0] && !present[1] && !present[2] && !present[3]) return {};
+  return data;
+}
+
 bool color_grade_gpu_capable(const Json& e) {
   const std::string t = type_of(e);
-  if (t != "lumetri") return false;
+  if (t != "lumetri" && t != "levels" && t != "hue-saturation") return false;
   rj::Value params;
   std::string err;
   if (!rj::parse(js::stringify(doc::params_of(e)), params, err)) return false;

@@ -512,7 +512,8 @@ bool keying(std::string_view t, const Params& P, double lw, double lh, Out& out)
   if (t == "keylight") {
     // AE parity 5.3: View ▸ Source shows the layer untouched; Screen Matte and
     // Status draw the key's matte after it (matte-view). Intermediate Result,
-    // pre-blur, rollback and the garbage masks stay in the CPU bake.
+    // pre-blur, rollback and the garbage masks: effects_port.cpp upgrades this
+    // entry to keylight-ex.
     const double view = mjs::round(P.n("view"));
     if (view == 1) return true;
     const Vec3 key = P.hex("screenColor");
@@ -547,18 +548,20 @@ bool keying(std::string_view t, const Params& P, double lw, double lh, Out& out)
     return true;
   }
   if (t == "advanced-spill-suppressor") {
-    // AE parity 5.3: Ultra's spill pass on the GPU (Standard's frame-wide
-    // green / blue vote stays in the CPU bake).
+    // AE parity 5.3: the spill pass on the GPU — Ultra from the key colour,
+    // Standard from the layer's own green / blue vote (`standard`, drawn first).
     const double suppression = jclamp(P.n("suppression") / 100, 0, 1);
-    if (mjs::round(P.n("method")) == 1 && suppression > 0) {
+    if (suppression > 0) {
+      const bool ultra = mjs::round(P.n("method")) == 1;
       const Vec3 key = P.hex("keyColor");
-      const double primary = (key[1] >= key[0] && key[1] >= key[2]) ? 1 : (key[2] >= key[0] && key[2] >= key[1]) ? 2 : 0;
+      const double primary = !ultra ? 1 : (key[1] >= key[0] && key[1] >= key[2]) ? 1 : (key[2] >= key[0] && key[2] >= key[1]) ? 2 : 0;
       FxWriter w("advanced-spill");
       w.num("primary", primary).num("suppression", suppression);
       w.num("range", jclamp(P.n("spillRange") / 100, 0, 1)).num("tolerance", jclamp(P.n("tolerance") / 100, 0, 1));
       w.num("desat", jclamp(P.n("desaturate") / 100, 0, 1));
       w.num("colorFix", jclamp(P.n("spillColorCorrection") / 100, 0, 1));
       w.num("lumaFix", jclamp(P.n("lumaCorrection") / 100, 0, 1));
+      w.num("standard", ultra ? 0 : 1);
       out.push_back(w.done());
     }
     return true;

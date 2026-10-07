@@ -120,32 +120,30 @@ void liquify_field(RgbaView img, int columns, int rows, std::span<const double> 
   });
 }
 
-bool reshape(RgbaView img, std::span<const double> xy, std::size_t srcStart, std::size_t srcCount, std::size_t dstStart, std::size_t dstCount,
-             std::span<const float> boundary, double percent, double elasticity, ThreadPool* pool) {
+std::optional<ReshapeTps> reshape_tps(std::span<const double> xy, std::size_t srcStart, std::size_t srcCount, std::size_t dstStart,
+                                      std::size_t dstCount, double percent, double elasticity, double w, double h, double scale) {
   const double t = std::clamp(percent, 0.0, 1.0);
-  if (t <= 0 || srcCount < 3 || dstCount < 3) return false;
+  if (t <= 0 || srcCount < 3 || dstCount < 3 || !(scale > 0)) return std::nullopt;
   constexpr std::size_t kK = 32;
   const auto src = resample_closed(xy, srcStart, srcCount, kK);
   const auto dst0 = resample_closed(xy, dstStart, dstCount, kK);
-  if (src.size() != kK || dst0.size() != kK) return false;
+  if (src.size() != kK || dst0.size() != kK) return std::nullopt;
   // Control pairs: the morph's in-between outline → the source outline (inverse map),
   // plus the frame's corners and edge midpoints holding still.
   std::vector<std::array<double, 2>> from;
   std::vector<std::array<double, 2>> to;
   for (std::size_t i = 0; i < kK; ++i) {
-    from.push_back({src[i][0] + (dst0[i][0] - src[i][0]) * t, src[i][1] + (dst0[i][1] - src[i][1]) * t});
-    to.push_back(src[i]);
+    from.push_back({(src[i][0] + (dst0[i][0] - src[i][0]) * t) / scale, (src[i][1] + (dst0[i][1] - src[i][1]) * t) / scale});
+    to.push_back({src[i][0] / scale, src[i][1] / scale});
   }
-  const double w = img.w;
-  const double h = img.h;
   for (const auto& p : std::array<std::array<double, 2>, 8>{{{0, 0}, {w / 2, 0}, {w, 0}, {w, h / 2}, {w, h}, {w / 2, h}, {0, h}, {0, h / 2}}}) {
-    from.push_back(p);
-    to.push_back(p);
+    from.push_back({p[0] / scale, p[1] / scale});
+    to.push_back({p[0] / scale, p[1] / scale});
   }
   const std::size_t n = from.size();
   const std::size_t m = n + 3;
-  // Elasticity: a stiffer morph smooths more (TPS regularisation λ).
-  const double lambda = std::max(0.0, elasticity) * 1e-3 * (w * w + h * h) / 4;
+  // Elasticity: a stiffer morph smooths more (TPS regularisation λ, in the solve's units).
+  const double lambda = std::max(0.0, elasticity) * 1e-3 * (w * w + h * h) / 4 / (scale * scale);
   std::vector<double> A(m * m, 0.0);
   for (std::size_t i = 0; i < n; ++i) {
     for (std::size_t j = 0; j < n; ++j) {
@@ -156,13 +154,27 @@ bool reshape(RgbaView img, std::span<const double> xy, std::size_t srcStart, std
     A[i * m + n + 1] = A[(n + 1) * m + i] = from[i][0];
     A[i * m + n + 2] = A[(n + 2) * m + i] = from[i][1];
   }
-  std::vector<double> bx(m, 0.0), by(m, 0.0);
+  ReshapeTps out;
+  out.bx.assign(m, 0.0);
+  out.by.assign(m, 0.0);
   for (std::size_t i = 0; i < n; ++i) {
-    bx[i] = to[i][0];
-    by[i] = to[i][1];
+    out.bx[i] = to[i][0];
+    out.by[i] = to[i][1];
   }
   std::vector<double> Ax = A;
-  if (!solve_dense(Ax, bx, m) || !solve_dense(A, by, m)) return false;
+  if (!solve_dense(Ax, out.bx, m) || !solve_dense(A, out.by, m)) return std::nullopt;
+  out.from = std::move(from);
+  return out;
+}
+
+bool reshape(RgbaView img, std::span<const double> xy, std::size_t srcStart, std::size_t srcCount, std::size_t dstStart, std::size_t dstCount,
+             std::span<const float> boundary, double percent, double elasticity, ThreadPool* pool) {
+  const auto tps = reshape_tps(xy, srcStart, srcCount, dstStart, dstCount, percent, elasticity, img.w, img.h, 1);
+  if (!tps) return false;
+  const std::size_t n = tps->from.size();
+  const auto& from = tps->from;
+  const auto& bx = tps->bx;
+  const auto& by = tps->by;
   const bool bounded = boundary.size() == img.pixels();
   remap_rgba(img, pool, [&](double px, double py) -> std::optional<RemapPt> {
     if (bounded) {

@@ -1,8 +1,9 @@
 
-struct Object { mvp: mat3x3<f32>, uvRect: vec4<f32>, p0: vec4<f32>, p1: vec4<f32>, p2: vec4<f32>, p3: vec4<f32>, p4: vec4<f32>, p5: vec4<f32>, fxBox: vec4<f32> };
+struct Object { mvp: mat3x3<f32>, uvRect: vec4<f32>, p0: vec4<f32>, p1: vec4<f32>, p2: vec4<f32>, p3: vec4<f32>, p4: vec4<f32>, p5: vec4<f32>, p6: vec4<f32>, fxBox: vec4<f32> };
 @group(0) @binding(0) var<uniform> obj : Object;
 @group(0) @binding(1) var tex : texture_2d<f32>;
 @group(0) @binding(2) var smp : sampler;
+@group(0) @binding(3) var data : texture_2d<f32>;
 struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
 @vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
   var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
@@ -128,7 +129,6 @@ fn encodeOut(c : vec3<f32>, a : f32) -> vec4<f32> {
   return vec4<f32>(srgbToLinearRgb(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0))) * a, a);
 }
 
-
 fn lum709(c : vec3<f32>) -> f32 { return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722)); }
 fn smooth01(a : f32, b : f32, x : f32) -> f32 {
   if (b <= a) { return select(1.0, 0.0, x < a); }
@@ -148,17 +148,56 @@ fn rgbToHsl(c : vec3<f32>) -> vec3<f32> {
   else { h = (c.r - c.g) / d + 4.0; }
   return vec3<f32>(h * 60.0, s, l);
 }
+fn hueChan(p : f32, q : f32, t0 : f32) -> f32 {
+  var t = t0;
+  if (t < 0.0) { t = t + 1.0; }
+  if (t > 1.0) { t = t - 1.0; }
+  if (t < 1.0 / 6.0) { return p + (q - p) * 6.0 * t; }
+  if (t < 0.5) { return q; }
+  if (t < 2.0 / 3.0) { return p + (q - p) * (2.0 / 3.0 - t) * 6.0; }
+  return p;
+}
+fn hslToRgb(h0 : f32, s : f32, l : f32) -> vec3<f32> {
+  var h = h0 % 360.0;
+  if (h < 0.0) { h = h + 360.0; }
+  if (s <= 0.0) { return vec3<f32>(l); }
+  let q = select(l + s - l * s, l * (1.0 + s), l < 0.5);
+  let p = 2.0 * l - q;
+  let hk = h / 360.0;
+  return vec3<f32>(hueChan(p, q, hk + 1.0 / 3.0), hueChan(p, q, hk), hueChan(p, q, hk - 1.0 / 3.0));
+}
 fn hueDistDeg(a : f32, b : f32) -> f32 {
   let d = abs(a - b) % 360.0;
   return select(d, 360.0 - d, d > 180.0);
 }
+/// Layer px of a fragment (the box is fxBox in field space).
+fn layerPx(uv : vec2<f32>, lwh : vec2<f32>) -> vec2<f32> {
+  return (fieldQ(uv) - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001)) * lwh;
+}
+fn straightOf(s : vec4<f32>) -> vec4<f32> {
+  if (s.a <= 0.0) { return vec4<f32>(0.0); }
+  return vec4<f32>(linearToSrgbRgb(s.rgb / s.a), s.a);
+}
+// One float32 per RGBA8 texel, little-endian bytes in r g b a (effects_port.cpp pack_float_texture).
+const DATA_ROW : u32 = 1024u;
+fn fetch(i : u32) -> f32 {
+  let t = textureLoad(data, vec2<i32>(i32(i % DATA_ROW), i32(i / DATA_ROW)), 0);
+  let b = vec4<u32>(round(t * 255.0));
+  return bitcast<f32>(b.x | (b.y << 8u) | (b.z << 16u) | (b.w << 24u));
+}
+/// A Hue / Luma vs curve (256 floats, curve k at k × 256), indexed as the CPU table: round(v · 255).
+fn curveAt(k : u32, v01 : f32) -> f32 {
+  return fetch(k * 256u + u32(clamp(round(v01 * 255.0), 0.0, 255.0)));
+}
 
+// AE parity 5.3: Lumetri's cross-channel stage (effect_color.cpp apply_lumetri_pixels)
+// after its LUT, on the GPU route. p6 = which Hue / Luma vs curves the data texture holds.
 @fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   let s = textureSampleLevel(tex, smp, uv, 0.0);
   let a0 = s.a;
   if (a0 <= 0.0) { return s; }
   var c = linearToSrgbRgb(s.rgb / a0);
-  // Basic / Creative saturation and Vibrance (p0.x = sat, p0.y = vibrance).
+  // Basic / Creative saturation, then Vibrance (p0.x sat, p0.y vibrance).
   let sat = obj.p0.x;
   let vib = obj.p0.y;
   if (sat != 1.0 || vib != 0.0) {
@@ -166,6 +205,20 @@ fn hueDistDeg(a : f32, b : f32) -> f32 {
     let chroma = max(c.r, max(c.g, c.b)) - min(c.r, min(c.g, c.b));
     let k = sat * (1.0 + vib * (1.0 - chroma));
     c = vec3<f32>(L) + (c - vec3<f32>(L)) * k;
+  }
+  // Hue vs Saturation / Hue / Luma, Luma vs Saturation (neutral 128): curves 0..3 = hueSat, hueHue, hueLuma, lumaSat.
+  let cv = obj.p6;
+  if (cv.x > 0.5 || cv.y > 0.5 || cv.z > 0.5 || cv.w > 0.5) {
+    let hsl = rgbToHsl(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)));
+    var h = hsl.x;
+    var sv = hsl.y;
+    var l = hsl.z;
+    let hx = h / 360.0;
+    if (cv.y > 0.5) { h = h + (curveAt(1u, hx) - 128.0) / 128.0 * 180.0; }
+    if (cv.x > 0.5) { sv = sv * max(0.0, curveAt(0u, hx) / 128.0); }
+    if (cv.w > 0.5) { sv = sv * max(0.0, curveAt(3u, lum709(c)) / 128.0); }
+    if (cv.z > 0.5) { l = l + (curveAt(2u, hx) - 128.0) / 128.0 * 0.5 * sv; }
+    c = hslToRgb(h, clamp(sv, 0.0, 1.0), clamp(l, 0.0, 1.0));
   }
   // HSL Secondary (p1.w enable; p2 hue centre / range / softness, range softness; p3 sat / lum ranges; p4 corrections).
   if (obj.p1.w > 0.5) {
@@ -187,13 +240,13 @@ fn hueDistDeg(a : f32, b : f32) -> f32 {
       c = c + (k - c) * key;
     }
   }
-  // Vignette (p0.z amount, p0.w radius; p1.x exponent, p1.y feather, p1.z aspect-round; p5.yz layer px).
+  // Vignette over the layer box (p0.z amount, p0.w radius; p1.x exponent, p1.y feather, p1.z aspect-round; p5.yz layer px).
   let amount = obj.p0.z;
   if (amount != 0.0) {
-    let q = fieldQ(uv);
+    let lwh = obj.p5.yz;
+    let q = layerPx(uv, lwh) / max(lwh, vec2<f32>(1.0, 1.0));
     let u = q.x * 2.0 - 1.0;
-    var v = q.y * 2.0 - 1.0;
-    v = v * obj.p1.z;
+    let v = (q.y * 2.0 - 1.0) * obj.p1.z;
     let e = obj.p1.x;
     let dist = pow(pow(abs(u), e) + pow(abs(v), e), 1.0 / e);
     let t = smooth01(obj.p0.w * (1.0 - obj.p1.y * 0.9), obj.p0.w * (1.0 + obj.p1.y * 0.9), dist);

@@ -222,7 +222,11 @@
     "shadow-catcher",
     "lumetri-grade",
     "advanced-spill",
-    "matte-view"
+    "matte-view",
+    "matte-ops",
+    "hue-sat-ranges",
+    "field-warp",
+    "reshape-tps"
   ],
   "materials": [
     {
@@ -8591,6 +8595,13 @@
           "stages": [
             "fragment"
           ]
+        },
+        {
+          "binding": 3,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
         }
       ]
     },
@@ -8619,6 +8630,13 @@
           "stages": [
             "fragment"
           ]
+        },
+        {
+          "binding": 3,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
         }
       ]
     },
@@ -8644,6 +8662,160 @@
         {
           "binding": 2,
           "type": "sampler",
+          "stages": [
+            "fragment"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "MATTE_OPS_MATERIAL",
+      "shader": "matte-ops",
+      "layout": [
+        {
+          "binding": 0,
+          "type": "uniform-buffer",
+          "stages": [
+            "vertex",
+            "fragment"
+          ]
+        },
+        {
+          "binding": 1,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 2,
+          "type": "sampler",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 3,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 4,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 5,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "HUE_SAT_RANGES_MATERIAL",
+      "shader": "hue-sat-ranges",
+      "layout": [
+        {
+          "binding": 0,
+          "type": "uniform-buffer",
+          "stages": [
+            "vertex",
+            "fragment"
+          ]
+        },
+        {
+          "binding": 1,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 2,
+          "type": "sampler",
+          "stages": [
+            "fragment"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "FIELD_WARP_MATERIAL",
+      "shader": "field-warp",
+      "layout": [
+        {
+          "binding": 0,
+          "type": "uniform-buffer",
+          "stages": [
+            "vertex",
+            "fragment"
+          ]
+        },
+        {
+          "binding": 1,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 2,
+          "type": "sampler",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 3,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "RESHAPE_TPS_MATERIAL",
+      "shader": "reshape-tps",
+      "layout": [
+        {
+          "binding": 0,
+          "type": "uniform-buffer",
+          "stages": [
+            "vertex",
+            "fragment"
+          ]
+        },
+        {
+          "binding": 1,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 2,
+          "type": "sampler",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 3,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 4,
+          "type": "texture",
           "stages": [
             "fragment"
           ]

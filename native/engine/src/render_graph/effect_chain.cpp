@@ -44,6 +44,9 @@ struct FxEntry {
   Mat material;
   std::vector<std::array<Term, 4>> rows;
   Tail tail = Tail::box;
+  /// AE parity 5.3: the material reads a second texture at binding 3 — the
+  /// entry's `dataKey` texture, or the chain's own buffer when it has none.
+  bool data = false;
 };
 
 Term parse_term(std::string_view t) {
@@ -74,7 +77,16 @@ Term parse_term(std::string_view t) {
   return out;
 }
 
-FxEntry entry(Mat m, std::initializer_list<std::string_view> rows, Tail tail = Tail::box) {
+FxEntry entry(Mat m, std::initializer_list<std::string_view> rows, Tail tail = Tail::box);
+
+/// `entry` for a material with a data texture at binding 3 (FxEntry::data).
+FxEntry data_entry(Mat m, std::initializer_list<std::string_view> rows) {
+  FxEntry e = entry(m, rows);
+  e.data = true;
+  return e;
+}
+
+FxEntry entry(Mat m, std::initializer_list<std::string_view> rows, Tail tail) {
   FxEntry e{m, {}, tail};
   for (const std::string_view row : rows) {
     std::array<Term, 4> terms{};
@@ -117,13 +129,20 @@ const std::unordered_map<std::string, FxEntry>& fx_table() {
     t.emplace("color-range", entry(Mat::COLOR_RANGE_MATERIAL, {"ky ku kv mode", "lo hi wl 0"}));
     t.emplace("extract", entry(Mat::EXTRACT_MATERIAL, {"channel black white blackSoft", "whiteSoft invert 0 0"}));
     t.emplace("spill-suppressor", entry(Mat::SPILL_SUPPRESSOR_MATERIAL, {"keyHue strength preserveLuma 0"}));
-    // AE parity 5.3: float GPU passes for Advanced Spill Suppressor (Ultra), Lumetri's
-    // cross-channel stage and Keylight's matte views (effects_spatial_a.cpp writes them).
-    t.emplace("advanced-spill", entry(Mat::ADVANCED_SPILL_MATERIAL, {"primary suppression range tolerance", "desat colorFix lumaFix 0"}));
-    t.emplace("lumetri-grade", entry(Mat::LUMETRI_GRADE_MATERIAL, {"sat vib vAmount vRadius", "vExp vFeather vAspect hsl",
-                                                                  "hslHue hslRange hslHueSoft hslSoft", "satMin satMax lumMin lumMax",
-                                                                  "temp tint contrast hslSat", "showMask lw lh 0"}));
+    // AE parity 5.3: float GPU passes for Advanced Spill Suppressor (binding 3 =
+    // Standard's green / blue vote), Lumetri's cross-channel stage (binding 3 = its
+    // Hue / Luma vs curves), Keylight's matte views, Hue/Saturation's colour
+    // ranges and Mesh Warp / Liquify's displacement field (binding 3 = the mesh).
+    t.emplace("advanced-spill", data_entry(Mat::ADVANCED_SPILL_MATERIAL, {"primary suppression range tolerance", "desat colorFix lumaFix standard"}));
+    t.emplace("lumetri-grade", data_entry(Mat::LUMETRI_GRADE_MATERIAL, {"sat vib vAmount vRadius", "vExp vFeather vAspect hsl",
+                                                                       "hslHue hslRange hslHueSoft hslSoft", "satMin satMax lumMin lumMax",
+                                                                       "temp tint contrast hslSat", "showMask lw lh 0",
+                                                                       "cSat cHue cLuma cLumaSat"}));
     t.emplace("matte-view", entry(Mat::MATTE_VIEW_MATERIAL, {"view 0 0 0"}));
+    t.emplace("hue-sat-ranges", entry(Mat::HUE_SAT_RANGES_MATERIAL, {"mh ms ml colorize", "ch cs cl 0", "r0h r0s r0l r0c", "r1h r1s r1l r1c",
+                                                                     "r2h r2s r2l r2c", "r3h r3s r3l r3c", "r4h r4s r4l r4c",
+                                                                     "r5h r5s r5l r5c"}));
+    t.emplace("field-warp", data_entry(Mat::FIELD_WARP_MATERIAL, {"cols rows amount 0", "lw lh 0 0"}));
     t.emplace("wave-warp", entry(Mat::WAVE_WARP_MATERIAL, {"dx dy k phase", "height lw lh 0"}));
     t.emplace("directional-blur", entry(Mat::DIRECTIONAL_BLUR_MATERIAL, {"dx dy length steps", "lw lh 0 0"}));
     t.emplace("linear-wipe", entry(Mat::LINEAR_WIPE_MATERIAL, {"gx gy pos soft", "lw lh full 0"}));
@@ -371,7 +390,9 @@ bool known_single(std::string_view t) {
                                          "channel-blur", "minimax",       "cross-blur",       "unsharp-mask",
                                          "shadow-highlight", "equalize", "auto-levels",     "auto-contrast",
                                          "auto-color",   "plastic",       "glass",            "vector-blur",
-                                         "radial-shadow", "plugin"});
+                                         "radial-shadow", "plugin",
+                                         // AE parity 5.3: the multi-pass keying / matte / deformation passes.
+                                         "keylight-ex", "key-cleaner", "remove-grain", "refine-matte", "reshape-tps"});
   return std::ranges::find(kSpecial, t) != kSpecial.end();
 }
 
@@ -485,6 +506,34 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
     return texOf(kFxScopeMask);
   };
 
+  /// AE parity 5.3: a mask raster by key (Keylight's Inside / Outside, Reshape's
+  /// Boundary) drawn into `dest` in the buffer's space, as scopeOf; empty when none.
+  auto maskInto = [&](std::string_view key, std::string_view dest) -> TexRef {
+    if (key.empty() || selfR == nullptr) return {};
+    const TexRef maskTex = ctx.texture(key);
+    if (!maskTex) return {};
+    const Mat3 maskMvp = space != nullptr ? mul(mvp, model_from_rect(space->box)) : mvp_for(vp, mat3_of(selfR->model_matrix));
+    const Rect maskUv = selfR->uv_rect ? rect_of(*selfR->uv_rect) : Rect{0, 0, 1, 1};
+    Commands mc;
+    emit_textured(ctx, mc, maskMvp, Color::white(), 1, Blend::none, maskTex, ctx.linear_clamp(), maskUv, kIdentityColor,
+                  maskTex.sampleLinear);
+    ctx.draw_into(dest, mc, true);
+    return texOf(dest);
+  };
+
+  /// AE parity 5.3: one matte-ops.wgsl pass into `dest` (rows p0..p3; B / C / D
+  /// default to A). Blend none: the scratch targets may be 32-bit float.
+  auto matteOp = [&](std::string_view dest, const std::array<Vec4, 4>& rows, const TexRef& a, const TexRef& b = {}, const TexRef& c = {},
+                     const TexRef& d = {}) -> TexRef {
+    Commands mc = one(Mat::MATTE_OPS_MATERIAL, pack_fx_block(ctx.packer(), mvp, targetUv, rows, fxBox), a, Blend::none);
+    DrawItem& it = mc.last();
+    it.mask = b ? b : a;
+    it.origin = c ? c : a;
+    it.bind(5, d ? d : a);
+    ctx.draw_into(dest, mc, true);
+    return texOf(dest);
+  };
+
   // A faded / scoped effect that writes several chain entries (`blendSpan` on
   // its first): its input is kept in kFxBlendInput and blended back once, after
   // its last entry — applyEffectChain blends the WHOLE effect's output over its
@@ -559,6 +608,8 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
     if (type == "channel-lut" && !ctx.texture(fx.text("lutKey"))) continue;
     if (type == "stamp-field" && !ctx.texture(fx.text("stampKey"))) continue;
     if (type == "fx-overlay" && !ctx.texture(fx.text("overlayKey"))) continue;
+    // AE parity 5.3: an entry whose data texture (a curve table, a mesh, a spline) did not arrive.
+    if (!fx.text("dataKey").empty() && !ctx.texture(fx.text("dataKey"))) continue;
 
     // E4: an effect scoped to one mask path blends back through its coverage,
     // drawn now (before the effect) into the buffer's space.
@@ -876,7 +927,7 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
         curName = srcName;
       }
     };
-    if (type == "keylight" || type == "simple-choker" || type == "matte-choker") {
+    if (type == "keylight" || type == "keylight-ex" || type == "simple-choker" || type == "matte-choker") {
       const double lw = fx.num("lw");
       const double lh = fx.num("lh");
       const auto morph = [&](double radius, bool erode, double border) {
@@ -895,7 +946,42 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
         const std::array<Vec4, 2> v{{{0, 1, r, 0}, {lw, lh, 2, 0}}};
         pass2(Mat::ALPHA_BOX_MATERIAL, v);
       };
-      if (type == "keylight") {
+      if (type == "keylight-ex") {
+        // AE parity 5.3: Keylight 1.2 past the core key (keying_more_kernels.cpp
+        // keylight_full): Screen Pre-blur (a box blur of the colours the matte is
+        // pulled from), Clip Rollback (the unclipped matte where the clipped one
+        // turns), Inside / Outside masks and the Intermediate Result.
+        constexpr double kBox = 1, kMax = 3, kMatte = 10, kFinal = 11;
+        const double chan = fx.num("p");
+        TexRef from = curTex;
+        if (const double blur = std::min(20.0, std::round(fx.num("preBlurPx"))); blur > 0) {
+          (void)matteOp(kFxAux[0], {{{kBox, 1, 0, blur}, {lw, lh, 0, chan}, {1, 1, 1, 1}, {0, 0, 0, 0}}}, curTex);
+          from = matteOp(kFxAux[1], {{{kBox, 0, 1, blur}, {lw, lh, 0, chan}, {1, 1, 1, 1}, {0, 0, 0, 0}}}, texOf(kFxAux[0]));
+        }
+        TexRef matte = matteOp(kFxAux[0], {{{kMatte, 0, 0, 0}, {lw, lh, 0, chan}, {fx.num("balance"), fx.num("gain"), fx.num("clipBlack"), fx.num("clipWhite")},
+                                            {fx.num("denom", 1), 0, 0, 0}}},
+                               from);
+        const double roll = std::min(50.0, std::round(fx.num("rollbackPx")));
+        if (roll > 0) {
+          (void)matteOp(kFxAux[1], {{{kMax, 1, 0, roll}, {lw, lh, 0, chan}, {0, 0, 1, 1}, {0, 0, 0, 0}}}, matte);
+          matte = matteOp(kFxAux[0], {{{kMax, 0, 1, roll}, {lw, lh, 0, chan}, {0, 0, 1, 1}, {0, 0, 0, 0}}}, texOf(kFxAux[1]));
+        }
+        const TexRef inside = maskInto(fx.text("insideMaskKey"), kFxAux[2]);
+        const TexRef outside = maskInto(fx.text("outsideMaskKey"), kFxAux[3]);
+        const bool intermediate = fx.flag("intermediate");
+        const std::string_view dest = srcName == f0 ? f1 : f0;
+        (void)matteOp(dest,
+                      {{{kFinal, 0, 0, 0}, {lw, lh, 0, chan}, {fx.num("despill"), roll > 0 ? 1.0 : 0.0, inside ? 1.0 : 0.0, outside ? 1.0 : 0.0},
+                        {intermediate ? 1.0 : 0.0, 0, 0, 0}}},
+                      src, matte, inside, outside);
+        src = texOf(dest);
+        srcName = dest;
+        if (!intermediate) {
+          const double choke = fx.num("chokePx");
+          if (choke != 0) morph(std::abs(choke), choke > 0, 0);
+          if (fx.num("softPx") > 0) box(fx.num("softPx"));
+        }
+      } else if (type == "keylight") {
         const std::array<Vec4, 3> rows{{{fx.num("kr"), fx.num("kg"), fx.num("kb"), fx.num("balance")},
                                         {fx.num("gain"), fx.num("clipBlack"), fx.num("clipWhite"), fx.num("despill")},
                                         {fx.num("p"), fx.num("a"), fx.num("b"), fx.num("denom")}}};
@@ -914,6 +1000,89 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
         }
       }
       settle();
+      continue;
+    }
+    if (type == "key-cleaner" || type == "remove-grain" || type == "refine-matte" || type == "reshape-tps") {
+      // AE parity 5.3: the rest of the keying / matte family and Reshape on the
+      // GPU route — scratch passes in kFxAux, the result into f0.
+      constexpr double kBox = 1, kGauss = 2, kMax = 3, kMedian = 4;
+      const double lw = fx.num("lw");
+      const double lh = fx.num("lh");
+      const auto aux = [&](std::size_t i) { return kFxAux.at(i); };
+      /// A separable op (box / gauss / max) over `in`: across into `tmp`, down into `out`.
+      const auto sep = [&](double mode, double r, const Vec4& mask, double edge, const TexRef& in, std::size_t tmp, std::size_t out) {
+        (void)matteOp(aux(tmp), {{{mode, 1, 0, r}, {lw, lh, edge, 0}, mask, {0, 0, 0, 0}}}, in);
+        return matteOp(aux(out), {{{mode, 0, 1, r}, {lw, lh, edge, 0}, mask, {0, 0, 0, 0}}}, texOf(aux(tmp)));
+      };
+      if (type == "key-cleaner") {
+        // keying_more_kernels.cpp key_cleaner: the edge zone (soft alpha, or where
+        // opaque meets clear) dilated by the radius; Reduce Chatter's median; the
+        // matte box-blurred twice and its contrast raised, inside the zone.
+        const double r = std::min(50.0, std::round(fx.num("radius")));
+        if (r <= 0 || fx.num("strength") <= 0) continue;
+        (void)matteOp(aux(0), {{{20, 0, 0, 0}, {lw, lh, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}}, curTex);
+        TexRef m = sep(kMax, r, {0, 0, 1, 0}, 0, texOf(aux(0)), 1, 0);
+        std::size_t at = 0;
+        if (fx.flag("chatter")) {
+          m = matteOp(aux(1), {{{kMedian, 0, 0, 0}, {lw, lh, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}}, m);
+          at = 1;
+        }
+        const double half = std::max(1.0, std::floor(r / 2));
+        for (int k = 0; k < 2; ++k) {
+          m = sep(kBox, half, {0, 1, 0, 0}, 0, m, 1 - at, at);
+        }
+        (void)matteOp(f0, {{{21, 0, 0, 0}, {lw, lh, 0, 0}, {fx.num("contrast"), fx.num("strength"), 0, 0}, {0, 0, 0, 0}}}, curTex, m);
+      } else if (type == "remove-grain") {
+        // keying_more_kernels.cpp remove_grain: bilateral passes in YCbCr.
+        if (fx.num("strength") <= 0) continue;
+        TexRef y = matteOp(aux(0), {{{30, 0, 0, 0}, {lw, lh, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}}, curTex);
+        const int passes = static_cast<int>(std::clamp(fx.num("passes", 1), 1.0, 4.0));
+        std::size_t at = 0;
+        for (int k = 0; k < passes; ++k) {
+          y = matteOp(aux(1 - at), {{{31, 0, 0, std::clamp(fx.num("radius", 1), 1.0, 8.0)}, {lw, lh, 0, 0},
+                                     {fx.num("sigmaY"), fx.num("sigmaC"), fx.num("sigmaS"), 0}, {0, 0, 0, 0}}},
+                      y);
+          at = 1 - at;
+        }
+        (void)matteOp(f0, {{{32, 0, 0, 0}, {lw, lh, 0, 0}, {fx.flag("showNoise") ? 1.0 : 0.0, 0, 0, 0}, {0, 0, 0, 0}}}, curTex, y);
+      } else if (type == "refine-matte") {
+        // keying_kernels.cpp refine_matte: the guided filter (window means of I,
+        // α, I², Iα, then of the linear model), smooth, contrast / shift, feather,
+        // and edge decontamination against the blurred clear background.
+        const double r = std::min(200.0, std::round(fx.num("radius")));
+        TexRef a;
+        if (r > 0) {
+          (void)matteOp(aux(0), {{{40, 0, 0, 0}, {lw, lh, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}}, curTex);
+          const TexRef means = sep(kBox, r, {1, 1, 1, 1}, 1, texOf(aux(0)), 1, 0);
+          (void)matteOp(aux(1), {{{41, 0, 0, 0}, {lw, lh, 0, 0}, {fx.num("eps"), 0, 0, 0}, {0, 0, 0, 0}}}, means);
+          const TexRef model = sep(kBox, r, {1, 1, 0, 0}, 1, texOf(aux(1)), 0, 1);
+          a = matteOp(aux(0), {{{42, 0, 0, 0}, {lw, lh, 0, 0}, {0, 1, 0, 0}, {0, 0, 0, 0}}}, model, curTex);
+        } else {
+          a = matteOp(aux(0), {{{42, 0, 0, 0}, {lw, lh, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}}, curTex, curTex);
+        }
+        a = sep(kGauss, fx.num("smoothSigma"), {1, 0, 0, 0}, 0, a, 1, 0);
+        a = matteOp(aux(1), {{{43, 0, 0, 0}, {lw, lh, 0, 0}, {fx.num("contrast", 1), fx.num("shift"), 0, 0}, {0, 0, 0, 0}}}, a);
+        a = sep(kGauss, fx.num("featherSigma"), {1, 0, 0, 0}, 0, a, 0, 1);
+        TexRef bg;
+        const double amt = fx.num("decontaminate");
+        if (amt > 0) {
+          (void)matteOp(aux(2), {{{44, 0, 0, 0}, {lw, lh, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}}, a, curTex);
+          bg = sep(kGauss, fx.num("bgSigma", 4), {1, 1, 1, 1}, 0, texOf(aux(2)), 3, 2);
+        }
+        (void)matteOp(f0, {{{45, 0, 0, 0}, {lw, lh, 0, 0}, {amt, bg ? 1.0 : 0.0, 0, 0}, {0, 0, 0, 0}}}, curTex, a, bg);
+      } else {
+        // reshape-tps: warp_more_kernels.cpp reshape, the spline the scene solved.
+        const TexRef data = ctx.texture(fx.text("dataKey"));
+        if (!data) continue;
+        const TexRef boundary = maskInto(fx.text("boundaryMaskKey"), aux(0));
+        const std::array<Vec4, 2> rows{{{0, boundary ? 1.0 : 0.0, fx.num("scale", 1), 0}, {lw, lh, 0, 0}}};
+        Commands rc = one(Mat::RESHAPE_TPS_MATERIAL, pack_fx_block(ctx.packer(), mvp, targetUv, rows, fxBox), curTex, Blend::none);
+        rc.last().mask = data;
+        rc.last().origin = boundary ? boundary : curTex;
+        ctx.draw_into(f0, rc, true);
+      }
+      curTex = texOf(f0);
+      curName = f0;
       continue;
     }
     if (type == "channel-blur" || type == "minimax" || type == "cross-blur") {
@@ -1153,6 +1322,18 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
       return it;
     };
     if (const auto t = fx_table().find(std::string(type)); t != fx_table().end()) {
+      // AE parity 5.3: a data texture at binding 3 (FxEntry::data) — the entry's
+      // own, or Advanced Spill ▸ Standard's green / blue vote drawn now into one texel.
+      TexRef dataTex = fx.text("dataKey").empty() ? TexRef{} : ctx.texture(fx.text("dataKey"));
+      if (type == "advanced-spill" && fx.flag("standard")) {
+        const std::array<Vec4, 4> vote{{{50, 0, 0, 0}, {1, 1, 0, 0}, {0, 0, 0, 0}, {0, 0, 0, 0}}};
+        Commands vc = one(Mat::MATTE_OPS_MATERIAL, pack_fx_block(ctx.packer(), mvp, targetUv, vote, fxBox), curTex, Blend::none);
+        vc.last().mask = curTex;
+        vc.last().origin = curTex;
+        vc.last().bind(5, curTex);
+        ctx.draw_into_sized(kFxAux[0], vc, true, 1, 1);
+        dataTex = texOf(kFxAux[0]);
+      }
       std::vector<Vec4> rows;
       for (const auto& row : t->second.rows) {
         rows.push_back({term_value(fx, row[0]), term_value(fx, row[1]), term_value(fx, row[2]), term_value(fx, row[3])});
@@ -1166,7 +1347,8 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
         (void)fx.color("color", c);
         pk.working_rgba(c);
       }
-      add(t->second.material, pk.span(), ctx.linear_clamp());
+      DrawItem& it = add(t->second.material, pk.span(), ctx.linear_clamp());
+      if (t->second.data) it.mask = dataTex ? dataTex : curTex;
     } else if (type == "bevel-alpha" || type == "bevel-edges") {
       const double lr = fx.num("lightRad");
       Color c{1, 1, 1, 1};

@@ -81,6 +81,10 @@ struct ColorMatrix {
 [[nodiscard]] std::string scope_mask_key(std::string_view layerId, std::string_view maskId);
 /// The scoped masks a GPU-routed layer's chain reads: (texture key, `{paths: [path]}`).
 [[nodiscard]] std::vector<std::pair<std::string, Json>> gpu_route_scope_masks(const RLayer& l);
+/// AE parity 5.3: the GPU route's data textures — Lumetri's Hue / Luma vs curve
+/// tables, Mesh Warp's / Liquify's displacement mesh, Reshape's solved spline —
+/// keyed as the chain entries name them (`dataKey`), floats in entry order.
+[[nodiscard]] std::vector<std::pair<std::string, std::vector<float>>> gpu_route_data_textures(const RLayer& l);
 /// A Canvas2D-only effect the GPU draws itself on this layer (Vegas over the
 /// layer's own alpha: gpu_canvas_fx.cpp), and its chain entry.
 [[nodiscard]] bool gpu_draws_canvas_effect(const RLayer& l, const Json& e);

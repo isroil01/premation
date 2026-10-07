@@ -243,6 +243,7 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
                                   std::string(kGeneratorTarget), std::string(kFxSilhouette), std::string(kFxScopeMask),
                                   std::string(kFxBlendInput)};
     for (const auto n : kPrecompTargets) w.emplace_back(n);
+    for (const auto n : kFxAux) w.emplace_back(n);
     return w;
   }
   [[nodiscard]] std::vector<std::string> after() const override { return {"background"}; }
