@@ -61,12 +61,16 @@ export type Harness = AppHarness;
 
 let shared: NativeEngine | null = null;
 let starting: Promise<NativeEngine> | null = null;
+/** Whether the running (or starting) engine is the full renderer. */
+let sharedGpu = false;
 
-async function nativeEngine(): Promise<NativeEngine> {
+async function nativeEngine(gpu = false): Promise<NativeEngine> {
+  if ((shared || starting) && sharedGpu !== gpu) await stopShared();
   if (shared) return shared;
+  sharedGpu = gpu;
   // `--test-ports`: the engine's FakePorts — deterministic footage records for
   // any path, projects kept in memory (what the suites import and save).
-  starting ??= startNativeEngine({ extraArgs: ['--no-gpu', '--test-ports'] }).then((n) => {
+  starting ??= startNativeEngine({ extraArgs: gpu ? ['--test-ports'] : ['--no-gpu', '--test-ports'] }).then((n) => {
     forwardFrames(n);
     return (shared = n);
   });
@@ -167,6 +171,13 @@ export interface AppEngineOptions {
    * Suites of edits leave it off: an edit must load what it reads itself.
    */
   panels?: boolean;
+  /**
+   * The full renderer instead of `--no-gpu`'s simulated frame slots: frames
+   * and thumbnails carry real pixels. For suites that LOOK at output (the
+   * AI eval harness); everything else stays on the deterministic default.
+   * Switching between the two restarts the file's engine.
+   */
+  gpu?: boolean;
 }
 
 /** Hold the tree of every layer the mirror knows, as layers appear (`panels`). */
@@ -196,7 +207,7 @@ export async function setupAppEngine(opts: AppEngineOptions = {}): Promise<AppHa
     }
     if (stale) await stopShared();
   }
-  const native = await nativeEngine();
+  const native = await nativeEngine(opts.gpu === true);
   (window as unknown as { motionEditor?: unknown }).motionEditor = { engine: native.bridge };
   setCommandSystem(new CommandSystem({ services: {} as CommandServices, getState: () => ({}) }));
   setEngineOwnsDocument(true);
