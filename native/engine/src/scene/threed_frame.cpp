@@ -207,6 +207,7 @@ void apply_three_d(const RLayer& l, const Mat3& parent, api::Renderable& r, cons
     }
   }
   if (l.castsShadow3d && r.three_d) r.three_d->casts_shadow = true;
+  if (l.acceptsShadows3d && !*l.acceptsShadows3d && r.three_d) r.three_d->accepts_shadows = false;
   if (l.lighting) {
     if (l.shade3d && r.three_d && depth_eligible_3d(r)) {
       api::RenderShade3D s;

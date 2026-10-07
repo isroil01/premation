@@ -70,6 +70,9 @@ struct Shade {
   const std::vector<api::RenderLight3D>* lights = nullptr;
   double kAmbient = 1;
   double kDiffuse = 1;
+  /// false: an unlit surface that still accepts shadows (AE: Accepts Shadows
+  /// does not need Accepts Lights) — packed unlit, only its shadow blocks apply.
+  bool lit = true;
   /// A shadow-mapped light's receiver block (packShade3D's shadow / shadow2).
   struct ShadowBlock {
     Mat4 matrix;
@@ -117,7 +120,7 @@ void pack_shade(Packer& p, const Shade* s, const FogBlock* fog) {
     out.at(o + 1) = f32(s->eye[1]);
     out.at(o + 2) = f32(s->eye[2]);
     const bool toon = s->toonBands.has_value();
-    out.at(o + 3) = toon ? (s->oneSided ? 4.0F : 3.0F) : s->oneSided ? 2.0F : 1.0F;
+    out.at(o + 3) = !s->lit ? 0.0F : toon ? (s->oneSided ? 4.0F : 3.0F) : s->oneSided ? 2.0F : 1.0F;
     o += 4;
     std::vector<const api::RenderLight3D*> lights;
     std::vector<double> gains;
@@ -162,7 +165,10 @@ void pack_shade(Packer& p, const Shade* s, const FogBlock* fog) {
       out.at(o + 15) = f32(l.falloff_distance);
       o += 16;
     }
-    const std::size_t envAt = kShadeFloats - 56 - 20 - 8 - 4;
+    // Measured back from the end of the first two shadow blocks (kShadeFloatsBase),
+    // not from kShadeFloats: AE parity 4.3–4.8 appended blocks 3–4, the SH probe,
+    // fog and the layer reflection after them.
+    const std::size_t envAt = kShadeFloatsBase - 56 - 20 - 8 - 4;
     if (s->env) {
       out.at(envAt + 0) = 1;
       out.at(envAt + 1) = f32((*s->env)[0]);
@@ -395,13 +401,18 @@ Mat4 mat4_list(std::initializer_list<double> v) {
 
 std::optional<ShadowCamera> shadow_camera_for(const api::RenderLight3D& light, const WorldBox& box) {
   if (light.type == api::RenderLightType::ambient || box.empty()) return std::nullopt;
-  const V3 f = normalize3(light.aim_x, light.aim_y, light.aim_z);
-  const V3 up = std::abs(f[1]) > 0.99 ? V3{0, 0, 1} : V3{0, 1, 0};
-  const V3 r = normalize3(up[1] * f[2] - up[2] * f[1], up[2] * f[0] - up[0] * f[2], up[0] * f[1] - up[1] * f[0]);
-  const V3 u = normalize3(f[1] * r[2] - f[2] * r[1], f[2] * r[0] - f[0] * r[2], f[0] * r[1] - f[1] * r[0]);
   const double cx = (box.minX + box.maxX) / 2;
   const double cy = (box.minY + box.maxY) / 2;
   const double cz = (box.minZ + box.maxZ) / 2;
+  // A point light shines every way: its one map looks at the shadowed volume.
+  // Its `aim` is only the glow's direction (sideways when it has no point of
+  // interest), which would point the map away from the casters (AE parity 4.3
+  // maps point lights; before, they took the projected path).
+  const V3 f = light.type == api::RenderLightType::point ? normalize3(cx - light.x, cy - light.y, cz - light.z)
+                                                         : normalize3(light.aim_x, light.aim_y, light.aim_z);
+  const V3 up = std::abs(f[1]) > 0.99 ? V3{0, 0, 1} : V3{0, 1, 0};
+  const V3 r = normalize3(up[1] * f[2] - up[2] * f[1], up[2] * f[0] - up[0] * f[2], up[0] * f[1] - up[1] * f[0]);
+  const V3 u = normalize3(f[1] * r[2] - f[2] * r[1], f[2] * r[0] - f[0] * r[2], f[0] * r[1] - f[1] * r[0]);
   const double radius = std::max(1.0, 0.5 * std::hypot(box.maxX - box.minX, box.maxY - box.minY, box.maxZ - box.minZ));
   const auto view_of = [&](const V3& eye) {
     const auto dot = [&](const V3& a) { return a[0] * eye[0] + a[1] * eye[1] + a[2] * eye[2]; };
@@ -779,8 +790,11 @@ void render_3d_group(PassContext& ctx, std::span<const api::Renderable* const> g
       b.origin = camera->origin;
       b.invFar = camera->invFar;
       b.darkness = std::max(0.0, std::min(1.0, light.shadow_darkness.value_or(1)));
-      const double softness = light.shadow_softness.value_or(1);
       const double texel = camera->footprint / std::max(1.0, static_cast<double>(size));
+      // Shadow Diffusion (world px) as filter texels; Map softness is the floor.
+      // Capped so the 3 × 3 kernel's taps stay within reach of each other.
+      const double diffusionTexels = std::min(16.0, light.shadow_diffusion.value_or(0) / std::max(1e-6, texel));
+      const double softness = std::max(light.shadow_softness.value_or(1), diffusionTexels);
       b.bias = (std::max(0.0, light.shadow_bias.value_or(3)) + texel * (1 + std::max(0.0, softness))) * camera->invFar;
       b.step = std::max(0.0, softness) / size;
       return b;
@@ -851,7 +865,9 @@ void render_3d_group(PassContext& ctx, std::span<const api::Renderable* const> g
       const bool full = settings.quality == api::RenderSsaoQuality::full;
       const std::uint32_t sw = std::max(1U, vp.pixelWidth / (full ? 1U : 2U));
       const std::uint32_t shh = std::max(1U, vp.pixelHeight / (full ? 1U : 2U));
-      RenderTarget& depthRt = ctx.dev.target("ssao-depth", sw, shh, wgpu::TextureFormat::RGBA8Unorm, 1, true);
+      // Float depth (r + g / 4096, shadow-depth*.wgsl since AE parity 4.3): an
+      // rgba8 target would clamp g and keep r to 1/255 of the far plane.
+      RenderTarget& depthRt = ctx.dev.target("ssao-depth", sw, shh, wgpu::TextureFormat::RGBA16Float, 1, true);
       Commands dc;
       for (const api::Renderable* r : occluders) {
         const auto& model = r->three_d->model;
@@ -991,6 +1007,19 @@ void render_3d_group(PassContext& ctx, std::span<const api::Renderable* const> g
     s.kDiffuse = sh.diffuse.value_or(50) / 50;
     return true;
   };
+  // An unlit 3D surface under a mapped shadow (AE parity 4.3 maps every shadow
+  // light, so the projected copies that used to darken unlit receivers are gone).
+  const bool anyShadowBlock = std::ranges::any_of(shadowBlocks, [](const auto& b) { return b.has_value(); });
+  const auto shadow_only_for = [&](const api::Renderable& r, Shade& s) -> bool {
+    if (!anyShadowBlock || !r.three_d || r.three_d->shade || !r.three_d->accepts_shadows.value_or(true)) return false;
+    if (scene.lights3d == nullptr) return false;
+    s = Shade{};
+    s.lit = false;
+    s.model = r.three_d->model;
+    s.lights = scene.lights3d;
+    s.shadows = shadowBlocks;
+    return true;
+  };
   const auto lit_color = [](const api::Renderable& r, Color c, bool shaded) {
     if (shaded || !r.three_d || !r.three_d->shade || r.three_d->shade->quad_gain.size() < 3) return c;
     const auto& g = r.three_d->shade->quad_gain;
@@ -1106,7 +1135,10 @@ void render_3d_group(PassContext& ctx, std::span<const api::Renderable* const> g
     const Rect uv = r.uv_rect ? rect_of(*r.uv_rect) : Rect{0, 0, 1, 1};
     Shade shade;
     const bool shaded = shade_for(r, shade);
-    if (shaded) shade.model = model;
+    // `shaded` stays "lit" (baked gains and lit colours key off it); a shadow-only
+    // shade still rides the uniforms.
+    const bool shadowOnly = !shaded && shadow_only_for(r, shade);
+    if (shaded || shadowOnly) shade.model = model;
     // This surface's planar reflection, if the run prepared one (bind_scene binds layerReflTex).
     layerReflTex = noReflection;
     if (shaded && !inReflectionPass) {
@@ -1119,7 +1151,7 @@ void render_3d_group(PassContext& ctx, std::span<const api::Renderable* const> g
         layerReflTex = it->second;
       }
     }
-    const Shade* sp = shaded ? &shade : nullptr;
+    const Shade* sp = shaded || shadowOnly ? &shade : nullptr;
 
     if (r.extruded_mesh) {
       const auto& mesh = *r.extruded_mesh;
@@ -1176,7 +1208,7 @@ void render_3d_group(PassContext& ctx, std::span<const api::Renderable* const> g
         const Color color = shaded ? c : Color{c.r * range.gain, c.g * range.gain, c.b * range.gain, c.a};
         Shade rangeShade = shade;
         if (shaded && range.role == api::RenderMeshRole::front && shade.oneSided) rangeShade.oneSided = false;
-        const Shade* rsp = shaded ? &rangeShade : nullptr;
+        const Shade* rsp = shaded || shadowOnly ? &rangeShade : nullptr;
         // The resolved surface already carries the content, its colour matrix and LUT.
         const bool useFx = fx.has_value() && !range.texture_key && (uvSpace || range.textured);
         const TexRef rangeTex = useFx ? fx->tex : range.texture_key ? texFor(range.texture_key) : tex;
@@ -1260,7 +1292,7 @@ void render_3d_group(PassContext& ctx, std::span<const api::Renderable* const> g
       fxShade.model = fxModel;
       const Color tint = lit_color(r, Color::white(), shaded);
       Packer p = ctx.packer();
-      pack_textured3d(p, fxMvp, targetUv, tint, opacity, kIdentityColor, shaded ? &fxShade : nullptr, true, fogp);
+      pack_textured3d(p, fxMvp, targetUv, tint, opacity, kIdentityColor, shaded || shadowOnly ? &fxShade : nullptr, true, fogp);
       DrawItem& it = out.add(Mat::TEXTURED3D_LINEAR_NO_DEPTH_WRITE_MATERIAL, blend, p.span());
       it.texture = res->tex;
       it.sampler = clamp;

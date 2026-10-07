@@ -101,6 +101,7 @@ SceneLight scene_light_of(const LightProps& lt) {
   s.shadowBias = lt.shadowBias;
   s.shadowSoftness = lt.shadowSoftness;
   s.shadowDarkness = lt.shadowDarkness;
+  s.shadowDiffusion = lt.shadowDiffusion;
   return s;
 }
 
@@ -267,6 +268,7 @@ std::vector<api::RenderLight3D> to_shader_lights(const std::vector<SceneLight>& 
       if (light.shadowMapSize) o.shadow_map_size = light.shadowMapSize;
       if (light.shadowBias) o.shadow_bias = light.shadowBias;
       if (light.shadowSoftness) o.shadow_softness = light.shadowSoftness;
+      if (light.shadowDiffusion && *light.shadowDiffusion > 0) o.shadow_diffusion = light.shadowDiffusion;
       if (light.shadowDarkness) o.shadow_darkness = *light.shadowDarkness / 100;
     }
     out.push_back(std::move(o));

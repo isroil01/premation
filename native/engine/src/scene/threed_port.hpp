@@ -207,7 +207,10 @@ class Scene3D {
   struct ShadowLight {
     double x = 0, y = 0, z = 0, intensity = 0, darkness = 0, diffusion = 0;
   };
+  /// Projected-copy lights: the shadow lights past the mapped four.
   std::vector<ShadowLight> shadowLights_;
+  /// Every shadow light, mapped or not: a 2D layer's drop-shadow reads the first.
+  std::vector<ShadowLight> flatShadowLights_;
   bool hasShadowMapLight_ = false;
   struct EnvReflect {
     Json sky;

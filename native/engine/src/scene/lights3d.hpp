@@ -73,6 +73,8 @@ struct SceneLight {
   std::optional<double> shadowBias;
   std::optional<double> shadowSoftness;
   std::optional<double> shadowDarkness;
+  /// AE's Shadow Diffusion (px): softens a mapped shadow too (AE parity 4.3).
+  std::optional<double> shadowDiffusion;
   double x = 0, y = 0, z = 0;
   /// AE parity 4.4: part of an environment probe's derived rig — lights the
   /// CPU's per-quad shading but is not shipped to the GPU, whose image-based

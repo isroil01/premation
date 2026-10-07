@@ -173,6 +173,9 @@ struct RenderThreeD {
   model: f64[] = 1;
   castsShadow?: bool = 2;
   shade?: RenderShade3D = 3;
+  /// false = Accepts Shadows off. Read for an unlit surface (no `shade`): a mapped
+  /// shadow still darkens it (AE parity 4.3); a lit one reads shade.acceptsShadows.
+  acceptsShadows?: bool = 4;
 }
 
 struct RenderDof {
@@ -197,6 +200,8 @@ struct RenderLight3D {
   aimX: f64 = 8; aimY: f64 = 9; aimZ: f64 = 10; halfConeRad: f64 = 11; coneFeatherRad: f64 = 12;
   falloffMode: f64 = 13; falloffDistance: f64 = 14;
   shadowMap?: bool = 15; shadowMapSize?: f64 = 16; shadowBias?: f64 = 17; shadowSoftness?: f64 = 18; shadowDarkness?: f64 = 19;
+  /// AE's Shadow Diffusion in world px: widens the map's filter (AE parity 4.3).
+  shadowDiffusion?: f64 = 20;
 }
 
 struct RenderEnvMap {

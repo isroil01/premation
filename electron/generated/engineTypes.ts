@@ -4984,6 +4984,11 @@ export interface RenderThreeD {
   model: number[];
   castsShadow?: boolean;
   shade?: RenderShade3D;
+  /**
+   * false = Accepts Shadows off. Read for an unlit surface (no `shade`): a mapped
+   * shadow still darkens it (AE parity 4.3); a lit one reads shade.acceptsShadows.
+   */
+  acceptsShadows?: boolean;
 }
 
 export interface RenderDof {
@@ -5031,6 +5036,8 @@ export interface RenderLight3D {
   shadowBias?: number;
   shadowSoftness?: number;
   shadowDarkness?: number;
+  /** AE's Shadow Diffusion in world px: widens the map's filter (AE parity 4.3). */
+  shadowDiffusion?: number;
 }
 
 export interface RenderEnvMap {

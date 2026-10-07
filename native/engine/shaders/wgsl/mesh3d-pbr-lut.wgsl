@@ -402,8 +402,15 @@ fn shadeAlpha3d(world : vec3<f32>) -> f32 {
   return 1.0 - t * mix(1.0, 1.0 - fres, obj.alphaParams.y);
 }
 
+// AE parity 4.3: Accepts Shadows does not need Accepts Lights. An unlit
+// surface still darkens under every mapped shadow, each sampled facing its
+// light (no surface normal to slope the bias by). Unused slots answer 1.
+fn unlitShadow(world : vec3<f32>) -> f32 {
+  return shadowFactor(world, -obj.shadowAxis.xyz) * shadowFactor2(world, -obj.shadow2Axis.xyz) *
+         shadowFactor3(world, -obj.shadow3Axis.xyz) * shadowFactor4(world, -obj.shadow4Axis.xyz);
+}
 fn shade3dNMR(world : vec3<f32>, nrmIn : vec3<f32>, baseRgb : vec3<f32>, metalMul : f32, roughMul : f32, ao : f32) -> vec3<f32> {
-  if (obj.eyeLit.w < 0.5) { return applyFog(world, baseRgb); }
+  if (obj.eyeLit.w < 0.5) { return applyFog(world, baseRgb * unlitShadow(world)); }
   /*
     Two-sided or one-sided, from the lit flag.
 

@@ -28638,6 +28638,7 @@ void encode(wire::Writer& w, const RenderThreeD& v) {
   if (!v.model.empty()) { w.varint(10U); const std::size_t s = w.begin_ld(); for (const auto& e : v.model) w.f64(e); w.end_ld(s); }
   if (v.casts_shadow.has_value()) { w.varint(16U); w.boolean(*v.casts_shadow); }
   if (v.shade.has_value()) { w.varint(26U); { const std::size_t s = w.begin_ld(); encode(w, *v.shade); w.end_ld(s); } }
+  if (v.accepts_shadows.has_value()) { w.varint(32U); w.boolean(*v.accepts_shadows); }
 }
 
 Status decode(wire::Reader& r, RenderThreeD& out) {
@@ -28661,6 +28662,12 @@ Status decode(wire::Reader& r, RenderThreeD& out) {
         RenderShade3D e;
         { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
         out.shade = std::move(e);
+        break;
+      }
+      case 32U: {
+        bool e = false;
+        if (!r.boolean(e)) return Status::truncated;
+        out.accepts_shadows = std::move(e);
         break;
       }
       default:
@@ -28845,6 +28852,7 @@ void encode(wire::Writer& w, const RenderLight3D& v) {
   if (v.shadow_bias.has_value()) { w.varint(137U); w.f64(*v.shadow_bias); }
   if (v.shadow_softness.has_value()) { w.varint(145U); w.f64(*v.shadow_softness); }
   if (v.shadow_darkness.has_value()) { w.varint(153U); w.f64(*v.shadow_darkness); }
+  if (v.shadow_diffusion.has_value()) { w.varint(161U); w.f64(*v.shadow_diffusion); }
 }
 
 Status decode(wire::Reader& r, RenderLight3D& out) {
@@ -28964,6 +28972,12 @@ Status decode(wire::Reader& r, RenderLight3D& out) {
         double e = 0.0;
         if (!r.f64(e)) return Status::truncated;
         out.shadow_darkness = std::move(e);
+        break;
+      }
+      case 161U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.shadow_diffusion = std::move(e);
         break;
       }
       default:

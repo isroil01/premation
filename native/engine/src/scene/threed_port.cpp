@@ -334,11 +334,6 @@ void Scene3D::setup(const std::vector<const doc::Node*>& nodes) {
       // AE parity 4.3: every shadow-casting light takes a shadow MAP (up to
       // four per run) — geometry-aware, so a floor or any surface at any angle
       // receives it. Only lights past the fourth fall back to projected copies.
-      if (mapped < kMappedShadowLights) {
-        ++mapped;
-        hasShadowMapLight_ = true;
-        continue;
-      }
       const Values& av = h_.values3d(n->id);
       const xf::Vec3 wp = node_world_position(*n);
       ShadowLight sl;
@@ -348,6 +343,14 @@ void Scene3D::setup(const std::vector<const doc::Node*>& nodes) {
       sl.intensity = av.get("intensity").value_or(lt.intensity);
       sl.darkness = av.get("shadowDarkness").value_or(lt.shadowDarkness) / 100;
       sl.diffusion = av.get("shadowDiffusion").value_or(lt.shadowDiffusion);
+      // A 2D layer is in no depth pass, so no map reaches it: it keeps the
+      // drop-shadow from the first shadow light, mapped or not.
+      flatShadowLights_.push_back(sl);
+      if (mapped < kMappedShadowLights) {
+        ++mapped;
+        hasShadowMapLight_ = true;
+        continue;
+      }
       shadowLights_.push_back(sl);
     }
   }
@@ -476,6 +479,7 @@ void Scene3D::setup(const std::vector<const doc::Node*>& nodes) {
       r.shadowDarkness = av.get("shadowDarkness").value_or(lt.shadowDarkness);
       r.shadowBias = av.get("shadowBias").value_or(lt.shadowBias);
       r.shadowSoftness = av.get("shadowSoftness").value_or(lt.shadowSoftness);
+      r.shadowDiffusion = av.get("shadowDiffusion").value_or(lt.shadowDiffusion);
       {
         const std::optional<double> px = av.get("poiX") ? av.get("poiX") : lt.poi ? std::optional<double>((*lt.poi)[0]) : std::nullopt;
         const std::optional<double> py = av.get("poiY") ? av.get("poiY") : lt.poi ? std::optional<double>((*lt.poi)[1]) : std::nullopt;
@@ -661,9 +665,9 @@ void Scene3D::effects(const Layer3D& s, bool isSolid, double px, double py, RLay
       c.transmission = mat.lightTransmission / 100;
       c.world3d = s.world3d.value_or(xf::kIdentity4);
       shadowCasters_.push_back(std::move(c));
-    } else if (!shadowLights_.empty()) {
+    } else if (!s.is3d && !flatShadowLights_.empty()) {
       // shadowEffectOf(px, py).
-      const ShadowLight& L = shadowLights_.front();
+      const ShadowLight& L = flatShadowLights_.front();
       double dx = px - L.x;
       double dy = py - L.y;
       const double len = hypot2(dx, dy);

@@ -5922,6 +5922,7 @@ struct RenderThreeD {
   std::vector<double> model;
   std::optional<bool> casts_shadow;
   std::optional<RenderShade3D> shade;
+  std::optional<bool> accepts_shadows;
   bool operator==(const RenderThreeD&) const = default;
 };
 
@@ -5970,6 +5971,7 @@ struct RenderLight3D {
   std::optional<double> shadow_bias;
   std::optional<double> shadow_softness;
   std::optional<double> shadow_darkness;
+  std::optional<double> shadow_diffusion;
   bool operator==(const RenderLight3D&) const = default;
 };
 

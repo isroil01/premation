@@ -18,6 +18,7 @@
 // With that file in its document, the golden frame itself was checked through
 // premation-scene: structurally equal to the TS FrameScene and pixel-equal to
 // the webgpu frame (NATIVE_CORE_PLAN.md, "D2w 3D leftovers").
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <cstring>
@@ -294,15 +295,19 @@ TEST_CASE("3D leftovers: an image (asset:) environment sky lights and reflects f
   // What the builder must have derived: the same pixels through the ported pipeline.
   std::vector<std::uint8_t> rgba;
   for (std::size_t i = 0; i < std::size_t{kW} * kH; ++i) rgba.insert(rgba.end(), {rgb[i * 3], rgb[i * 3 + 1], rgb[i * 3 + 2], 255});
+  // AE parity 4.4: the reflection atlas is the HDR one (kEnvHdr bands), and the
+  // diffuse light is the probe's SH, not rig lights in the light array.
   const sc::EnvPixels base = sc::resample_equirect(rgba, kW, kH, sc::kEnvSpecWidth, sc::kEnvSpecHeight, false);
-  const std::string id = sc::env_atlas_key("asset:sky1#" + sc::hash_env_pixels(base));
+  const sc::EnvPixels hdr = sc::resample_equirect(rgba, kW, kH, sc::kEnvHdrWidth, sc::kEnvHdrHeight, false);
+  const std::string id = "hdr:asset:sky1#" + sc::hash_env_pixels(hdr);
   REQUIRE(f.file.scene.env_map.has_value());
   CHECK(f.file.scene.env_map->id == id);
-  CHECK(f.file.scene.env_map->data == sc::build_env_specular_atlas(base, id).data);
+  CHECK(f.file.scene.env_map->data == sc::build_env_hdr_atlas(hdr, id).data);
   CHECK(f.file.scene.env_map->rotation_deg == 30);
-  // The irradiance rig rides the light array: as many lights as environment_rig derives.
-  const auto rig = sc::environment_rig(sc::sh_project(base), 90, 30);
-  CHECK(f.file.scene.lights3d.size() == rig.size());
+  const auto sh = sc::sh_project(base);
+  REQUIRE(f.file.scene.env_map->sh.size() == 27);
+  CHECK(f.file.scene.env_map->sh[0] == Catch::Approx(static_cast<double>(sh[0]) * 0.9));
+  CHECK(f.file.scene.lights3d.empty());
 }
 
 TEST_CASE("3D leftovers: a corner-pinned 3D layer renders on the pinned 2D path", "[scene][cornerpin]") {

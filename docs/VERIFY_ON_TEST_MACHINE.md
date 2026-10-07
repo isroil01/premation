@@ -76,6 +76,45 @@ builds; ctest 15/15; every `*.native.test.*` suite on the full engine with
 the TypeScript engine went: 100 layers with effects at 1080p, 4K ProRes scrub
 latency, export fps against 0.8.5.
 
+## AE parity steps 1–5 on the Windows RTX 4060 box (2026-10-08)
+
+Built and run there (vcpkg gained `draco` and `ktx`): `windows-clang-cl-engine`
+builds with the full engine feature (three Windows-only build breaks fixed in
+6fbdfffc); ctest 14/16; `[ae5]` of `test_gpu_effect_route.cpp` 118/118; the
+golden gate 334/345 gated, 420/420 ported; `*.native.test` 176/182; tsc.
+
+The golden gate found four render bugs, fixed in the same round:
+- `pack_shade` placed the environment / reflection / AO / shadow uniforms
+  from the END of the grown shade block (368 floats, was 240): every lit 3D
+  surface read zeros there — no shadows, no SSAO, an environment-lit metal
+  drew black.
+- The SSAO depth prepass target stayed RGBA8 while the depth shaders write
+  the float encoding (r + g / 4096): rgba16float.
+- A point light's shadow map looked along its glow aim (sideways without a
+  point of interest): it now looks at the shadowed volume.
+- With every shadow light mapped, unlit receivers and 2D layers lost their
+  shadows (the projected copies were their only source): a 2D layer keeps the
+  drop-shadow from the first shadow light; an unlit 3D surface that accepts
+  shadows applies the mapped terms (`unlitShadow` in the 14 lit shaders,
+  `RenderThreeD.acceptsShadows`); Shadow Diffusion widens the map's filter
+  (`RenderLight3D.shadowDiffusion`), so a diffused shadow is soft again.
+
+Re-blessed after looking: `shadow-catcher`, `shadow-map-spot-off` (mapped,
+hard at diffusion 0, where the projected copy blurred anyway) and
+`env-reflect-metal` (SH diffuse instead of the derived rig). Still open:
+
+- [ ] `env-reflect-metal-off`: Metal 100 lit only by an environment with
+      Reflections 0 is now black (no diffuse on a metal, no reflection). The
+      old rig's ambient light ignored Metal. Owner decision: black (PBR) or a
+      floor of ambient on metals; then re-bless.
+- [ ] D1 / undo parity: 9 / 227 before 2026-10-08's merges, 1060 / 19955
+      after them (every session's getDocument, one getComposition — a new
+      comp-level field). Re-bless from C++ after checking the diffs.
+- [ ] `*.native.test`: animatableCatalog (strokeDashOffset), videoPlacement
+      (generate_video), PropertiesPanel.shell (section order) and TextPanel
+      (panel title) fail with or without this round's engine changes —
+      from the 2026-10-08 merges.
+
 ## AE parity step 1 (2026-10-06, docs/AE_PARITY_PLAN.md) — needs the GPU box
 
 Written in a Linux cloud session with no GPU, no Dawn and no Skia: the

@@ -15893,17 +15893,20 @@ function encS_RenderThreeD(w: Writer, v: T.RenderThreeD): void {
   { const a = v.model; if (a.length) { w.byte(10); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
   if (v.castsShadow !== undefined) { w.byte(16); w.bool(v.castsShadow); }
   if (v.shade !== undefined) { w.byte(26); { const s = w.beginLd(); encS_RenderShade3D(w, v.shade); w.endLd(s); } }
+  if (v.acceptsShadows !== undefined) { w.byte(32); w.bool(v.acceptsShadows); }
 }
 function decS_RenderThreeD(r: Reader, end: number, o: any): T.RenderThreeD {
   const l_model: number[] = [];
   let v_castsShadow: boolean | undefined;
   let v_shade: T.RenderShade3D | undefined;
+  let v_acceptsShadows: boolean | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
       case 10: { const e = r.ldEnd(); while (r.pos < e) l_model.push(r.f64()); r.expectAt(e); break; }
       case 16: v_castsShadow = r.bool(); break;
       case 26: v_shade = decS_RenderShade3D(r, r.ldEnd(), {}); break;
+      case 32: v_acceptsShadows = r.bool(); break;
       default: r.skip(key);
     }
   }
@@ -15911,6 +15914,7 @@ function decS_RenderThreeD(r: Reader, end: number, o: any): T.RenderThreeD {
   o.model = l_model;
   if (v_castsShadow !== undefined) o.castsShadow = v_castsShadow;
   if (v_shade !== undefined) o.shade = v_shade;
+  if (v_acceptsShadows !== undefined) o.acceptsShadows = v_acceptsShadows;
   return o;
 }
 function encS_RenderDof(w: Writer, v: T.RenderDof): void {
@@ -16031,6 +16035,7 @@ function encS_RenderLight3D(w: Writer, v: T.RenderLight3D): void {
   if (v.shadowBias !== undefined) { w.varint(137); w.f64(v.shadowBias); }
   if (v.shadowSoftness !== undefined) { w.varint(145); w.f64(v.shadowSoftness); }
   if (v.shadowDarkness !== undefined) { w.varint(153); w.f64(v.shadowDarkness); }
+  if (v.shadowDiffusion !== undefined) { w.varint(161); w.f64(v.shadowDiffusion); }
 }
 function decS_RenderLight3D(r: Reader, end: number, o: any): T.RenderLight3D {
   const l_color: number[] = [];
@@ -16065,6 +16070,7 @@ function decS_RenderLight3D(r: Reader, end: number, o: any): T.RenderLight3D {
   let v_shadowBias: number | undefined;
   let v_shadowSoftness: number | undefined;
   let v_shadowDarkness: number | undefined;
+  let v_shadowDiffusion: number | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -16087,6 +16093,7 @@ function decS_RenderLight3D(r: Reader, end: number, o: any): T.RenderLight3D {
       case 137: v_shadowBias = r.f64(); break;
       case 145: v_shadowSoftness = r.f64(); break;
       case 153: v_shadowDarkness = r.f64(); break;
+      case 161: v_shadowDiffusion = r.f64(); break;
       default: r.skip(key);
     }
   }
@@ -16123,6 +16130,7 @@ function decS_RenderLight3D(r: Reader, end: number, o: any): T.RenderLight3D {
   if (v_shadowBias !== undefined) o.shadowBias = v_shadowBias;
   if (v_shadowSoftness !== undefined) o.shadowSoftness = v_shadowSoftness;
   if (v_shadowDarkness !== undefined) o.shadowDarkness = v_shadowDarkness;
+  if (v_shadowDiffusion !== undefined) o.shadowDiffusion = v_shadowDiffusion;
   return o;
 }
 function encS_RenderEnvMap(w: Writer, v: T.RenderEnvMap): void {
