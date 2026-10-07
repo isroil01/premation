@@ -78,7 +78,7 @@ TEST_CASE("capturePreset: an applied preset captures back rebased to 0 in its ow
   (void)h.hello();
   const auto comp = make_comp(h);
   const auto layer = make_layer(h, comp);
-  REQUIRE(is_ok(h.run(cmd(api::ApplyPreset{{layer}, "Fade In", 2 * kSec}))));
+  REQUIRE(is_ok(h.run(cmd(api::ApplyPreset{{layer}, "Fade In", 2 * kSec, {}}))));
   const auto cap = query<api::CapturedPreset>(h, qry(api::CapturePreset{layer}));
   REQUIRE_FALSE(cap.empty);
   const js::Json body = parse_or_fail(cap.preset);
