@@ -7,7 +7,7 @@
  * timeline keeps READING the transition store for its brackets until B4.
  */
 
-import type { TransitionAlignment as ApiAlignment, TransitionKind as ApiKind } from '@motion/engine-api';
+import type { TransitionAlignment as ApiAlignment, TransitionEase, TransitionKind as ApiKind } from '@motion/engine-api';
 import { edit, GestureSession } from '@core/engine/uiEdits';
 import { framesToFlicks } from '@core/engine/time';
 import { documentMirror } from '@stores/documentMirror';
@@ -22,6 +22,33 @@ function rateFor(nodeId: string): number {
   return compFps(m.comp(m.layer(nodeId)?.comp ?? ''));
 }
 
+/**
+ * A cut transition's parameters (the engine's addTransition / setTransition):
+ * a wipe's Transition effect, direction and softness, a dip's colour, and the
+ * ease of the ramp. Absent = the engine's default for each.
+ */
+export interface TransitionParams {
+  /** wipe: the Transition effect it ramps ('' = back to Linear Wipe). */
+  effect?: string;
+  /** wipe: direction, degrees. */
+  angle?: number;
+  /** wipe: edge softness (the effect's Feather / Softness). */
+  softness?: number;
+  /** dipToWhite: the colour dipped through, #rrggbb. */
+  color?: string;
+  ease?: TransitionEase;
+}
+
+function paramFields(p: TransitionParams): TransitionParams {
+  return {
+    ...(p.effect !== undefined ? { effect: p.effect } : {}),
+    ...(p.angle !== undefined ? { angle: p.angle } : {}),
+    ...(p.softness !== undefined ? { softness: p.softness } : {}),
+    ...(p.color !== undefined ? { color: p.color } : {}),
+    ...(p.ease !== undefined ? { ease: p.ease } : {}),
+  };
+}
+
 /** Add (or replace) the transition on the cut between two layers. Refusals come back as a reason to show. */
 export async function addTransitionEdit(
   leftNodeId: string,
@@ -29,6 +56,7 @@ export async function addTransitionEdit(
   kind: TransitionKind,
   durationFrames: number = DEFAULT_TRANSITION_FRAMES,
   alignment: TransitionAlignment = 'centred',
+  params: TransitionParams = {},
 ): Promise<TransitionEditResult> {
   const res = await edit('Add Transition', {
     type: 'addTransition',
@@ -37,13 +65,14 @@ export async function addTransitionEdit(
     kind: kind as ApiKind,
     duration: framesToFlicks(Math.max(1, Math.round(durationFrames)), rateFor(leftNodeId)),
     alignment: alignment as ApiAlignment,
+    ...paramFields(params),
   }, { quiet: true });
   if (!res.ok) return { ok: false, reason: res.error.message };
   const id = (res.value[0] as { transition?: string } | undefined)?.transition ?? '';
   return { ok: true, id };
 }
 
-export interface TransitionPatch {
+export interface TransitionPatch extends TransitionParams {
   kind?: TransitionKind;
   durationFrames?: number;
   alignment?: TransitionAlignment;
@@ -58,10 +87,11 @@ function setCommand(leftNodeId: string, id: string, patch: TransitionPatch) {
       ? { duration: framesToFlicks(Math.max(1, Math.round(patch.durationFrames)), rateFor(leftNodeId)) }
       : {}),
     ...(patch.alignment !== undefined ? { alignment: patch.alignment as ApiAlignment } : {}),
+    ...paramFields(patch),
   };
 }
 
-/** Change a transition's kind, length or alignment — one entry. */
+/** Change a transition's kind, length, alignment or parameters — one entry. */
 export async function setTransitionEdit(leftNodeId: string, id: string, patch: TransitionPatch): Promise<TransitionEditResult> {
   const res = await edit('Change Transition', setCommand(leftNodeId, id, patch), { quiet: true });
   return res.ok ? { ok: true, id } : { ok: false, reason: res.error.message };

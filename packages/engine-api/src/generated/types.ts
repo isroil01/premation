@@ -366,6 +366,14 @@ export type TransitionAlignment =
   | 'endAtCut';
 export const TransitionAlignmentValues = ['centred', 'startAtCut', 'endAtCut'] as const;
 
+/** The ease of a transition's ramp (the two keys it writes); absent = linear. */
+export type TransitionEase =
+  | 'linear'
+  | 'easeInOut'
+  | 'easeIn'
+  | 'easeOut';
+export const TransitionEaseValues = ['linear', 'easeInOut', 'easeIn', 'easeOut'] as const;
+
 export type MaskMode =
   | 'none'
   | 'add'
@@ -1563,6 +1571,8 @@ export interface CompSettings {
   pristine?: boolean;
   /** B4 — the Essential Properties the composition PUBLISHES to the layers that place it (AE Master Properties), as stored on its root (`__essentialProps`: `<layerId>/<editorProp>` keys), in publish order. Empty = none published (an instance then lists every overridable property of the comp's top layers). Read-only here: not in CompSettingsPatch. */
   essentialProps: string[];
+  /** AE's Enable Frame Blending comp switch: off = no layer of this composition frame-blends, whatever its own switch says. Absent in a stored comp = on. */
+  frameBlending: boolean;
 }
 
 export interface CompSettingsPatch {
@@ -1594,6 +1604,7 @@ export interface CompSettingsPatch {
   backgroundPaint?: string;
   /** B3 — true marks the composition as the empty project's placeholder (AE's "no compositions" state: New Composition adopts it, the start screen treats the project as empty); false clears the mark. Any other settings change clears it too. */
   pristine?: boolean;
+  frameBlending?: boolean;
 }
 
 /** Create a composition. `fromItems` makes it from footage (size/duration/rate from the first item, one layer per item). */
@@ -2159,6 +2170,18 @@ export interface Transition {
   /** Whole frames of the composition. */
   duration: Time;
   alignment: TransitionAlignment;
+  /**
+   * wipe: the Transition effect it ramps (any registry effect with a Transition Completion param — radial-wipe,
+   * iris-wipe, venetian-blinds, block-dissolve, card-wipe, …); absent = linear-wipe.
+   */
+  effect?: string;
+  /** wipe: the direction in degrees (the effect's wipe / start angle, or angle). Absent = the effect's default. */
+  angle?: number;
+  /** wipe: the edge softness (the effect's Feather or Softness). Absent = the effect's default. */
+  softness?: number;
+  /** dipToWhite: the colour dipped through (#rrggbb). Absent = white. */
+  color?: string;
+  ease?: TransitionEase;
 }
 
 export interface TransitionRef {
@@ -2172,14 +2195,24 @@ export interface AddTransition {
   kind: TransitionKind;
   duration: Time;
   alignment: TransitionAlignment;
+  effect?: string;
+  angle?: number;
+  softness?: number;
+  color?: string;
+  ease?: TransitionEase;
 }
 
-/** B3z — change a transition's kind, length or alignment (the bracket drag, the alignment menu): the cut is restored to what it was before the transition, then the new one materialised. Coalescable: a drag sends the absolute length per move. Refusals as addTransition (the record is unchanged). Inverse: the previous record and everything it materialised. */
+/** B3z — change a transition's kind, length, alignment or parameters (the bracket drag, the alignment menu, the transition inspector; `effect` '' = back to linear-wipe): the cut is restored to what it was before the transition, then the new one materialised. Coalescable: a drag sends the absolute length per move. Refusals as addTransition (the record is unchanged). Inverse: the previous record and everything it materialised. */
 export interface SetTransition {
   transition: string;
   kind?: TransitionKind;
   duration?: Time;
   alignment?: TransitionAlignment;
+  effect?: string;
+  angle?: number;
+  softness?: number;
+  color?: string;
+  ease?: TransitionEase;
 }
 
 /** B3z — remove transitions: each cut is put back exactly as it was before the transition was applied (bars, the ramped keys, the effect stack). Hand edits made to those tracks afterwards are discarded with it (transitions.ts). Inverse: the records and their materialisation. */
@@ -2480,11 +2513,16 @@ export interface CopyPropertyGroups {
   toLayers: LayerId[];
 }
 
-/** Apply an animation preset (.ffx-like Premation preset) to layers at `time`. */
+/**
+ * Apply an animation preset (.ffx-like Premation preset) to layers at `time`. `preset` names a built-in; `body` —
+ * the preset itself as JSON (a user preset from the editor's library: tracks, animators, effects, expressions,
+ * timeUnit) — is applied under that name instead, since the user library is editor state the engine does not hold.
+ */
 export interface ApplyPreset {
   layers: LayerId[];
   preset: string;
   time: Time;
+  body?: string;
 }
 
 /** A plugin effect's action button (param supervision / PF_Cmd_DO_DIALOG equivalents). The plugin's writes are one undo entry. */
@@ -2835,6 +2873,12 @@ export interface SetViewportHiddenLayers {
 export interface SetViewportFocus {
   viewport: number;
   layers: LayerId[];
+}
+
+/** The viewer LUT (View ▸ Viewer LUT) — editor state, not document state: a `.cube` table applied after the display transform on every viewport's frames (never in an export or a thumbnail). `lut` is the stored table as JSON text (cubeLut.ts StoredLut: size, size1d, data, domainMin, domainMax); '' clears it. `intensity` 0..1. A table that does not parse: `invalidArgument`. A control: no history, no revision. */
+export interface SetViewerLut {
+  lut: string;
+  intensity: number;
 }
 
 /** B4 round 5 — one overlay's share of a subscription (setOverlayGeometry `groups`): its layers get ITS kinds, not every kind another overlay asked for. */
@@ -5206,6 +5250,11 @@ export interface RenderView {
    * an opaque grey image on the final blit; rgbStraight shows the colour without its alpha. Absent = rgb.
    */
   channel?: ChannelView;
+  /**
+   * The viewer's exposure in stops (viewport-only; AE's Adjust Exposure): the linear working colour is scaled by 2^exposure before
+   * the display transform. Absent = 0. Exports leave it off.
+   */
+  exposure?: number;
 }
 
 /** A texture key the scene samples → the content it resolved to when the frame was rendered. */
@@ -5442,6 +5491,7 @@ export type Command =
   | ({ type: 'setInteracting' } & SetInteracting)
   | ({ type: 'setViewportHiddenLayers' } & SetViewportHiddenLayers)
   | ({ type: 'setViewportFocus' } & SetViewportFocus)
+  | ({ type: 'setViewerLut' } & SetViewerLut)
   | ({ type: 'setOverlayGeometry' } & SetOverlayGeometry)
   | ({ type: 'setLayerTrackers' } & SetLayerTrackers)
   | ({ type: 'setCameraSolve' } & SetCameraSolve)
@@ -5613,6 +5663,7 @@ export type CommandResult =
   | ({ type: 'setInteracting' } & Empty)
   | ({ type: 'setViewportHiddenLayers' } & Empty)
   | ({ type: 'setViewportFocus' } & Empty)
+  | ({ type: 'setViewerLut' } & Empty)
   | ({ type: 'setOverlayGeometry' } & Empty)
   | ({ type: 'setLayerTrackers' } & Empty)
   | ({ type: 'setCameraSolve' } & Empty)
@@ -5937,6 +5988,7 @@ export interface CommandArgs {
   setInteracting: SetInteracting;
   setViewportHiddenLayers: SetViewportHiddenLayers;
   setViewportFocus: SetViewportFocus;
+  setViewerLut: SetViewerLut;
   setOverlayGeometry: SetOverlayGeometry;
   setLayerTrackers: SetLayerTrackers;
   setCameraSolve: SetCameraSolve;
@@ -6108,6 +6160,7 @@ export interface CommandResults {
   setInteracting: Empty;
   setViewportHiddenLayers: Empty;
   setViewportFocus: Empty;
+  setViewerLut: Empty;
   setOverlayGeometry: Empty;
   setLayerTrackers: Empty;
   setCameraSolve: Empty;

@@ -31,6 +31,7 @@ import { fieldCommands } from '@layout/Text/textEdits';
 import { valueCommands } from '../inspectorEdits';
 import { useEngineEdit } from '../useEngineEdit';
 import { AnimatablePaintRow } from './AnimatablePaintRow';
+import { TwirlGroup } from './TwirlGroup';
 import styles from '../TransformSection.module.css';
 
 type Corner = 'TL' | 'TR' | 'BR' | 'BL';
@@ -103,20 +104,24 @@ export function CornerRows({ nodeId }: { nodeId: string }): JSX.Element | null {
 
   return (
     <>
-      <div className={styles.subhead} style={{ marginTop: 10 }}>
-        <span>Corners</span>
-        <button
-          type="button"
-          onClick={toggleCornersLinked}
-          className={`${styles.lockBtn} ${cornersLinked ? styles.lockBtnActive : ''}`}
-          title={cornersLinked ? 'Unlink corners (edit individually)' : 'Link corners (same radius)'}
-          style={{ marginLeft: 6 }}
-          aria-pressed={cornersLinked}
-        >
-          <Icon name={cornersLinked ? 'lock' : 'unlock'} size="sm" style={{ color: cornersLinked ? '#f59e0b' : '#94a3b8' }} />
-        </button>
-        {isCornerAnimated && <span className={styles.animatedDot} />}
-      </div>
+      <TwirlGroup
+        prefKey="contents.roundness"
+        label={<>Roundness{isCornerAnimated && <span className={styles.animatedDot} />}</>}
+        defaultOpen
+        summary={cornersLinked ? `${Math.round(cornerRadius * 10) / 10}` : 'per corner'}
+        trailing={(
+          <button
+            type="button"
+            onClick={toggleCornersLinked}
+            className={`${styles.lockBtn} ${cornersLinked ? styles.lockBtnActive : ''}`}
+            title={cornersLinked ? 'Unlink corners (edit individually)' : 'Link corners (same radius)'}
+            aria-label={cornersLinked ? 'Unlink corners' : 'Link corners'}
+            aria-pressed={cornersLinked}
+          >
+            <Icon name={cornersLinked ? 'lock' : 'unlock'} size="sm" />
+          </button>
+        )}
+      >
       {cornersLinked ? (
         <AnimatablePaintRow
           nodeId={nodeId}
@@ -152,6 +157,7 @@ export function CornerRows({ nodeId }: { nodeId: string }): JSX.Element | null {
           </div>
         </>
       )}
+      </TwirlGroup>
     </>
   );
 }

@@ -42,6 +42,7 @@ import { openNewCompositionDialog } from '@layout/Composition/NewCompositionDial
 import { openCompositionSettings } from '@layout/Composition/CompositionSettingsDialog';
 import { deleteCompositionEdit, deleteCompositionWarning } from '@layout/Scene/sceneEdits';
 import { customConfirm } from '@components/Modal';
+import { popOutViewport } from '@layout/Workspace/ViewportDisplayControls';
 import styles from './EditorTabs.module.css';
 
 /**
@@ -297,11 +298,10 @@ export function EditorTabs({ scene }: EditorTabsProps): JSX.Element {
         <div className={styles.panelActions}>
           {/*
             Only the panel's own two actions here: the lock and the menu. The
-            viewport's display controls (layout, channel, resolution, preview,
-            LUT, overlays, snapshot compare, display mode, bookmarks, pop out)
-            sat before the lock for a while and made this end of the row a
-            wall of buttons; they are in the transport row under the stage
-            now (`Workspace/TransportBar.tsx`), which had the room.
+            viewport's display controls sat before the lock for a while and
+            made this end of the row a wall of buttons; they are in the
+            transport row under the stage now (`Workspace/TransportBar.tsx`),
+            and Pop Out is a row of this menu.
           */}
           {/* View lock — the workspace's fixed/free camera mode. Fixed frames
               and centres the comp and disables panning; free is the infinite
@@ -334,11 +334,10 @@ export function EditorTabs({ scene }: EditorTabsProps): JSX.Element {
                     try { getWorkspaceController().fitComposition(); getWorkspaceController().requestRender(); } catch { /* engine not ready */ }
                   },
                 },
-                {
-                  id: 'view-lock',
-                  label: viewMode === 'fixed' ? 'Unlock View' : 'Lock View',
-                  onSelect: () => useWorkspaceViewStore.getState().toggleMode(),
-                },
+                // Pop the viewer into its own window — AE's panel-menu Undock;
+                // it was a button in the transport row (2026-10-07). The lock
+                // is the button beside this menu, so it is not a row here too.
+                { id: 'pop-out', label: 'Pop Out Viewer', icon: 'pop-out', onSelect: popOutViewport },
                 { id: 'sep2', separator: true },
                 {
                   id: 'delete-comp',

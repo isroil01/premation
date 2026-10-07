@@ -121,3 +121,21 @@ describe('shortcut conflicts across command sets', () => {
     expect(idsOn('Ctrl+Shift+`')).toEqual(['timeline.expandAll']);
   });
 });
+
+/**
+ * AE's reveal keys (App.tsx's listener, not registry commands) must not be
+ * held by an always-enabled command: the ShortcutManager listens in the capture
+ * phase and stops the event, so a command on Shift+S silently killed AE's
+ * "add Scale to the reveal" (2026-10-07: the timeline edit tools held Shift+S /
+ * Shift+R / Shift+U, Fit Selection held Shift+F).
+ */
+describe("AE's reveal keys are free", () => {
+  const REVEAL_KEYS = ['p', 's', 'r', 't', 'a', 'm', 'f', 'e', 'u', 'l'];
+  it('no command binds Shift+<reveal key>', () => {
+    const shifted = new Set(REVEAL_KEYS.map((k) => chordKey({ key: k, shift: true })));
+    const holders = allCommands()
+      .filter((c) => c.shortcut && shifted.has(boundKey(c.shortcut)))
+      .map((c) => `${String(c.id)} → ${boundKey(c.shortcut!)}`);
+    expect(holders).toEqual([]);
+  });
+});

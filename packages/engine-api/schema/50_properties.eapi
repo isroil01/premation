@@ -150,8 +150,10 @@ command setGroupEnabled = 606 { groups: PropRef[] = 1; enabled: bool = 2; }
 command renamePropertyGroup = 607 { group: PropRef = 1; name: string = 2; }
 /// Copy groups to other layers (paste effects / masks). Returns new paths in target order.
 command copyPropertyGroups = 608 { groups: PropRef[] = 1; toLayers: LayerId[] = 2; } -> GroupList;
-/// Apply an animation preset (.ffx-like Premation preset) to layers at `time`.
-command applyPreset = 609 { layers: LayerId[] = 1; preset: string = 2; time: Time = 3; } -> GroupList;
+/// Apply an animation preset (.ffx-like Premation preset) to layers at `time`. `preset` names a built-in; `body` —
+/// the preset itself as JSON (a user preset from the editor's library: tracks, animators, effects, expressions,
+/// timeUnit) — is applied under that name instead, since the user library is editor state the engine does not hold.
+command applyPreset = 609 { layers: LayerId[] = 1; preset: string = 2; time: Time = 3; body?: string = 4; } -> GroupList;
 /// A plugin effect's action button (param supervision / PF_Cmd_DO_DIALOG equivalents). The plugin's writes are one undo entry.
 command invokeEffectAction = 610 { group: PropRef = 1; action: string = 2; payload?: string = 3; }
 /// AE's Add ▸ Property: add OPTIONAL properties that exist only once added — a text animator's Anchor Point, Skew Axis, Line Anchor, Character Value, Fill / Stroke Hue·Saturation·Brightness, Stroke Opacity, Fill Color, Stroke Color, and Font Axis properties ('axis<TAG>'). `parent` is the property group ('text/animators/<id>/props'); `names` are the new properties' path leaves. A property already present is kept as it is (AE's menu disables it). Returns the property paths in input order. Undo removes what this added.

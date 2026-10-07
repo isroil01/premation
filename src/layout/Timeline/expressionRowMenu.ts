@@ -17,9 +17,9 @@ import { edit } from '@core/engine/uiEdits';
 import { trackExpressionFacts } from '@core/mirror/memberExpressions';
 import type { ContextMenuItem } from '@stores/contextMenuStore';
 import { documentMirror } from '@stores/documentMirror';
-import { useLayoutStore } from '@stores/layoutStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { expressionCommands } from '@layout/Inspector/inspectorEdits';
+import { openTimelineExpressionEditor } from './timelineExpressionEditor';
 
 type Pair = { nodeId: string; track: string; source: string };
 
@@ -28,16 +28,16 @@ function send(label: string, pairs: Pair[], enabled: boolean): void {
   if (cmds && cmds.length > 0) void edit(label, cmds);
 }
 
-/** Bring the row on screen — its layer selected, the Properties panel open — and ask it to open its editor. */
+/**
+ * Open the expression where the row is: the editor floating over the timeline
+ * (`openTimelineExpressionEditor`). The inspector's row is asked too, so a
+ * Properties panel that is already showing this layer opens its editor in step.
+ */
 function revealEditor(nodeId: string, prop: string): void {
   const selection = useSelectionStore.getState();
   if (!selection.ids.includes(nodeId)) selection.set([nodeId]);
-  try {
-    useLayoutStore.getState().openPanel('properties');
-  } catch {
-    /* headless: no layout to open */
-  }
   requestExpressionEditor({ nodeId, prop });
+  openTimelineExpressionEditor(nodeId, prop);
 }
 
 export function expressionRowMenuItems(nodeId: string, props: ReadonlyArray<string>): ContextMenuItem[] {
@@ -48,6 +48,12 @@ export function expressionRowMenuItems(nodeId: string, props: ReadonlyArray<stri
   const anyOff = had.some((r) => r.facts?.enabled === false);
   const plural = (n: number, one: string, many: string): string => (n === 1 ? one : many);
   return [
+    {
+      id: 'expr-edit',
+      label: 'Edit Expression…',
+      disabled: had.length === 0,
+      onSelect: () => revealEditor(nodeId, had[0]!.track),
+    },
     {
       id: 'expr-add',
       label: 'Add Expression',

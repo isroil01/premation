@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "engine_api.hpp"
+#include "json.hpp"
 
 namespace premation {
 
@@ -117,6 +118,13 @@ struct CustomViewParams {
   bool operator==(const CustomViewParams&) const = default;
 };
 
+/// setViewerLut: the viewer LUT every viewport's frames are graded with — the
+/// stored `.cube` table (cubeLut.ts StoredLut) and its intensity 0..1.
+struct ViewerLut {
+  js::Json table;
+  double intensity = 1;
+};
+
 /// A viewport's output: slot textures of width × height physical pixels.
 struct ViewportConfig {
   std::uint32_t viewport = 0;
@@ -170,6 +178,23 @@ struct ViewportConfig {
   /// setViewport `onion`. Absent = off. Playback ignores it (ghosts are for a
   /// still playhead). Not a ring change.
   std::optional<api::OnionSkin> onion;
+  /// setPreviewQuality `draft3d` (AE's Draft 3D): lights, shadows, depth of field
+  /// and camera motion off in this viewport's frames (SnapshotComp.draft3d).
+  bool draft3d = false;
+  /// setPreviewQuality `motionBlur`: false skips the motion-blur samples in
+  /// this viewport's frames (Preview ▸ Draft Quality); exports keep them.
+  bool previewMotionBlur = true;
+  /// setViewport `exposure`: stops, on the final blit (RenderView.exposure).
+  double exposure = 0;
+  /// setViewport `transparencyGrid` on a composition view: a checkerboard
+  /// where the comp is transparent, in place of its background colour.
+  bool transparencyGrid = false;
+  /// setViewport `regionOfInterest` (comp px): draws are clipped to it.
+  std::optional<api::Rect> regionOfInterest;
+  /// setViewerLut, filled per frame by the Session like `hiddenLayers`.
+  /// shared_ptr: one read-only table shared by every viewport's frame job on
+  /// the render thread, instead of a copy of a 33³ table per frame.
+  std::shared_ptr<const ViewerLut> viewerLut;
   /// Build this frame with a transparent background (an onion ghost). Never
   /// stored on a surface — only the copy handed to the frame builder.
   bool ghost = false;

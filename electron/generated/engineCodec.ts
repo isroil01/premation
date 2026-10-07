@@ -156,6 +156,10 @@ const TransitionAlignment_TO_NUM: Record<string, number> = { 'centred': 0, 'star
 const TransitionAlignment_FROM_NUM: readonly (T.TransitionAlignment | undefined)[] = ['centred', 'startAtCut', 'endAtCut'];
 function enc_TransitionAlignment(v: T.TransitionAlignment): number { const n = TransitionAlignment_TO_NUM[v]; if (n === undefined) throw new RangeError('TransitionAlignment: invalid value ' + String(v)); return n; }
 function dec_TransitionAlignment(n: number): T.TransitionAlignment { const v = TransitionAlignment_FROM_NUM[n]; if (v === undefined) throw new DecodeError('TransitionAlignment: unknown value ' + n, 'badEnum'); return v; }
+const TransitionEase_TO_NUM: Record<string, number> = { 'linear': 0, 'easeInOut': 1, 'easeIn': 2, 'easeOut': 3 };
+const TransitionEase_FROM_NUM: readonly (T.TransitionEase | undefined)[] = ['linear', 'easeInOut', 'easeIn', 'easeOut'];
+function enc_TransitionEase(v: T.TransitionEase): number { const n = TransitionEase_TO_NUM[v]; if (n === undefined) throw new RangeError('TransitionEase: invalid value ' + String(v)); return n; }
+function dec_TransitionEase(n: number): T.TransitionEase { const v = TransitionEase_FROM_NUM[n]; if (v === undefined) throw new DecodeError('TransitionEase: unknown value ' + n, 'badEnum'); return v; }
 const MaskMode_TO_NUM: Record<string, number> = { 'none': 0, 'add': 1, 'subtract': 2, 'intersect': 3, 'lighten': 4, 'darken': 5, 'difference': 6 };
 const MaskMode_FROM_NUM: readonly (T.MaskMode | undefined)[] = ['none', 'add', 'subtract', 'intersect', 'lighten', 'darken', 'difference'];
 function enc_MaskMode(v: T.MaskMode): number { const n = MaskMode_TO_NUM[v]; if (n === undefined) throw new RangeError('MaskMode: invalid value ' + String(v)); return n; }
@@ -2973,6 +2977,7 @@ function encS_CompSettings(w: Writer, v: T.CompSettings): void {
   if (v.templateFields !== undefined) { w.varint(178); w.str(v.templateFields); }
   if (v.backgroundPaint !== undefined) { w.varint(186); w.str(v.backgroundPaint); }
   if (v.pristine !== undefined) { w.varint(192); w.bool(v.pristine); }
+  w.varint(208); w.bool(v.frameBlending);
   { const a = v.essentialProps; for (let i = 0; i < a.length; i++) { w.varint(1002); w.str(a[i]!); } }
 }
 function decS_CompSettings(r: Reader, end: number, o: any): T.CompSettings {
@@ -2994,6 +2999,7 @@ function decS_CompSettings(r: Reader, end: number, o: any): T.CompSettings {
   let h_dropFrame = false;
   let h_preserveFrameRate = false;
   let h_preserveResolution = false;
+  let h_frameBlending = false;
   let v_name: string | undefined;
   let v_width: number | undefined;
   let v_height: number | undefined;
@@ -3017,6 +3023,7 @@ function decS_CompSettings(r: Reader, end: number, o: any): T.CompSettings {
   let v_templateFields: string | undefined;
   let v_backgroundPaint: string | undefined;
   let v_pristine: boolean | undefined;
+  let v_frameBlending: boolean | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -3043,6 +3050,7 @@ function decS_CompSettings(r: Reader, end: number, o: any): T.CompSettings {
       case 178: v_templateFields = r.str(); break;
       case 186: v_backgroundPaint = r.str(); break;
       case 192: v_pristine = r.bool(); break;
+      case 208: v_frameBlending = r.bool(); h_frameBlending = true; break;
       case 1002: l_essentialProps.push(r.str()); break;
       default: r.skip(key);
     }
@@ -3065,6 +3073,7 @@ function decS_CompSettings(r: Reader, end: number, o: any): T.CompSettings {
   if (!h_dropFrame) throw new DecodeError('CompSettings.dropFrame: missing', 'missingField');
   if (!h_preserveFrameRate) throw new DecodeError('CompSettings.preserveFrameRate: missing', 'missingField');
   if (!h_preserveResolution) throw new DecodeError('CompSettings.preserveResolution: missing', 'missingField');
+  if (!h_frameBlending) throw new DecodeError('CompSettings.frameBlending: missing', 'missingField');
   o.name = v_name;
   o.width = v_width;
   o.height = v_height;
@@ -3088,6 +3097,7 @@ function decS_CompSettings(r: Reader, end: number, o: any): T.CompSettings {
   if (v_templateFields !== undefined) o.templateFields = v_templateFields;
   if (v_backgroundPaint !== undefined) o.backgroundPaint = v_backgroundPaint;
   if (v_pristine !== undefined) o.pristine = v_pristine;
+  o.frameBlending = v_frameBlending;
   o.essentialProps = l_essentialProps;
   return o;
 }
@@ -3116,6 +3126,7 @@ function encS_CompSettingsPatch(w: Writer, v: T.CompSettingsPatch): void {
   if (v.templateFields !== undefined) { w.varint(178); w.str(v.templateFields); }
   if (v.backgroundPaint !== undefined) { w.varint(186); w.str(v.backgroundPaint); }
   if (v.pristine !== undefined) { w.varint(192); w.bool(v.pristine); }
+  if (v.frameBlending !== undefined) { w.varint(208); w.bool(v.frameBlending); }
 }
 function decS_CompSettingsPatch(r: Reader, end: number, o: any): T.CompSettingsPatch {
   let v_name: string | undefined;
@@ -3142,6 +3153,7 @@ function decS_CompSettingsPatch(r: Reader, end: number, o: any): T.CompSettingsP
   let v_templateFields: string | undefined;
   let v_backgroundPaint: string | undefined;
   let v_pristine: boolean | undefined;
+  let v_frameBlending: boolean | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -3169,6 +3181,7 @@ function decS_CompSettingsPatch(r: Reader, end: number, o: any): T.CompSettingsP
       case 178: v_templateFields = r.str(); break;
       case 186: v_backgroundPaint = r.str(); break;
       case 192: v_pristine = r.bool(); break;
+      case 208: v_frameBlending = r.bool(); break;
       default: r.skip(key);
     }
   }
@@ -3197,6 +3210,7 @@ function decS_CompSettingsPatch(r: Reader, end: number, o: any): T.CompSettingsP
   if (v_templateFields !== undefined) o.templateFields = v_templateFields;
   if (v_backgroundPaint !== undefined) o.backgroundPaint = v_backgroundPaint;
   if (v_pristine !== undefined) o.pristine = v_pristine;
+  if (v_frameBlending !== undefined) o.frameBlending = v_frameBlending;
   return o;
 }
 function encS_CreateComposition(w: Writer, v: T.CreateComposition): void {
@@ -5334,6 +5348,11 @@ function encS_Transition(w: Writer, v: T.Transition): void {
   w.byte(40); w.varint(enc_TransitionKind(v.kind));
   w.byte(48); w.i64(v.duration);
   w.byte(56); w.varint(enc_TransitionAlignment(v.alignment));
+  if (v.effect !== undefined) { w.byte(66); w.str(v.effect); }
+  if (v.angle !== undefined) { w.byte(73); w.f64(v.angle); }
+  if (v.softness !== undefined) { w.byte(81); w.f64(v.softness); }
+  if (v.color !== undefined) { w.byte(90); w.str(v.color); }
+  if (v.ease !== undefined) { w.byte(96); w.varint(enc_TransitionEase(v.ease)); }
 }
 function decS_Transition(r: Reader, end: number, o: any): T.Transition {
   let h_id = false;
@@ -5350,6 +5369,11 @@ function decS_Transition(r: Reader, end: number, o: any): T.Transition {
   let v_kind: T.TransitionKind | undefined;
   let v_duration: number | undefined;
   let v_alignment: T.TransitionAlignment | undefined;
+  let v_effect: string | undefined;
+  let v_angle: number | undefined;
+  let v_softness: number | undefined;
+  let v_color: string | undefined;
+  let v_ease: T.TransitionEase | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -5360,6 +5384,11 @@ function decS_Transition(r: Reader, end: number, o: any): T.Transition {
       case 40: v_kind = dec_TransitionKind(r.varint()); h_kind = true; break;
       case 48: v_duration = r.i64(); h_duration = true; break;
       case 56: v_alignment = dec_TransitionAlignment(r.varint()); h_alignment = true; break;
+      case 66: v_effect = r.str(); break;
+      case 73: v_angle = r.f64(); break;
+      case 81: v_softness = r.f64(); break;
+      case 90: v_color = r.str(); break;
+      case 96: v_ease = dec_TransitionEase(r.varint()); break;
       default: r.skip(key);
     }
   }
@@ -5378,6 +5407,11 @@ function decS_Transition(r: Reader, end: number, o: any): T.Transition {
   o.kind = v_kind;
   o.duration = v_duration;
   o.alignment = v_alignment;
+  if (v_effect !== undefined) o.effect = v_effect;
+  if (v_angle !== undefined) o.angle = v_angle;
+  if (v_softness !== undefined) o.softness = v_softness;
+  if (v_color !== undefined) o.color = v_color;
+  if (v_ease !== undefined) o.ease = v_ease;
   return o;
 }
 function encS_TransitionRef(w: Writer, v: T.TransitionRef): void {
@@ -5404,6 +5438,11 @@ function encS_AddTransition(w: Writer, v: T.AddTransition): void {
   w.byte(24); w.varint(enc_TransitionKind(v.kind));
   w.byte(32); w.i64(v.duration);
   w.byte(40); w.varint(enc_TransitionAlignment(v.alignment));
+  if (v.effect !== undefined) { w.byte(50); w.str(v.effect); }
+  if (v.angle !== undefined) { w.byte(57); w.f64(v.angle); }
+  if (v.softness !== undefined) { w.byte(65); w.f64(v.softness); }
+  if (v.color !== undefined) { w.byte(74); w.str(v.color); }
+  if (v.ease !== undefined) { w.byte(80); w.varint(enc_TransitionEase(v.ease)); }
 }
 function decS_AddTransition(r: Reader, end: number, o: any): T.AddTransition {
   let h_left = false;
@@ -5416,6 +5455,11 @@ function decS_AddTransition(r: Reader, end: number, o: any): T.AddTransition {
   let v_kind: T.TransitionKind | undefined;
   let v_duration: number | undefined;
   let v_alignment: T.TransitionAlignment | undefined;
+  let v_effect: string | undefined;
+  let v_angle: number | undefined;
+  let v_softness: number | undefined;
+  let v_color: string | undefined;
+  let v_ease: T.TransitionEase | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -5424,6 +5468,11 @@ function decS_AddTransition(r: Reader, end: number, o: any): T.AddTransition {
       case 24: v_kind = dec_TransitionKind(r.varint()); h_kind = true; break;
       case 32: v_duration = r.i64(); h_duration = true; break;
       case 40: v_alignment = dec_TransitionAlignment(r.varint()); h_alignment = true; break;
+      case 50: v_effect = r.str(); break;
+      case 57: v_angle = r.f64(); break;
+      case 65: v_softness = r.f64(); break;
+      case 74: v_color = r.str(); break;
+      case 80: v_ease = dec_TransitionEase(r.varint()); break;
       default: r.skip(key);
     }
   }
@@ -5438,6 +5487,11 @@ function decS_AddTransition(r: Reader, end: number, o: any): T.AddTransition {
   o.kind = v_kind;
   o.duration = v_duration;
   o.alignment = v_alignment;
+  if (v_effect !== undefined) o.effect = v_effect;
+  if (v_angle !== undefined) o.angle = v_angle;
+  if (v_softness !== undefined) o.softness = v_softness;
+  if (v_color !== undefined) o.color = v_color;
+  if (v_ease !== undefined) o.ease = v_ease;
   return o;
 }
 function encS_SetTransition(w: Writer, v: T.SetTransition): void {
@@ -5445,6 +5499,11 @@ function encS_SetTransition(w: Writer, v: T.SetTransition): void {
   if (v.kind !== undefined) { w.byte(16); w.varint(enc_TransitionKind(v.kind)); }
   if (v.duration !== undefined) { w.byte(24); w.i64(v.duration); }
   if (v.alignment !== undefined) { w.byte(32); w.varint(enc_TransitionAlignment(v.alignment)); }
+  if (v.effect !== undefined) { w.byte(42); w.str(v.effect); }
+  if (v.angle !== undefined) { w.byte(49); w.f64(v.angle); }
+  if (v.softness !== undefined) { w.byte(57); w.f64(v.softness); }
+  if (v.color !== undefined) { w.byte(66); w.str(v.color); }
+  if (v.ease !== undefined) { w.byte(72); w.varint(enc_TransitionEase(v.ease)); }
 }
 function decS_SetTransition(r: Reader, end: number, o: any): T.SetTransition {
   let h_transition = false;
@@ -5452,6 +5511,11 @@ function decS_SetTransition(r: Reader, end: number, o: any): T.SetTransition {
   let v_kind: T.TransitionKind | undefined;
   let v_duration: number | undefined;
   let v_alignment: T.TransitionAlignment | undefined;
+  let v_effect: string | undefined;
+  let v_angle: number | undefined;
+  let v_softness: number | undefined;
+  let v_color: string | undefined;
+  let v_ease: T.TransitionEase | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -5459,6 +5523,11 @@ function decS_SetTransition(r: Reader, end: number, o: any): T.SetTransition {
       case 16: v_kind = dec_TransitionKind(r.varint()); break;
       case 24: v_duration = r.i64(); break;
       case 32: v_alignment = dec_TransitionAlignment(r.varint()); break;
+      case 42: v_effect = r.str(); break;
+      case 49: v_angle = r.f64(); break;
+      case 57: v_softness = r.f64(); break;
+      case 66: v_color = r.str(); break;
+      case 72: v_ease = dec_TransitionEase(r.varint()); break;
       default: r.skip(key);
     }
   }
@@ -5468,6 +5537,11 @@ function decS_SetTransition(r: Reader, end: number, o: any): T.SetTransition {
   if (v_kind !== undefined) o.kind = v_kind;
   if (v_duration !== undefined) o.duration = v_duration;
   if (v_alignment !== undefined) o.alignment = v_alignment;
+  if (v_effect !== undefined) o.effect = v_effect;
+  if (v_angle !== undefined) o.angle = v_angle;
+  if (v_softness !== undefined) o.softness = v_softness;
+  if (v_color !== undefined) o.color = v_color;
+  if (v_ease !== undefined) o.ease = v_ease;
   return o;
 }
 function encS_RemoveTransitions(w: Writer, v: T.RemoveTransitions): void {
@@ -6426,6 +6500,7 @@ function encS_ApplyPreset(w: Writer, v: T.ApplyPreset): void {
   { const a = v.layers; for (let i = 0; i < a.length; i++) { w.byte(10); w.str(a[i]!); } }
   w.byte(18); w.str(v.preset);
   w.byte(24); w.i64(v.time);
+  if (v.body !== undefined) { w.byte(34); w.str(v.body); }
 }
 function decS_ApplyPreset(r: Reader, end: number, o: any): T.ApplyPreset {
   const l_layers: string[] = [];
@@ -6433,12 +6508,14 @@ function decS_ApplyPreset(r: Reader, end: number, o: any): T.ApplyPreset {
   let h_time = false;
   let v_preset: string | undefined;
   let v_time: number | undefined;
+  let v_body: string | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
       case 10: l_layers.push(r.str()); break;
       case 18: v_preset = r.str(); h_preset = true; break;
       case 24: v_time = r.i64(); h_time = true; break;
+      case 34: v_body = r.str(); break;
       default: r.skip(key);
     }
   }
@@ -6448,6 +6525,7 @@ function decS_ApplyPreset(r: Reader, end: number, o: any): T.ApplyPreset {
   o.layers = l_layers;
   o.preset = v_preset;
   o.time = v_time;
+  if (v_body !== undefined) o.body = v_body;
   return o;
 }
 function encS_InvokeEffectAction(w: Writer, v: T.InvokeEffectAction): void {
@@ -7730,6 +7808,30 @@ function decS_SetViewportFocus(r: Reader, end: number, o: any): T.SetViewportFoc
   if (!h_viewport) throw new DecodeError('SetViewportFocus.viewport: missing', 'missingField');
   o.viewport = v_viewport;
   o.layers = l_layers;
+  return o;
+}
+function encS_SetViewerLut(w: Writer, v: T.SetViewerLut): void {
+  w.byte(10); w.str(v.lut);
+  w.byte(17); w.f64(v.intensity);
+}
+function decS_SetViewerLut(r: Reader, end: number, o: any): T.SetViewerLut {
+  let h_lut = false;
+  let h_intensity = false;
+  let v_lut: string | undefined;
+  let v_intensity: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_lut = r.str(); h_lut = true; break;
+      case 17: v_intensity = r.f64(); h_intensity = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_lut) throw new DecodeError('SetViewerLut.lut: missing', 'missingField');
+  if (!h_intensity) throw new DecodeError('SetViewerLut.intensity: missing', 'missingField');
+  o.lut = v_lut;
+  o.intensity = v_intensity;
   return o;
 }
 function encS_OverlayRequest(w: Writer, v: T.OverlayRequest): void {
@@ -16717,6 +16819,7 @@ function encS_RenderView(w: Writer, v: T.RenderView): void {
   if (v.viewerLut !== undefined) { w.varint(154); { const s = w.beginLd(); encS_RenderViewerLut(w, v.viewerLut); w.endLd(s); } }
   if (v.colorManagement !== undefined) { w.varint(162); { const s = w.beginLd(); encS_RenderColorManagement(w, v.colorManagement); w.endLd(s); } }
   if (v.channel !== undefined) { w.varint(168); w.varint(enc_ChannelView(v.channel)); }
+  if (v.exposure !== undefined) { w.varint(177); w.f64(v.exposure); }
 }
 function decS_RenderView(r: Reader, end: number, o: any): T.RenderView {
   let h_cssWidth = false;
@@ -16755,6 +16858,7 @@ function decS_RenderView(r: Reader, end: number, o: any): T.RenderView {
   let v_viewerLut: T.RenderViewerLut | undefined;
   let v_colorManagement: T.RenderColorManagement | undefined;
   let v_channel: T.ChannelView | undefined;
+  let v_exposure: number | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -16779,6 +16883,7 @@ function decS_RenderView(r: Reader, end: number, o: any): T.RenderView {
       case 154: v_viewerLut = decS_RenderViewerLut(r, r.ldEnd(), {}); break;
       case 162: v_colorManagement = decS_RenderColorManagement(r, r.ldEnd(), {}); break;
       case 168: v_channel = dec_ChannelView(r.varint()); break;
+      case 177: v_exposure = r.f64(); break;
       default: r.skip(key);
     }
   }
@@ -16819,6 +16924,7 @@ function decS_RenderView(r: Reader, end: number, o: any): T.RenderView {
   if (v_viewerLut !== undefined) o.viewerLut = v_viewerLut;
   if (v_colorManagement !== undefined) o.colorManagement = v_colorManagement;
   if (v_channel !== undefined) o.channel = v_channel;
+  if (v_exposure !== undefined) o.exposure = v_exposure;
   return o;
 }
 function encS_RenderTextureRef(w: Writer, v: T.RenderTextureRef): void {
@@ -17440,6 +17546,7 @@ function encU_Command(w: Writer, v: T.Command): void {
     case 'setInteracting': w.varint(6498); { const s = w.beginLd(); encS_SetInteracting(w, v); w.endLd(s); } return;
     case 'setViewportHiddenLayers': w.varint(6506); { const s = w.beginLd(); encS_SetViewportHiddenLayers(w, v); w.endLd(s); } return;
     case 'setViewportFocus': w.varint(6514); { const s = w.beginLd(); encS_SetViewportFocus(w, v); w.endLd(s); } return;
+    case 'setViewerLut': w.varint(6522); { const s = w.beginLd(); encS_SetViewerLut(w, v); w.endLd(s); } return;
     case 'startJob': w.varint(6802); { const s = w.beginLd(); encS_StartJob(w, v); w.endLd(s); } return;
     case 'cancelJob': w.varint(6810); { const s = w.beginLd(); encS_CancelJob(w, v); w.endLd(s); } return;
     case 'applyJobResult': w.varint(6818); { const s = w.beginLd(); encS_ApplyJobResult(w, v); w.endLd(s); } return;
@@ -17616,6 +17723,7 @@ function decU_Command(r: Reader, end: number): T.Command {
       case 6498: out = decS_SetInteracting(r, r.ldEnd(), { type: 'setInteracting' }) as T.Command; break;
       case 6506: out = decS_SetViewportHiddenLayers(r, r.ldEnd(), { type: 'setViewportHiddenLayers' }) as T.Command; break;
       case 6514: out = decS_SetViewportFocus(r, r.ldEnd(), { type: 'setViewportFocus' }) as T.Command; break;
+      case 6522: out = decS_SetViewerLut(r, r.ldEnd(), { type: 'setViewerLut' }) as T.Command; break;
       case 6802: out = decS_StartJob(r, r.ldEnd(), { type: 'startJob' }) as T.Command; break;
       case 6810: out = decS_CancelJob(r, r.ldEnd(), { type: 'cancelJob' }) as T.Command; break;
       case 6818: out = decS_ApplyJobResult(r, r.ldEnd(), { type: 'applyJobResult' }) as T.Command; break;
@@ -17792,6 +17900,7 @@ function encU_CommandResult(w: Writer, v: T.CommandResult): void {
     case 'setInteracting': w.varint(6498); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'setViewportHiddenLayers': w.varint(6506); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'setViewportFocus': w.varint(6514); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
+    case 'setViewerLut': w.varint(6522); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'startJob': w.varint(6802); { const s = w.beginLd(); encS_JobRef(w, v); w.endLd(s); } return;
     case 'cancelJob': w.varint(6810); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'applyJobResult': w.varint(6818); { const s = w.beginLd(); encS_ItemList(w, v); w.endLd(s); } return;
@@ -17968,6 +18077,7 @@ function decU_CommandResult(r: Reader, end: number): T.CommandResult {
       case 6498: out = decS_Empty(r, r.ldEnd(), { type: 'setInteracting' }) as T.CommandResult; break;
       case 6506: out = decS_Empty(r, r.ldEnd(), { type: 'setViewportHiddenLayers' }) as T.CommandResult; break;
       case 6514: out = decS_Empty(r, r.ldEnd(), { type: 'setViewportFocus' }) as T.CommandResult; break;
+      case 6522: out = decS_Empty(r, r.ldEnd(), { type: 'setViewerLut' }) as T.CommandResult; break;
       case 6802: out = decS_JobRef(r, r.ldEnd(), { type: 'startJob' }) as T.CommandResult; break;
       case 6810: out = decS_Empty(r, r.ldEnd(), { type: 'cancelJob' }) as T.CommandResult; break;
       case 6818: out = decS_ItemList(r, r.ldEnd(), { type: 'applyJobResult' }) as T.CommandResult; break;
@@ -18595,6 +18705,7 @@ export const codecs = {
   SetInteracting: mk<T.SetInteracting>(encS_SetInteracting, (r, e) => decS_SetInteracting(r, e, {})),
   SetViewportHiddenLayers: mk<T.SetViewportHiddenLayers>(encS_SetViewportHiddenLayers, (r, e) => decS_SetViewportHiddenLayers(r, e, {})),
   SetViewportFocus: mk<T.SetViewportFocus>(encS_SetViewportFocus, (r, e) => decS_SetViewportFocus(r, e, {})),
+  SetViewerLut: mk<T.SetViewerLut>(encS_SetViewerLut, (r, e) => decS_SetViewerLut(r, e, {})),
   OverlayRequest: mk<T.OverlayRequest>(encS_OverlayRequest, (r, e) => decS_OverlayRequest(r, e, {})),
   SetOverlayGeometry: mk<T.SetOverlayGeometry>(encS_SetOverlayGeometry, (r, e) => decS_SetOverlayGeometry(r, e, {})),
   OverlayRigOptions: mk<T.OverlayRigOptions>(encS_OverlayRigOptions, (r, e) => decS_OverlayRigOptions(r, e, {})),

@@ -146,6 +146,27 @@
   height: 100%;
   min-height: 0;
   overflow: hidden;
+  /* After Effects' density inside Properties (2026-10-07): 22px property rows
+     and 24px section headers, the row and twirl metrics of AE's timeline.
+     Scoped here, so the rest of the chrome keeps the shared scale (and the
+     1366px compact scale still steps both down by 2px). */
+  --control-height-row: var(--control-height-sm);
+  --bar-height-panel: var(--control-height-md);
+}
+
+/* The inspector's foot: property counts and AE's U / UU Show filter. */
+.inspectorFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  flex: none;
+  min-height: var(--control-height-md);
+  padding: 0 var(--space-3);
+  border-top: 1px solid var(--color-border-subtle);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
 }
 
 /*
@@ -2762,4 +2783,40 @@
   .assetRowSize {
     display: none;
   }
+}
+
+/* Library ▸ Transitions: the two groups, named by how they are added. */
+.libSectionTitle {
+  padding: var(--space-3) var(--space-3) var(--space-2);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.libCutRow {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+  padding: 0 var(--space-3) var(--space-2);
+}
+
+.libCutItem {
+  height: var(--control-height-md);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-field-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-1);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: grab;
+}
+
+.libCutItem:hover {
+  border-color: var(--color-text-tertiary);
+}
+
+.libCutItem:focus-visible {
+  outline: 1px solid var(--color-focus-ring);
+  outline-offset: 1px;
 }

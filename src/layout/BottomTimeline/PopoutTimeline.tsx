@@ -6,22 +6,20 @@
  * the scene. This is the same track derivation the editor shell uses.
  */
 
-import { useCallback, useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { clampPps } from '@layout/Timeline/zoomAnchor';
 import { BottomTimeline } from './BottomTimeline';
 import { TransportBar } from '@layout/Workspace/TransportBar';
+import { TimelineZoom } from '@layout/StatusBar/TimelineZoom';
 import { useTimelinePixelsPerSecond, useTimelineRuler, useTimelineTracks } from '@layout/Timeline/useTimelineModel';
 import type { TimelineModel, TimelineTrack } from '@layout/Timeline';
-import { documentMirror } from '@stores/documentMirror';
 import { getTime as getPlayheadTime } from '@stores/playbackClockStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useActiveCompId } from '@hooks/useMirror';
-import { uiKindOf } from '@core/mirror/layerKinds';
-import { playheadSeconds, seekPlayhead, setTimelinePixelsPerSecond, setTimelineScrollPixels } from '@core/timeline/timelineView';
-import { edit } from '@core/engine/uiEdits';
-import { labelIndexOf } from '@core/engine/model';
-import { moveBars, setWorkArea } from '@layout/Timeline/timelineEdits';
+import { playheadSeconds, setTimelinePixelsPerSecond, setTimelineScrollPixels } from '@core/timeline/timelineView';
+import { setWorkArea } from '@layout/Timeline/timelineEdits';
 import { useFocusContext } from '@layout/focus/useFocusContext';
+import { timelineHandlerProps, useTimelineHandlers } from '@layout/Timeline/useTimelineHandlers';
 
 export function PopoutTimeline(): JSX.Element {
   const activeCompId = useActiveCompId();
@@ -54,37 +52,12 @@ export function PopoutTimeline(): JSX.Element {
     };
   }, [focusTracks, pps, ruler]);
 
-  // Switch toggles read the layer's CURRENT switches from the mirror at click time.
-  const toggleFlag = useCallback((trackId: string, field: 'visible' | 'locked' | 'solo'): void => {
-    const sw = documentMirror().layer(trackId)?.switches;
-    if (!sw) return;
-    const labels = {
-      visible: sw.visible ? 'Hide layer' : 'Show layer',
-      locked: sw.locked ? 'Unlock layer' : 'Lock layer',
-      solo: sw.solo ? 'Unsolo layer' : 'Solo layer',
-    };
-    const next = !sw[field];
-    void edit(labels[field], { type: 'setLayerSwitches', layers: [trackId], patch: { [field]: next } });
-  }, []);
-
-  // The speaker switch: only a layer that can make a sound has one; which way
-  // it goes is the layer's `audioEnabled` switch (the write is the engine's).
-  const toggleAudioMute = useCallback((trackId: string): void => {
-    const layer = documentMirror().layer(trackId);
-    const kind = uiKindOf(layer);
-    if (!layer || (kind !== 'audio' && kind !== 'video')) return;
-    const muted = !layer.switches.audioEnabled;
-    void edit(muted ? 'Unmute layer audio' : 'Mute layer audio', {
-      type: 'setLayerSwitches', layers: [trackId], patch: { audioEnabled: muted },
-    });
-  }, []);
-
-  const setLabelColor = useCallback((trackId: string, color: string | undefined): void => {
-    const label = labelIndexOf(color);
-    // A colour outside the palette is a custom label (B3z `labelColor`).
-    const patch = color && label === 0 ? { labelColor: color } : { label };
-    void edit('Label Color', { type: 'setLayerSwitches', layers: [trackId], patch });
-  }, []);
+  // Every row, bar, keyframe and property handler — the docked timeline's own
+  // (useTimelineHandlers), so the switches, Mode / TrkMat / Parent menus,
+  // rename, trims and keyframe edits work here too.
+  const tracksRef = useRef<ReadonlyArray<TimelineTrack>>(tracks);
+  tracksRef.current = tracks;
+  const handlers = useTimelineHandlers(tracksRef);
 
   return (
     /*
@@ -100,29 +73,23 @@ export function PopoutTimeline(): JSX.Element {
       <div style={{ flex: 1, minHeight: 0 }}>
     <BottomTimeline
       model={model}
-      onScrub={(t) => seekPlayhead(t)}
+      {...timelineHandlerProps(handlers)}
       onWorkAreaChange={(start, end) => { void setWorkArea(start, end); }}
       onScroll={(px) => setTimelineScrollPixels(px)}
       onZoom={(next, anchorSeconds) => {
         setTimelinePixelsPerSecond(clampPps(next), anchorSeconds ?? playheadSeconds());
       }}
-      onTrackSelect={(trackId, additive) => {
-        if (additive) useSelectionStore.getState().add(trackId);
-        else useSelectionStore.getState().set([trackId]);
-      }}
-      onTrackSelectMany={(trackIds) => useSelectionStore.getState().set([...trackIds])}
-      onClipMoveMany={(moves, label) => { void moveBars(moves, label); }}
-      onTrackToggleVisible={(id) => toggleFlag(id, 'visible')}
-      onTrackToggleLock={(id) => toggleFlag(id, 'locked')}
-      onTrackToggleSolo={(id) => toggleFlag(id, 'solo')}
-      onClipMuteToggle={toggleAudioMute}
       selectedTrackIds={selectedIds}
       expandedTrackIds={expandedIds}
       onTrackToggleExpand={(id) => {
         setExpandedIds((cur) => (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]));
       }}
-      onTrackColorChange={setLabelColor}
     />
+      </div>
+      {/* The docked timeline's zoom is in the editor's status bar, which this
+          window does not have — so it gets its own, at the foot like AE's. */}
+      <div style={{ flex: 'none', display: 'flex', justifyContent: 'flex-end', padding: '2px 8px', borderTop: '1px solid var(--color-border-subtle)' }}>
+        <TimelineZoom />
       </div>
     </div>
   );

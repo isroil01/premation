@@ -492,6 +492,7 @@ api::CompSettings comp_settings(const Document& d, std::string_view comp) {
   s.global_light_angle = num("globalLightAngle", 90);
   s.global_light_altitude = num("globalLightAltitude", 45);
   s.drop_frame = c.at("dropFrame").is_bool() && c.at("dropFrame").b();
+  s.frame_blending = !(c.at("frameBlending").is_bool() && !c.at("frameBlending").b());  // absent = on
   s.preserve_frame_rate = c.at("preserveFrameRate").is_bool() && c.at("preserveFrameRate").b();
   s.preserve_resolution = c.at("preserveResolution").is_bool() && c.at("preserveResolution").b();
   Json world = Json::object();
@@ -548,6 +549,15 @@ api::Transition transition_info(const Document& d, std::string_view comp, const 
   const Json& df = rec.at("durationFrames");
   const double frames = df.is_number() && std::isfinite(df.num()) ? motion::js::round(df.num()) : 0;
   t.duration = frames_to_flicks(frames, comp_fps(d, comp));
+  if (!str("effect").empty()) t.effect = str("effect");
+  if (rec.at("angle").is_number()) t.angle = rec.at("angle").num();
+  if (rec.at("softness").is_number()) t.softness = rec.at("softness").num();
+  if (!str("color").empty()) t.color = str("color");
+  const std::string ease = str("ease");
+  if (ease == "easeInOut") t.ease = api::TransitionEase::ease_in_out;
+  else if (ease == "easeIn") t.ease = api::TransitionEase::ease_in;
+  else if (ease == "easeOut") t.ease = api::TransitionEase::ease_out;
+  else if (ease == "linear") t.ease = api::TransitionEase::linear;
   return t;
 }
 

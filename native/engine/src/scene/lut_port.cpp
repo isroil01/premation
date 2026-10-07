@@ -141,8 +141,9 @@ std::array<double, 3> sample_channel_lut_as_uploaded(const ChannelLut& lut, cons
   return {sample_strip(lut.r, rgb[0]), sample_strip(lut.g, rgb[1]), sample_strip(lut.b, rgb[2])};
 }
 
-std::optional<CubeLut> read_cube_lut_param(const Json& e) {
-  const Json& o = e.at("params").at("lut");
+std::optional<CubeLut> read_cube_lut_param(const Json& e) { return parse_stored_cube_lut(e.at("params").at("lut")); }
+
+std::optional<CubeLut> parse_stored_cube_lut(const Json& o) {
   if (!o.is_object()) return std::nullopt;
   const double size = o.at("size").is_number() ? o.at("size").num() : 0;
   const double size1d = o.at("size1d").is_number() ? o.at("size1d").num() : 0;
@@ -227,11 +228,19 @@ void append_lut_textures(const RLayer& l, std::vector<TextureRequest>& out) {
   if (!first_enabled_cube(l, cubeFx)) return;
   const auto cube = read_cube_lut_param(*cubeFx);
   if (!cube) return;
+  if (auto strip = cube_lut_strip(*cube, "cubelut:" + l.id)) {
+    strip->layerId = l.id;
+    out.push_back(std::move(*strip));
+  }
+}
+
+std::optional<TextureRequest> cube_lut_strip(const CubeLut& lut, std::string key) {
+  const CubeLut* cube = &lut;
   const bool is1d = cube->size1d > 0;
   const auto n = static_cast<std::uint32_t>(is1d ? cube->size1d : cube->size);
-  if (n == 0) return;
+  if (n == 0) return std::nullopt;
   TextureRequest r;
-  r.key = "cubelut:" + l.id;
+  r.key = std::move(key);
   r.kind = TexKind::pixels;
   r.pxWidth = is1d ? n : n * n;
   r.pxHeight = is1d ? 1 : n;
@@ -256,8 +265,7 @@ void append_lut_textures(const RLayer& l, std::vector<TextureRequest>& out) {
       }
     }
   }
-  r.layerId = l.id;
-  out.push_back(std::move(r));
+  return r;
 }
 
 std::optional<api::RenderEffect> apply_color_lut_entry(const Json& e, const Json& params, const RLayer& l) {

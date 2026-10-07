@@ -44,18 +44,28 @@ it('carries the display controls, once each, and no View Options menu', () => {
   expect(within(b).getAllByRole('group', { name: 'Viewport display' })).toHaveLength(1);
   expect(within(b).getAllByRole('button', { name: 'Preview' })).toHaveLength(1);
   expect(within(b).getAllByRole('button', { name: /^Preview resolution/ })).toHaveLength(1);
-  expect(within(b).getAllByRole('button', { name: /^Pop out/ })).toHaveLength(1);
+  expect(within(b).getAllByRole('button', { name: 'Toggle Transparency Grid' })).toHaveLength(1);
+  expect(within(b).getAllByRole('group', { name: 'Exposure' })).toHaveLength(1);
   expect(within(b).queryByRole('button', { name: 'View Options' })).toBeNull();
 });
 
-it('keeps the scene tools, then the display controls, then the one zoom field beside play', () => {
+it('has none of the buttons that moved to their AE homes (2026-10-07)', () => {
   const b = bar();
-  const autoKey = within(b).getByRole('button', { name: 'Auto-Keyframe mode' });
+  for (const name of [/^Pop out/, /^Viewer LUT/, /^Camera bookmarks/, /^Display mode/, 'Loop Playback', 'Auto-Keyframe mode', 'Zoom out', 'Zoom in', 'Fit comp in view']) {
+    expect(within(b).queryByRole('button', { name })).toBeNull();
+  }
+});
+
+it('keeps the display controls, then the one magnification field, right of play', () => {
+  const b = bar();
+  const play = within(b).getByRole('button', { name: 'Play' });
   const display = within(b).getByRole('group', { name: 'Viewport display' });
   expect(within(b).getAllByRole('group', { name: 'Viewport zoom' })).toHaveLength(1);
   const zoom = within(b).getByRole('group', { name: 'Viewport zoom' });
+  // AE's one magnification popup: the field and its presets, no −, + or Fit buttons.
+  expect(within(zoom).getAllByRole('button')).toHaveLength(1);
   expect(within(b).getByRole('button', { name: 'Magnification presets' })).toBeInTheDocument();
-  expect(autoKey.compareDocumentPosition(display) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(play.compareDocumentPosition(display) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(display.compareDocumentPosition(zoom) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
 
@@ -75,7 +85,7 @@ it('is the element the JKL chords treat as viewport focus', () => {
 });
 
 it('sheds groups in the documented order — the display controls first, zoom last', () => {
-  expect(TRANSPORT_DEMOTE_ORDER[0]).toBe('popout');
+  expect(TRANSPORT_DEMOTE_ORDER[0]).toBe('exposure');
   expect(TRANSPORT_DEMOTE_ORDER[TRANSPORT_DEMOTE_ORDER.length - 1]).toBe('zoom');
 });
 
@@ -88,26 +98,31 @@ it('balances controls across the left and right sides of the centered play butto
   const leftButtons = buttons.slice(0, playIdx);
   const rightButtons = buttons.slice(playIdx + 1);
 
-  // Left has 9 buttons before the transport cluster (layout, split, trim-in, trim-out, snapshot, compare, loop, marker, auto-key)
-  // plus 2 transport navigation buttons (go-to-start, prev-frame) = 11 buttons to the left of Play.
-  expect(leftButtons).toHaveLength(11);
+  // Left: AE's 3D View popup, layout, snapshot, compare, then go-to-start and
+  // prev-frame = 6 buttons to the left of Play. No split / trim / marker, loop
+  // or auto-key buttons (AE's Composition panel has none of them).
   expect(leftButtons.map((btn) => btn.getAttribute('aria-label'))).toEqual([
+    expect.stringMatching(/^3D View:/),
     expect.stringMatching(/^Viewport layout:/),
-    'Split Layer at Playhead',
-    'Trim In-Point to Playhead',
-    'Trim Out-Point to Playhead',
     expect.stringMatching(/^Take Snapshot/),
     'Compare snapshots',
-    'Loop Playback',
-    'Add Composition Marker',
-    'Auto-Keyframe mode',
     'Go to Start',
     'Previous Frame',
   ]);
 
-  // Right starts with the 2 transport navigation buttons (next-frame, go-to-end) and follows with the display & zoom controls.
-  expect(rightButtons[0]).toHaveAccessibleName('Next Frame');
-  expect(rightButtons[1]).toHaveAccessibleName('Go to End');
-  expect(rightButtons.length).toBeGreaterThanOrEqual(10);
+  // Right: next-frame, go-to-end, then AE's footer — resolution, preview,
+  // transparency, overlays, channel, exposure (reset) — and the magnification
+  // presets: 9 in all (the exposure value is a spinbutton, not a button).
+  expect(rightButtons.map((btn) => btn.getAttribute('aria-label'))).toEqual([
+    'Next Frame',
+    'Go to End',
+    expect.stringMatching(/^Preview resolution:/),
+    'Preview',
+    'Toggle Transparency Grid',
+    expect.stringMatching(/^Overlays/),
+    expect.stringMatching(/^Show channel:/),
+    'Adjust Exposure',
+    'Magnification presets',
+  ]);
 });
 

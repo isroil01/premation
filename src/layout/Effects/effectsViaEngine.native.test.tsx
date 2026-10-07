@@ -402,9 +402,12 @@ test('mask card edits: add, mode, inverted, rename, feather, shape stopwatch, re
 
 // ── Layer styles ──────────────────────────────────────────────────────
 
-test('layer styles: the checkbox adds / removes the style, a field scrub is one entry', async () => {
+test('layer styles: the Add menu adds the style, a field scrub is one entry', async () => {
   render(<LayerStylesControls nodeId={s.A} />);
-  await act(async () => { fireEvent.click(screen.getByLabelText('Drop shadow')); await settleEdits(); });
+  // AE's model: only applied styles are listed; the rest come from the Add menu.
+  expect(screen.queryByLabelText('Drop shadow')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Add layer style' }));
+  await act(async () => { fireEvent.click(screen.getByRole('menuitem', { name: 'Drop Shadow' })); await settleEdits(); });
   expect((await stylesOf(s.A)).dropShadow).toBeDefined();
   cleanup();
   render(<LayerStylesControls nodeId={s.A} />);

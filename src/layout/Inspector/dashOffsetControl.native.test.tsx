@@ -43,10 +43,13 @@ async function setStroke(dash: number[]): Promise<void> {
   await documentMirror().whenIdle();
 }
 
-/** The panel keeps stroke controls behind a popover; open it by its trigger. */
+/** Twirl every closed Contents group open (Stroke 1 ▸ Dashes and the rest). */
 function openStrokePopover(): void {
-  const trigger = screen.queryAllByLabelText(/stroke/i)[0];
-  if (trigger) fireEvent.click(trigger);
+  for (let guard = 0; guard < 10; guard += 1) {
+    const closed = [...document.querySelectorAll('[data-twirl][aria-expanded="false"]')] as HTMLElement[];
+    if (closed.length === 0) return;
+    for (const b of closed) fireEvent.click(b);
+  }
 }
 
 const idle = async (): Promise<void> => { await act(async () => { await engineIdle(); }); };

@@ -57,6 +57,9 @@ export const APP_EVENTS = [
 
   // Timeline reveal (AE U / UU shortcuts)
   'RevealAnimatedProps',
+  // AE's Go to Time (Alt+Shift+J) and timeline search (Ctrl+F)
+  'TimelineGoToTime',
+  'TimelineFocusSearch',
 
   // Engine lifecycle (future)
   'EngineReady',
@@ -145,6 +148,10 @@ export interface AppEventPayloads {
    * assistant re-emitting it would collapse the very rows it just filled.
    */
   RevealAnimatedProps: { nodeIds: string[]; mode: 'animated' | 'modified'; force?: boolean };
+  /** Open the timeline's timecode field for typing (AE's Go to Time). */
+  TimelineGoToTime: Record<string, never>;
+  /** Put focus in the timeline's layer / property filter (AE's Ctrl+F). */
+  TimelineFocusSearch: Record<string, never>;
 
   EngineReady: { engine: string; role?: 'viewport' | 'auxiliary' };
   EngineError: { engine: string; error: Error; role?: 'viewport' | 'auxiliary' };

@@ -4,7 +4,7 @@
  * navigator) and a category accordion heading. Split out of `Timeline.tsx`.
  */
 
-import { memo, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
+import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import type { SelectModifiers } from './trackRangeSelect';
 import { cn } from '@utils/cn';
 import { Icon, type IconName } from '@components/Icon';
@@ -23,11 +23,14 @@ import { documentMirror } from '@stores/documentMirror';
 import { useMirrorKeys, useMirrorLayer } from '@hooks/useMirror';
 import type { MenuSelectModifiers } from '@components/Menu';
 import { extraColumnValue, type TimelineExtraColumn } from './timelineColumns';
+import { mirrorStretchPercent } from '@core/mirror/motionAssist';
+import { useTimelineNameColumnStore } from '@stores/timelineNameColumnStore';
 import styles from './Timeline.module.css';
-import { ColorPicker } from '@components/ColorPicker';
-import { MATTE_OPTIONS, MATTE_SHORT_LABEL, matteOptionId, applyMatteOption } from '@components/MatteControl/matteMenu';
+import { MATTE_OPTIONS, MATTE_SHORT_LABEL, matteOptionId, applyMatteOption, setMatteSource } from '@components/MatteControl/matteMenu';
+import { readMatte } from '@core/effects/matte';
 import { areRowPropsEqual } from './rowMemo';
 import { openContextMenu, type ContextMenuItem } from '@stores/contextMenuStore';
+import { LABEL_COLORS } from '@core/scene/labelColor';
 import {
   collapseSwitchKind,
   toggleCollapseSwitch,
@@ -96,9 +99,10 @@ export const TrackHeader = memo(function TrackHeader({
   onToggleFlag,
   onRename,
   onTrackColorChange,
-  switchesOnHover: _switchesOnHover = false,
-  switchesPinned: _switchesPinned = false,
-  onToggleSwitchPin: _onToggleSwitchPin,
+  onExtraColumnEdit,
+  startFrame = 0,
+  renameNonce,
+  onContextMenu,
   showSwitches = true,
   showModes = true,
   extraColumns,
@@ -140,11 +144,14 @@ export const TrackHeader = memo(function TrackHeader({
   onToggleFlag?: (flag: 'shy' | 'collapse' | 'fxEnabled' | 'motionBlur' | 'adjustment' | 'threeD' | 'guide' | 'preserveTransparency') => void;
   onRename?: (newName: string) => void;
   onTrackColorChange?: (trackId: string, color: string) => void;
-  /** Keep the seven AE switches quiet until the row is hovered. */
-  switchesOnHover?: boolean;
-  /** This row has pinned them open through its own control. */
-  switchesPinned?: boolean;
-  onToggleSwitchPin?: () => void;
+  /** A value typed into an In / Out / Duration (frames) or Stretch (%) cell. */
+  onExtraColumnEdit?: (col: TimelineExtraColumn, value: number) => void;
+  /** The comp's first frame number: In / Out read on the same axis as the timecode. */
+  startFrame?: number;
+  /** Changes when the list asks this row to start a rename (AE's Enter). */
+  renameNonce?: number;
+  /** Right-click: the layer menu (AE's). */
+  onContextMenu?: (clientX: number, clientY: number) => void;
   /** AE's Toggle Switches / Modes — see `TimelineProps['columns']`. */
   showSwitches?: boolean;
   showModes?: boolean;
@@ -174,16 +181,31 @@ export const TrackHeader = memo(function TrackHeader({
     return Number.isFinite(min) ? { start: min, duration: max - min } : undefined;
   }, [track.clips]);
 
+  // AE's Layer Name / Source Name column: a layer with a source item (footage,
+  // a comp) shows that item's name in Source Name mode; the rest keep theirs.
+  const nameColumn = useTimelineNameColumnStore((st) => st.mode);
+  const sourceName = nameColumn === 'source' ? sourceNameOf(track.id) : null;
+  const shownName = sourceName ?? track.name;
+
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(track.name);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const startRename = (e: React.MouseEvent): void => {
-    e.stopPropagation();
+  const beginRename = (): void => {
+    if (!onRename) return;
     setDraft(track.name);
     setEditing(true);
     setTimeout(() => { inputRef.current?.select(); }, 10);
   };
+  const startRename = (e: React.MouseEvent): void => {
+    e.stopPropagation();
+    beginRename();
+  };
+  // AE's Enter on the focused row (the list sends a fresh nonce).
+  useEffect(() => {
+    if (renameNonce !== undefined) beginRename();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only a new request starts a rename
+  }, [renameNonce]);
   const commitRename = (): void => {
     setEditing(false);
     const trimmed = draft.trim();
@@ -214,7 +236,11 @@ export const TrackHeader = memo(function TrackHeader({
   // Option id + label come from the SHARED menu, not a second hardcoded copy of
   // the four labels. This row and the inspector used to each own their own list.
   const currentMatteOption = matteOptionId(track.matteMode);
-  const currentMatteLabel = MATTE_SHORT_LABEL[currentMatteOption] ?? 'None';
+  // An explicit matte source (any layer, AE 2023+) names itself in the cell;
+  // without one the matte is the layer above, as it always was.
+  const matteSourceId = readMatte(track.matteMode)?.sourceId;
+  const matteSourceName = matteSourceId ? (documentMirror().layer(matteSourceId)?.name ?? null) : null;
+  const currentMatteLabel = `${MATTE_SHORT_LABEL[currentMatteOption] ?? 'None'}${matteSourceName ? ` · ${matteSourceName}` : ''}`;
 
   // Built when the menu OPENS, not per render: the list names every layer in
   // the comp, and the walk that collects it ran for every visible row on
@@ -251,6 +277,11 @@ export const TrackHeader = memo(function TrackHeader({
       data-locked={locked || undefined}
       onClick={(e) => onClick({ shift: e.shiftKey, meta: e.ctrlKey || e.metaKey })}
       onDoubleClick={(e) => onActivate(e.altKey)}
+      onContextMenu={(e) => {
+        if (!onContextMenu) return;
+        e.preventDefault();
+        onContextMenu(e.clientX, e.clientY);
+      }}
       onFocus={onRowFocus}
       onKeyDown={(e) => {
         // Enter, Space and the arrows belong to the LISTBOX, which handles
@@ -266,7 +297,7 @@ export const TrackHeader = memo(function TrackHeader({
       tabIndex={active ? 0 : -1}
       aria-selected={selected}
       aria-label={track.name}
-      title="↑ ↓ to move · Enter to expand · Space to hide · F2 to focus"
+      title="↑ ↓ to move · → ← to twirl · Enter to rename · Space to hide · F2 to open · right-click for the layer menu"
     >
       <div className={styles.preInfoCol}>
         <button
@@ -275,7 +306,7 @@ export const TrackHeader = memo(function TrackHeader({
           data-kind="visible"
           data-on={!hidden || undefined}
           aria-label={hidden ? 'Show track' : 'Hide track'}
-          title={hidden ? 'Hide' : 'Show (Video)'}
+          title={hidden ? 'Show (Video)' : 'Hide (Video)'}
           onClick={(e) => { e.stopPropagation(); onToggleVisible(); }}
         >
           {!hidden ? <Icon name="eye" size="sm" /> : null}
@@ -306,6 +337,7 @@ export const TrackHeader = memo(function TrackHeader({
             tabIndex={-1}
             aria-hidden="true"
             title="Audio not available for this layer"
+            aria-label="Audio not available for this layer"
           />
         )}
         <button
@@ -342,28 +374,25 @@ export const TrackHeader = memo(function TrackHeader({
         </div>
         <span className={styles.trackIndex}>{index}</span>
         {typeof track.nodeColor === 'string' && (
-          <div
-            onClick={(e) => e.stopPropagation()}
-            // AE's label menu carries "Select Label Group"; the swatch's own
-            // picker is a colour field, so the verb lives on its right-click.
+          // AE's label: a swatch whose click opens the NAMED label menu (None,
+          // the palette, Select Label Group) — not a free colour field.
+          <button
+            type="button"
+            className={styles.labelSwatch}
+            style={{ background: track.nodeColor || 'transparent' }}
+            aria-label={`Label: ${labelNameOf(track.nodeColor)}`}
+            title={`Label: ${labelNameOf(track.nodeColor)} — click to change`}
+            onClick={(e) => {
+              e.stopPropagation();
+              const r = e.currentTarget.getBoundingClientRect();
+              openContextMenu(r.left, r.bottom, labelMenuItems(track.id, track.nodeColor, onTrackColorChange));
+            }}
             onContextMenu={(e) => {
               e.preventDefault();
               e.stopPropagation();
-              openContextMenu(e.clientX, e.clientY, [
-                { id: 'select-label-group', label: 'Select Label Group', onSelect: () => { selectLabelGroup(track.id); } },
-              ]);
+              openContextMenu(e.clientX, e.clientY, labelMenuItems(track.id, track.nodeColor, onTrackColorChange));
             }}
-            title="Right-click: Select Label Group"
-            style={{ display: 'inline-flex', alignItems: 'center' }}
-          >
-            <ColorPicker
-              value={track.nodeColor || '#5282b8'}
-              onChange={(hex) => onTrackColorChange?.(track.id, hex)}
-              compact
-              alpha={false}
-              aria-label="Layer label color"
-            />
-          </div>
+          />
         )}
         <button
           type="button"
@@ -406,10 +435,10 @@ export const TrackHeader = memo(function TrackHeader({
         ) : (
           <span
             className={styles.trackName}
-            title={`${track.name} — double-click to rename`}
+            title={`${shownName} — double-click to rename`}
             onDoubleClick={startRename}
           >
-            {track.name}
+            {shownName}
           </span>
         )}
       </div>
@@ -420,11 +449,12 @@ export const TrackHeader = memo(function TrackHeader({
             type="button"
             className={styles.trackAction}
             data-kind="shy"
-            data-on={(track as any).shy || undefined}
+            data-on={track.shy || undefined}
             title="Toggle Shy Layer"
+            aria-label="Toggle Shy Layer"
             onClick={(e) => { e.stopPropagation(); onToggleFlag?.('shy'); }}
           >
-            {(track as any).shy ? <Icon name="shy" size="sm" /> : null}
+            {track.shy ? <Icon name="shy" size="sm" /> : null}
           </button>
 
           {/* AE's sunburst: Collapse Transformations on a placed comp,
@@ -451,6 +481,7 @@ export const TrackHeader = memo(function TrackHeader({
               tabIndex={-1}
               aria-hidden="true"
               title="Not available for this layer"
+              aria-label="Not available for this layer"
             />
           )}
 
@@ -477,6 +508,7 @@ export const TrackHeader = memo(function TrackHeader({
               tabIndex={-1}
               aria-hidden="true"
               title="Quality not available for this layer"
+              aria-label="Quality not available for this layer"
             />
           )}
 
@@ -494,6 +526,7 @@ export const TrackHeader = memo(function TrackHeader({
               data-kind="fx"
               data-on={track.fxEnabled !== false || undefined}
               title="Toggle Effects (fx)"
+              aria-label="Toggle Effects (fx)"
               onClick={(e) => { e.stopPropagation(); onToggleFlag?.('fxEnabled'); }}
             >
               {track.fxEnabled !== false ? <span className={styles.fxText}>fx</span> : null}
@@ -507,6 +540,7 @@ export const TrackHeader = memo(function TrackHeader({
               tabIndex={-1}
               aria-hidden="true"
               title="No effects on this layer"
+              aria-label="No effects on this layer"
             />
           )}
 
@@ -532,6 +566,7 @@ export const TrackHeader = memo(function TrackHeader({
               tabIndex={-1}
               aria-hidden="true"
               title="Frame Blending not available for this layer"
+              aria-label="Frame Blending not available for this layer"
             />
           )}
 
@@ -541,6 +576,7 @@ export const TrackHeader = memo(function TrackHeader({
             data-kind="motionBlur"
             data-on={track.motionBlur || undefined}
             title="Toggle Motion Blur"
+            aria-label="Toggle Motion Blur"
             onClick={(e) => { e.stopPropagation(); onToggleFlag?.('motionBlur'); }}
           >
             {track.motionBlur ? <Icon name="motion-blur" size="sm" /> : null}
@@ -551,6 +587,7 @@ export const TrackHeader = memo(function TrackHeader({
             data-kind="adjustment"
             data-on={track.adjustment || undefined}
             title="Toggle Adjustment Layer"
+            aria-label="Toggle Adjustment Layer"
             onClick={(e) => { e.stopPropagation(); onToggleFlag?.('adjustment'); }}
           >
             {track.adjustment ? <Icon name="adjustment" size="sm" /> : null}
@@ -562,6 +599,7 @@ export const TrackHeader = memo(function TrackHeader({
             data-on={track.guide || undefined}
             aria-pressed={track.guide === true}
             title={track.guide ? 'Guide layer — not rendered on export' : 'Make Guide Layer'}
+            aria-label={track.guide ? 'Guide layer — not rendered on export' : 'Make Guide Layer'}
             onClick={(e) => { e.stopPropagation(); onToggleFlag?.('guide'); }}
           >
             {track.guide ? <Icon name="frame" size="sm" /> : null}
@@ -593,6 +631,7 @@ export const TrackHeader = memo(function TrackHeader({
               tabIndex={-1}
               aria-hidden="true"
               title="Cameras and lights are always 3D"
+              aria-label="Cameras and lights are always 3D"
             />
           ) : (
             <button
@@ -601,6 +640,7 @@ export const TrackHeader = memo(function TrackHeader({
               data-kind="threeD"
               data-on={track.threeD || undefined}
               title="Toggle 3D Layer"
+              aria-label="Toggle 3D Layer"
               onClick={(e) => { e.stopPropagation(); onToggleFlag?.('threeD'); }}
             >
               {track.threeD ? <Icon name="3d" size="sm" /> : null}
@@ -634,20 +674,40 @@ export const TrackHeader = memo(function TrackHeader({
         </div>
 
         <div className={styles.matteCol} onClick={(e) => e.stopPropagation()}>
+          {/* AE's track-matte pick-whip: drag to any layer to matte with it
+              (an alpha matte when none was set). The dropdown is the mode. */}
+          <PickWhip
+            label="Track matte pick-whip"
+            accept={(target) => target.nodeId !== track.id && !!documentMirror().layer(target.nodeId)}
+            onPick={(target) => onMatteChange?.(setMatteSource(track.matteMode ?? { mode: 'alpha', inverted: false }, target.nodeId))}
+          />
           <Dropdown
             placement="bottom-start"
             trigger={
-              <button type="button" className={styles.timelineSelectTrigger} aria-label="Track Matte">
+              <button type="button" className={styles.timelineSelectTrigger} aria-label="Track Matte" title={matteSourceName ? `Matte: ${matteSourceName}` : 'Track matte (the layer above unless one is picked)'}>
                 {currentMatteLabel}
               </button>
             }
-            items={MATTE_OPTIONS.map((m) => ({
-              type: 'item',
-              id: m.id,
-              label: MATTE_SHORT_LABEL[m.id] ?? m.label,
-              icon: m.id === currentMatteOption ? ('check' as const) : undefined,
-              onSelect: () => onMatteChange?.(applyMatteOption(track.matteMode, m.id)),
-            }))}
+            items={[
+              ...MATTE_OPTIONS.map((m) => ({
+                type: 'item' as const,
+                id: m.id,
+                label: MATTE_SHORT_LABEL[m.id] ?? m.label,
+                icon: m.id === currentMatteOption ? ('check' as const) : undefined,
+                onSelect: () => onMatteChange?.(applyMatteOption(track.matteMode, m.id)),
+              })),
+              ...(matteSourceId
+                ? [
+                    { type: 'separator' as const },
+                    {
+                      type: 'item' as const,
+                      id: 'matte-source-above',
+                      label: 'Use the Layer Above',
+                      onSelect: () => onMatteChange?.(setMatteSource(track.matteMode, undefined)),
+                    },
+                  ]
+                : []),
+            ]}
           />
         </div>
 
@@ -695,20 +755,27 @@ export const TrackHeader = memo(function TrackHeader({
       )}
 
       {/*
-        In / Out / Duration — AE's optional columns, off by default.
-
-        Read-outs, not fields: the numbers answer "where does this layer sit"
-        at a glance, which is the question the columns exist for, and the edit
-        that would follow (trimming a head to a typed frame) already has a
-        gesture on the bar itself. Shipping them as inputs whose commit path is
-        not wired would be worse than shipping them as the readout they are —
-        see the report for what a writable column needs.
+        In / Out / Duration / Stretch — AE's optional columns, off by default.
+        Editable as in AE (2026-10-07): In trims the head, Out and Duration the
+        tail, Stretch time-stretches from the in-point. In / Out read on the
+        comp's frame axis (its start frame included), like the timecode.
       */}
       {extraColumns.map((id) => {
-        const value = extraColumnValue(id, layerSpan, frameRate, 100);
+        const raw = id === 'stretch'
+          ? Math.round(mirrorStretchPercent(documentMirror(), track.id) * 10) / 10
+          : extraColumnValue(id, layerSpan, frameRate, 100);
+        const value = raw === null ? null : id === 'in' || id === 'out' ? raw + startFrame : raw;
+        const label = id === 'in' ? 'In' : id === 'out' ? 'Out' : id === 'duration' ? 'Duration' : 'Stretch';
         return (
-          <div key={id} className={styles.extraCol} data-col={id} title={`${id === 'in' ? 'In' : id === 'out' ? 'Out' : 'Duration'} (frames)`}>
-            {value === null ? '—' : value}
+          <div key={id} className={styles.extraCol} data-col={id} title={`${label} (${id === 'stretch' ? '%' : 'frames'}) — type a value and press Enter`}>
+            {value === null ? '—' : (
+              <ExtraColumnInput
+                value={value}
+                ariaLabel={`${label} of ${track.name}`}
+                disabled={!onExtraColumnEdit || track.locked === true}
+                onCommit={(v) => onExtraColumnEdit?.(id, v)}
+              />
+            )}
           </div>
         );
       })}
@@ -752,6 +819,8 @@ export function PropertyHeader({
   whipNodeId,
   whipProp,
   contextMenuItems,
+  expression,
+  onEditExpression,
 }: {
   label: string;
   style: CSSProperties;
@@ -781,6 +850,13 @@ export function PropertyHeader({
    * timeline never pays for menus nobody opens. Absent = no menu.
    */
   contextMenuItems?: () => ContextMenuItem[];
+  /**
+   * The row's expression, when it has one (AE's `=` beside the property):
+   * whether it is enabled and whether the engine reported it failing.
+   */
+  expression?: { enabled: boolean; error: string | null } | null;
+  /** Open the row's expression editor (the `=` button). */
+  onEditExpression?: () => void;
 }): JSX.Element {
   const sorted = useMemo(() => [...keyframes].sort((a, b) => a.time - b.time), [keyframes]);
   const onContextMenu = contextMenuItems
@@ -829,6 +905,29 @@ export function PropertyHeader({
     <StopwatchButton animated={animated} label={label} onToggle={onStopwatch} />
   ) : null;
 
+  // AE's expression `=`: lit while the expression runs, red when it fails —
+  // a click opens the editor over the timeline.
+  const exprBadge = expression ? (
+    <button
+      type="button"
+      className={cn(styles.exprBadge, !expression.enabled && styles.exprBadgeOff, expression.error && styles.exprBadgeError)}
+      aria-label={`Edit expression on ${label}`}
+      title={
+        expression.error
+          ? `Expression error: ${expression.error} — click to edit`
+          : expression.enabled
+            ? 'Expression — click to edit'
+            : 'Expression (disabled) — click to edit'
+      }
+      onClick={(e) => {
+        e.stopPropagation();
+        onEditExpression?.();
+      }}
+    >
+      =
+    </button>
+  ) : null;
+
   // The name is the row's SELECT target — AE's property selection, on which
   // proportional scrubbing is defined. Ctrl/Cmd-click adds to the ordered
   // selection; a plain click replaces it.
@@ -874,6 +973,7 @@ export function PropertyHeader({
       >
         {stopwatch}
         {name}
+        {exprBadge}
         {fields}
       </div>
     );
@@ -889,6 +989,7 @@ export function PropertyHeader({
     >
       {stopwatch}
       {name}
+      {exprBadge}
       {fields}
       <div className={styles.propNav}>
         <KeyframeNavigator
@@ -969,4 +1070,81 @@ export function TrackCategoryHeader({
       <span className={styles.categoryBadge}>{count}</span>
     </div>
   );
+}
+
+/**
+ * One editable In / Out / Duration / Stretch cell: shows the number, commits a
+ * typed one on Enter or blur, Escape puts the shown value back. A plain input,
+ * not a scrubbing field: each commit is a trim (one undo entry), and a drag
+ * would be dozens of them.
+ */
+function ExtraColumnInput({ value, ariaLabel, disabled, onCommit }: {
+  value: number;
+  ariaLabel: string;
+  disabled: boolean;
+  onCommit: (value: number) => void;
+}): JSX.Element {
+  const [draft, setDraft] = useState<string | null>(null);
+  const commit = (): void => {
+    if (draft === null) return;
+    const v = Number(draft);
+    setDraft(null);
+    if (Number.isFinite(v) && v !== value) onCommit(v);
+  };
+  return (
+    <input
+      className={styles.extraColInput}
+      type="text"
+      inputMode="decimal"
+      aria-label={ariaLabel}
+      disabled={disabled}
+      value={draft ?? String(value)}
+      onChange={(e) => setDraft(e.currentTarget.value)}
+      onFocus={(e) => e.currentTarget.select()}
+      onBlur={commit}
+      onPointerDown={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') { commit(); e.currentTarget.blur(); }
+        if (e.key === 'Escape') { setDraft(null); e.currentTarget.blur(); }
+      }}
+    />
+  );
+}
+
+/** The name of a layer's source item (footage or composition), from the mirror. */
+function sourceNameOf(layerId: string): string | null {
+  const m = documentMirror();
+  const source = m.layer(layerId)?.source;
+  if (!source) return null;
+  return m.item(source)?.name ?? m.comp(source)?.settings.name ?? null;
+}
+
+/** The label's name, AE-style (a custom colour reads "Custom"). */
+function labelNameOf(color: string | undefined): string {
+  if (!color) return 'None';
+  return LABEL_COLORS.find((l) => l.color.toLowerCase() === color.toLowerCase())?.label ?? 'Custom';
+}
+
+/** AE's label menu: None, the named palette (the current one ticked), Select Label Group. */
+function labelMenuItems(
+  trackId: string,
+  current: string | undefined,
+  onTrackColorChange: ((trackId: string, color: string) => void) | undefined,
+): ContextMenuItem[] {
+  const isCurrent = (c: string): boolean => !!current && current.toLowerCase() === c.toLowerCase();
+  return [
+    ...LABEL_COLORS.map<ContextMenuItem>((l) => ({
+      id: `label-${l.id}`,
+      label: (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+          <span aria-hidden style={{ width: 10, height: 10, background: l.color, display: 'inline-block' }} />
+          {l.label}{isCurrent(l.color) ? '  ✓' : ''}
+        </span>
+      ),
+      onSelect: () => onTrackColorChange?.(trackId, l.color),
+    })),
+    { id: 'label-sep', separator: true },
+    { id: 'select-label-group', label: 'Select Label Group', onSelect: () => { selectLabelGroup(trackId); } },
+  ];
 }

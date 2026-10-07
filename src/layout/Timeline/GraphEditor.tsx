@@ -84,8 +84,6 @@ import { mirrorPropertyMeta } from '@core/mirror/metaFacts';
 import {
   withOutgoingSpeed,
   withIncomingSpeed,
-  withOutgoingInfluence,
-  withIncomingInfluence,
   withOutgoingSlope,
   withIncomingSlope,
   outgoingSpeed,
@@ -228,7 +226,7 @@ interface GraphTrack {
   color: string;
 }
 
-type DragKind = 'kf' | 'handle-in' | 'handle-out' | 'scrub' | 'box-zoom' | 'box-select';
+type DragKind = 'kf' | 'handle-in' | 'handle-out' | 'scrub' | 'box-zoom' | 'box-select' | 'box-transform';
 
 interface DragState {
   kind: DragKind;
@@ -274,7 +272,29 @@ interface DragState {
   grabIndex?: number;
   /** Current layer times for `group` members (parallel; mutated while dragging). */
   groupCurrentT?: number[];
+  /**
+   * Transform box: the selection's svg bounds at pointer-down, which edges the
+   * grabbed handle moves (null = that axis is not scaled), and each member's
+   * svg y at pointer-down (values scale in screen space, so curves of
+   * different ranges scale together, as AE's box does).
+   */
+  box?: { x0: number; x1: number; y0: number; y1: number; edgeX: 'l' | 'r' | null; edgeY: 't' | 'b' | null };
+  groupY0?: number[];
 }
+
+/** The transform box's eight handles: which edge(s) each moves. */
+const BOX_HANDLES: ReadonlyArray<{ id: string; edgeX: 'l' | 'r' | null; edgeY: 't' | 'b' | null; cursor: string }> = [
+  { id: 'l', edgeX: 'l', edgeY: null, cursor: 'ew-resize' },
+  { id: 'r', edgeX: 'r', edgeY: null, cursor: 'ew-resize' },
+  { id: 't', edgeX: null, edgeY: 't', cursor: 'ns-resize' },
+  { id: 'b', edgeX: null, edgeY: 'b', cursor: 'ns-resize' },
+  { id: 'tl', edgeX: 'l', edgeY: 't', cursor: 'nwse-resize' },
+  { id: 'tr', edgeX: 'r', edgeY: 't', cursor: 'nesw-resize' },
+  { id: 'bl', edgeX: 'l', edgeY: 'b', cursor: 'nesw-resize' },
+  { id: 'br', edgeX: 'r', edgeY: 'b', cursor: 'nwse-resize' },
+];
+/** The box's margin around the outermost diamonds, px. */
+const BOX_PAD = 6;
 
 /** Fixed multi-curve series palette (data-viz, not chrome) — shared across themes. */
 /** Width of the curve list (`showCurveList`), px — `.curveList` in the sheet matches. */
@@ -832,6 +852,33 @@ export function GraphEditor({
   }, [tracks, duration, pps, INNER_H, rev, samplesTick, mode, scrollLeft, viewportW, refitTick]);
 
   /**
+   * The transform box around the selected diamonds — value graph only (the
+   * speed graph plots derivatives, which do not scale like values), and only
+   * for two or more keys.
+   */
+  const transformBox = useMemo(() => {
+    if (mode !== 'value' || selectedKfIds.size < 2) return null;
+    let x0 = Infinity;
+    let x1 = -Infinity;
+    let y0 = Infinity;
+    let y1 = -Infinity;
+    let n = 0;
+    for (const p of sampledPaths) {
+      for (const k of p.keyframes) {
+        if (!selectedKfIds.has(k.selId)) continue;
+        const kx = k.tAbs * pps;
+        x0 = Math.min(x0, kx);
+        x1 = Math.max(x1, kx);
+        y0 = Math.min(y0, k.y);
+        y1 = Math.max(y1, k.y);
+        n++;
+      }
+    }
+    if (n < 2) return null;
+    return { x0: x0 - BOX_PAD, x1: x1 + BOX_PAD, y0: y0 - BOX_PAD, y1: y1 + BOX_PAD };
+  }, [mode, selectedKfIds, sampledPaths, pps]);
+
+  /**
    * Every keyframe a Shift-drag box has caught — diamonds, plus the focused
    * keyframe's tangent handles. Declared here, above the pointer handlers that
    * call it, so the box-select cannot be a use-before-declaration hazard.
@@ -1134,6 +1181,68 @@ export function GraphEditor({
     [svgCoords, beginDrag, pps, mode, selectedKfIds, setSelectedKfIds, sampledPaths],
   );
 
+  // ── Transform box (AE's Graph Editor "Show Transform Box") ──────
+  // Two or more selected keys in the value graph get a box; dragging an edge
+  // scales their times (from the opposite edge) and/or values (in screen
+  // space, from the opposite edge). One engine gesture, absolute per move.
+  const onBoxHandlePointerDown = useCallback(
+    (e: React.PointerEvent<SVGElement>, edgeX: 'l' | 'r' | null, edgeY: 't' | 'b' | null, box: { x0: number; x1: number; y0: number; y1: number }) => {
+      if (e.button !== 0) return;
+      const group: GraphGroupMemberStart[] = [];
+      const groupSelIds: string[] = [];
+      const groupY0: number[] = [];
+      for (const p of sampledPaths) {
+        for (const k of p.keyframes) {
+          if (!selectedKfIds.has(k.selId)) continue;
+          group.push({ nodeId: k.nodeId, prop: k.prop, startT: k.t, startCompT: k.tAbs, startValue: k.value, minV: k.minV, maxV: k.maxV });
+          groupSelIds.push(k.selId);
+          groupY0.push(k.y);
+        }
+      }
+      if (group.length < 2) return;
+      const moving = new Set(group.map((m) => `${m.nodeId}|${m.prop}|${m.startT}`));
+      const neighbours = group.map((m) => {
+        const kfs = trackKeys(m.nodeId, m.prop) ?? [];
+        const fixed = kfs.filter((k) => !moving.has(`${m.nodeId}|${m.prop}|${k.t}`));
+        const prev = [...fixed].reverse().find((k) => k.t < m.startT);
+        const next = fixed.find((k) => k.t > m.startT);
+        return { ...(prev ? { prev: prev.tAbs } : {}), ...(next ? { next: next.tAbs } : {}) };
+      });
+      const gesture = new GestureSession('Scale Keyframes');
+      const { x, y } = svgCoords(e);
+      const first = group[0]!;
+      beginDrag(e, {
+        kind: 'box-transform',
+        nodeId: first.nodeId,
+        prop: first.prop,
+        kfT: first.startT,
+        origValue: first.startValue,
+        ox: x,
+        oy: y,
+        px0: x,
+        py0: y,
+        minV: first.minV,
+        maxV: first.maxV,
+        mode,
+        gesture,
+        group,
+        grabIndex: 0,
+        groupCurrentT: group.map((m) => m.startT),
+        groupSelIds,
+        groupY0,
+        startKeys: group.map((m) => memberKeyStart(m.nodeId, m.prop, m.startT)),
+        neighbours,
+        box: { ...box, edgeX, edgeY },
+      });
+      void resolveKeysForGesture(gesture, group.map((m, i) => ({ id: String(i), nodeId: m.nodeId, prop: m.prop, t: m.startT }))).then((ids) => {
+        const d = dragRef.current;
+        if (!ids || !d || d.gesture !== gesture) return;
+        d.groupEids = group.map((_m, i) => ids.get(String(i)));
+      });
+    },
+    [sampledPaths, selectedKfIds, svgCoords, beginDrag, mode],
+  );
+
   // Click the curve body (fat invisible stroke) → nearest keyframe on that track.
   // Does not start a drag; scrubbing stays on empty background.
   const onCurvePointerDown = useCallback(
@@ -1426,6 +1535,46 @@ export function GraphEditor({
     [pps, duration, INNER_H, frameRate, currentTime, sampledPaths, relocateKeys],
   );
 
+  // ── Drag: transform box ───────────────────────────────────────
+  const moveBoxTransform = useCallback(
+    (d: DragState, x: number, y: number) => {
+      const b = d.box;
+      if (!b || !d.group || !d.gesture || !d.groupEids || !d.startKeys || !d.groupY0) return;
+      const frameDur = frameRate > 0 ? 1 / frameRate : 0;
+      // Scale factors from the opposite edge; never flipped or collapsed (keys
+      // would cross or land on one another and replace each other).
+      const factor = (pos: number, edge: number, anchor: number): number =>
+        Math.abs(edge - anchor) < 1 ? 1 : Math.max(0.02, (pos - anchor) / (edge - anchor));
+      const anchorX = b.edgeX === 'l' ? b.x1 : b.x0;
+      const anchorY = b.edgeY === 't' ? b.y1 : b.y0;
+      const sx = b.edgeX ? factor(x, b.edgeX === 'l' ? b.x0 : b.x1, anchorX) : 1;
+      const sy = b.edgeY ? factor(y, b.edgeY === 't' ? b.y0 : b.y1, anchorY) : 1;
+      const byId = new Map<string, { time: number; start: MemberKeyStart; rep: Map<number, number> }>();
+      d.group.forEach((m, i) => {
+        const eid = d.groupEids![i];
+        const start = d.startKeys![i];
+        if (!eid || !start) return;
+        const compT = clampToNeighbours(
+          clamp((anchorX + (m.startCompT * pps - anchorX) * sx) / pps, 0, duration),
+          d.neighbours?.[i],
+          m.startCompT,
+          frameDur,
+        );
+        const value = sy === 1 ? m.startValue : yToValue(anchorY + (d.groupY0![i]! - anchorY) * sy, m.minV, m.maxV, INNER_H);
+        const entry = byId.get(eid) ?? { time: compT, start, rep: new Map<number, number>() };
+        entry.rep.set(start.index, value);
+        byId.set(eid, entry);
+      });
+      const patches: KeyframePatch[] = [...byId].map(([id, e]) => ({
+        id, time: compTime(e.time), value: memberKeyValue(e.start, e.rep), spatialIn: [], spatialOut: [],
+      }));
+      if (patches.length === 0) return;
+      d.gesture.send({ type: 'updateKeyframes', patches });
+      void engineIdle().then(() => relocateKeys(d));
+    },
+    [frameRate, pps, duration, INNER_H, relocateKeys],
+  );
+
   // ── Drag: Bézier handle ───────────────────────────────────────
   const moveHandle = useCallback(
     (d: DragState, ex: number, ey: number, e: React.PointerEvent) => {
@@ -1566,6 +1715,11 @@ export function GraphEditor({
       if (!d.moved && Math.hypot(ex, ey) < DRAG_DEAD_ZONE_PX) return;
       d.moved = true;
 
+      if (d.kind === 'box-transform') {
+        moveBoxTransform(d, x, y);
+        return;
+      }
+
       // Shift constrains the drag.
       //
       // A KEYFRAME takes the dominant axis: it is a point in two dimensions and
@@ -1591,7 +1745,7 @@ export function GraphEditor({
       if (d.kind === 'kf') moveKeyframe(d, ex, ey, e);
       else moveHandle(d, ex, ey, e);
     },
-    [svgCoords, onScrub, pps, duration, moveKeyframe, moveHandle, sampledPaths, INNER_H, mode, boxSelectIds],
+    [svgCoords, onScrub, pps, duration, moveKeyframe, moveHandle, moveBoxTransform, sampledPaths, INNER_H, mode, boxSelectIds],
   );
 
   const onSvgPointerUp = useCallback(
@@ -1908,12 +2062,6 @@ export function GraphEditor({
             <button type="button" className={pillClass('EaseOut')} aria-pressed={activePreset === 'EaseOut'} aria-label="Easy Ease Out" onClick={() => handleApplyPreset('EaseOut')} title="Easy Ease Out (Ctrl+Shift+F9)">
               <Icon name="arrow-left" size="sm" />
             </button>
-            <button type="button" className={pillClass('Linear')} aria-pressed={activePreset === 'Linear'} aria-label="Linear interpolation" onClick={() => handleApplyPreset('Linear')} title="Linear">
-              <Icon name="line" size="sm" />
-            </button>
-            <button type="button" className={pillClass('Hold')} aria-pressed={activePreset === 'Hold'} aria-label="Hold interpolation" onClick={() => handleApplyPreset('Hold')} title="Toggle Hold">
-              <Icon name="keyframe" size="sm" />
-            </button>
           </div>
         )}
 
@@ -1922,8 +2070,9 @@ export function GraphEditor({
             selection, which is what the timeline and F9 already operate on. */}
         {selectedKfData && (
           <div className={styles.btnGroup}>
-            {/* Interpolation KIND — a different axis from the pills beside it
-                (those pick a named CURVE). See `easingVocabulary`. */}
+            {/* Interpolation KIND (Linear, Bezier, Auto / Continuous Bezier,
+                Hold) — the ease pills beside it pick a named CURVE. Linear and
+                Hold live only here, not as pills too. See `easingVocabulary`. */}
             <select
               className={styles.select}
               aria-label="Easing kind"
@@ -2026,110 +2175,9 @@ export function GraphEditor({
               />
             </div>
 
-            {mode === 'value' ? (
-              <div style={{ width: 65 }}>
-                <span className={styles.fieldLabel}>v=</span>
-                <ValueField
-                  value={selectedKfData.value}
-                  precision={2}
-                  onChange={(newV: number) => {
-                    void commitMemberWrites('Set Keyframe Value', selectedKfData.nodeId, selectedKfData.prop, [
-                      { t: selectedKfData.t, value: newV },
-                    ]);
-                  }}
-                />
-              </div>
-            ) : (
-              <>
-                {selectedKfData.inSpeed !== undefined && (
-                  <div style={{ width: 68 }}>
-                    <span className={styles.fieldLabel}>In:</span>
-                    <ValueField
-                      value={selectedKfData.inSpeed}
-                      precision={1}
-                      min={0}
-                      onChange={(newSpeed: number) => {
-                        const writes = speedWrites(selectedKfData.nodeId, selectedKfData.prop, selectedKfData.t, newSpeed, 'in');
-                        // Typing a one-sided speed is an explicit split.
-                        if (selectedKfData.outSpeed !== undefined && Math.abs(newSpeed - selectedKfData.outSpeed) > 1e-6) {
-                          writes.push({ t: selectedKfData.t, continuous: false });
-                        }
-                        void commitMemberWrites('Set Incoming Speed', selectedKfData.nodeId, selectedKfData.prop, writes);
-                      }}
-                    />
-                  </div>
-                )}
-                {selectedKfData.inInfluence !== undefined && (
-                  <div style={{ width: 62 }}>
-                    <span className={styles.fieldLabel}>In%:</span>
-                    <ValueField
-                      value={Math.round(selectedKfData.inInfluence * 100)}
-                      unit="%"
-                      precision={0}
-                      min={1}
-                      max={99}
-                      onChange={(newPct: number) => {
-                        const trackKfs = trackKeys(selectedKfData.nodeId, selectedKfData.prop);
-                        const idx = trackKfs ? findKfIndex(trackKfs, selectedKfData.t) : -1;
-                        if (idx > 0 && trackKfs) {
-                          const prevKf = trackKfs[idx - 1]!;
-                          const dtPrev = selectedKfData.t - prevKf.t;
-                          const dvPrev = selectedKfData.value - prevKf.value;
-                          const bz = withIncomingInfluence(effectiveBezier(prevKf), dvPrev, dtPrev, newPct / 100);
-                          void commitMemberWrites('Set Incoming Influence', selectedKfData.nodeId, selectedKfData.prop, [
-                            bezierWrite(prevKf, bz, prevKf.continuous),
-                          ]);
-                        }
-                      }}
-                    />
-                  </div>
-                )}
-                {selectedKfData.outSpeed !== undefined && (
-                  <div style={{ width: 68 }}>
-                    <span className={styles.fieldLabel}>Out:</span>
-                    <ValueField
-                      value={selectedKfData.outSpeed}
-                      precision={1}
-                      min={0}
-                      onChange={(newSpeed: number) => {
-                        const writes = speedWrites(selectedKfData.nodeId, selectedKfData.prop, selectedKfData.t, newSpeed, 'out');
-                        if (selectedKfData.inSpeed !== undefined && Math.abs(newSpeed - selectedKfData.inSpeed) > 1e-6) {
-                          writes.push({ t: selectedKfData.t, continuous: false });
-                        }
-                        void commitMemberWrites('Set Outgoing Speed', selectedKfData.nodeId, selectedKfData.prop, writes);
-                      }}
-                    />
-                  </div>
-                )}
-                {selectedKfData.outInfluence !== undefined && (
-                  <div style={{ width: 62 }}>
-                    <span className={styles.fieldLabel}>Out%:</span>
-                    <ValueField
-                      value={Math.round(selectedKfData.outInfluence * 100)}
-                      unit="%"
-                      precision={0}
-                      min={1}
-                      max={99}
-                      onChange={(newPct: number) => {
-                        const trackKfs = trackKeys(selectedKfData.nodeId, selectedKfData.prop);
-                        const idx = trackKfs ? findKfIndex(trackKfs, selectedKfData.t) : -1;
-                        if (idx >= 0 && trackKfs && idx < trackKfs.length - 1) {
-                          const self = trackKfs[idx]!;
-                          const nextKf = trackKfs[idx + 1]!;
-                          const dt = nextKf.t - self.t;
-                          const dv = nextKf.value - self.value;
-                          const bz = withOutgoingInfluence(effectiveBezier(self), dv, dt, newPct / 100);
-                          void commitMemberWrites('Set Outgoing Influence', selectedKfData.nodeId, selectedKfData.prop, [
-                            bezierWrite(self, bz, self.continuous),
-                          ]);
-                        }
-                      }}
-                    />
-                  </div>
-                )}
-              </>
-            )}
-
+            {/* Value, speeds and influences are the numeric strip under the
+                graph (one set of fields, AE's Keyframe Velocity numbers);
+                the toolbar keeps the key's time. */}
             {selectedKfData.easing === 'bezier' && (
               <button
                 type="button"
@@ -2383,6 +2431,36 @@ export function GraphEditor({
             </g>
             );
           })}
+
+          {transformBox && (
+            <g aria-label="Transform box">
+              <rect
+                className={styles.transformBoxRect}
+                x={transformBox.x0}
+                y={transformBox.y0}
+                width={transformBox.x1 - transformBox.x0}
+                height={transformBox.y1 - transformBox.y0}
+              />
+              {BOX_HANDLES.map((h) => {
+                const hx = h.edgeX === 'l' ? transformBox.x0 : h.edgeX === 'r' ? transformBox.x1 : (transformBox.x0 + transformBox.x1) / 2;
+                const hy = h.edgeY === 't' ? transformBox.y0 : h.edgeY === 'b' ? transformBox.y1 : (transformBox.y0 + transformBox.y1) / 2;
+                return (
+                  <rect
+                    key={h.id}
+                    className={styles.transformBoxHandle}
+                    x={hx - 4}
+                    y={hy - 4}
+                    width={8}
+                    height={8}
+                    style={{ cursor: h.cursor }}
+                    onPointerDown={(e) => onBoxHandlePointerDown(e, h.edgeX, h.edgeY, transformBox)}
+                  >
+                    <title>{h.edgeY === null ? 'Scale the keys in time' : h.edgeX === null ? 'Scale the values' : 'Scale time and values'}</title>
+                  </rect>
+                );
+              })}
+            </g>
+          )}
 
           {boxZoom && (
             <rect

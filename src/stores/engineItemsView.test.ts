@@ -36,7 +36,7 @@ function settings(patch: Partial<CompSettings> = {}): CompSettings {
     startTimecode: SEC, background: { r: 1, g: 0, b: 0, a: 1 }, transparent: false,
     workArea: { start: 0, duration: 6 * SEC },
     motionBlur: { shutterAngle: 180, shutterPhase: -90, samplesPerFrame: 8, adaptiveSampleLimit: 128, enabled: true },
-    renderer3d: 'classic', globalLightAngle: 90, globalLightAltitude: 45, dropFrame: false, preserveFrameRate: false, preserveResolution: false,
+    renderer3d: 'classic', globalLightAngle: 90, globalLightAltitude: 45, dropFrame: false, preserveFrameRate: false, preserveResolution: false, frameBlending: true,
     essentialProps: [],
     ...patch,
   };

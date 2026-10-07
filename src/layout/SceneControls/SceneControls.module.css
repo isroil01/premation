@@ -8,6 +8,13 @@
 
 /* Matches TopNav .toolDivider exactly — this bar sits inside that row, so a
    sub-group rule here and a group rule there must be the same line. */
+/* AE's axis-mode buttons sit closer together than separate controls. */
+.axisModes {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
 .divider {
   width: 1px;
   height: 22px;

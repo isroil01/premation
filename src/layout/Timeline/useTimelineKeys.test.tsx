@@ -27,19 +27,14 @@ function Host(): null {
   return null;
 }
 
-it('uses the canonical history entry points for undo and redo', () => {
+it('leaves Ctrl+Z / Ctrl+Shift+Z to the registered Undo / Redo commands', () => {
+  // The app's Undo / Redo (Providers) own these chords; a second handler here
+  // never ran (the ShortcutManager matches first) and was removed.
   render(<Host />);
-
   window.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }));
-  window.dispatchEvent(new KeyboardEvent('keydown', {
-    key: 'z',
-    ctrlKey: true,
-    shiftKey: true,
-    bubbles: true,
-  }));
-
-  expect(performUndo).toHaveBeenCalledTimes(1);
-  expect(performRedo).toHaveBeenCalledTimes(1);
+  window.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, shiftKey: true, bubbles: true }));
+  expect(performUndo).not.toHaveBeenCalled();
+  expect(performRedo).not.toHaveBeenCalled();
   expect(mockDirectUndo).not.toHaveBeenCalled();
   expect(mockDirectRedo).not.toHaveBeenCalled();
 });

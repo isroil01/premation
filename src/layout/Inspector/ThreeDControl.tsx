@@ -1,5 +1,7 @@
 /**
- * ThreeDControl — the layer's "3D Layer" switch and its Geometry Options.
+ * ThreeDControl — the layer's "3D Layer" switch and its Geometry Options. It
+ * is the body of the inspector's Geometry Options section (AE's group of that
+ * name), so it draws no heading of its own.
  *
  * Turning it on adds depth props (Z, X-rotation, Y-rotation) to the layer, so
  * the NodeInspector below renders keyframeable rows for them and the renderer
@@ -198,7 +200,6 @@ export function ThreeDControl({ nodeId, children }: ThreeDControlProps): JSX.Ele
             </div>
           )}
 
-          <div className={s.groupHeading}>Geometry Options</div>
           {/* Bevel PROFILE. Only meaningful once there is a chamfer to shape,
               so it rides with Bevel Depth rather than standing alone above a
               depth of 0 where every option would look identical. */}

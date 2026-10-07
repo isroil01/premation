@@ -101,6 +101,7 @@ Json patch_to_store(const api::CompSettingsPatch& p) {
     out.set("globalLightAltitude", Json::number(*p.global_light_altitude));
   }
   if (p.drop_frame) out.set("dropFrame", Json::boolean(*p.drop_frame));
+  if (p.frame_blending) out.set("frameBlending", Json::boolean(*p.frame_blending));
   if (p.preserve_frame_rate) out.set("preserveFrameRate", Json::boolean(*p.preserve_frame_rate));
   if (p.preserve_resolution) out.set("preserveResolution", Json::boolean(*p.preserve_resolution));
   if (p.world) {

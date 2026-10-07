@@ -558,6 +558,22 @@ export function listPresets(): AnimationPreset[] {
   ];
 }
 
+/**
+ * A user preset's body as `applyPreset{body}` carries it — the engine knows only
+ * the built-ins, so a preset from the user's library travels with the command.
+ * Undefined for a built-in (applied by name) or an unknown name.
+ */
+export function userPresetBody(name: string): string | undefined {
+  const p = readUserPresets().find((u) => u.name === name && !u.builtin);
+  return p ? JSON.stringify(p) : undefined;
+}
+
+/** `{ body }` for a user preset, `{}` otherwise — spread into an `applyPreset` command. */
+export function withUserPresetBody(name: string): { body?: string } {
+  const body = userPresetBody(name);
+  return body ? { body } : {};
+}
+
 /** A preset's location in the tree, falling back through the older fields so
  *  presets saved before folders existed still land somewhere sensible. */
 export function presetFolder(p: AnimationPreset): string {

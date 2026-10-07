@@ -70,19 +70,22 @@ it('shows the font size and the everyday controls for a text layer', async () =>
   expect(screen.queryByText('Default Preset')).toBeNull();
 });
 
-it('keeps the rarer options behind "More text options"', async () => {
+it('shows AE\'s Character and Paragraph groups, and keeps the rarer options behind "More text options"', async () => {
   const id = await textLayer({ content: 'Hello', paragraphSpacing: 7 });
   render(<TextSection nodeId={id} />);
 
-  expect(screen.queryByLabelText('Paragraph Spacing')).toBeNull();
+  // Character and Paragraph are open, as AE's two panels are.
+  expect(screen.getByLabelText('Paragraph Spacing')).toHaveValue(7);
+  expect(screen.getByRole('button', { name: 'Faux Bold' })).toBeInTheDocument();
+
+  expect(screen.queryByLabelText('Point or Paragraph Text')).toBeNull();
   const more = screen.getByRole('button', { name: 'More text options' });
   expect(more).toHaveAttribute('aria-expanded', 'false');
 
   fireEvent.click(more);
 
   expect(more).toHaveAttribute('aria-expanded', 'true');
-  expect(screen.getByLabelText('Paragraph Spacing')).toHaveValue(7);
-  expect(screen.getByRole('button', { name: 'Faux Bold' })).toBeInTheDocument();
+  expect(screen.getByLabelText('Point or Paragraph Text')).toBeInTheDocument();
 });
 
 it('writes a size edit to the layer — one undo entry that undo reverses', async () => {

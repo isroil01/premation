@@ -142,15 +142,13 @@ describe('snap', () => {
 });
 
 describe('playhead follow', () => {
-  it('offers the three modes as one cycling control', () => {
+  it('offers the three modes in View ▾ ▸ Playhead follow', () => {
     usePreferenceStore.getState().set('timelineFollowMode', 'off');
     render(<BottomTimeline model={MODEL} />);
-    fireEvent.click(screen.getByLabelText('Playhead follow: Off'));
+    fireEvent.click(screen.getByRole('button', { name: 'Timeline view options' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Playhead follow: Off' }));
+    fireEvent.click(screen.getByRole('menuitemcheckbox', { name: /^Page/ }));
     expect(usePreferenceStore.getState().timelineFollowMode).toBe('page');
-    fireEvent.click(screen.getByLabelText('Playhead follow: Page'));
-    expect(usePreferenceStore.getState().timelineFollowMode).toBe('continuous');
-    fireEvent.click(screen.getByLabelText('Playhead follow: Continuous'));
-    expect(usePreferenceStore.getState().timelineFollowMode).toBe('off');
   });
 });
 
@@ -189,21 +187,39 @@ describe('the layer rows as a listbox', () => {
     expect(onSelect).toHaveBeenLastCalledWith('a', false);
   });
 
-  it('Enter toggles the disclosure and Space the visibility', () => {
+  it('→ opens the disclosure, Space toggles visibility, Enter renames (AE)', () => {
     const onToggleExpand = jest.fn();
     const onToggleVisible = jest.fn();
+    const onRename = jest.fn();
     render(
       <Timeline
         model={MODEL}
         expandedTrackIds={[]}
         onTrackToggleExpand={onToggleExpand}
         onTrackToggleVisible={onToggleVisible}
+        onTrackRename={onRename}
       />,
     );
-    fireEvent.keyDown(rows()[0]!, { key: 'Enter' });
+    fireEvent.keyDown(rows()[0]!, { key: 'ArrowRight' });
     expect(onToggleExpand).toHaveBeenCalledWith('a');
+    // ← on a closed row does nothing.
+    fireEvent.keyDown(rows()[0]!, { key: 'ArrowLeft' });
+    expect(onToggleExpand).toHaveBeenCalledTimes(1);
     fireEvent.keyDown(rows()[0]!, { key: ' ' });
     expect(onToggleVisible).toHaveBeenCalledWith('a');
+    expect(onToggleExpand).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(rows()[0]!, { key: 'Enter' });
+    const field = screen.getByDisplayValue('Layer A');
+    fireEvent.change(field, { target: { value: 'Hero' } });
+    fireEvent.keyDown(field, { key: 'Enter' });
+    expect(onRename).toHaveBeenCalledWith('a', 'Hero');
+  });
+
+  it('right-clicking a row opens the layer menu of its bar', () => {
+    const onClipContextMenu = jest.fn();
+    render(<Timeline model={MODEL} onClipContextMenu={onClipContextMenu} />);
+    fireEvent.contextMenu(rows()[0]!, { clientX: 10, clientY: 20 });
+    expect(onClipContextMenu).toHaveBeenCalledWith('la', 10, 20);
   });
 });
 
@@ -288,20 +304,32 @@ describe('In / Out / Duration columns', () => {
     expect(screen.queryByText('Duration')).not.toBeInTheDocument();
   });
 
-  it('adds a head and a per-layer cell for each column the preference names', () => {
+  it('adds a head and an editable per-layer cell for each column the preference names', () => {
     usePreferenceStore.getState().set('timelineExtraColumns', ['in', 'duration']);
     render(<Timeline model={MODEL} />);
     expect(screen.getByText('In')).toBeInTheDocument();
     expect(screen.getByText('Duration')).toBeInTheDocument();
-    // Layer A spans 1s → 3s at 30fps: in 30, duration 60. Read off the CELLS
-    // by title — a bare `getByText('30')` also matches a ruler tick.
-    expect(screen.getAllByTitle('In (frames)')[0]).toHaveTextContent('30');
-    expect(screen.getAllByTitle('Duration (frames)')[0]).toHaveTextContent('60');
+    // Layer A spans 1s → 3s at 30fps: in 30, duration 60 — editable cells (AE).
+    expect(screen.getByRole('textbox', { name: 'In of Layer A' })).toHaveValue('30');
+    expect(screen.getByRole('textbox', { name: 'Duration of Layer A' })).toHaveValue('60');
   });
 
-  it('never offers Stretch — there is no time-stretch API behind it', () => {
+  it('a typed In trims the layer\'s head through onClipTrim (one edit)', () => {
+    usePreferenceStore.getState().set('timelineExtraColumns', ['in']);
+    const onClipTrim = jest.fn();
+    render(<Timeline model={MODEL} onClipTrim={onClipTrim} />);
+    const cell = screen.getByRole('textbox', { name: 'In of Layer A' });
+    fireEvent.focus(cell);
+    fireEvent.change(cell, { target: { value: '45' } });
+    fireEvent.keyDown(cell, { key: 'Enter' });
+    expect(onClipTrim).toHaveBeenCalledTimes(1);
+    expect(onClipTrim.mock.calls[0]![1]).toBe('start');
+    expect(onClipTrim.mock.calls[0]![2]).toBeCloseTo(1.5);
+  });
+
+  it('offers Stretch, as AE does', () => {
     usePreferenceStore.getState().set('timelineExtraColumns', ['stretch']);
     render(<Timeline model={MODEL} />);
-    expect(screen.queryByText('Stretch')).not.toBeInTheDocument();
+    expect(screen.getByText('Stretch')).toBeInTheDocument();
   });
 });

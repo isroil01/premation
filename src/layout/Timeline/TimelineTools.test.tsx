@@ -1,67 +1,36 @@
 /**
- * The tool row.
- *
- * What is worth asserting about five buttons is the part that makes them a
- * TOOL row rather than five toggles: exactly one is checked, clicking one
- * un-checks the rest, and each button says out loud what it does and which key
- * arms it. That last one is the whole reason the row exists — slip and slide
- * already worked and went unused because nothing anywhere named them.
+ * The timeline's tool controls (2026-10-07): AE's timeline has no edit-tool
+ * row, so the tools are menu rows and only Snap stays a button.
  */
 
-import { render, screen, fireEvent, act } from '@testing-library/react';
-import { TimelineTools } from './TimelineTools';
-import {
-  TIMELINE_EDIT_MODES,
-  getTimelineEditMode,
-  useTimelineEditModeStore,
-} from './timelineEditMode';
+import { render, screen, fireEvent, renderHook, act } from '@testing-library/react';
+import { usePreferenceStore } from '@stores/preferenceStore';
+import { TimelineSnapButton, useTimelineToolsMenu } from './TimelineTools';
+import { TIMELINE_EDIT_MODES, getTimelineEditMode, useTimelineEditModeStore } from './timelineEditMode';
 
 beforeEach(() => {
   useTimelineEditModeStore.getState().reset();
 });
 
-it('renders one radio per mode, with exactly one checked', () => {
-  render(<TimelineTools />);
-  const radios = screen.getAllByRole('radio');
-  expect(radios).toHaveLength(TIMELINE_EDIT_MODES.length);
-  expect(radios.filter((r) => r.getAttribute('aria-checked') === 'true')).toHaveLength(1);
+it('the Snap button toggles the snap preference and says so', () => {
+  const before = usePreferenceStore.getState().timelineSnap;
+  render(<TimelineSnapButton />);
+  const btn = screen.getByRole('button', { name: 'Snap in timeline' });
+  expect(btn).toHaveAttribute('aria-pressed', String(before));
+  fireEvent.click(btn);
+  expect(usePreferenceStore.getState().timelineSnap).toBe(!before);
 });
 
-it('arms the mode that was clicked, and only that one', () => {
-  render(<TimelineTools />);
-  fireEvent.click(screen.getByRole('radio', { name: 'Razor tool' }));
+it('no tool radio row is drawn', () => {
+  render(<TimelineSnapButton />);
+  expect(screen.queryAllByRole('radio')).toHaveLength(0);
+});
+
+it('the menu lists every edit tool, with what it does, under one Timeline tool row', () => {
+  const { result } = renderHook(() => useTimelineToolsMenu());
+  const tool = result.current.items.find((i) => 'id' in i && i.id === 'tl-tool-edit') as unknown as { submenu: Array<{ id: string; label: string; onChange: () => void }> };
+  expect(tool.submenu.map((r) => r.id)).toEqual(TIMELINE_EDIT_MODES.map((d) => `tl-tool-${d.mode}`));
+  for (const [i, def] of TIMELINE_EDIT_MODES.entries()) expect(tool.submenu[i]!.label).toContain(def.description);
+  act(() => tool.submenu.find((r) => r.id === 'tl-tool-razor')!.onChange());
   expect(getTimelineEditMode()).toBe('razor');
-  const checked = screen.getAllByRole('radio').filter((r) => r.getAttribute('aria-checked') === 'true');
-  expect(checked).toHaveLength(1);
-  expect(checked[0]).toHaveAttribute('aria-label', 'Razor tool');
-});
-
-it('follows the store when the mode is armed from a shortcut', () => {
-  // The buttons and the keyboard are two doors into one piece of state; a row
-  // that only updated on its own clicks would show the wrong tool for the rest
-  // of the session after one keypress.
-  render(<TimelineTools />);
-  act(() => useTimelineEditModeStore.getState().setMode('roll'));
-  expect(screen.getByRole('radio', { name: 'Roll tool' })).toHaveAttribute('aria-checked', 'true');
-});
-
-it('every button advertises its shortcut and what it does', () => {
-  render(<TimelineTools />);
-  for (const def of TIMELINE_EDIT_MODES) {
-    const btn = screen.getByRole('radio', { name: `${def.label} tool` });
-    const title = btn.getAttribute('title') ?? '';
-    expect(title).toContain(def.chord);
-    expect(title).toContain(def.description);
-  }
-});
-
-it('carries no text label — the name lives in each button, not beside the row', () => {
-  // The word "Selection" used to sit beside the five buttons. It cost a slot
-  // in a toolbar that now has to hold the whole panel's tools, and it said
-  // what the armed button's own name and tooltip already say.
-  render(<TimelineTools />);
-  expect(screen.queryByText('Selection')).toBeNull();
-  const armed = screen.getByRole('radio', { name: 'Selection tool' });
-  expect(armed).toHaveAttribute('aria-checked', 'true');
-  expect(armed.getAttribute('title')).toContain('Selection');
 });

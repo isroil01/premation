@@ -1864,11 +1864,23 @@ ResultOf<api::ApplyPreset> handle(const api::ApplyPreset& c, HCtx& x) {
   Document& d = x.d;
   if (c.layers.empty()) fail(ErrorCode::invalid_argument, "no layers given");
   const Json* preset = nullptr;
-  for (const Json& p : registry().presets.arr()) {
-    if ((p.at("name").is_string() && p.at("name").str() == c.preset) ||
-        (p.at("id").is_string() && p.at("id").str() == c.preset)) {
-      preset = &p;
-      break;
+  // A user preset travels with the command (the user library is the editor's,
+  // not the engine's registry): parsed, named, and applied like a built-in.
+  std::optional<Json> carried;
+  if (c.body && !c.body->empty()) {
+    carried = js::parse(*c.body);
+    if (!carried || !carried->is_object() || !carried->at("tracks").is_array()) {
+      fail(ErrorCode::invalid_argument, "preset '" + c.preset + "' is not a preset body (no tracks)");
+    }
+    carried->set("name", Json::string(c.preset));
+    preset = &*carried;
+  } else {
+    for (const Json& p : registry().presets.arr()) {
+      if ((p.at("name").is_string() && p.at("name").str() == c.preset) ||
+          (p.at("id").is_string() && p.at("id").str() == c.preset)) {
+        preset = &p;
+        break;
+      }
     }
   }
   if (preset == nullptr) fail(ErrorCode::not_found, "no preset '" + c.preset + "'");

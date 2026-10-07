@@ -194,7 +194,12 @@ export function buildViewportCommands(): ReadonlyArray<Command> {
       description: 'L — forward; again for 2× and 4×. With K held, step one frame forward.',
       icon: 'skip-forward',
       shortcut: { key: 'l' },
-      enabled: transportChordsActive,
+      // With a layer selected and no shuttle running, L is AE's "reveal Audio
+      // Levels" (LL the waveform) — the timeline's reveal listener. The
+      // shuttle takes it only when it is already running or nothing is
+      // selected, so both meanings stay reachable.
+      enabled: () => transportChordsActive()
+        && (getCompositionShuttle().rate() !== 0 || useSelectionStore.getState().ids.length === 0),
       execute: () => getCompositionShuttle().keyDown('l'),
     },
     {

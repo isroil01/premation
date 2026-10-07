@@ -48,9 +48,19 @@ const undo = async (): Promise<void> => { await act(async () => { await h.run({ 
 const labels = (c: HTMLElement): string[] =>
   [...c.querySelectorAll('[aria-label]')].map((e) => e.getAttribute('aria-label') ?? '');
 
+/** Twirl every closed group open (Contents draws strokes 2+ closed, as AE does). */
+const expandAll = (c: HTMLElement): void => {
+  for (let guard = 0; guard < 10; guard += 1) {
+    const closed = [...c.querySelectorAll('[data-twirl][aria-expanded="false"]')] as HTMLElement[];
+    if (closed.length === 0) return;
+    for (const b of closed) fireEvent.click(b);
+  }
+};
+
 describe('stroke 2 offers the whole AE Stroke group', () => {
   it('composite, blend, align, cap, join, dashes and paint — the controls it never had', async () => {
     const { container } = render(<AppearanceSection nodeId={ID} />);
+    expandAll(container);
     const found = labels(container);
     for (const want of [
       'Stroke 2 composite', 'Stroke 2 blend mode', 'Stroke 2 align', 'Stroke 2 cap', 'Stroke 2 join',
@@ -62,6 +72,7 @@ describe('stroke 2 offers the whole AE Stroke group', () => {
 
   it('its blend mode writes stroke 2 and leaves stroke 1 alone — one undo entry', async () => {
     const { container } = render(<AppearanceSection nodeId={ID} />);
+    expandAll(container);
     const before = (await h.doc());
     const select = container.querySelector('[aria-label="Stroke 2 blend mode"]') as HTMLSelectElement;
     fireEvent.change(select, { target: { value: 'screen' } });
@@ -75,10 +86,12 @@ describe('stroke 2 offers the whole AE Stroke group', () => {
 
   it('"+" adds a Dash, then a Gap; "−" removes the last — one undo entry per click', async () => {
     const { container, rerender } = render(<AppearanceSection nodeId={ID} />);
+    expandAll(container);
     const click = async (label: string): Promise<void> => {
       fireEvent.click(container.querySelector(`[aria-label="${label}"]`) as HTMLElement);
       await idle();
       rerender(<AppearanceSection nodeId={ID} />);
+      expandAll(container);
     };
     await click('Add dash or gap to stroke 2');
     expect((await docView()).getNodeStrokes(ID)[1]!.dash).toEqual([10]);
@@ -96,6 +109,7 @@ describe('stroke 2 offers the whole AE Stroke group', () => {
 
   it('its Width stopwatch keys stroke 2’s own track, not the primary’s — one undo entry', async () => {
     const { container } = render(<AppearanceSection nodeId={ID} />);
+    expandAll(container);
     const toggles = [...container.querySelectorAll('[aria-label="Enable Width animation"]')] as HTMLElement[];
     expect(toggles.length).toBeGreaterThanOrEqual(2);
     fireEvent.click(toggles[1]!);
@@ -110,6 +124,7 @@ describe('stroke 2 offers the whole AE Stroke group', () => {
 
   it('Remove stroke 2 removes it — one undo entry; undo restores it', async () => {
     const { container } = render(<AppearanceSection nodeId={ID} />);
+    expandAll(container);
     const before = (await h.doc());
     fireEvent.click(container.querySelector('[aria-label="Remove stroke 2"]') as HTMLElement);
     await idle();

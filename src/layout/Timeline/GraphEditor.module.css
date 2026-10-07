@@ -520,6 +520,25 @@
   pointer-events: none;
 }
 
+/* ── Transform box (two or more selected keys, value graph) ─────── */
+.transformBoxRect {
+  fill: none;
+  stroke: var(--color-selection);
+  stroke-width: 1;
+  stroke-dasharray: 3 2;
+  pointer-events: none;
+}
+
+.transformBoxHandle {
+  fill: var(--color-surface-0);
+  stroke: var(--color-selection);
+  stroke-width: 1;
+}
+
+.transformBoxHandle:hover {
+  fill: var(--color-selection);
+}
+
 /* The hover read-out. Never intercepts the pointer — it follows the pointer,
    so a chip that could be hovered would flicker against its own presence. */
 .hoverTip {

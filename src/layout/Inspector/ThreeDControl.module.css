@@ -89,18 +89,6 @@
   outline-offset: 1px;
 }
 
-/* AE's "Geometry Options" group title — a quiet sub-heading, not a second
-   ruled switch row. */
-.groupHeading {
-  margin-top: var(--space-2, 6px);
-  padding: 0 var(--space-3);
-  font-size: var(--font-size-micro);
-  font-weight: var(--font-weight-semibold);
-  letter-spacing: var(--letter-spacing-uppercase);
-  text-transform: uppercase;
-  color: var(--color-text-tertiary);
-}
-
 /* A lit stopwatch tints its label, as every other keyframeable row does. */
 .labelAnimated {
   color: var(--color-text-primary);

@@ -34,7 +34,6 @@ import {
   goToPrevKeyframe,
   goToPrevMarker,
   goToStart,
-  playheadSeconds,
   stepBackward,
   stepForward,
 } from '@core/timeline/timelineView';
@@ -43,9 +42,6 @@ import { activeCompSettingsNow } from '@hooks/useMirrorFrame';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
 import { claimsChord } from '@core/commands/ShortcutManager';
-import { historyView, performRedo, performUndo } from '@stores/historyStore';
-import { copyKeyframes } from '@core/animation/keyframeClipboard';
-import { pasteKeyframesAt } from './keyframeEdits';
 import { smoothMotionPath } from '@core/motion/motionPath';
 import { editPositionKeysOf } from '@layout/Workspace/viewportEdits';
 import { createSelectionNudger, nudgeForKey } from './keyframeNudge';
@@ -111,37 +107,10 @@ export function useTimelineKeys(): void {
           void splitSelectedAtPlayhead(useSelectionStore.getState().ids);
           return;
         }
-        // Undo / redo: the engine's history.
-        if (e.key === 'z' || e.key === 'Z') {
-          const redo = e.shiftKey;
-          const history = historyView();
-          if (redo ? history.canRedo : history.canUndo) {
-            e.preventDefault();
-            if (redo) performRedo();
-            else performUndo();
-          }
-          return;
-        }
-        // Ctrl+C — copy selected keyframes to clipboard.
-        if (!e.shiftKey && !e.altKey && (e.key === 'c' || e.key === 'C')) {
-          const kfIds = useKeyframeSelectionStore.getState().ids;
-          if (kfIds.size > 0) {
-            e.preventDefault();
-            // The engine's `copyKeyframes`: the whole keys, in API form.
-            void copyKeyframes(kfIds);
-          }
-          return;
-        }
-        // Ctrl+V — paste keyframes from clipboard at the playhead.
-        if (!e.shiftKey && !e.altKey && (e.key === 'v' || e.key === 'V')) {
-          const targetIds = useSelectionStore.getState().ids;
-          if (targetIds.length > 0) {
-            e.preventDefault();
-            const playhead = playheadSeconds();
-            void pasteKeyframesAt(targetIds, playhead);
-          }
-          return;
-        }
+        // Ctrl+Z / C / V are the app's registered Undo, Copy and Paste
+        // (Copy / Paste carry keyframes too — clipboardEdits). The
+        // ShortcutManager matches them first, so the copies that lived here
+        // never ran and were removed (2026-10-07).
         // Ctrl+Alt+S — smooth motion path for selected layers.
         if (e.altKey && (e.key === 's' || e.key === 'S')) {
           e.preventDefault();
@@ -165,7 +134,11 @@ export function useTimelineKeys(): void {
       // permanently unreachable while the transport tooltips went on
       // advertising them — and the allow-list written to fix that named only
       // the brackets, which left the nudge unreachable in exactly the same way.
-      const altAware = e.key === '[' || e.key === ']' || e.key === 'PageDown' || e.key === 'PageUp';
+      // The physical key, not the character: on macOS Option turns "[" into
+      // "“", so Alt+[ / Alt+] (AE's Trim In / Out) never matched `e.key`
+      // there. CommandSystem normalises brackets the same way.
+      const key = e.code === 'BracketLeft' ? '[' : e.code === 'BracketRight' ? ']' : e.key;
+      const altAware = key === '[' || key === ']' || key === 'PageDown' || key === 'PageUp';
       if (e.altKey && !altAware) return;
       // J / K belong to whichever surface has focus: the comp transport's
       // shuttle takes them in the viewport (and with nothing focused), and
@@ -175,7 +148,7 @@ export function useTimelineKeys(): void {
       // keyframes from any panel the shuttle did not own while K, its twin,
       // was eaten by a global chord and never got here at all.
       const timelineOwns = (k: string): boolean => claimsChord(el, k);
-      switch (e.key) {
+      switch (key) {
         case 'Home':
           e.preventDefault();
           goToStart();

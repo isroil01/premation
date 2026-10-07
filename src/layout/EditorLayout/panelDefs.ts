@@ -78,6 +78,12 @@ export interface PanelDef {
  * `layoutStore`'s LAYOUT_SCHEMA_VERSION drops an older persisted tab order once
  * so these defaults actually reach existing users.
  */
+/*
+ * AFTER EFFECTS' DEFAULT RIGHT COLUMN (2026-10-07, owner decision: "how After
+ * Effects does it"): Properties, Info, Audio, Preview, Effects & Presets,
+ * Align, Character. Plugins, Assistant and Animation Presets are on demand
+ * (Window ▸ Panels, the stack's "+"), as AE keeps its own extras.
+ */
 export const PANEL_DEFS: readonly PanelDef[] = [
   // ── Left sidebar ─────────────────────────────────────────────────
   /**
@@ -123,15 +129,25 @@ export const PANEL_DEFS: readonly PanelDef[] = [
    * (a curve graph, an effect stack, a rig, a render queue) rather than
    * properties of the current selection.
    */
-  // Preview (transport + playback settings) and Align are permanent since the
-  // inspector became a STACK of bars (2026-10): a closed panel now costs one
-  // 24px bar, where on the rail it cost an icon slot, so the two panels every
-  // After Effects layout carries no longer have to be asked for.
+  // The permanent stack is AE's Default right column (see the note above
+  // PANEL_DEFS): a closed panel costs one bar, so the panels every After
+  // Effects layout carries no longer have to be asked for.
   // Properties stays FIRST: with no saved layout the first panel is the open one.
   { id: 'properties',  title: 'Properties', icon: 'sliders-h',  region: 'rightInspector', weight: 5,    closable: false },
+  // The pointer / composition readout, as AE's Info panel.
+  { id: 'info',        title: 'Info',      icon: 'info',        region: 'rightInspector', weight: 4.98, closable: true },
+  /**
+   * AE's Audio panel (Ctrl+4): the master meter, the selected layer's level and
+   * pan faders, and — since 2026-09-15 — the pointer / composition readout that
+   * used to be a separate "Info & Audio" tab beside it (`InfoReadout`). Two
+   * tabs that both drew a master meter was one too many.
+   */
+  { id: 'audio',       title: 'Audio',     icon: 'audio',       region: 'rightInspector', weight: 4.95, closable: false },
   { id: 'preview',     title: 'Preview',   icon: 'play',        region: 'rightInspector', weight: 4.9,  closable: true },
-  { id: 'effects',     title: 'Effects',   icon: 'magic-wand',  region: 'rightInspector', weight: 4.8,  closable: true },
-  { id: 'presets',     title: 'Presets',   icon: 'zap',         region: 'rightInspector', weight: 4.7,  closable: true },
+  // AE's Effects & Presets: the effect browser and the effect presets (one
+  // search). Animation Presets are their own on-demand panel below.
+  { id: 'effects',     title: 'Effects & Presets', shortTitle: 'Effects', icon: 'magic-wand',  region: 'rightInspector', weight: 4.8,  closable: true },
+  { id: 'presets',     title: 'Animation Presets', shortTitle: 'Presets', icon: 'zap',         region: 'rightInspector', weight: 4.7,  closable: true, onDemand: true },
   /**
    * Native SDK plugins: what the engine found in the plugins folder (loaded,
    * or failed with why) and the button that opens that folder. Where the old
@@ -140,30 +156,20 @@ export const PANEL_DEFS: readonly PanelDef[] = [
    * `plugins` was once the id of the JS plugin-panel host; a persisted layout
    * that still lists it now shows this panel, which is the right successor.
    */
-  { id: 'plugins',     title: 'Plugins',   icon: 'plugin',      region: 'rightInspector', weight: 4.6,  closable: true },
-  /**
-   * AE's Audio panel (Ctrl+4): the master meter, the selected layer's level and
-   * pan faders, and — since 2026-09-15 — the pointer / composition readout that
-   * used to be a separate "Info & Audio" tab beside it (`InfoReadout`). Two
-   * tabs that both drew a master meter was one too many.
-   */
+  { id: 'plugins',     title: 'Plugins',   icon: 'plugin',      region: 'rightInspector', weight: 4.6,  closable: true, onDemand: true },
   { id: 'align',       title: 'Align',     icon: 'align-center', region: 'rightInspector', weight: 4.55, closable: true },
-  { id: 'audio',       title: 'Audio',     icon: 'audio',       region: 'rightInspector', weight: 4.48, closable: false },
-  // The assistant, as the last bar of the stack. Both editions — see
-  // PANEL_AVAILABILITY / `aiEnabled()`: local runs BYOK, server runs through
-  // the hosted gateway. It was a left tab titled "AI" until the left group
-  // became Project + Effect Controls.
-  { id: 'ai',          title: 'Assistant', icon: 'ai',          region: 'rightInspector', weight: 4.45, closable: false },
+  // AE's Character panel (with Paragraph below it), permanent as in AE's Default.
+  { id: 'character',   title: 'Character', icon: 'type',        region: 'rightInspector', weight: 4.5,  closable: true },
+  // The assistant: on demand (Window ▸ Panels ▸ Assistant), as AE has none.
+  // Both editions — see PANEL_AVAILABILITY / `aiEnabled()`: local runs BYOK,
+  // server runs through the hosted gateway.
+  { id: 'ai',          title: 'Assistant', icon: 'ai',          region: 'rightInspector', weight: 4.45, closable: true, onDemand: true },
   // ── Right inspector, on demand (Window ▸ Panels, the rail's "+") ─────
   // Each of these is a specialist surface; the workspaces that need one open
   // it (Color → Scopes, Animation → Graph + Rigging).
-  { id: 'character',   title: 'Text',      icon: 'type',        region: 'rightInspector', weight: 4.4,  closable: true, onDemand: true },
   // The project palette. The swatches are document state and the colour picker
   // offers them wherever a colour is edited, so the panel is the bulk editor.
   { id: 'swatches',    title: 'Swatches',  icon: 'palette',     region: 'rightInspector', weight: 4.25, closable: true, onDemand: true },
-  // The pointer / composition readout plus a simple master meter — the same
-  // readout Audio now carries at its top, kept for layouts that want it alone.
-  { id: 'info',        title: 'Info',      icon: 'info',        region: 'rightInspector', weight: 4.2,  closable: true, onDemand: true },
   // Video scopes: waveform, RGB parade, vectorscope, histogram. The Color
   // workspaces lead with it. `waves` is the one unclaimed glyph that reads as a
   // signal trace; `graph-value` / `graph-speed` are the Graph panel's.

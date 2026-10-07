@@ -1,5 +1,5 @@
 /**
- * The four inspector sections that are a COMPOSITION of other controls rather
+ * The inspector sections that are a COMPOSITION of other controls rather
  * than a component of their own.
  *
  * They used to be inline JSX inside `InspectorContent`'s push list, which is
@@ -22,19 +22,28 @@ import { useFocusStore } from '@stores/focusStore';
 import { PrecompControl } from './PrecompControl';
 import { RevertSvgRow } from './SvgSection';
 import { TransformSection } from './TransformSection';
+import { ThreeDControl } from './ThreeDControl';
 import { useCompLayersWatch } from './inspectorMirror';
 import { LayerStylesControls } from '@layout/Effects/LayerStylesControls';
 import { StylePresetsSection } from './StylePresetsSection';
 import styles from '@layout/EditorLayout/panels.module.css';
 
 /**
- * Transform, plus the 3D switch for the kinds that have one.
- *
- * Groups and nulls are excluded from the switch, not from the section: both
- * still have a position.
+ * Transform. The name predates the move of the 3D switch into Geometry Options
+ * (below); it stays because it is the registry's component identity.
  */
 export function TransformWithThreeDSection({ nodeId }: { nodeId: string }): JSX.Element {
   return <TransformSection nodeId={nodeId} />;
+}
+
+/**
+ * AE's Geometry Options group: the 3D Layer switch, then Bevel Style, Bevel
+ * Depth, Hole Bevel Depth and Extrusion Depth. In AE the switch is a timeline
+ * column; here it heads the group so turning a layer 3D and giving it depth is
+ * one place, instead of Transform › More › 3D Layer.
+ */
+export function GeometryOptionsSection({ nodeId }: { nodeId: string }): JSX.Element {
+  return <ThreeDControl nodeId={nodeId} />;
 }
 
 /**

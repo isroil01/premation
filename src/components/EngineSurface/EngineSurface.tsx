@@ -40,6 +40,8 @@ import { isCustomViewId, type CustomViewParams } from '@core/workspace/customVie
 import { useRenderQualityStore, type PreviewResolution } from '@stores/renderQualityStore';
 import { useViewportDisplayStore, viewportHudStats } from '@stores/viewportDisplayStore';
 import { useOnionSkinStore } from '@stores/onionSkinStore';
+import { useViewerLutStore } from '@stores/viewerLutStore';
+import { toStoredLut } from '@core/effects/cubeLut';
 import { publishFrameGeometry, setEngineDrivenViewport } from '@stores/overlayGeometry';
 import { captureLiveFrame, needsLiveFrame, useCompareStore } from '@stores/compareStore';
 import { publishFrame } from '@core/engine/frameTap';
@@ -111,6 +113,10 @@ export interface EngineSurfaceStats {
     customView: CustomViewParams | null;
     /** setViewport `onion`, or null when onion skins are off. */
     onion: { before: number; after: number; step: number; opacity: number; colorize: boolean } | null;
+    /** setViewport `exposure` (stops), `transparencyGrid` and `regionOfInterest` (comp px, null = none). */
+    exposure: number;
+    transparencyGrid: boolean;
+    roi: { x: number; y: number; width: number; height: number } | null;
   } | null;
   errors: string[];
 }
@@ -337,6 +343,7 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
       // and camera views itself; a custom view sends its orbit, resolved to the
       // same camera customViewCamera builds for the page's chrome.
       const g = useGuidesStore.getState();
+      const display = useViewportDisplayStore.getState();
       const view = isCustomViewId(g.camera3dMode) ? 'custom' : g.camera3dMode;
       const customView = isCustomViewId(g.camera3dMode) ? g.customViews[g.camera3dMode] : null;
       const onionState = useOnionSkinStore.getState();
@@ -352,6 +359,9 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
         panX: zoom > 0 ? (r.width / 2 - v.offsetX) / zoom : 0,
         panY: zoom > 0 ? (r.height / 2 - v.offsetY) / zoom : 0,
         view, customView, onion,
+        exposure: display.exposure,
+        transparencyGrid: display.transparencyGrid,
+        roi: g.roi,
       };
     };
     const sameOnion = (a: NonNullable<EngineSurfaceStats['lastViewport']>['onion'], b: NonNullable<EngineSurfaceStats['lastViewport']>['onion']): boolean =>
@@ -368,7 +378,8 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
       const channel = useGuidesStore.getState().channel;
       if (!force && last && channel === lastChannel && last.width === d.width && last.height === d.height && last.dpr === d.dpr
         && last.zoom === d.zoom && last.panX === d.panX && last.panY === d.panY
-        && last.view === d.view && sameCustomView(last.customView, d.customView) && sameOnion(last.onion, d.onion)) return;
+        && last.view === d.view && sameCustomView(last.customView, d.customView) && sameOnion(last.onion, d.onion)
+        && last.exposure === d.exposure && last.transparencyGrid === d.transparencyGrid && last.roi === d.roi) return;
       if (inFlight) {
         again = true;
         return;
@@ -386,8 +397,9 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
         zoom: d.zoom,
         pan: { x: d.panX, y: d.panY },
         channel: CHANNEL[channel] ?? 'rgb',
-        exposure: 0,
-        transparencyGrid: false,
+        exposure: d.exposure,
+        transparencyGrid: d.transparencyGrid,
+        ...(d.roi ? { regionOfInterest: { x: d.roi.x, y: d.roi.y, width: d.roi.width, height: d.roi.height } } : {}),
         displayTransform: '',
         layerRenderEffects: true,
         view: d.view,
@@ -449,7 +461,11 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
     const unRender = getWorkspaceController().onRender(() => sendViewport());
     // The channel and the 3D view both ride on setViewport; `sendViewport` drops a request that changes nothing.
     const unGuides = useGuidesStore.subscribe((s, prev) => {
-      if (s.channel !== lastChannel || s.camera3dMode !== prev.camera3dMode || s.customViews !== prev.customViews) sendViewport();
+      if (s.channel !== lastChannel || s.camera3dMode !== prev.camera3dMode || s.customViews !== prev.customViews || s.roi !== prev.roi) sendViewport();
+      if (s.draft3d !== prev.draft3d) sendResolution();
+    });
+    const unDisplay = useViewportDisplayStore.subscribe((s, prev) => {
+      if (s.exposure !== prev.exposure || s.transparencyGrid !== prev.transparencyGrid) sendViewport();
     });
     const unOnion = useOnionSkinStore.subscribe(() => sendViewport());
     // Difference turned on over a still viewport: it needs a live frame, so the engine delivers this one again.
@@ -459,16 +475,41 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
       if (live && !hadLive) sendViewport(true);
       hadLive = live;
     });
-    // Preview resolution (Full / Half / Third / Quarter) → the engine's.
-    let lastRes: PreviewResolution | null = null;
+    // Preview quality → the engine's: the resolution in effect (Auto lowers it
+    // to the floor while playback falls behind), the floor, Draft 3D, and
+    // Draft Quality (no motion-blur samples).
+    let lastQuality = '';
     const sendResolution = (): void => {
-      const r = useRenderQualityStore.getState().resolution;
-      if (r === lastRes) return;
-      lastRes = r;
-      void client.execute({ type: 'setPreviewQuality', resolution: RESOLUTION[r] ?? 'full', fastPreview: 'off', draft3d: false, motionBlur: true, adaptiveFloor: 'half' });
+      const q = useRenderQualityStore.getState();
+      const r = q.effectiveResolution();
+      const draft3d = useGuidesStore.getState().draft3d;
+      const key = `${r}:${q.adaptiveFloor}:${draft3d ? 1 : 0}:${q.draft ? 1 : 0}`;
+      if (key === lastQuality) return;
+      lastQuality = key;
+      void client.execute({
+        type: 'setPreviewQuality', resolution: RESOLUTION[r] ?? 'full', fastPreview: q.adaptive ? 'adaptive' : 'off',
+        draft3d, motionBlur: !q.draft, adaptiveFloor: RESOLUTION[q.adaptiveFloor] ?? 'half',
+      });
     };
     const unQuality = useRenderQualityStore.subscribe(sendResolution);
     sendResolution();
+    // View ▸ Viewer LUT → the engine (setViewerLut), graded on every viewport's
+    // final blit. Sent again only when the table changes (its signature).
+    let lastLut = '';
+    const sendViewerLut = (): void => {
+      const { lut, signature } = useViewerLutStore.getState();
+      if (signature === lastLut) return;
+      lastLut = signature;
+      void client.execute({ type: 'setViewerLut', lut: lut ? JSON.stringify(toStoredLut(lut)) : '', intensity: 1 }).then((res) => {
+        if (!res.ok) fail(`setViewerLut: ${res.error.code} ${res.error.message}`);
+      });
+    };
+    const unLut = useViewerLutStore.subscribe(sendViewerLut);
+    sendViewerLut();
+    // Auto resolution's input: playback falling behind (the engine's dropped
+    // frames) degrades to the floor; it restores after a run of good frames.
+    let playing = false;
+    let lastDropped = -1;
 
     // A restarted engine has no viewport until it is told again (the replay
     // restores it too; resending is cheap and makes the surface self-healing).
@@ -476,11 +517,22 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
       for (const e of batch.events) {
         if (e.type === 'documentReset' && e.reason === 'engineRestarted') {
           stats.lastViewport = null;
-          lastRes = null;
+          lastQuality = '';
+          lastLut = '';
+          sendViewerLut();
           requestViewport();
           sendResolution();
         } else if (e.type === 'renderStatsUpdated') {
           stats.engineBuildMs = e.stats.cpuFrameMs;
+          if (playing && lastDropped >= 0) {
+            const dropped = e.stats.droppedFrames - lastDropped;
+            useRenderQualityStore.getState().reportPlaybackFrame(dropped > 0 ? 2 : 0, 1);
+          }
+          lastDropped = e.stats.droppedFrames;
+        } else if (e.type === 'transportChanged') {
+          const now = e.state === 'playing';
+          if (playing && !now) useRenderQualityStore.getState().setSlowPlayback(false);
+          playing = now;
         }
       }
     });
@@ -496,9 +548,11 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
       unsub();
       unRender();
       unGuides();
+      unDisplay();
       unOnion();
       unCompare();
       unQuality();
+      unLut();
       ro.disconnect();
       dprQuery?.removeEventListener('change', onDpr);
       if (raf) cancelAnimationFrame(raf);

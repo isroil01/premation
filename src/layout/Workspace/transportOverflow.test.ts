@@ -19,16 +19,15 @@ import {
 } from './transportOverflow';
 
 describe('the transport bar demote order', () => {
-  it('gives up the display controls first, then the clip edits, and the zoom field last', () => {
-    // The display controls are the least-often-changed things in the row and
-    // every one is already a menu; they lead, right to left. Clip edits are
-    // three buttons — the bar's widest own group — and every one of them has
-    // a keyboard shortcut. The zoom field goes last because it is the only
-    // group that leaves without a menu entry.
+  it('gives up the display controls first and the magnification field last', () => {
+    // The display controls lead, least-used first (exposure, transparency).
+    // Loop and auto-key are not in the row any more (the Preview panel's and
+    // the timeline's), so the bar's own ladder is just the zoom field.
     expect([...TRANSPORT_DEMOTE_ORDER.slice(0, DISPLAY_DEMOTE_ORDER.length)]).toEqual([...DISPLAY_DEMOTE_ORDER]);
     expect([...TRANSPORT_DEMOTE_ORDER.slice(DISPLAY_DEMOTE_ORDER.length)]).toEqual([...TRANSPORT_GROUP_ORDER]);
-    expect(TRANSPORT_GROUP_ORDER[0]).toBe('clipEdits');
-    expect(TRANSPORT_DEMOTE_ORDER[TRANSPORT_DEMOTE_ORDER.length - 1]).toBe('zoom');
+    expect(TRANSPORT_GROUP_ORDER).toEqual(['zoom']);
+    expect(DISPLAY_DEMOTE_ORDER[0]).toBe('exposure');
+    expect(DISPLAY_DEMOTE_ORDER[DISPLAY_DEMOTE_ORDER.length - 1]).toBe('layout');
   });
 
   it('keeps the whole row at level 0', () => {
@@ -45,15 +44,15 @@ describe('the transport bar demote order', () => {
     }
   });
 
-  it('reads the display controls\' own level out of the bar\'s, capped at their ten', () => {
+  it('reads the display controls\' own level out of the bar\'s, capped at their count', () => {
     for (let level = 0; level <= DISPLAY_DEMOTE_ORDER.length; level++) {
       expect(displayLevelFor(level)).toBe(level);
     }
     expect(displayLevelFor(DISPLAY_DEMOTE_ORDER.length + 1)).toBe(DISPLAY_DEMOTE_ORDER.length);
     expect(displayLevelFor(MAX_DEMOTE_LEVEL)).toBe(DISPLAY_DEMOTE_ORDER.length);
     // The bar's own first group goes only once every display control has.
-    expect(isDemoted('clipEdits', DISPLAY_DEMOTE_ORDER.length)).toBe(false);
-    expect(isDemoted('clipEdits', DISPLAY_DEMOTE_ORDER.length + 1)).toBe(true);
+    expect(isDemoted('zoom', DISPLAY_DEMOTE_ORDER.length)).toBe(false);
+    expect(isDemoted('zoom', DISPLAY_DEMOTE_ORDER.length + 1)).toBe(true);
   });
 
   it('has shed everything at the top of the ladder', () => {

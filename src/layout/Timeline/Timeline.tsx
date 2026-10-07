@@ -37,10 +37,10 @@ import { ROW_HEIGHT_PRESETS, ROW_HEIGHT_MIN, ROW_HEIGHT_MAX, rowHeightFromDrag }
 import { collectClipSnapTargets, snapClipTime } from './clipSnap';
 import { collectClipCuts, findClipCutNear, type ClipCut } from './clipCuts';
 import { useTimelineEditModeStore } from './timelineEditMode';
-import { readTransitionDrag, isTransitionDrag } from './transitionPalette';
+import { isLayerTransitionDrag, isTransitionDrag, readLayerTransitionDrag, readTransitionDrag, readTransitionDragEffect } from './transitionDrag';
 import { hasCanvasDrag, readCanvasDrag } from '@core/dnd/canvasDrag';
 import { documentMirror } from '@stores/documentMirror';
-import { barOf, replaceSourceWithAsset, replaceTargetAt, splitLayersAt } from './timelineEdits';
+import { barOf, replaceSourceWithAsset, replaceTargetAt, splitLayersAt, timeStretchEdit } from './timelineEdits';
 import {
   layoutTransitions,
   durationFromEdgeDrag,
@@ -49,6 +49,10 @@ import {
   type TransitionBox,
 } from './transitionOverlay';
 import { installTransitionCommands } from './transitionCommands';
+import { POSITION_PSEUDO_PROP } from '@motion/animation';
+import { edit } from '@core/engine/uiEdits';
+import { wipeLabel } from './cutTransitionEffects';
+import { openTransitionSettings } from './TransitionSettingsDialog';
 import { transitionViewsOf } from '@core/mirror/transitions';
 import {
   DEFAULT_TRANSITION_FRAMES,
@@ -60,6 +64,7 @@ import { registerTimelineScroll, setTimelineLaneGeometry, setTimelineViewportWid
 import { zoomAroundTime, zoomStep } from './zoomAnchor';
 import { resolveTrackSelection, selectIntentFor, type SelectModifiers } from './trackRangeSelect';
 import { usePreferenceStore } from '@stores/preferenceStore';
+import { useTimelineNameColumnStore } from '@stores/timelineNameColumnStore';
 import { useResizeObserver } from '@hooks/useResizeObserver';
 import { clamp } from '@utils/lang';
 import type { TimelineModel, TimelinePropertyTrack, TimelineClip } from './TimelineModel';
@@ -73,7 +78,7 @@ import { flushRenderNow } from '@core/perf/framePump';
 import { installTimelineExpandCommands, recursiveTogglePlan, expandAllPlan, collapseAllPlan, registerTimelineExpansion } from './expandCollapse';
 import { registerTimelineFitSource } from './fitSelection';
 import { installTimelineSnapCommands, toggleTimelineSnap } from './snapCommands';
-import { TIMELINE_EXTRA_COLUMNS, parseExtraColumns, type TimelineExtraColumn } from './timelineColumns';
+import { TIMELINE_EXTRA_COLUMNS, extraColumnEdit, parseExtraColumns, type TimelineExtraColumn } from './timelineColumns';
 import styles from './Timeline.module.css';
 import { useUIStore } from '@stores/uiStore';
 import { MarkerLane } from './MarkerLane';
@@ -108,11 +113,35 @@ import { TrackHeader, PropertyHeader, TrackCategoryHeader } from './TrackHeaderC
 import { mirrorCanResetProperties } from '@core/mirror/resetFacts';
 import { activeCompSize, resetPropertiesEdit, resetTransformEdit } from './resetEdits';
 import { expressionRowMenuItems } from './expressionRowMenu';
+import { openTimelineExpressionEditor } from './timelineExpressionEditor';
+import { trackExpressionFacts } from '@core/mirror/memberExpressions';
+import { propRefForTrack } from '@core/engine/propRefs';
+
 import { TrackContent, LaneRow } from './Lanes';
 import { Keyframes } from './KeyframeLayer';
 import { useClipDrag } from './useClipDrag';
 import { useKeyframeDrag } from './useKeyframeDrag';
 import { useMarquee } from './useMarquee';
+
+/**
+ * A property row's expression for its `=` badge: the first member track that
+ * has one, and the engine's error for that property if it reported one
+ * (`layerErrors`, stage 'expression'). Null when the row has no expression.
+ */
+function rowExpression(nodeId: string, props: ReadonlyArray<string>): { enabled: boolean; error: string | null } | null {
+  const m = documentMirror();
+  for (const p of props) {
+    const facts = trackExpressionFacts(m, nodeId, p);
+    if (!facts) continue;
+    const path = propRefForTrack(nodeId, p)?.ref.path;
+    const comp = m.layer(nodeId)?.comp;
+    const err = comp
+      ? m.layerErrors(comp).find((e) => e.layer === nodeId && e.stage === 'expression' && (!e.path || e.path === path))
+      : undefined;
+    return { enabled: facts.enabled, error: err?.message ?? null };
+  }
+  return null;
+}
 
 // The names other files import from here — kept on this module after the
 // split so no importer moves.
@@ -147,6 +176,11 @@ export interface TimelineProps {
   ) => void;
   /** Clip edge trimmed to an absolute time (seconds). `ripple` closes the gap on in/out trim. */
   onClipTrim?: (clipId: string, edge: 'start' | 'end', time: number, opts?: { ripple?: boolean }) => void;
+  /**
+   * A Library layer transition dropped on a bar: `edge` is the end the drop
+   * landed nearer to — 'in' becomes the layer's entrance, 'out' its exit.
+   */
+  onLayerTransitionDrop?: (transId: string, trackId: string, edge: 'in' | 'out') => void;
   /** Alt-drag clip body: slip source under a fixed bar (sourceInSec). */
   onClipSlip?: (clipId: string, sourceInSec: number) => void;
   /** Shift+Alt-drag clip body: slide bar + trim abutting neighbors (new start sec). */
@@ -273,6 +307,21 @@ export interface TimelineProps {
   livePlayhead?: boolean;
 }
 
+/** Whether this is the popped-out timeline window (no second pop-out button there). */
+function inPopoutWindow(): boolean {
+  return typeof window !== 'undefined' && window.location.hash.startsWith('#/popout/');
+}
+
+/** Pop the timeline out through the app's window manager when it has one. */
+function popOutTimeline(): void {
+  if (window.motionEditor?.popout?.spawnWindow) {
+    window.motionEditor.popout.spawnWindow('timeline');
+    return;
+  }
+  const url = `${window.location.origin}${window.location.pathname}#/popout/timeline`;
+  window.open(url, 'popout-timeline', 'width=1280,height=500,resizable=yes');
+}
+
 function Timeline({
   model,
   onScrub,
@@ -280,6 +329,7 @@ function Timeline({
   onClipMove,
   onClipMoveMany,
   onClipTrim,
+  onLayerTransitionDrop,
   onClipSlip,
   onClipSlide,
   onClipContextMenu,
@@ -356,13 +406,16 @@ function Timeline({
   // narrowing it hides columns behind an edge you can scroll back — which is
   // the AE behaviour, and does not force the panel to a width the user did not
   // ask for. See `.colHeads` / `.trackHeaderScroller`.
+  /** AE's Enter-to-rename on the focused row: the row starts its own edit when its nonce changes. */
+  const [renameRequest, setRenameRequest] = useState<{ id: string; n: number } | null>(null);
+  // AE's Layer Name / Source Name toggle (the name column's head).
+  const nameColumn = useTimelineNameColumnStore((st) => st.mode);
+  const toggleNameColumn = useTimelineNameColumnStore((st) => st.toggle);
+
   // ── Optional In / Out / Duration columns ───────────────────────
   const extraColumnPref = usePreferenceStore((s) => s.timelineExtraColumns);
   const extraColumns = useMemo<TimelineExtraColumn[]>(
-    // Stretch is offered only when there is a time-stretch API to drive it;
-    // there is none today (see the report), so it is filtered out rather than
-    // shipped as a column that shows 100% and refuses every edit.
-    () => parseExtraColumns(extraColumnPref).filter((c) => c !== 'stretch'),
+    () => parseExtraColumns(extraColumnPref),
     [extraColumnPref],
   );
 
@@ -595,32 +648,6 @@ function Timeline({
   // A switch, not only a held key. `S` is claimed by the root below, so the
   // global `S` (reveal Scale) keeps working everywhere outside this panel.
   const snapOn = usePreferenceStore((s) => s.timelineSnap);
-  /**
-   * The seven AE switches at rest.
-   *
-   * Hidden until hover by default (`timelineSwitchesOnHover`), because the
-   * switch block is seven glyphs per row that are OFF on almost every layer
-   * and read as noise at a glance — while the three things you actually scan a
-   * track list for (the eye, the solo dot, the lock) live in the gutter on the
-   * left and are always there. Hovering a row brings them back, and a row you
-   * are working on can PIN them through its own control; the global escape
-   * hatch is the Switches/Modes cycle button, which stays exactly as it was.
-   */
-  const switchesOnHover = usePreferenceStore((s) => s.timelineSwitchesOnHover);
-  /**
-   * Rows that have pinned their switches open. Session state, not a
-   * preference: it is a scratch note about the layer being worked on right
-   * now, and layer ids are not stable across a reload anyway.
-   */
-  const [pinnedSwitchRows, setPinnedSwitchRows] = useState<ReadonlySet<string>>(() => new Set());
-  const toggleSwitchPin = useCallback((trackId: string) => {
-    setPinnedSwitchRows((prev) => {
-      const next = new Set(prev);
-      if (next.has(trackId)) next.delete(trackId);
-      else next.add(trackId);
-      return next;
-    });
-  }, []);
   useEffect(() => installTimelineSnapCommands(), []);
 
   const revealSet = useMemo(
@@ -946,7 +973,19 @@ function Timeline({
         case 'End':
           move(ids.length - 1);
           return;
+        // AE: Enter renames the layer (2026-10-07). Twirling is the tree
+        // keys: → opens the row, ← closes it (Alt: the layer and everything
+        // under it).
         case 'Enter': {
+          e.preventDefault();
+          e.stopPropagation();
+          setRenameRequest({ id: here, n: Date.now() });
+          return;
+        }
+        case 'ArrowRight':
+        case 'ArrowLeft': {
+          const open = expanded.has(here);
+          if ((e.key === 'ArrowRight') === open) return;
           e.preventDefault();
           e.stopPropagation();
           toggleExpandRow(here, e.altKey);
@@ -961,7 +1000,7 @@ function Timeline({
         default:
       }
     },
-    [rows, trackHeight, onTrackToggleVisible, toggleExpandRow],
+    [rows, trackHeight, onTrackToggleVisible, toggleExpandRow, expanded],
   );
 
   // ── Derived geometry ───────────────────────────────────────────
@@ -1507,8 +1546,8 @@ function Timeline({
    * clips are already at their ends.
    */
   const applyTransition = useCallback(
-    (cut: ClipCut, kind: TransitionKind): void => {
-      void addTransitionEdit(cut.leftNodeId, cut.rightNodeId, kind, DEFAULT_TRANSITION_FRAMES, 'centred').then(
+    (cut: ClipCut, kind: TransitionKind, effect?: string): void => {
+      void addTransitionEdit(cut.leftNodeId, cut.rightNodeId, kind, DEFAULT_TRANSITION_FRAMES, 'centred', effect ? { effect } : {}).then(
         (res) => {
           if (!res.ok) setTransitionError(res.reason);
           else setSelectedTransitionId(res.id);
@@ -1564,8 +1603,44 @@ function Timeline({
     [rulerStackHeight, trackHeight, rows],
   );
 
+  /**
+   * The bar end a layer-transition drop is aimed at: the row under the
+   * pointer, and whichever end of that layer's bar the pointer is nearer to.
+   */
+  const lanesEdgeAt = useCallback(
+    (clientX: number, clientY: number): { trackId: string; edge: 'in' | 'out'; time: number; rowIndex: number } | null => {
+      const lanes = lanesRef.current;
+      if (!lanes) return null;
+      const time = lanesTimeAt(clientX);
+      if (time === null) return null;
+      const rect = lanes.getBoundingClientRect();
+      const y = clientY - rect.top + lanes.scrollTop - rulerStackHeight - TIMELINE_TOP_PADDING;
+      const rowIndex = Math.floor(y / trackHeight);
+      const row = rowIndex >= 0 ? rows[rowIndex] : undefined;
+      const clips = row?.track.clips ?? [];
+      if (!row || clips.length === 0) return null;
+      const start = Math.min(...clips.map((c) => c.start));
+      const end = Math.max(...clips.map((c) => c.start + c.duration));
+      const edge = time - start <= end - time ? 'in' : 'out';
+      return { trackId: row.track.id as string, edge, time: edge === 'in' ? start : end, rowIndex };
+    },
+    [lanesTimeAt, rulerStackHeight, trackHeight, rows],
+  );
+  const [dropEdge, setDropEdge] = useState<{ time: number; rowIndex: number } | null>(null);
+
   const onLanesDragOver = useCallback(
     (e: ReactDragEvent<HTMLDivElement>): void => {
+      if (isLayerTransitionDrag(e.dataTransfer)) {
+        const hit = lanesEdgeAt(e.clientX, e.clientY);
+        setDropEdge((cur) => (hit
+          ? (cur && cur.time === hit.time && cur.rowIndex === hit.rowIndex ? cur : { time: hit.time, rowIndex: hit.rowIndex })
+          : null));
+        if (hit) {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'copy';
+        }
+        return;
+      }
       if (!isTransitionDrag(e.dataTransfer)) {
         // AE Alt-drag from the Assets panel onto a layer bar: replace source.
         if (e.altKey && hasCanvasDrag(e)) {
@@ -1581,14 +1656,25 @@ function Timeline({
       const key = cut ? cutKeyOf(cut) : null;
       setDropCutKey((k) => (k === key ? k : key));
     },
-    [lanesCutAt],
+    [lanesCutAt, lanesEdgeAt],
   );
 
   const onLanesDrop = useCallback(
     (e: ReactDragEvent<HTMLDivElement>): void => {
       const kind = readTransitionDrag(e.dataTransfer);
+      const effect = readTransitionDragEffect(e.dataTransfer);
       setDropCutKey(null);
       setChipDragging(false);
+      setDropEdge(null);
+      const layerTransition = readLayerTransitionDrag(e.dataTransfer);
+      if (layerTransition) {
+        const hit = lanesEdgeAt(e.clientX, e.clientY);
+        if (!hit) return;
+        e.preventDefault();
+        e.stopPropagation();
+        onLayerTransitionDrop?.(layerTransition, hit.trackId, hit.edge);
+        return;
+      }
       if (!kind) {
         // Alt-drop an asset on a layer's lane → replace that layer's source
         // (transforms, keyframes and effects kept).
@@ -1602,9 +1688,9 @@ function Timeline({
       e.preventDefault();
       const cut = lanesCutAt(e.clientX, e.clientY);
       setTransitionError(cut ? null : 'Drop a transition on a cut — the point where one clip ends and the next begins.');
-      if (cut) applyTransition(cut, kind);
+      if (cut) applyTransition(cut, kind, effect);
     },
-    [lanesCutAt, applyTransition, lanesTrackIdAt],
+    [lanesCutAt, applyTransition, lanesTrackIdAt, lanesEdgeAt, onLayerTransitionDrop],
   );
 
   /** Double-click a cut → the default 12-frame cross dissolve. */
@@ -1812,15 +1898,48 @@ function Timeline({
     callbacks through a ref, so they never go stale and never change identity.
     Row styles are cached by (top, height) for the same reason.
   */
+  /**
+   * An edit typed into the In / Out / Duration / Stretch columns (AE's): In
+   * trims the layer's first bar's head, Out and Duration its last bar's tail
+   * (through `onClipTrim`, one undo entry); Stretch is the shared time-stretch
+   * edit, anchored at the in-point as AE's column is. Frames are on the
+   * comp's own axis, so the shown start frame is taken off first.
+   */
+  const onExtraColumnEdit = (trackId: string, col: TimelineExtraColumn, value: number): void => {
+    if (!Number.isFinite(value)) return;
+    if (col === 'stretch') {
+      if (value !== 0 && Math.abs(value) <= 1000) void timeStretchEdit([trackId], value, 'in', 0);
+      return;
+    }
+    const clips = model.tracks.find((t) => t.id === trackId)?.clips ?? [];
+    if (clips.length === 0) return;
+    const first = clips.reduce((a, b) => (b.start < a.start ? b : a));
+    const last = clips.reduce((a, b) => (b.start + b.duration > a.start + a.duration ? b : a));
+    const span = { start: first.start, duration: last.start + last.duration - first.start };
+    const frames = col === 'duration' ? value : value - (model.startFrame ?? 0);
+    const trim = extraColumnEdit(col, span, frames, model.frameRate || 30);
+    if (!trim) return;
+    onClipTrim?.(trim.edge === 'start' ? first.id : last.id, trim.edge, trim.time);
+  };
+  /**
+   * AE: right-click a layer's row for the layer menu — the same menu its bar
+   * has (Split, trims, Time Stretch, Add Transition, delete …), anchored to
+   * the layer's first bar. A layer with no bar has no menu.
+   */
+  const openRowMenu = (trackId: string, x: number, y: number): void => {
+    const clips = model.tracks.find((t) => t.id === trackId)?.clips ?? [];
+    const first = clips.reduce<(typeof clips)[number] | undefined>((a, b) => (!a || b.start < a.start ? b : a), undefined);
+    if (first) onClipContextMenu?.(first.id, x, y);
+  };
   const latestRowCallbacks = useRef({
     toggleExpandRow, onTrackActivate, selectTrack, onTrackToggleVisible, onTrackToggleLock, onTrackToggleSolo,
     onClipMuteToggle, onTrackBlendModeChange, onTrackMatteChange, onTrackParentChange, onTrackToggleFlag,
-    onTrackRename, toggleSwitchPin, setActiveTrackId,
+    onTrackRename, setActiveTrackId, onExtraColumnEdit, openRowMenu,
   });
   latestRowCallbacks.current = {
     toggleExpandRow, onTrackActivate, selectTrack, onTrackToggleVisible, onTrackToggleLock, onTrackToggleSolo,
     onClipMuteToggle, onTrackBlendModeChange, onTrackMatteChange, onTrackParentChange, onTrackToggleFlag,
-    onTrackRename, toggleSwitchPin, setActiveTrackId,
+    onTrackRename, setActiveTrackId, onExtraColumnEdit, openRowMenu,
   };
   const rowRealIndex = useRef(new Map<string, number>());
   const rowHandlerCache = useRef(new Map<string, ReturnType<typeof makeRowHandlers>>());
@@ -1839,7 +1958,8 @@ function Timeline({
       onParentChange: (parentId: string | null, options?: { preserveWorld?: boolean; jump?: boolean }) => L.current.onTrackParentChange?.(id, parentId, options),
       onToggleFlag: (flag: Parameters<NonNullable<typeof onTrackToggleFlag>>[1]) => L.current.onTrackToggleFlag?.(id, flag),
       onRename: (name: string) => L.current.onTrackRename?.(id, name),
-      onToggleSwitchPin: () => L.current.toggleSwitchPin(id),
+      onExtraColumnEdit: (col: TimelineExtraColumn, value: number) => L.current.onExtraColumnEdit(id, col, value),
+      onContextMenu: (x: number, y: number) => L.current.openRowMenu(id, x, y),
       onRowFocus: () => L.current.setActiveTrackId(id),
       onReorderStart: (e: ReactPointerEvent<HTMLDivElement>) => {
         const idx = rowRealIndex.current.get(id) ?? 0;
@@ -1987,11 +2107,20 @@ function Timeline({
   // comp zoomed in is thousands of ticks, almost all of them off-screen.
   const ticks = useMemo(() => cullTicks(allTicks, timeWindow, pps, TIMELINE_LEFT_OFFSET), [allTicks, timeWindow, pps]);
 
-  // Layer number column (AE-style) — index within the track order.
-  const trackIndexById = useMemo(
-    () => new Map(model.tracks.map((t, i) => [t.id, i + 1])),
-    [model.tracks],
-  );
+  // Layer number column (AE-style): a layer's position among its SIBLINGS —
+  // the rows of an expanded group's children no longer push the numbers of
+  // every layer below them (a comp's 3rd layer stays 3).
+  const trackIndexById = useMemo(() => {
+    const out = new Map<string, number>();
+    const counters: number[] = [];
+    for (const t of model.tracks) {
+      const depth = t.depth ?? 0;
+      counters.length = depth + 1;
+      counters[depth] = (counters[depth] ?? 0) + 1;
+      out.set(t.id, counters[depth]!);
+    }
+    return out;
+  }, [model.tracks]);
 
   /**
    * The category heading to pin while scrolled inside an expanded layer.
@@ -2160,19 +2289,26 @@ function Timeline({
             </div>
             <span className={styles.colHeadLayer}>
               <span className={styles.colHeadIndex} aria-hidden>#</span>
-              <span className={styles.colHeadLayerLabel}>Source Name</span>
+              {/* AE: click the head to switch Layer Name ⇄ Source Name. */}
               <button
                 type="button"
-                className={styles.colHeadPopOut}
-                onClick={() => {
-                  const url = `${window.location.origin}${window.location.pathname}#/popout/timeline`;
-                  window.open(url, 'popout-timeline', 'width=1280,height=500,resizable=yes');
-                }}
-                title="Pop Out Timeline into Separate Window"
-                aria-label="Pop out timeline into a separate window"
+                className={cn(styles.colHeadLayerLabel, styles.colHeadNameToggle)}
+                onClick={toggleNameColumn}
+                title={nameColumn === 'layer' ? 'Layer Name — click for Source Name' : 'Source Name — click for Layer Name'}
               >
-                <Icon name="export" size="sm" />
+                {nameColumn === 'layer' ? 'Layer Name' : 'Source Name'}
               </button>
+              {!inPopoutWindow() && (
+                <button
+                  type="button"
+                  className={styles.colHeadPopOut}
+                  onClick={popOutTimeline}
+                  title="Pop Out Timeline into Separate Window"
+                  aria-label="Pop out timeline into a separate window"
+                >
+                  <Icon name="pop-out" size="sm" />
+                </button>
+              )}
             </span>
             {/* Legend for the per-layer switch column below — one glyph per
                 switch that actually exists on the rows, in ROW ORDER. The
@@ -2261,9 +2397,10 @@ function Timeline({
                     onToggleFlag={h.onToggleFlag}
                     onRename={h.onRename}
                     onTrackColorChange={onTrackColorChange}
-                    switchesOnHover={switchesOnHover}
-                    switchesPinned={pinnedSwitchRows.has(row.track.id)}
-                    onToggleSwitchPin={h.onToggleSwitchPin}
+                    onExtraColumnEdit={h.onExtraColumnEdit}
+                    startFrame={model.startFrame ?? 0}
+                    renameNonce={renameRequest?.id === row.track.id ? renameRequest.n : undefined}
+                    onContextMenu={h.onContextMenu}
                     showSwitches={showSwitches}
                     showModes={showModes}
                     extraColumns={extraColumns}
@@ -2311,6 +2448,12 @@ function Timeline({
                   key={`h_${row.track.id}_${row.prop.prop}`}
                   whipNodeId={row.track.id}
                   whipProp={row.prop.prop}
+                  expression={rowExpression(row.track.id, row.prop.stopwatchProps ?? row.prop.valueProps ?? [row.prop.prop])}
+                  onEditExpression={() => {
+                    const props = row.prop.stopwatchProps ?? row.prop.valueProps ?? [row.prop.prop];
+                    const first = props.find((p) => trackExpressionFacts(documentMirror(), row.track.id, p) !== null) ?? props[0]!;
+                    openTimelineExpressionEditor(row.track.id, first);
+                  }}
                   label={row.prop.label}
                   style={propStyle}
                   keyframes={row.prop.keyframes}
@@ -2375,6 +2518,22 @@ function Timeline({
                           void resetPropertiesEdit(row.track.id, props, activeCompSize(), `Reset ${row.prop.label}`);
                         },
                       },
+                      ...(props.some((p) => p === 'x' || p === 'y' || p === POSITION_PSEUDO_PROP)
+                        ? [(() => {
+                            // AE's Separate Dimensions (right-click on Position): X / Y / Z
+                            // become their own rows, keyframes and graphs. One undo step.
+                            const separated = documentMirror().property(row.track.id, 'transform/position')?.separated === true;
+                            return {
+                              id: 'separate-dimensions',
+                              label: separated ? 'Separate Dimensions ✓' : 'Separate Dimensions',
+                              onSelect: () => {
+                                void edit(separated ? 'Join Dimensions' : 'Separate Dimensions', {
+                                  type: 'setDimensionsSeparated', layer: row.track.id, path: 'transform/position', separated: !separated,
+                                });
+                              },
+                            };
+                          })()]
+                        : []),
                       { id: 'expr-sep', separator: true },
                       // AE's Add / Enable-Disable / Remove Expression — the same
                       // helper (and undo step) as the inspector's `=` toggle.
@@ -2661,6 +2820,7 @@ function Timeline({
             onDragLeave={() => {
               setDropCutKey(null);
               setChipDragging(false);
+              setDropEdge(null);
             }}
             onDrop={onLanesDrop}
             onDoubleClick={onLanesDoubleClick}
@@ -2668,6 +2828,18 @@ function Timeline({
             {/* Snap indicator — a vertical line at whatever the in-flight drag
                 latched onto. Without it, snapping is a mystery force: the
                 keyframe stops where you did not put it and nothing says why. */}
+            {/* A Library layer transition in flight: the bar end it will land
+                on (its entrance at the in-point, its exit at the out-point). */}
+            {dropEdge && (
+              <div
+                className={styles.transitionEdgeTarget}
+                style={{
+                  transform: `translate(${TIMELINE_LEFT_OFFSET + dropEdge.time * pps - 3}px, ${TIMELINE_TOP_PADDING + dropEdge.rowIndex * trackHeight}px)`,
+                  height: trackHeight,
+                }}
+                aria-hidden
+              />
+            )}
             {kfSnap && (
               <div
                 className={cn(
@@ -2749,8 +2921,6 @@ function Timeline({
                     onClipDown={onClipDown}
                     onClipContextMenu={onClipContextMenu}
                     onActivate={onTrackActivate}
-                    clipMuted={row.track.audioMuted}
-                    onClipMuteToggle={onClipMuteToggle}
                   />
                 );
               }
@@ -2830,8 +3000,10 @@ function Timeline({
               const selected = box.id === selectedTransitionId;
               // The layout box carries only geometry; the alignment lives on
               // the record, which is also what the toggle writes back to.
-              const alignment =
-                allTransitions.find((t) => t.id === box.id)?.alignment ?? 'centred';
+              const rec = allTransitions.find((t) => t.id === box.id);
+              const alignment = rec?.alignment ?? 'centred';
+              // An effect wipe is named after its effect (Radial Wipe, Iris Wipe …).
+              const kindLabel = rec?.effect ? wipeLabel(rec.effect) : TRANSITION_LABEL[box.kind];
               return (
                 <div
                   key={box.id}
@@ -2843,13 +3015,18 @@ function Timeline({
                     top: TIMELINE_TOP_PADDING + box.topRow * trackHeight,
                     height: (box.bottomRow - box.topRow + 1) * trackHeight,
                   }}
-                  title={`${TRANSITION_LABEL[box.kind]} — drag an end to change its length, Delete to remove`}
-                  aria-label={`${TRANSITION_LABEL[box.kind]} transition, ${TRANSITION_ALIGNMENT_LABEL[alignment].toLowerCase()}`}
+                  title={`${kindLabel} — drag an end to change its length, double-click for its settings, Delete to remove`}
+                  aria-label={`${kindLabel} transition, ${TRANSITION_ALIGNMENT_LABEL[alignment].toLowerCase()}`}
                   onPointerDown={(e) => {
                     // Stopped so the press does not also start a clip drag or a
                     // marquee on the lane beneath.
                     e.stopPropagation();
                     setSelectedTransitionId(box.id);
+                  }}
+                  onDoubleClick={(e) => {
+                    // Not the lanes' double-click (which adds a dissolve at a cut).
+                    e.stopPropagation();
+                    if (rec) openTransitionSettings(rec.id, rec.leftNodeId);
                   }}
                 >
                   <div
@@ -2865,14 +3042,14 @@ function Timeline({
                     type="button"
                     className={cn(styles.transitionLabel, styles.transitionAlign)}
                     data-alignment={alignment}
-                    title={`${TRANSITION_LABEL[box.kind]} · ${TRANSITION_ALIGNMENT_LABEL[alignment]} — click to change alignment`}
+                    title={`${kindLabel} · ${TRANSITION_ALIGNMENT_LABEL[alignment]} — click to change alignment`}
                     onPointerDown={(e) => e.stopPropagation()}
                     onClick={(e) => {
                       e.stopPropagation();
                       cycleTransitionAlignment(box.id);
                     }}
                   >
-                    {box.label}
+                    {rec?.effect ? kindLabel : box.label}
                   </button>
                   <div
                     className={styles.transitionGrip}

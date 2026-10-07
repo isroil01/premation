@@ -300,6 +300,8 @@ command shiftLayerKeyframes = 333 { items: LayerKeyShift[] = 1; }
 enum TransitionKind { crossDissolve = 0; dipToBlack = 1; dipToWhite = 2; wipe = 3; }
 /// Where a transition sits relative to its cut.
 enum TransitionAlignment { centred = 0; startAtCut = 1; endAtCut = 2; }
+/// The ease of a transition's ramp (the two keys it writes); absent = linear.
+enum TransitionEase { linear = 0; easeInOut = 1; easeIn = 2; easeOut = 3; }
 
 /// A cut transition (the timeline's bracket): a record on the composition, MATERIALISED into the two layers — the overlapping kinds (crossDissolve, wipe) extend the left bar's tail and the right bar's head into their source handles; crossDissolve / dipToBlack ramp Opacity, dipToWhite ramps a white Fill effect, wipe ramps a Linear Wipe on the incoming layer.
 struct Transition {
@@ -313,13 +315,23 @@ struct Transition {
   /// Whole frames of the composition.
   duration: Time = 6;
   alignment: TransitionAlignment = 7;
+  /// wipe: the Transition effect it ramps (any registry effect with a Transition Completion param — radial-wipe,
+  /// iris-wipe, venetian-blinds, block-dissolve, card-wipe, …); absent = linear-wipe.
+  effect?: string = 8;
+  /// wipe: the direction in degrees (the effect's wipe / start angle, or angle). Absent = the effect's default.
+  angle?: f64 = 9;
+  /// wipe: the edge softness (the effect's Feather or Softness). Absent = the effect's default.
+  softness?: f64 = 10;
+  /// dipToWhite: the colour dipped through (#rrggbb). Absent = white.
+  color?: string = 11;
+  ease?: TransitionEase = 12;
 }
 
 struct TransitionRef { transition: string = 1; }
 
 /// B3z — add a transition on the cut between two layers of one composition (replacing any transition already on that cut). Refused (`outOfRange`, with the frames the handles lack) when a source cannot pay for the overlap, `invalidArgument` when the layers do not meet at a cut, `locked` for a locked layer. `duration` rounds to whole frames (≥ 1). Returns the new transition's id. Inverse: the cut, the bars, the keys and effects exactly as they were, and the record gone.
-command addTransition = 334 { left: LayerId = 1; right: LayerId = 2; kind: TransitionKind = 3; duration: Time = 4; alignment: TransitionAlignment = 5; } -> TransitionRef;
-/// B3z — change a transition's kind, length or alignment (the bracket drag, the alignment menu): the cut is restored to what it was before the transition, then the new one materialised. Coalescable: a drag sends the absolute length per move. Refusals as addTransition (the record is unchanged). Inverse: the previous record and everything it materialised.
-command setTransition = 335 [coalesce] { transition: string = 1; kind?: TransitionKind = 2; duration?: Time = 3; alignment?: TransitionAlignment = 4; }
+command addTransition = 334 { left: LayerId = 1; right: LayerId = 2; kind: TransitionKind = 3; duration: Time = 4; alignment: TransitionAlignment = 5; effect?: string = 6; angle?: f64 = 7; softness?: f64 = 8; color?: string = 9; ease?: TransitionEase = 10; } -> TransitionRef;
+/// B3z — change a transition's kind, length, alignment or parameters (the bracket drag, the alignment menu, the transition inspector; `effect` '' = back to linear-wipe): the cut is restored to what it was before the transition, then the new one materialised. Coalescable: a drag sends the absolute length per move. Refusals as addTransition (the record is unchanged). Inverse: the previous record and everything it materialised.
+command setTransition = 335 [coalesce] { transition: string = 1; kind?: TransitionKind = 2; duration?: Time = 3; alignment?: TransitionAlignment = 4; effect?: string = 5; angle?: f64 = 6; softness?: f64 = 7; color?: string = 8; ease?: TransitionEase = 9; }
 /// B3z — remove transitions: each cut is put back exactly as it was before the transition was applied (bars, the ramped keys, the effect stack). Hand edits made to those tracks afterwards are discarded with it (transitions.ts). Inverse: the records and their materialisation.
 command removeTransitions = 336 { transitions: string[] = 1; }

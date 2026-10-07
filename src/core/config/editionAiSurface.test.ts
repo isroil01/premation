@@ -55,9 +55,12 @@ describe('both editions offer the AI surface when aiEnabled', () => {
       expect(ids).toContain('ai-focus');
     });
 
-    it('keeps ai listed in the default preset source', () => {
-      expect(BUILTIN_WORKSPACES.find((w) => w.id === 'default')?.panelOrder?.rightInspector)
-        .toContain('ai');
+    // The Default workspace is After Effects' right column, which has no
+    // assistant (2026-10-07); AI Focus leads with it and Window ▸ Panels ▸
+    // Assistant opens it anywhere.
+    it('keeps ai in the AI Focus preset and on demand in every other', () => {
+      expect(BUILTIN_WORKSPACES.find((w) => w.id === 'ai-focus')?.panelOrder?.leftSidebar?.[0]).toBe('ai');
+      expect(panelDef('ai')?.onDemand).toBe(true);
     });
   });
 

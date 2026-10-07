@@ -1,6 +1,7 @@
 /**
- * FaceMaterialsSection — Front / Side / Bevel / Back colours for an extruded 3D
- * layer (AE's Cinema 4D renderer exposes the same three overrides).
+ * FaceMaterialsSection — the "Sides" group of Material Options: Front / Bevel /
+ * Side / Back colours for an extruded 3D layer (AE's Cinema 4D renderer exposes
+ * the same three overrides).
  *
  * Shown only when the layer is actually extruded, because with `extrusionDepth`
  * 0 there are no side or back faces to colour and the controls would be inert.
@@ -34,13 +35,15 @@ import { useFaceSelectionStore } from '@stores/faceSelectionStore';
 import { values } from '@core/engine/propRefs';
 import { fieldCommands, hasPath } from './materialEdits';
 import { useEngineEdit } from './useEngineEdit';
+import { TwirlGroup } from './appearance/TwirlGroup';
 import styles from './ParentControl.module.css';
+import sides from './FaceMaterialsSection.module.css';
 
 type EditableKind = Exclude<FaceKind, 'front'>;
 
 const KINDS: ReadonlyArray<{ kind: EditableKind; label: string; hint: string }> = [
-  { kind: 'side', label: 'Side', hint: 'The extruded walls' },
   { kind: 'bevel', label: 'Bevel', hint: 'The chamfer rings — only visible with a bevel depth' },
+  { kind: 'side', label: 'Side', hint: 'The extruded walls' },
   { kind: 'back', label: 'Back', hint: 'The rear cap' },
 ];
 
@@ -101,41 +104,44 @@ export function FaceMaterialsSection({ nodeId }: { nodeId: string }): JSX.Elemen
   const lit = mirrorMaterial(tree).acceptsLights;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span style={{ fontSize: 'var(--font-size-micro)', fontWeight: 600, color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-          Face Materials
-        </span>
-        <Button
-          size="xs"
-          variant={pickMode ? 'primary' : 'ghost'}
-          onClick={() => faceSel.setEnabled(!pickMode)}
-          title={pickMode
-            ? 'Stop picking faces on canvas — clicks select layers again'
-            : 'Click a side of the object on canvas to select it'}
-          aria-pressed={pickMode}
-          leftIcon={<Icon name="mouse-pointer" size="sm" />}
-          style={{ marginRight: 'auto', marginLeft: 8 }}
-        >
-          Pick
-        </Button>
-        {anyOverride && (
+    // AE-style "Sides" group (2026-10-07): one twirl row, then Front, Bevel,
+    // Side and Back in the order the eye meets them. Each side follows the
+    // layer fill (with its brightness) until it is given a colour of its own.
+    <TwirlGroup
+      prefKey="material.sides"
+      label="Sides"
+      defaultOpen
+      summary={anyOverride ? 'custom colours' : 'follow the fill'}
+      trailing={(
+        <>
           <Button
             size="xs"
-            variant="ghost"
-            onClick={() => e.send('Reset Face Materials', fieldCommands([nodeId], 'material/faceMaterials', values.json(null)))}
-            title="Back to one colour for the whole object"
+            variant={pickMode ? 'primary' : 'ghost'}
+            onClick={() => faceSel.setEnabled(!pickMode)}
+            title={pickMode
+              ? 'Stop picking faces on canvas — clicks select layers again'
+              : 'Click a side of the object on canvas to select it'}
+            aria-pressed={pickMode}
+            leftIcon={<Icon name="mouse-pointer" size="sm" />}
           >
-            Reset
+            Pick
           </Button>
-        )}
-      </div>
-
+          {anyOverride && (
+            <Button
+              size="xs"
+              variant="ghost"
+              onClick={() => e.send('Reset Face Materials', fieldCommands([nodeId], 'material/faceMaterials', values.json(null)))}
+              title="Back to one colour for the whole object"
+            >
+              Reset
+            </Button>
+          )}
+        </>
+      )}
+    >
       <div className={styles.row}>
-        <span className={styles.label} style={{ fontSize: 'var(--font-size-xs)', opacity: 0.7 }}>Front</span>
-        <span style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)' }}>
-          <Icon name="arrow-up" size="sm" /> layer fill
-        </span>
+        <span className={styles.label}>Front</span>
+        <span className={sides.note}>Layer fill</span>
       </div>
 
       {KINDS.map(({ kind, label, hint }) => {
@@ -146,14 +152,11 @@ export function FaceMaterialsSection({ nodeId }: { nodeId: string }): JSX.Elemen
         return (
           <div
             key={kind}
-            className={styles.row}
+            className={picked ? `${styles.row} ${sides.picked}` : styles.row}
             title={hint}
-            style={picked
-              ? { background: 'color-mix(in srgb, var(--color-accent) 18%, transparent)', borderRadius: 4, boxShadow: 'inset 2px 0 0 var(--color-accent)' }
-              : undefined}
           >
-            <span className={styles.label} style={{ fontSize: 'var(--font-size-xs)', fontWeight: picked ? 600 : undefined }}>{label}</span>
-            <span style={{ display: 'flex', alignItems: 'center', gap: 4 }} {...e.press(`Set ${label} face colour`, on)}>
+            <span className={styles.label}>{label}</span>
+            <span className={sides.controls} {...e.press(`Set ${label} face colour`, on)}>
               <ColorPicker
                 compact
                 value={custom ? m!.fill! : layerFill}
@@ -168,7 +171,7 @@ export function FaceMaterialsSection({ nodeId }: { nodeId: string }): JSX.Elemen
                   title={`Track the layer fill again instead of a fixed ${label.toLowerCase()} colour`}
                   aria-label={`Reset ${label.toLowerCase()} face colour`}
                 >
-                  <Icon name="close" size="sm" />
+                  Same as fill
                 </Button>
               ) : (
                 // Derived from the layer fill: the gain is what shades it.
@@ -188,17 +191,17 @@ export function FaceMaterialsSection({ nodeId }: { nodeId: string }): JSX.Elemen
       })}
 
       {pickMode && (
-        <p style={{ margin: '2px 0 0', fontSize: 'var(--font-size-micro)', color: 'var(--color-accent)', lineHeight: 1.5 }}>
+        <p className={sides.hint}>
           {pickedKind
             ? `${pickedKind[0]!.toUpperCase()}${pickedKind.slice(1)} face selected — click another side, or Pick again to leave.`
             : 'Click a side of the object on canvas.'}
         </p>
       )}
-      <p style={{ margin: '2px 0 0', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
-        {lit
-          ? 'Accepts Lights is on, so scene lights shade these faces — the colours still apply, the brightness percentages do not.'
-          : 'Pick a colour to fix a face, or set a brightness to keep it tracking the layer fill.'}
-      </p>
-    </div>
+      {lit && (
+        <p className={sides.hint}>
+          Scene lights shade these sides: the colours apply, the brightness percentages do not.
+        </p>
+      )}
+    </TwirlGroup>
   );
 }

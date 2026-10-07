@@ -3,13 +3,22 @@
  *
  * Left to right:
  *
- *   [split · trim in · trim out] · timecode current / total ·
+ *   3D view · layout · timecode current / total · snapshot + compare ·
  *   [go to start · previous frame · PLAY · next frame · go to end] ·
- *   [loop · marker] · the scene tools (`ViewportTools`: motion path, the 3D
- *   switch, auto-keyframe, the status badges) · the display controls
- *   (`ViewportDisplayControls`: layout, channel, resolution, preview, LUT,
- *   overlays, snapshot + compare, display mode, bookmarks, pop out) · the
- *   zoom field
+ *   the motion-path toggle (`ViewportTools`, with a selected path only) ·
+ *   resolution · preview · transparency grid · overlays · channel · exposure
+ *   (`ViewportDisplayControls`) · magnification
+ *
+ * That is AE's Composition panel footer plus the transport. What used to sit
+ * here as well and was not (2026-10-07): Loop (the Preview panel's), Auto-
+ * Keyframe (the timeline's toolbar), the 3D-view badge (the 3D View menu says
+ * it), Smooth / Straighten path (the keyframe menu), the 3D switch (the
+ * timeline switch and Layer ▸ 3D Layer), Viewer LUT and display mode (the
+ * Preview menu), bookmarks (View ▸ Viewport) and pop out (the panel menu).
+ *
+ * Split / Trim In / Trim Out and Add Marker are not buttons here (2026-10-07):
+ * AE's Composition panel has none, and each is a chord (Ctrl+Shift+D, Alt+[,
+ * Alt+], * / Numpad *), a clip right-click row and a Layer menu row.
  *
  * The five transport buttons in the middle are the only set of them in the
  * app. The JKL shuttle and the in / out marks that used to sit beside them as
@@ -42,14 +51,10 @@ import { cn } from '@utils/cn';
 import {
   goToEnd,
   goToStart,
-  isTransportLooping,
-  setTransportLooping,
   stepBackward,
   stepForward,
   togglePlayTransport,
 } from '@core/timeline/timelineView';
-import { splitSelectedAtPlayhead, trimSelectedEndToPlayhead, trimSelectedStartToPlayhead } from '@layout/Timeline/timelineEdits';
-import { addCompMarkerAtPlayhead, addLayerMarkersAtPlayhead } from '@layout/Timeline/markerCommands';
 import { ViewportTools } from './ViewportTools';
 import { ViewportDisplayControlsView, displayOverflowItems, useViewportDisplayModel } from './ViewportDisplayControls';
 import { ZoomField, useZoomPercent, zoomMenuItems } from './ZoomField';
@@ -58,8 +63,6 @@ import { useWorkspaceStore } from '@stores/projectStore';
 import { LiveTimecode } from '@layout/Timeline/LiveTimecode';
 import { useActiveMirrorComp } from '@hooks/useMirror';
 import { settingsDurationSeconds, settingsFps, settingsStartFrame } from '@core/mirror/compFacts';
-import { useSelectionStore } from '@stores/selectionStore';
-import { usePreferenceStore } from '@stores/preferenceStore';
 import { displayLevelFor, isDemoted, type TransportGroup } from './transportOverflow';
 import { useTransportDemote } from './useTransportDemote';
 import {
@@ -75,19 +78,10 @@ import styles from './TransportBar.module.css';
  */
 export const TransportBar = memo(function TransportBar(): JSX.Element {
   const ws = useWorkspaceStore((s) => (s.activeTabId ? s.tabs[s.activeTabId] : null));
-  const activeTabId = useWorkspaceStore((s) => s.activeTabId);
-  const selectedIds = useSelectionStore((s) => s.ids);
   const settings = useActiveMirrorComp()?.settings;
   const fps = settingsFps(settings);
   const startFrame = settingsStartFrame(settings);
   const duration = settingsDurationSeconds(settings);
-
-  // Looping is PER COMP; a state seeded once showed the previous tab's value
-  // after switching comps.
-  const [looping, setLooping] = useState(() => isTransportLooping());
-  useEffect(() => {
-    setLooping(isTransportLooping());
-  }, [activeTabId]);
 
   // No live clock subscription here: the timecode is a `LiveTimecode` leaf that
   // writes its own text every frame, so playback does not re-render the bar.
@@ -95,52 +89,16 @@ export const TransportBar = memo(function TransportBar(): JSX.Element {
   const barRef = useRef<HTMLDivElement>(null);
   const level = useTransportDemote(barRef);
   const shed = (group: TransportGroup): boolean => isDemoted(group, level);
-  // The display controls' share of the ladder — its first ten rungs.
+  // The display controls' share of the ladder — its first rungs.
   const displayLevel = displayLevelFor(level);
   const display = useViewportDisplayModel();
   const zoom = useZoomPercent();
 
-  // The timeline's own edits (engine API, one entry each, the legacy labels).
-  const splitAtPlayhead = (): void => { void splitSelectedAtPlayhead(selectedIds); };
-  const trimInToPlayhead = (): void => { void trimSelectedStartToPlayhead(selectedIds); };
-  const trimOutToPlayhead = (): void => { void trimSelectedEndToPlayhead(selectedIds); };
-  const toggleLoop = (): void => {
-    setTransportLooping(!looping);
-    setLooping(!looping);
-  };
-  // One layer selected → a layer marker on it; otherwise a comp marker. The
-  // timeline's marker commands (their colour gap is documented there).
-  const addMarker = (): void => {
-    if (selectedIds.length === 1 && addLayerMarkersAtPlayhead() > 0) return;
-    addCompMarkerAtPlayhead();
-  };
-
-  const autoKeyframe = usePreferenceStore((s) => s.timelineAutoKeyframe);
-  const toggleAutoKeyframe = (): void => {
-    usePreferenceStore.getState().set('timelineAutoKeyframe', !autoKeyframe);
-  };
-
   // Everything the row has shed, as rows of the bar's own `⋯` menu, in row
-  // order: the clip edits, loop and marker, the display controls, the zoom.
-  // Built here because these are the handlers' home.
+  // order: the display controls, then the zoom.
   const displayItems = displayOverflowItems(display, displayLevel);
   const overflowItems = useMemo<DropdownItem[]>(() => {
     const items: DropdownItem[] = [];
-    if (shed('clipEdits')) {
-      items.push(
-        { type: 'item', id: 'tb-split', label: 'Split Layer at Playhead', icon: 'scissors', shortcut: 'Ctrl+Shift+D', onSelect: splitAtPlayhead },
-        { type: 'item', id: 'tb-trim-in', label: 'Trim In-Point to Playhead', icon: 'trim-in', shortcut: 'Alt+[', onSelect: trimInToPlayhead },
-        { type: 'item', id: 'tb-trim-out', label: 'Trim Out-Point to Playhead', icon: 'trim-out', shortcut: 'Alt+]', onSelect: trimOutToPlayhead },
-      );
-    }
-    if (shed('loopMarker')) {
-      if (items.length) items.push({ type: 'separator' });
-      items.push(
-        { type: 'checkbox', id: 'tb-loop', label: 'Loop Playback', checked: looping, onChange: toggleLoop },
-        { type: 'item', id: 'tb-marker', label: selectedIds.length === 1 ? 'Add Layer Marker' : 'Add Composition Marker', icon: 'marker', onSelect: addMarker },
-        { type: 'checkbox', id: 'tb-autokey', label: 'Auto-Keyframe Mode', checked: autoKeyframe, onChange: toggleAutoKeyframe },
-      );
-    }
     if (displayItems.length > 0) {
       if (items.length) items.push({ type: 'separator' });
       items.push(...displayItems);
@@ -151,7 +109,7 @@ export const TransportBar = memo(function TransportBar(): JSX.Element {
     }
     return items;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [level, looping, selectedIds, zoom, displayItems, autoKeyframe]);
+  }, [level, zoom, displayItems]);
 
   return (
     <div
@@ -164,10 +122,9 @@ export const TransportBar = memo(function TransportBar(): JSX.Element {
       data-transport-bar=""
     >
       {/*
-        Left of play: everything about TIME — clip edits at the playhead, the
-        timecode, the loop flag, the marker key.
-        Right of play: everything about the SCENE — the viewport's own tools
-        and its zoom.
+        Left of play: the views — 3D view, layout, the timecode, snapshots.
+        Right of play: how the frame is shown — resolution, preview,
+        transparency, overlays, channel, exposure — and the magnification.
 
         The split is what makes the row look balanced: the eye weighs the mass
         either side of the play button, not the geometry, so the two sides are
@@ -178,43 +135,6 @@ export const TransportBar = memo(function TransportBar(): JSX.Element {
         <div className={styles.cluster}>
           <ViewportDisplayControlsView model={display} level={displayLevel} overflow="host" section="layout" />
         </div>
-
-        {!shed('clipEdits') && (
-          <>
-            <div className={styles.divider} />
-
-            {/* Layer clip operations: Split, Trim In, Trim Out */}
-            <div className={styles.cluster}>
-              <button
-                type="button"
-                className={styles.btn}
-                title="Split Layer at Playhead (Ctrl+Shift+D)"
-                aria-label="Split Layer at Playhead"
-                onClick={splitAtPlayhead}
-              >
-                <Icon name="scissors" size="sm" />
-              </button>
-              <button
-                type="button"
-                className={styles.btn}
-                title="Trim In-Point to Playhead (Alt+[)"
-                aria-label="Trim In-Point to Playhead"
-                onClick={trimInToPlayhead}
-              >
-                <Icon name="trim-in" size="sm" />
-              </button>
-              <button
-                type="button"
-                className={styles.btn}
-                title="Trim Out-Point to Playhead (Alt+])"
-                aria-label="Trim Out-Point to Playhead"
-                onClick={trimOutToPlayhead}
-              >
-                <Icon name="trim-out" size="sm" />
-              </button>
-            </div>
-          </>
-        )}
 
         <div className={styles.divider} />
 
@@ -232,46 +152,6 @@ export const TransportBar = memo(function TransportBar(): JSX.Element {
         <div className={styles.cluster}>
           <ViewportDisplayControlsView model={display} level={displayLevel} overflow="host" section="compare" />
         </div>
-
-        {!shed('loopMarker') && (
-          <>
-            <div className={styles.divider} />
-
-            {/* Playback modes & recording: Loop, Marker, Auto-Keyframe */}
-            <div className={styles.cluster}>
-              <button
-                type="button"
-                className={cn(styles.btn, looping && styles.btnActive)}
-                title={looping ? 'Loop Playback: ON' : 'Loop Playback: OFF'}
-                aria-label="Loop Playback"
-                aria-pressed={looping}
-                onClick={toggleLoop}
-              >
-                <Icon name="loop" size="sm" />
-              </button>
-              <button
-                type="button"
-                className={styles.btn}
-                title={selectedIds.length === 1 ? 'Add Layer Marker' : 'Add Composition Marker'}
-                aria-label={selectedIds.length === 1 ? 'Add Layer Marker' : 'Add Composition Marker'}
-                onClick={addMarker}
-              >
-                <Icon name="marker" size="sm" />
-              </button>
-              <button
-                type="button"
-                className={cn(styles.btn, autoKeyframe && styles.btnActive, autoKeyframe && styles.autoKeyBtnActive)}
-                onClick={toggleAutoKeyframe}
-                aria-label="Auto-Keyframe mode"
-                aria-pressed={autoKeyframe}
-                title={autoKeyframe ? 'Auto-Keyframe Mode is ON (Click to turn OFF)' : 'Auto-Keyframe Mode is OFF (Click to turn ON)'}
-              >
-                <Icon name="stopwatch" size="sm" />
-                {autoKeyframe && <span className={styles.recLabel}>REC</span>}
-              </button>
-            </div>
-          </>
-        )}
       </div>
 
       {/* The centre column: go-to-start · prev · PLAY · next · go-to-end.
@@ -330,10 +210,10 @@ export const TransportBar = memo(function TransportBar(): JSX.Element {
       </div>
 
       <div className={styles.sideRight}>
-        {/* Contextual motion path, 3D switch, and status badges */}
+        {/* The motion-path toggle, while a layer with a path is selected */}
         <ViewportTools />
 
-        {/* Display controls: Overlays, display mode, channel, resolution, preview, LUT, bookmarks, pop out */}
+        {/* Resolution · Preview · Transparency Grid · Overlays · Channel · Exposure */}
         <div className={styles.cluster}>
           <ViewportDisplayControlsView model={display} level={displayLevel} overflow="host" section="right" />
         </div>

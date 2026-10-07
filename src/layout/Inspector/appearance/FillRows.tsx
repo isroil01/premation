@@ -42,6 +42,7 @@ function withPaintOp<T extends FillPaint>(paint: T, opts: PaintOpOptions): T {
   return { ...rest, ...normalizePaintOpOptions(opts) } as T;
 }
 import { StopList } from './StopLists';
+import { SummaryChip, TwirlGroup } from './TwirlGroup';
 import styles from '../TransformSection.module.css';
 import effStyles from '../../Effects/EffectsPanel.module.css';
 
@@ -129,12 +130,26 @@ export function FillRows({ nodeId }: { nodeId: string }): JSX.Element | null {
 
   const isFillAnimated = ['fill', 'fill_r', 'fill_g', 'fill_b'].some((t) => isTrackAnimated(m, nodeId, t));
 
+  const typeLabel = (f: FillPaint | undefined): string =>
+    !f ? 'None' : f.type === 'solid' ? 'Solid' : f.type === 'linear' ? 'Linear' : 'Radial';
+  const chipColor = (f: FillPaint): string =>
+    f.type === 'solid' ? f.color : sortedStops(f.stops)[0]?.color ?? '#ffffff';
+  const blendNote = (f: FillPaint): string => {
+    const mode = (f as PaintOpOptions).blendMode;
+    return mode && mode !== 'normal' ? ` · ${mode}` : '';
+  };
+
   return (
     <>
-        <div className={styles.subhead}>
-          Fill
-          {isFillAnimated && <span className={styles.animatedDot} />}
-        </div>
+      {/* AE's Fill group: one twirl row, its paint summarised while closed. */}
+      <TwirlGroup
+        prefKey="contents.fill.0"
+        label={<>Fill 1{isFillAnimated && <span className={styles.animatedDot} />}</>}
+        defaultOpen
+        summary={fill
+          ? <><SummaryChip color={chipColor(fill)} />{typeLabel(fill)}{blendNote(fill)}</>
+          : 'None'}
+      >
             <div className={styles.popoverRow}>
               <span className={styles.popoverLabel}>Type</span>
               <select
@@ -142,6 +157,7 @@ export function FillRows({ nodeId }: { nodeId: string }): JSX.Element | null {
                 onChange={(e) => handleFillTypeChange(e.target.value as FillType | 'none')}
                 className={styles.select}
                 style={{ width: 110 }}
+                aria-label="Fill type"
               >
                 <option value="none">None</option>
                 <option value="solid">Solid</option>
@@ -185,7 +201,7 @@ export function FillRows({ nodeId }: { nodeId: string }): JSX.Element | null {
                 <button
                   type="button"
                   className={effStyles.addChip}
-                  style={{ gap: 5, ...(gradientArmed ? { color: 'var(--color-primary, #4c8dff)' } : {}) }}
+                  style={{ gap: 5, ...(gradientArmed ? { color: 'var(--color-primary)' } : {}) }}
                   aria-pressed={gradientArmed}
                   title={gradientArmed
                     ? 'Editing this gradient on the canvas — click to put the handles away (or press Escape)'
@@ -199,13 +215,31 @@ export function FillRows({ nodeId }: { nodeId: string }): JSX.Element | null {
                 <StopList nodeId={nodeId} paint={fill} />
               </div>
             )}
+      </TwirlGroup>
 
-        {/* Extra fills (multi-fill stack, drawn over the primary). Animated
-            fill tracks bind to the primary only, so extras stay simple rows. */}
+        {/* Extra fills (multi-fill stack, drawn over the primary), each its own
+            closed twirl. Animated fill tracks bind to the primary only, so
+            extras stay simple rows. */}
         {fills.slice(1).map((f, i) => (
-          <div key={`xfill_${i}`} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <TwirlGroup
+            key={`xfill_${i}`}
+            prefKey={`contents.fill.${i + 1}`}
+            label={`Fill ${i + 2}`}
+            defaultOpen={false}
+            summary={<><SummaryChip color={chipColor(f)} />{typeLabel(f)}{blendNote(f)}</>}
+            trailing={(
+              <button
+                type="button"
+                className={effStyles.remove}
+                aria-label={`Remove fill ${i + 2}`}
+                onClick={() => { void setFillsEdit('Remove Fill', nodeId, fills.filter((_, fi) => fi !== i + 1)); }}
+              >
+                <Icon name="close" size="sm" />
+              </button>
+            )}
+          >
           <div className={styles.popoverRow}>
-            <span className={styles.popoverLabel}>Fill {i + 2}</span>
+            <span className={styles.popoverLabel}>Type</span>
             <select
               className={styles.select}
               style={{ width: 74 }}
@@ -223,7 +257,7 @@ export function FillRows({ nodeId }: { nodeId: string }): JSX.Element | null {
             </select>
             <ColorPicker
               compact
-              value={f.type === 'solid' ? f.color : sortedStops(f.stops)[0]?.color ?? '#ffffff'}
+              value={chipColor(f)}
               onChange={(hex) => {
                 const next = [...fills];
                 next[i + 1] =
@@ -234,14 +268,6 @@ export function FillRows({ nodeId }: { nodeId: string }): JSX.Element | null {
               }}
               aria-label={`Fill ${i + 2} color`}
             />
-            <button
-              type="button"
-              className={effStyles.remove}
-              aria-label={`Remove fill ${i + 2}`}
-              onClick={() => { void setFillsEdit('Remove Fill', nodeId, fills.filter((_, fi) => fi !== i + 1)); }}
-            >
-              <Icon name="close" size="sm" />
-            </button>
           </div>
           <PaintOpRows
             label={`Fill ${i + 2}`}
@@ -252,7 +278,7 @@ export function FillRows({ nodeId }: { nodeId: string }): JSX.Element | null {
               void setFillsEdit(`Fill ${i + 2} Compositing`, nodeId, next);
             }}
           />
-          </div>
+          </TwirlGroup>
         ))}
         {fill && (
           <button

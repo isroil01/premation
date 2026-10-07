@@ -30,6 +30,7 @@
 #include "merge_paths.hpp"
 #include "snapshot_build.hpp"
 #include "log.hpp"
+#include "lut_port.hpp"
 #include "passes.hpp"
 #include "png_write.hpp"
 #include "model.hpp"
@@ -283,6 +284,8 @@ class EngineFrameBuilder final : public FrameBuilder, public TextQueries, public
       }
       vs.clear = viewport.ghost ? api::Color{0, 0, 0, 0} : api::Color{0, 0, 0, 1};
       vs.channel = viewport.channel;  // View ▸ Show Channel, on the final blit
+      if (!viewport.ghost) vs.exposure = viewport.exposure;  // Adjust Exposure, on the final blit (not twice through a ghost)
+      if (viewport.layer.empty()) vs.regionOfInterest = viewport.regionOfInterest;
       if (viewport.ghost) sc.transparent = true;
       vs.surfaceFormat = api::RenderTextureFormat::rgba8unorm;
       const double seconds = doc::flicks_to_seconds(time);
@@ -294,21 +297,27 @@ class EngineFrameBuilder final : public FrameBuilder, public TextQueries, public
       if (sc.transparent) ov.transparent = true;
       ov.camera3dMode = sc.camera3dMode;
       ov.customViewCamera = sc.customViewCamera;
+      ov.draft3d = sc.draft3d;
+      ov.transparencyGrid = sc.transparencyGrid;
       // The Layer panel draws the layer at its own size, centred in the comp's
       // frame: the comp's clip cut whatever of it falls outside the composition (a
       // picture wider or taller than the comp) along a straight line.
       if (!viewport.layer.empty()) vs.clipToComp = false;
-      NativeFrame nf = build_native_frame(ctx, comp, seconds, vs, true, {}, 0, ov);
+      // setPreviewQuality `motionBlur` false (Preview ▸ Draft Quality): no blur samples in this viewport.
+      NativeFrame nf = build_native_frame(ctx, comp, seconds, vs, viewport.previewMotionBlur, {}, 0, ov);
       // G1: native plugin entries completed from the document (sequence data,
       // times), their checkouts at other times added, disabled instances reported.
       plugins::PluginHost* host = plugins::PluginHost::active();
-      plugins::finish_native_frame(ctx, comp, seconds, vs, true, nf, host);
+      plugins::finish_native_frame(ctx, comp, seconds, vs, viewport.previewMotionBlur, nf, host);
       if (host != nullptr) {
         host->next_frame();
         // Instances no frame has used for a while give their state back
         // (SEQUENCE_SETDOWN); the document's flat copy rebuilds them on use.
         if ((++builtFrames_ & 255U) == 0) host->collect_instances(kIdleInstanceFrames);
       }
+      // The viewer LUT (setViewerLut): graded on the final blit of a viewport
+      // frame (EffectPass), never in an export or a thumbnail.
+      if (viewport.viewerLut && !viewport.ghost) attach_viewer_lut(viewport.viewerLut, nf);
       out->file = std::move(nf.file);
       out->textures = std::move(nf.textures);
       errors.reserve(nf.errors.size());
@@ -498,7 +507,35 @@ class EngineFrameBuilder final : public FrameBuilder, public TextQueries, public
     return c.mask;
   }
 
+  /// setViewerLut's table → RenderView.viewerLut + its `viewer-lut` strip.
+  /// Parsed once per table (the Session hands every frame the same pointer).
+  void attach_viewer_lut(const std::shared_ptr<const ViewerLut>& lut, NativeFrame& nf) {
+    const ViewerLut& src = *lut;
+    if (viewerLutSrc_ != lut) {
+      viewerLutSrc_ = lut;
+      viewerLutStrip_.reset();
+      if (const std::optional<CubeLut> cube = parse_stored_cube_lut(src.table)) {
+        viewerLutStrip_ = cube_lut_strip(*cube, std::string(rg::kViewerLutKey));
+        viewerLutMeta_.size = static_cast<std::uint32_t>(cube->size1d > 0 ? cube->size1d : cube->size);
+        viewerLutMeta_.is1d = cube->size1d > 0;
+        viewerLutMeta_.domain_min = cube->domainMin[0];
+        viewerLutMeta_.domain_max = cube->domainMax[0];
+      }
+    }
+    if (!viewerLutStrip_) return;
+    api::RenderViewerLut meta = viewerLutMeta_;
+    meta.intensity = src.intensity;
+    nf.file.view.viewer_lut_active = true;
+    nf.file.view.viewer_lut = meta;
+    nf.textures.push_back(*viewerLutStrip_);
+  }
+
   static constexpr std::uint64_t kIdleInstanceFrames = 600;
+  /// attach_viewer_lut's memo: the table it last parsed (held, so a new table
+  /// can never reuse its address) and what it made of it. Core thread only, like build().
+  std::shared_ptr<const ViewerLut> viewerLutSrc_;
+  std::optional<TextureRequest> viewerLutStrip_;
+  api::RenderViewerLut viewerLutMeta_;
   Fonts fonts_;
   std::unique_ptr<TextMeasurer> measurer_;
   MediaClock* audio_ = nullptr;

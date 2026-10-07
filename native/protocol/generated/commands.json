@@ -775,6 +775,11 @@
     "type": "setViewportFocus"
   },
   {
+    "id": 815,
+    "kind": "control",
+    "type": "setViewerLut"
+  },
+  {
     "id": 1771,
     "kind": "control",
     "type": "setOverlayGeometry"

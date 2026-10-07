@@ -130,7 +130,8 @@ fn viewerSlice(rg : vec2<f32>, slice : f32, n : f32) -> vec3<f32> {
 @fragment
 fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   let c = unpremul(textureSample(tex, smp, uv)) * obj.tint;
-  var rgb = workingToDisplay(c.rgb, obj.srcSpace);
+  // View ▸ Adjust Exposure: cr1.y is a linear gain (2^stops; 1 = none).
+  var rgb = workingToDisplay(c.rgb * obj.cr1.y, obj.srcSpace);
   let signedSize = obj.cr0.x;
   let n = abs(signedSize);
   let intensity = clamp(obj.cr0.y, 0.0, 1.0);

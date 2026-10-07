@@ -6,7 +6,6 @@
 
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode, type PointerEvent as ReactPointerEvent } from 'react';
 import { cn } from '@utils/cn';
-import { Icon } from '@components/Icon';
 import { clipHandleLayout } from './clipHandleLayout';
 import type { TimelineTrack, TimelineClip, TimelineMarker } from './TimelineModel';
 import { openContextMenu } from '@stores/contextMenuStore';
@@ -38,8 +37,6 @@ export const ClipBar = memo(function ClipBar({
   onClipDown,
   onClipContextMenu,
   onActivate,
-  clipMuted,
-  onClipMuteToggle,
 }: {
   clip: TimelineClip;
   /** The bar's live geometry — the drag preview when one is in flight. */
@@ -53,8 +50,6 @@ export const ClipBar = memo(function ClipBar({
   onClipDown?: (clip: TimelineClip, mode: 'move' | 'start' | 'end', e: ReactPointerEvent<HTMLDivElement>, locked: boolean) => void;
   onClipContextMenu?: (clipId: string, clientX: number, clientY: number) => void;
   onActivate?: (nodeId: string) => void;
-  clipMuted?: boolean;
-  onClipMuteToggle?: (nodeId: string) => void;
 }): JSX.Element {
   const wave = useWaveform(clip.assetId);
   const width = Math.max(2, view.duration * pps);
@@ -72,7 +67,6 @@ export const ClipBar = memo(function ClipBar({
         : wave.peaks;
     return slice ? waveformPath(slice, width, height) : '';
   }, [wave, sourceInSec, sourceOutSec, width, height]);
-  const audible = clip.assetId !== undefined && wave !== undefined;
   // A bar narrower than three handle widths is all handle: the body could not
   // be grabbed at all. Below that the handles shrink and the body wins; on a
   // bar too thin to hold any body beside them they are not drawn at all.
@@ -124,24 +118,8 @@ export const ClipBar = memo(function ClipBar({
           />
         </>
       ) : null}
-      {audible && onClipMuteToggle && (
-        <button
-          type="button"
-          className={styles.clipMute}
-          title={clipMuted ? 'Unmute this layer’s audio' : 'Mute this layer’s audio'}
-          aria-label={clipMuted ? 'Unmute audio' : 'Mute audio'}
-          aria-pressed={clipMuted}
-          // The bar is a drag handle; without stopping propagation the
-          // pointerdown would start a move and the click never lands.
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation();
-            onClipMuteToggle(clip.nodeId);
-          }}
-        >
-          <Icon name={clipMuted ? 'audio-off' : 'audio'} size="sm" />
-        </button>
-      )}
+      {/* No speaker on the bar: AE's audio switch is the A/V column's, and
+          two mute buttons per layer was one too many (2026-10-07). */}
       <span className={styles.clipLabel}>{clip.label ?? clip.id}</span>
     </div>
   );
@@ -182,8 +160,6 @@ export const TrackContent = memo(function TrackContent({
   onClipDown,
   onClipContextMenu,
   onActivate,
-  clipMuted,
-  onClipMuteToggle,
 }: {
   track: TimelineTrack;
   ghosted: boolean;
@@ -200,10 +176,6 @@ export const TrackContent = memo(function TrackContent({
   onClipDown?: (clip: TimelineClip, mode: 'move' | 'start' | 'end', e: ReactPointerEvent<HTMLDivElement>, locked: boolean) => void;
   onClipContextMenu?: (clipId: string, clientX: number, clientY: number) => void;
   onActivate?: (nodeId: string) => void;
-  /** Whether this layer's audio is muted, for the speaker glyph. */
-  clipMuted?: boolean;
-  /** Toggle this layer's audio mute. Absent = no speaker button. */
-  onClipMuteToggle?: (nodeId: string) => void;
 }): JSX.Element {
   const locked = track.locked === true;
   return (
@@ -226,8 +198,6 @@ export const TrackContent = memo(function TrackContent({
             onClipDown={onClipDown}
             onClipContextMenu={onClipContextMenu}
             onActivate={onActivate}
-            clipMuted={clipMuted}
-            onClipMuteToggle={onClipMuteToggle}
           />
         );
       })}

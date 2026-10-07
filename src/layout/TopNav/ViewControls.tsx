@@ -37,6 +37,10 @@ import { Dropdown, type DropdownItem, type DropdownProps } from '@components/Dro
 import { OnionSkinSettingsPopover } from '@layout/BottomTimeline/OnionSkinSettings';
 import { cacheWorkAreaNow, canCacheWorkArea, installPreviewCacheCommands } from '@layout/Timeline/previewCacheCommands';
 import { describePreviewCache, previewCacheStats } from '@layout/Timeline/previewCacheStats';
+import { useViewerLutStore } from '@stores/viewerLutStore';
+import { useViewportDisplayStore, DISPLAY_MODE_LABEL, type DisplayMode } from '@stores/viewportDisplayStore';
+import { getCommandSystem } from '@core/commands/CommandSystem';
+import { asCommandId } from '@app-types/common';
 import styles from './TopNav.module.css';
 
 /**
@@ -162,6 +166,14 @@ export function usePreviewMenuItems(): { items: DropdownItem[]; degraded: boolea
   const onionEnabled = useOnionSkinStore((s) => s.enabled);
   const toggleOnion = useOnionSkinStore((s) => s.toggle);
 
+  // The viewer LUT and the display mode: how the viewport DRAWS, never the
+  // output — rows here and in View ▸ Viewport rather than two more buttons in
+  // the transport row (2026-10-07). Through the registered commands.
+  const lut = useViewerLutStore((s) => s.lut);
+  const lutName = useViewerLutStore((s) => s.name);
+  const displayMode = useViewportDisplayStore((s) => s.displayMode);
+  const runCommand = (id: string): void => { void getCommandSystem().execute(asCommandId(id)); };
+
   const roi = useGuidesStore((s) => s.roi);
   const setRoi = useGuidesStore((s) => s.setRoi);
   // Set the ROI to the composition's centre half — a sensible starting region
@@ -180,7 +192,7 @@ export function usePreviewMenuItems(): { items: DropdownItem[]; degraded: boolea
   }, []);
 
   /** On when the viewport is showing something cheaper than the real thing. */
-  const degraded = resolution !== 1 || draftQuality || draft3d;
+  const degraded = resolution !== 1 || draftQuality || draft3d || displayMode !== 'shaded' || !!lut;
 
   const items: DropdownItem[] = [
     { type: 'label', label: <PreviewCacheHeader /> },
@@ -258,6 +270,30 @@ export function usePreviewMenuItems(): { items: DropdownItem[]; degraded: boolea
     },
     { type: 'separator' },
     {
+      type: 'item',
+      id: 'preview-display-mode',
+      label: `Display: ${DISPLAY_MODE_LABEL[displayMode]}`,
+      submenu: (Object.keys(DISPLAY_MODE_LABEL) as DisplayMode[]).map<DropdownItem>((m) => ({
+        type: 'checkbox',
+        id: `preview-display-${m}`,
+        label: DISPLAY_MODE_LABEL[m],
+        checked: displayMode === m,
+        onChange: () => runCommand(`view.displayMode.${m}`),
+      })),
+    },
+    {
+      type: 'item',
+      id: 'preview-viewer-lut',
+      label: lut ? `Viewer LUT: ${lutName ?? 'loaded'}` : 'Viewer LUT',
+      submenu: [
+        { type: 'item', id: 'preview-lut-load', label: 'Load .cube LUT…', icon: 'upload', onSelect: () => runCommand('view.viewerLut.load') },
+        { type: 'item', id: 'preview-lut-clear', label: 'Clear Viewer LUT', disabled: !lut, onSelect: () => runCommand('view.viewerLut.clear') },
+        { type: 'separator' },
+        { type: 'label', label: 'A monitor look for the viewer only — never in output.' },
+      ],
+    },
+    { type: 'separator' },
+    {
       type: 'checkbox',
       id: 'preview-onion-skin',
       label: 'Onion Skin — ghosts of nearby frames, while paused',
@@ -293,13 +329,12 @@ export interface PreviewMenuProps {
 /**
  * The Preview menu — the one home for what the viewport spends its pixels on.
  *
- * Adaptive resolution, proxies, motion blur, draft quality, draft 3D, onion
- * skin, region of interest and the cache actions. They are all the same kind
- * of setting — fidelity traded for speed — and they are all here.
+ * Adaptive resolution, proxies, motion blur, draft quality, draft 3D, the
+ * display mode, the viewer LUT, onion skin, region of interest and the cache
+ * actions — what the viewer spends its pixels on and how it shows them.
  *
- * Draft 3D is deliberately a MIRROR: the 3D menu in `SceneControls` still owns
- * it for people working in that menu, and both read the same store, so neither
- * copy can drift.
+ * Draft 3D is also the timeline's comp switch (AE's placement); both read the
+ * same store, so neither copy can drift.
  */
 export function PreviewMenu({ className, activeClassName, placement = 'bottom-start' }: PreviewMenuProps): JSX.Element {
   const { items, degraded } = usePreviewMenuItems();

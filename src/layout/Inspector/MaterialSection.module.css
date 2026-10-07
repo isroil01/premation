@@ -18,11 +18,8 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2, 6px);
-  font-size: var(--font-size-micro);
-  font-weight: 600;
-  color: var(--color-text-tertiary);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
   margin: var(--space-1, 4px) 0 2px;
 }
 
@@ -35,7 +32,7 @@
 
 .label {
   flex: 1;
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
   white-space: nowrap;
   overflow: hidden;
@@ -211,29 +208,6 @@
 }
 
 /* ── Preview + save form ─────────────────────────────────────────── */
-
-.previewRow {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3, 8px);
-  padding: var(--space-1, 4px) 0;
-}
-
-.preview {
-  flex: 0 0 auto;
-  width: 46px;
-  height: 46px;
-  border-radius: 50%;
-  border: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.14));
-}
-
-.previewMeta {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-  flex: 1;
-}
 
 .saveRow {
   display: flex;

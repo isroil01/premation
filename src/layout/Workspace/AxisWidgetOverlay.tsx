@@ -1,7 +1,8 @@
 /**
  * AxisWidgetOverlay — the 3D view cube (AE parity 4.6).
  *
- * A fixed-size cube in the bottom-left of the viewport, turned by the CURRENT
+ * A fixed-size cube in the top-right of the viewport (72px, out of the way of
+ * the layers being worked on — 2026-10-07), turned by the CURRENT
  * view (the scene camera, a custom view or the orthographic view), so the
  * user always sees how the 3D scene is oriented. All six faces are buttons
  * that snap to that orthographic view (clicking the face already shown goes
@@ -44,7 +45,10 @@ const AXIS_COLORS = {
   z: 'var(--color-axis-z)',
 } as const;
 
+/** The drawing's own coordinate space (every position below is in it). */
 const SIZE = 96;
+/** The size it is shown at: the drawing scales down to fit. */
+const DISPLAY = 72;
 const CENTER = SIZE / 2;
 /** Half the cube's edge on screen (px) for an axis facing the screen plane. */
 const HALF = 22;
@@ -222,12 +226,12 @@ export const AxisWidgetOverlay: React.FC = () => {
     <div
       style={{
         position: 'absolute',
-        left: 12,
-        bottom: 12,
+        right: 12,
+        top: 12,
         pointerEvents: 'auto',
         zIndex: 21,
-        width: SIZE,
-        height: SIZE,
+        width: DISPLAY,
+        height: DISPLAY,
         cursor: 'grab',
         touchAction: 'none',
       }}
@@ -238,7 +242,7 @@ export const AxisWidgetOverlay: React.FC = () => {
       onPointerUp={endPress}
       onPointerCancel={endPress}
     >
-      <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`} style={{ opacity: 0.95 }}>
+      <svg width={DISPLAY} height={DISPLAY} viewBox={`0 0 ${SIZE} ${SIZE}`} style={{ opacity: 0.95 }}>
         <circle
           cx={CENTER}
           cy={CENTER}
@@ -281,7 +285,7 @@ export const AxisWidgetOverlay: React.FC = () => {
                   x={f.center.x}
                   y={f.center.y}
                   style={{ fill: 'var(--color-overlay-text)' }}
-                  fontSize={8.5}
+                  fontSize={10.5}
                   fontWeight={700}
                   fontFamily="system-ui, sans-serif"
                   textAnchor="middle"
@@ -298,7 +302,7 @@ export const AxisWidgetOverlay: React.FC = () => {
         {axisTips.filter((t) => t.d <= 0).map((t) => (
           <g key={t.k} pointerEvents="none">
             <line x1={CENTER} y1={CENTER} x2={t.x} y2={t.y} style={{ stroke: AXIS_COLORS[t.k] }} strokeWidth={2} strokeLinecap="round" />
-            <text x={t.x} y={t.y} style={{ fill: AXIS_COLORS[t.k] }} fontSize={8} fontWeight={700} fontFamily="system-ui, sans-serif" textAnchor="middle" dominantBaseline="central">
+            <text x={t.x} y={t.y} style={{ fill: AXIS_COLORS[t.k] }} fontSize={10} fontWeight={700} fontFamily="system-ui, sans-serif" textAnchor="middle" dominantBaseline="central">
               {t.k.toUpperCase()}
             </text>
           </g>

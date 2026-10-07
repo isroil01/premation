@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -1461,6 +1462,68 @@ std::vector<std::pair<std::string, std::string>> tx_props(const Json& rec) {
   return {{L, "opacity"}, {R, "opacity"}};
 }
 
+/// A wipe's Transition effect: the record's `effect` when the registry has it
+/// with a Transition Completion param, else Linear Wipe.
+std::string tx_wipe_effect(const Json& rec) {
+  const std::string e = rstr(rec, "effect");
+  if (!e.empty()) {
+    if (const EffectDef* def = registry().effect(e); def != nullptr && def->param("completion") != nullptr) return e;
+  }
+  return "linear-wipe";
+}
+
+std::string ease_str(api::TransitionEase e) {
+  switch (e) {
+    case api::TransitionEase::ease_in_out: return "easeInOut";
+    case api::TransitionEase::ease_in: return "easeIn";
+    case api::TransitionEase::ease_out: return "easeOut";
+    case api::TransitionEase::linear: break;
+  }
+  return "linear";
+}
+
+/// The record's `ease` as the easing its two keys carry; nullopt = linear (the keys as before).
+std::optional<api::Easing> tx_easing(const Json& rec) {
+  const std::string e = rstr(rec, "ease");
+  if (e == "easeInOut") return api::Easing::ease_in_out;
+  if (e == "easeIn") return api::Easing::ease_in;
+  if (e == "easeOut") return api::Easing::ease_out;
+  return std::nullopt;
+}
+
+/// The optional parameters of add/setTransition onto the record, validated.
+/// An empty `effect` clears it (back to Linear Wipe).
+void tx_apply_params(Json& rec, const std::optional<std::string>& effect, const std::optional<double>& angle,
+                     const std::optional<double>& softness, const std::optional<std::string>& color,
+                     const std::optional<api::TransitionEase>& ease) {
+  if (effect) {
+    if (effect->empty()) {
+      rec.erase("effect");
+    } else {
+      const EffectDef* def = registry().effect(*effect);
+      if (def == nullptr || def->param("completion") == nullptr) {
+        fail(ErrorCode::invalid_argument, "'" + *effect + "' is not a transition effect (it has no Transition Completion)");
+      }
+      rec.set("effect", Json::string(*effect));
+    }
+  }
+  if (angle) {
+    if (!std::isfinite(*angle)) fail(ErrorCode::invalid_argument, "angle must be finite");
+    rec.set("angle", Json::number(*angle));
+  }
+  if (softness) {
+    if (!std::isfinite(*softness) || *softness < 0) fail(ErrorCode::invalid_argument, "softness must be ≥ 0");
+    rec.set("softness", Json::number(*softness));
+  }
+  if (color) {
+    const bool hex = color->size() == 7 && (*color)[0] == '#'
+                     && std::all_of(color->begin() + 1, color->end(), [](char ch) { return std::isxdigit(static_cast<unsigned char>(ch)) != 0; });
+    if (!hex) fail(ErrorCode::invalid_argument, "color must be #rrggbb");
+    rec.set("color", Json::string(*color));
+  }
+  if (ease) rec.set("ease", Json::string(ease_str(*ease)));
+}
+
 struct CutPair {
   std::vector<Geo> left;
   std::vector<Geo> right;
@@ -1624,10 +1687,11 @@ Json tx_materialize(HCtx& x, const std::string& comp, const Json& rec) {
     write_geoms(d, comp, L, left);
     write_geoms(d, comp, R, right);
   }
+  const std::optional<api::Easing> easing = tx_easing(rec);
   const auto key = [&](const std::string& node, const std::string& prop, double frame, double value, bool atEnd) {
     const double t = atEnd ? comp_to_keyframe_time(d, x.view, node, (frame - 1) / fps) + 1 / fps
                            : comp_to_keyframe_time(d, x.view, node, frame / fps);
-    anim_set_keyframe(d, node, prop, t, value);
+    anim_set_keyframe(d, node, prop, t, value, easing);
   };
   if (kind == "dipToBlack") {
     if (rg.before > 0) {
@@ -1641,14 +1705,15 @@ Json tx_materialize(HCtx& x, const std::string& comp, const Json& rec) {
   } else if (kind == "dipToWhite") {
     const std::string lf = fx_id(rec, 'l');
     const std::string rf = fx_id(rec, 'r');
+    const std::string dip = rec.at("color").is_string() ? rec.at("color").str() : std::string("#ffffff");
     if (rg.before > 0) {
       tx_add_effect(d, L, "fill", lf);
-      update_effect_param(d, L, lf, "color", Json::string("#ffffff"));
+      update_effect_param(d, L, lf, "color", Json::string(dip));
       update_effect_param(d, L, lf, "opacity", Json::number(0));
     }
     if (rg.after > 0) {
       tx_add_effect(d, R, "fill", rf);
-      update_effect_param(d, R, rf, "color", Json::string("#ffffff"));
+      update_effect_param(d, R, rf, "color", Json::string(dip));
       update_effect_param(d, R, rf, "opacity", Json::number(0));
     }
     if (rg.before > 0) {
@@ -1661,8 +1726,28 @@ Json tx_materialize(HCtx& x, const std::string& comp, const Json& rec) {
     }
   } else if (kind == "wipe") {
     const std::string rf = fx_id(rec, 'r');
-    tx_add_effect(d, R, "linear-wipe", rf);
+    const std::string type = tx_wipe_effect(rec);
+    tx_add_effect(d, R, type, rf);
     update_effect_param(d, R, rf, "completion", Json::number(100));
+    // The direction and the edge, onto whichever params this effect names them by.
+    if (const EffectDef* def = registry().effect(type); def != nullptr) {
+      if (rec.at("angle").is_number()) {
+        for (const char* k : {"wipeAngle", "startAngle", "angle"}) {
+          if (def->param(k) != nullptr) {
+            update_effect_param(d, R, rf, k, Json::number(rec.at("angle").num()));
+            break;
+          }
+        }
+      }
+      if (rec.at("softness").is_number()) {
+        for (const char* k : {"feather", "softness"}) {
+          if (def->param(k) != nullptr) {
+            update_effect_param(d, R, rf, k, Json::number(rec.at("softness").num()));
+            break;
+          }
+        }
+      }
+    }
     key(R, effect_prop(rf, "completion"), startFrame, 100, false);
     key(R, effect_prop(rf, "completion"), endFrame, 0, false);
   } else if (kind == "crossDissolve") {
@@ -1806,6 +1891,7 @@ ResultOf<api::AddTransition> handle(const api::AddTransition& c, HCtx& x) {
   draft.set("kind", Json::string(kind_str(c.kind)));
   draft.set("durationFrames", Json::number(frames));
   draft.set("alignment", Json::string(align_str(c.alignment)));
+  tx_apply_params(draft, c.effect, c.angle, c.softness, c.color, c.ease);
   x.label = "Add " + label_of_kind(draft.at("kind"));
   if (existing) {
     tx_dematerialize(d, comp, *existing);
@@ -1828,6 +1914,7 @@ ResultOf<api::SetTransition> handle(const api::SetTransition& c, HCtx& x) {
   if (c.kind) next.set("kind", Json::string(kind_str(*c.kind)));
   if (c.duration) next.set("durationFrames", Json::number(tx_frames(d, f.comp, *c.duration)));
   if (c.alignment) next.set("alignment", Json::string(align_str(*c.alignment)));
+  tx_apply_params(next, c.effect, c.angle, c.softness, c.color, c.ease);
   next.erase("before");
   ensure_timeline(d, f.comp);
   x.label = "Change " + label_of_kind(next.at("kind"));

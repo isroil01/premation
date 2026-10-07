@@ -31,6 +31,7 @@ import { ValueField } from '@components/ValueField';
 import { TooltipProvider } from '@components/Tooltip';
 import { TextFillRows, TextStrokeRows } from './TextFillRows';
 import { VariableAxesSection, TextPathOptions, OpenTypeControls } from './TextOptionControls';
+import { TwirlGroup } from './appearance/TwirlGroup';
 import styles from './CharacterPanel.module.css';
 
 /* eslint-disable design-system/no-hex-color */
@@ -1519,17 +1520,29 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
             text editing (and its character selection) alive. */}
         <div className={styles.sectionRoot} {...{ [TEXT_EDIT_KEEP_ATTR]: '' }}>
           {rangeNotice}
-          {fontRow}
-          <div className={styles.metricGrid}>
-            {sizeCell}
-            {leadingCell}
-            {trackingCell}
-          </div>
-          <div className={styles.sectionRow}>
-            <span className={styles.sectionRowLabel}>Fill</span>
-            <ColorPicker value={activeFill} onChange={handleFillChange} aria-label="Character Fill Color" />
-          </div>
-          {alignGroup}
+          {/* After Effects' Character panel, in its order (2026-10-07): font,
+              the fill / stroke swatch pair, then size · leading · tracking ·
+              kerning · scales · baseline · tsume as a two-column grid, the
+              stroke settings, and the faux-style buttons. */}
+          <TwirlGroup prefKey="text.character" label="Character" defaultOpen>
+            {fontRow}
+            {swatchDeck}
+            {noneToggles}
+            <div className={styles.metricGrid}>
+              {sizeCell}
+              {leadingCell}
+              {trackingCell}
+              {metricsRest}
+            </div>
+            {strokeGrid}
+            {styleToolbar}
+          </TwirlGroup>
+          {/* AE's Paragraph panel: alignment, then indents and spacing. */}
+          <TwirlGroup prefKey="text.paragraph" label="Paragraph" defaultOpen>
+            {alignGroup}
+            {spacingGrid}
+            {directionRows}
+          </TwirlGroup>
           <button
             type="button"
             className={styles.disclosure}
@@ -1542,28 +1555,14 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
           {moreOpen && (
             <div className={styles.moreBody}>
               {contentCard}
-              <div className={styles.sectionCard}>
-                <div className={styles.sectionHeader}>Character</div>
-                {styleToolbar}
-                {openType}
-                <div className={styles.metricGrid}>{metricsRest}</div>
-              </div>
-              <div className={styles.sectionCard}>
-                <div className={styles.sectionHeader}>Paragraph</div>
-                {directionRows}
-                {spacingGrid}
-              </div>
-              <div className={styles.sectionCard}>
-                <div className={styles.sectionHeader}>Fill &amp; stroke</div>
-                {fillRows}
-                {noneToggles}
-                <div className={styles.sectionRow}>
-                  <span className={styles.sectionRowLabel}>Stroke</span>
-                  <ColorPicker value={shownStroke} onChange={handleStrokeChange} aria-label="Character Stroke Color" />
+              {(fillRows || strokeRows || openType) && (
+                <div className={styles.sectionCard}>
+                  <div className={styles.sectionHeader}>Gradient, stroke stack and OpenType</div>
+                  {fillRows}
+                  {strokeRows}
+                  {openType}
                 </div>
-                {strokeGrid}
-                {strokeRows}
-              </div>
+              )}
               {variableAxes}
               {renderTextBox()}
               {pathCard}

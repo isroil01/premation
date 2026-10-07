@@ -23,8 +23,10 @@ export interface LiveTimecodeProps {
 }
 
 export function formatPlayhead(time: number, fps: number, startFrame = 0, format: 'timecode' | 'frames' = 'timecode'): string {
+  // The frame count is on the same axis as the timecode: a comp that starts
+  // at frame 100 reads 00100 at its first frame, as AE's does.
   return format === 'frames'
-    ? String(Math.round(time * fps)).padStart(5, '0')
+    ? String(Math.round(time * fps) + startFrame).padStart(5, '0')
     : framesToTimecode(time, fps, startFrame);
 }
 

@@ -27,6 +27,10 @@ struct ViewSpec {
   std::string outputColorSpace;
   /// The viewer's channel (View ▸ Show Channel); exports leave it rgb.
   api::ChannelView channel = api::ChannelView::rgb;
+  /// The viewer's exposure in stops (RenderView.exposure); exports leave it 0.
+  double exposure = 0;
+  /// The viewer's region of interest (comp px): the comp clip shrinks to it.
+  std::optional<api::Rect> regionOfInterest;
   /// E4: the frame is drawn on a GPU device, so a layer the TypeScript bakes on
   /// the CPU runs its stack on the render graph's chain when it can
   /// (effects_port.hpp gpu_effect_route). Off = the TypeScript's bake rule,
@@ -67,6 +71,9 @@ struct CompOverrides {
   /// camera); nullopt = the comp's own active camera.
   std::optional<std::string> camera3dMode;
   std::optional<motion::xf::Camera> customViewCamera;
+  /// A viewport's Draft 3D and transparency grid (with_viewport_view).
+  bool draft3d = false;
+  bool transparencyGrid = false;
 };
 
 /// The file half of build_native_frame: `snap` flattened (build_frame_scene)

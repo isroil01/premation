@@ -1274,6 +1274,19 @@
   line-height: inherit;
 }
 
+.colHeadNameToggle {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.colHeadNameToggle:hover {
+  color: var(--color-text-primary);
+}
+
 .colHeadPopOut {
   background: transparent;
   border: none;
@@ -1878,6 +1891,36 @@
 }
 
 /* The name reads the same animated or not — the stopwatch says which. */
+/* AE's expression `=` beside a property name: lit while it runs, dim when
+   disabled, red when the engine reports it failing. A click opens the editor. */
+.exprBadge {
+  flex: 0 0 auto;
+  height: 16px;
+  min-width: 16px;
+  padding: 0 3px;
+  margin-left: 4px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-primary);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.exprBadge:hover {
+  border-color: var(--color-border);
+}
+
+.exprBadgeOff {
+  color: var(--color-text-tertiary);
+}
+
+.exprBadgeError {
+  color: var(--color-danger);
+}
+
 .propHeaderStatic .propName {
   color: var(--color-text-secondary);
 }
@@ -2436,4 +2479,55 @@
 
 .clip[data-narrow] .clipHandle::before {
   inset: 0;
+}
+
+/* An editable In / Out / Duration / Stretch cell: reads as text until focused. */
+.extraColInput {
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  padding: 0 2px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  text-align: inherit;
+}
+
+.extraColInput:hover:not(:disabled) {
+  border-color: var(--color-field-border);
+}
+
+.extraColInput:focus {
+  outline: none;
+  border-color: var(--color-focus-ring);
+  background: var(--color-surface-1);
+}
+
+/* Where a dragged Library transition will land: a lit bar end. */
+.transitionEdgeTarget {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 6px;
+  background: var(--color-primary);
+  opacity: 0.8;
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* The layer's label swatch (AE): a flat chip that opens the named label menu. */
+.labelSwatch {
+  width: 10px;
+  height: 10px;
+  flex: none;
+  padding: 0;
+  border: 1px solid var(--color-border-structural);
+  cursor: pointer;
+}
+
+.labelSwatch:focus-visible {
+  outline: 1px solid var(--color-focus-ring);
+  outline-offset: 1px;
 }

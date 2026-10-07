@@ -98,6 +98,7 @@ import { replaceSourceWithAsset } from '@layout/Timeline/timelineEdits';
 import { edit } from '@core/engine/uiEdits';
 import { compTime } from '@core/engine/propRefs';
 import styles from './Workspace.module.css';
+import { withUserPresetBody } from '@core/animation/animationPresets';
 
 export interface WorkspaceViewportProps {
   topLeft?: ReactNode;
@@ -554,6 +555,7 @@ export function WorkspaceViewport({
           // switch it flips) as one entry, addressed by name.
           void edit('Apply animation preset', {
             type: 'applyPreset', layers: [node.id], preset: payload.name, time: compTime(getPlayheadTime()),
+            ...withUserPresetBody(payload.name),
           });
         } else {
           useUIStore.getState().notify({ level: 'warning', message: 'Drop a motion preset onto a layer.', durationMs: 2400 });

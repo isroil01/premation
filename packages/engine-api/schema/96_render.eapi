@@ -386,6 +386,9 @@ struct RenderView {
   /// The viewer's channel (View ▸ Show Channel, viewport-only): red / green / blue / alpha shown as
   /// an opaque grey image on the final blit; rgbStraight shows the colour without its alpha. Absent = rgb.
   channel?: ChannelView = 21;
+  /// The viewer's exposure in stops (viewport-only; AE's Adjust Exposure): the linear working colour is scaled by 2^exposure before
+  /// the display transform. Absent = 0. Exports leave it off.
+  exposure?: f64 = 22;
 }
 
 /// A texture key the scene samples → the content it resolved to when the frame was rendered.

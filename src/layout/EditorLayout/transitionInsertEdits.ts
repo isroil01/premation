@@ -44,13 +44,26 @@ import { documentMirror } from '@stores/documentMirror';
  * (`pasteLayers` of the panels, which end up selected). Resolves to what was
  * applied, or null when nothing could be (a refusal is toasted).
  */
-export async function applyTransitionEdit(transId: string, label: string): Promise<ApplyTransitionResult | null> {
+export async function applyTransitionEdit(
+  transId: string,
+  label: string,
+  /**
+   * A timeline drop: the one layer it landed on, and the comp time the recipe
+   * starts at (its in-point for an entrance, its out-point minus the recipe's
+   * length for an exit). Absent: the selection, at the playhead.
+   */
+  at?: { layer: string; time: number },
+): Promise<ApplyTransitionResult | null> {
   const comp = activeInsertTarget()?.comp;
   const item = getTransitionItem(transId);
   if (!comp || !item) return null;
-  // Layer mode: the recipe keys the selected content layers' own tracks. (Not
+  // Layer mode: the recipe keys the target layers' own tracks. (Not
   // `addTransition`: these recipes are keyframe choreography on any layer,
   // not a cut transition between two bars.)
+  if (at) {
+    // A drop names its layer: never fall back to inserting a solid.
+    return item.solidOnly ? null : layerTransitionEdit(transId, label, [at.layer], at.time);
+  }
   if (!item.solidOnly && layerTargets().length > 0) {
     const keyed = await layerTransitionEdit(transId, label);
     if (keyed) return keyed;
@@ -143,11 +156,16 @@ async function layerFacts(targets: readonly string[], t0: number): Promise<Trans
  * what was keyed, or null when the recipe keyed nothing or the engine refused
  * (toasted).
  */
-async function layerTransitionEdit(transId: string, label: string): Promise<ApplyTransitionResult | null> {
+async function layerTransitionEdit(
+  transId: string,
+  label: string,
+  only?: readonly string[],
+  startAt?: number,
+): Promise<ApplyTransitionResult | null> {
   const item = getTransitionItem(transId);
-  const targets = layerTargets();
+  const targets = only ? [...only] : layerTargets();
   if (!item || targets.length === 0) return null;
-  const t0 = getPlayheadTime();
+  const t0 = startAt ?? getPlayheadTime();
   const comp = activeInsertTarget()?.comp;
   const settings = comp ? documentMirror().comp(comp)?.settings : undefined;
   const box: CompBox = { width: settings?.width || 1920, height: settings?.height || 1080 };

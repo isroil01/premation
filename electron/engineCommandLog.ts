@@ -38,6 +38,7 @@ export const CMD = {
   setActiveComposition: 807,
   setViewport: 808,
   closeViewport: 809,
+  setViewerLut: 815,
   startJob: 850,
   applyJobResult: 852,
 } as const;
@@ -49,7 +50,7 @@ export const CMD = {
  * again, or apply a cancelled / failed / still-held one.
  */
 const REPLAY_SKIP = new Set<number>([CMD.play, CMD.pause, CMD.step, CMD.startJob]);
-const LAST_ONLY = new Set<number>([CMD.seek, CMD.setActiveComposition, CMD.setPreviewQuality, CMD.setLoop]);
+const LAST_ONLY = new Set<number>([CMD.seek, CMD.setActiveComposition, CMD.setPreviewQuality, CMD.setLoop, CMD.setViewerLut]);
 
 export interface LoggedRequest {
   /** The encoded EngineMessage{request} as it was sent to the engine. */

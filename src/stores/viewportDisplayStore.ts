@@ -50,6 +50,15 @@ interface ViewportDisplayStore {
   displayMode: DisplayMode;
   snapToPixel: boolean;
   pixelAspectCorrection: boolean;
+  /**
+   * AE's Adjust Exposure (stops), the viewer only — never a render. Sent to
+   * the engine with the viewport (setViewport `exposure`); 0 = off.
+   */
+  exposure: number;
+  /** AE's Toggle Transparency Grid: a checkerboard where the comp is transparent (setViewport `transparencyGrid`). */
+  transparencyGrid: boolean;
+  setExposure: (stops: number) => void;
+  toggleTransparencyGrid: () => void;
   setHud: (on: boolean) => void;
   toggleHud: () => void;
   toggleHudStages: () => void;
@@ -67,6 +76,10 @@ export const useViewportDisplayStore = create<ViewportDisplayStore>((set, get) =
   displayMode: 'shaded',
   snapToPixel: loadFlag(SNAP_PIXEL_KEY, false),
   pixelAspectCorrection: false,
+  exposure: 0,
+  transparencyGrid: false,
+  setExposure: (stops) => set({ exposure: Number.isFinite(stops) ? Math.max(-40, Math.min(40, stops)) : 0 }),
+  toggleTransparencyGrid: () => set((s) => ({ transparencyGrid: !s.transparencyGrid })),
   setHud: (on) => { saveFlag(HUD_KEY, on); set({ hud: on }); },
   toggleHud: () => get().setHud(!get().hud),
   toggleHudStages: () => {
