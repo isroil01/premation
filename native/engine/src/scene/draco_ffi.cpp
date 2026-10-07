@@ -23,7 +23,7 @@ bool decode_draco(std::span<const std::uint8_t> bytes, DracoMesh& out, std::stri
   out.indices.reserve(static_cast<std::size_t>(mesh->num_faces()) * 3);
   for (draco::FaceIndex f(0); f < mesh->num_faces(); ++f) {
     const auto& face = mesh->face(f);
-    for (int k = 0; k < 3; ++k) out.indices.push_back(face[k].value());
+    for (std::size_t k = 0; k < 3; ++k) out.indices.push_back(face[k].value());
   }
   for (int a = 0; a < mesh->num_attributes(); ++a) {
     const draco::PointAttribute* att = mesh->attribute(a);
