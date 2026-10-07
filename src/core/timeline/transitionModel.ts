@@ -89,6 +89,9 @@ export const TRANSITION_KINDS: ReadonlyArray<TransitionKind> = [
 /** AE's default transition length, and what a double-click on a cut applies. */
 export const DEFAULT_TRANSITION_FRAMES = 12;
 
+/** A dip transition's colour when none is set (the engine's default: Dip to White). Data, not a theme colour. */
+export const DEFAULT_DIP_COLOR = '#ffffff';
+
 let seq = 0;
 export function newTransitionId(): string {
   seq += 1;

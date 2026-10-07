@@ -15,7 +15,7 @@ import { openModal } from '@stores/modalStore';
 import { documentMirror } from '@stores/documentMirror';
 import { compFps } from '@hooks/useMirror';
 import { flicksToSeconds } from '@motion/engine-api';
-import { TRANSITION_KINDS, TRANSITION_LABEL, type TransitionAlignment, type TransitionKind } from '@core/timeline/transitionModel';
+import { DEFAULT_DIP_COLOR, TRANSITION_KINDS, TRANSITION_LABEL, type TransitionAlignment, type TransitionKind } from '@core/timeline/transitionModel';
 import { TRANSITION_ALIGNMENTS, TRANSITION_ALIGNMENT_LABEL } from './transitionOverlay';
 import { setTransitionEdit } from './transitionEdits';
 import { cutTransitionEffect, cutTransitionEffects } from './cutTransitionEffects';
@@ -50,7 +50,7 @@ function TransitionSettingsBody({ id, leftNodeId, close }: BodyProps): JSX.Eleme
   const [alignment, setAlignment] = useState<TransitionAlignment>(() => t?.alignment ?? 'centred');
   const [angle, setAngle] = useState(() => t?.angle ?? 90);
   const [softness, setSoftness] = useState(() => t?.softness ?? 0);
-  const [color, setColor] = useState(() => t?.color ?? '#ffffff');
+  const [color, setColor] = useState(() => t?.color ?? DEFAULT_DIP_COLOR);
   const [ease, setEase] = useState<TransitionEase>(() => t?.ease ?? 'linear');
   const [error, setError] = useState<string | null>(null);
 
