@@ -25,6 +25,9 @@ import { getTime as playheadNow } from '@stores/playbackClockStore';
 import { usePlaybackClock } from '@layout/Timeline/usePlaybackClock';
 import { useTimelineKeys } from '@layout/Timeline/useTimelineKeys';
 import { documentMirror } from '@stores/documentMirror';
+import { usePropertySelectionStore } from '@stores/propertySelectionStore';
+import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
+import { resolveSelectionKey } from '@core/mirror/keySelection';
 import { fetchMemberTracks, memberTracksNow } from '@stores/memberTracks';
 import { setWorkArea as setTimelineWorkArea } from '@layout/Timeline/timelineEdits';
 import { addKeyframesForSelectionEdit } from '@layout/Menu/appEdits';
@@ -209,6 +212,8 @@ function EditorShellInner(): JSX.Element {
     //   M / F / MM → mask shape / mask feather / all mask properties
     //   E   → effects
     //   L / LL → audio levels / waveform
+    //   SS  → only the SELECTED properties (or, with none selected, the
+    //         properties of the selected keyframes) — AE's SS
     //   Shift+<key> → ADD that property to what is already revealed
     // Each list names every row id that property can appear as: the raw engine
     // props, the merged 'Position' pseudo-row, and the static '__static:*'
@@ -240,6 +245,7 @@ function EditorShellInner(): JSX.Element {
     const DOUBLE_TAP_MS = 400;
     let lastL = 0;
     let lastM = 0;
+    let lastS = 0;
 
     /**
      * Rows of the engine's AE row projection (`getTimelineRows`) — the model only builds rows for expanded
@@ -332,6 +338,36 @@ function EditorShellInner(): JSX.Element {
         // F: the per-path `mask.<pathId>.feather` rows (plus the shape row).
         : key === 'f' ? allMaskRows(sel).filter((p) => p === MASK_ANIM_PROP || p.endsWith('.feather'))
         : REVEAL[key]!;
+      if (key === 's' && !e.shiftKey) {
+        // AE's SS: a second S within the double-tap window shows only the
+        // selected properties — the property rows selected in the timeline,
+        // else the rows of the selected keyframes — on their layers.
+        const now = Date.now();
+        if (now - lastS < DOUBLE_TAP_MS) {
+          lastS = 0;
+          const m = documentMirror();
+          const picked: Array<{ nodeId: string; prop: string }> = [...usePropertySelectionStore.getState().entries];
+          if (picked.length === 0) {
+            for (const kfId of useKeyframeSelectionStore.getState().ids) {
+              const hit = resolveSelectionKey(m, kfId);
+              if (hit) picked.push({ nodeId: hit.sel.layer, prop: hit.rowProp });
+            }
+          }
+          if (picked.length > 0) {
+            e.preventDefault();
+            const soloRows = new Set<string>();
+            for (const p of picked) {
+              const separated = m.property(p.nodeId, 'transform/position')?.separated === true;
+              soloRows.add(!separated && (p.prop === 'x' || p.prop === 'y' || p.prop === 'z') ? POSITION_PSEUDO_PROP : p.prop);
+            }
+            setRevealFilter([...soloRows]);
+            setExpandedIds((cur) => [...new Set([...cur, ...picked.map((p) => p.nodeId)])]);
+            return;
+          }
+        } else {
+          lastS = now;
+        }
+      }
       if (key === 'm' && !e.shiftKey) {
         // AE's MM: a second M within the double-tap window reveals every mask
         // property; a third falls back to the shape alone.

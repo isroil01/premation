@@ -26,7 +26,8 @@ import { extraColumnValue, type TimelineExtraColumn } from './timelineColumns';
 import { mirrorStretchPercent } from '@core/mirror/motionAssist';
 import { useTimelineNameColumnStore } from '@stores/timelineNameColumnStore';
 import styles from './Timeline.module.css';
-import { MATTE_OPTIONS, MATTE_SHORT_LABEL, matteOptionId, applyMatteOption } from '@components/MatteControl/matteMenu';
+import { MATTE_OPTIONS, MATTE_SHORT_LABEL, matteOptionId, applyMatteOption, setMatteSource } from '@components/MatteControl/matteMenu';
+import { readMatte } from '@core/effects/matte';
 import { areRowPropsEqual } from './rowMemo';
 import { openContextMenu, type ContextMenuItem } from '@stores/contextMenuStore';
 import { LABEL_COLORS } from '@core/scene/labelColor';
@@ -235,7 +236,11 @@ export const TrackHeader = memo(function TrackHeader({
   // Option id + label come from the SHARED menu, not a second hardcoded copy of
   // the four labels. This row and the inspector used to each own their own list.
   const currentMatteOption = matteOptionId(track.matteMode);
-  const currentMatteLabel = MATTE_SHORT_LABEL[currentMatteOption] ?? 'None';
+  // An explicit matte source (any layer, AE 2023+) names itself in the cell;
+  // without one the matte is the layer above, as it always was.
+  const matteSourceId = readMatte(track.matteMode)?.sourceId;
+  const matteSourceName = matteSourceId ? (documentMirror().layer(matteSourceId)?.name ?? null) : null;
+  const currentMatteLabel = `${MATTE_SHORT_LABEL[currentMatteOption] ?? 'None'}${matteSourceName ? ` · ${matteSourceName}` : ''}`;
 
   // Built when the menu OPENS, not per render: the list names every layer in
   // the comp, and the walk that collects it ran for every visible row on
@@ -669,20 +674,40 @@ export const TrackHeader = memo(function TrackHeader({
         </div>
 
         <div className={styles.matteCol} onClick={(e) => e.stopPropagation()}>
+          {/* AE's track-matte pick-whip: drag to any layer to matte with it
+              (an alpha matte when none was set). The dropdown is the mode. */}
+          <PickWhip
+            label="Track matte pick-whip"
+            accept={(target) => target.nodeId !== track.id && !!documentMirror().layer(target.nodeId)}
+            onPick={(target) => onMatteChange?.(setMatteSource(track.matteMode ?? { mode: 'alpha', inverted: false }, target.nodeId))}
+          />
           <Dropdown
             placement="bottom-start"
             trigger={
-              <button type="button" className={styles.timelineSelectTrigger} aria-label="Track Matte">
+              <button type="button" className={styles.timelineSelectTrigger} aria-label="Track Matte" title={matteSourceName ? `Matte: ${matteSourceName}` : 'Track matte (the layer above unless one is picked)'}>
                 {currentMatteLabel}
               </button>
             }
-            items={MATTE_OPTIONS.map((m) => ({
-              type: 'item',
-              id: m.id,
-              label: MATTE_SHORT_LABEL[m.id] ?? m.label,
-              icon: m.id === currentMatteOption ? ('check' as const) : undefined,
-              onSelect: () => onMatteChange?.(applyMatteOption(track.matteMode, m.id)),
-            }))}
+            items={[
+              ...MATTE_OPTIONS.map((m) => ({
+                type: 'item' as const,
+                id: m.id,
+                label: MATTE_SHORT_LABEL[m.id] ?? m.label,
+                icon: m.id === currentMatteOption ? ('check' as const) : undefined,
+                onSelect: () => onMatteChange?.(applyMatteOption(track.matteMode, m.id)),
+              })),
+              ...(matteSourceId
+                ? [
+                    { type: 'separator' as const },
+                    {
+                      type: 'item' as const,
+                      id: 'matte-source-above',
+                      label: 'Use the Layer Above',
+                      onSelect: () => onMatteChange?.(setMatteSource(track.matteMode, undefined)),
+                    },
+                  ]
+                : []),
+            ]}
           />
         </div>
 

@@ -49,6 +49,8 @@ import {
   type TransitionBox,
 } from './transitionOverlay';
 import { installTransitionCommands } from './transitionCommands';
+import { POSITION_PSEUDO_PROP } from '@motion/animation';
+import { edit } from '@core/engine/uiEdits';
 import { wipeLabel } from './cutTransitionEffects';
 import { openTransitionSettings } from './TransitionSettingsDialog';
 import { transitionViewsOf } from '@core/mirror/transitions';
@@ -2486,6 +2488,22 @@ function Timeline({
                           void resetPropertiesEdit(row.track.id, props, activeCompSize(), `Reset ${row.prop.label}`);
                         },
                       },
+                      ...(props.some((p) => p === 'x' || p === 'y' || p === POSITION_PSEUDO_PROP)
+                        ? [(() => {
+                            // AE's Separate Dimensions (right-click on Position): X / Y / Z
+                            // become their own rows, keyframes and graphs. One undo step.
+                            const separated = documentMirror().property(row.track.id, 'transform/position')?.separated === true;
+                            return {
+                              id: 'separate-dimensions',
+                              label: separated ? 'Separate Dimensions ✓' : 'Separate Dimensions',
+                              onSelect: () => {
+                                void edit(separated ? 'Join Dimensions' : 'Separate Dimensions', {
+                                  type: 'setDimensionsSeparated', layer: row.track.id, path: 'transform/position', separated: !separated,
+                                });
+                              },
+                            };
+                          })()]
+                        : []),
                       { id: 'expr-sep', separator: true },
                       // AE's Add / Enable-Disable / Remove Expression — the same
                       // helper (and undo step) as the inspector's `=` toggle.
