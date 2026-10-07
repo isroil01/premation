@@ -1,14 +1,18 @@
 /**
- * The composition switches After Effects puts in its timeline header
- * (2026-10-07): Hide Shy Layers, Enable Motion Blur (the comp's master switch
- * for every layer with its Motion Blur switch on) and Draft 3D. Each is a
- * toggle lit while on; each was only reachable from a menu before.
+ * The composition switches in the timeline header (2026-10-07): Hide Shy
+ * Layers and Enable Motion Blur — AE's two — and Auto-Keyframe, the timeline's
+ * recording mode (AE keeps it in the Timeline panel menu; here it needs a
+ * lit state you can see while you drag, so it is a switch). Each is a toggle
+ * lit while on.
+ *
+ * Draft 3D is not here: it is the Composition panel's button (AE 2022+, the
+ * viewer's 3D cluster) and a Preview menu row.
  */
 
 import { Icon } from '@components/Icon';
 import { cn } from '@utils/cn';
 import { useUIStore } from '@stores/uiStore';
-import { useGuidesStore } from '@stores/guidesStore';
+import { usePreferenceStore } from '@stores/preferenceStore';
 import { documentMirror } from '@stores/documentMirror';
 import { activeCompIdNow } from '@hooks/useMirror';
 import { useActiveMotionBlur } from '@hooks/useMirrorFrame';
@@ -18,8 +22,7 @@ import styles from './BottomTimeline.module.css';
 export function TimelineCompSwitches(): JSX.Element {
   const globalShy = useUIStore((s) => s.globalShy);
   const setGlobalShy = useUIStore((s) => s.setGlobalShy);
-  const draft3d = useGuidesStore((s) => s.draft3d);
-  const toggleDraft3d = useGuidesStore((s) => s.toggleDraft3d);
+  const autoKeyframe = usePreferenceStore((s) => s.timelineAutoKeyframe);
   const motionBlur = useActiveMotionBlur().enabled === true;
   const setMotionBlur = (on: boolean): void => {
     // `setCompositionSettings{motionBlur}` (B4), as the Preview menu writes it.
@@ -52,13 +55,13 @@ export function TimelineCompSwitches(): JSX.Element {
       </button>
       <button
         type="button"
-        className={cn(styles.compSwitch, draft3d && styles.compSwitchOn)}
-        aria-pressed={draft3d}
-        aria-label="Draft 3D"
-        title={draft3d ? 'Draft 3D on — click for full-quality 3D' : 'Draft 3D: fast preview, skips heavy lights and shadows'}
-        onClick={() => toggleDraft3d()}
+        className={cn(styles.compSwitch, autoKeyframe && styles.compSwitchOn, autoKeyframe && styles.compSwitchRec)}
+        aria-pressed={autoKeyframe}
+        aria-label="Auto-Keyframe mode"
+        title={autoKeyframe ? 'Auto-Keyframe is ON — every change sets a keyframe (click to turn off)' : 'Auto-Keyframe: set a keyframe whenever a property changes'}
+        onClick={() => usePreferenceStore.getState().set('timelineAutoKeyframe', !autoKeyframe)}
       >
-        <Icon name="draft-3d" size="sm" />
+        <Icon name="stopwatch" size="sm" />
       </button>
     </span>
   );

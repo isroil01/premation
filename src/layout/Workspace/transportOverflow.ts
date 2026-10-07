@@ -13,12 +13,14 @@
  *
  * ## One ladder, two kinds of rung
  *
- * The viewport's DISPLAY controls (layout, channel, resolution, preview, LUT,
- * overlays, snapshot + compare, display mode, bookmarks, pop out) moved down
- * from the tabs row into this bar, and they brought their own shed order with
- * them. They go first, one control per level, right to left — they are the
- * controls you change least often and every one of them is a menu already —
- * and only once all ten are gone does the bar start on its own three groups.
+ * The viewport's DISPLAY controls (3D view + layout, snapshot + compare,
+ * resolution, preview, transparency grid, overlays, channel, exposure) moved
+ * down from the tabs row into this bar, and they brought their own shed order
+ * with them. They go first, one control per level — the controls you change
+ * least often first — and only once all of them are gone does the bar shed its
+ * zoom field. (Viewer LUT, display mode, camera bookmarks and pop out are not
+ * in the row: they are rows of the Preview menu and View ▸ Viewport, as in
+ * AE's Composition panel, 2026-10-07.)
  * `useTransportDemote` walks the whole ladder as one number; the two halves
  * are read back out of it with `displayLevelFor` and `isDemoted`.
  */
@@ -29,15 +31,13 @@
  * so they hold on longest.
  */
 export const DISPLAY_DEMOTE_ORDER = [
-  'popout',
-  'bookmarks',
-  'displayMode',
+  'exposure',
+  'transparency',
   'compare',
-  'lut',
   'overlays',
+  'channel',
   'preview',
   'resolution',
-  'channel',
   'layout',
 ] as const;
 
@@ -50,16 +50,14 @@ export function isDisplayShed(group: DisplayGroup, level: number): boolean {
 
 /**
  * The bar's OWN groups, in the order they leave once the display controls
- * have all gone — least useful first.
- *
- * Each entry is a group, not a single button: splitting the three clip edits
- * across a row and a menu would be worse than having them in either one.
+ * have all gone. Only the zoom field is left: loop and auto-keyframe are the
+ * Preview panel's and the timeline's (2026-10-07).
  */
-export const TRANSPORT_GROUP_ORDER = ['loopMarker', 'zoom'] as const;
+export const TRANSPORT_GROUP_ORDER = ['zoom'] as const;
 
 export type TransportGroup = (typeof TRANSPORT_GROUP_ORDER)[number];
 
-/** The whole ladder: every display control, then the bar's own two groups. */
+/** The whole ladder: every display control, then the bar's own group. */
 export const TRANSPORT_DEMOTE_ORDER = [...DISPLAY_DEMOTE_ORDER, ...TRANSPORT_GROUP_ORDER] as const;
 
 export type TransportRung = (typeof TRANSPORT_DEMOTE_ORDER)[number];
@@ -70,7 +68,7 @@ export function isDemoted(group: TransportRung, level: number): boolean {
 }
 
 /**
- * The display controls' own level, read out of the bar's — the first ten rungs
+ * The display controls' own level, read out of the bar's — the first rungs
  * of the ladder are theirs, so the bar's level maps straight onto theirs until
  * it runs past them.
  */

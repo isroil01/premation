@@ -16,10 +16,16 @@
  * and the panel menu, nothing else. Every control here is the only one of
  * its kind in the app.
  *
- * ## The set, left to right
+ * ## The set
  *
- *   Layout · Channel · Resolution · Preview · LUT · Overlays · Snapshot +
- *   Compare · Display mode · Bookmarks · Pop out
+ *   Left of play: 3D View · Layout · Snapshot + Compare.
+ *   Right of play: Resolution · Preview · Transparency Grid · Overlays ·
+ *   Channel · Exposure — AE's Composition panel footer, in its order.
+ *
+ * Viewer LUT and the display mode are rows of the Preview menu (and View ▸
+ * Viewport); camera bookmarks are View ▸ Viewport rows and Ctrl+Alt+1…9; pop
+ * out is a row of the Composition panel menu. They were buttons here too,
+ * which made a 24-button row (2026-10-07).
  *
  * Overlays is new and REPLACES the loose toggles: grid, rulers, safe areas,
  * smart guides, guides (+ lock / clear), motion-path dots, HUD, snap to
@@ -28,8 +34,8 @@
  * ## Shedding
  *
  * The transport bar measures itself (`useTransportDemote`) and its ladder
- * (`TRANSPORT_DEMOTE_ORDER`) starts with these ten controls, shed from the
- * RIGHT one per level in `DISPLAY_DEMOTE_ORDER`, before the bar's own groups.
+ * (`TRANSPORT_DEMOTE_ORDER`) starts with these controls, shed one per level
+ * in `DISPLAY_DEMOTE_ORDER`, before the bar's own zoom field.
  * A shed dropdown becomes a submenu with the same rows; a shed button becomes
  * an item. Nothing is ever merely hidden. The rows go into the BAR's `⋯`
  * menu — `displayOverflowItems` builds them, `TransportBar` renders them —
@@ -43,11 +49,9 @@
  * palette entry, the menu row and this button are the same code path.
  */
 
-import { forwardRef, useMemo } from 'react';
-import { useProjectStore } from '@stores/projectStore';
+import { forwardRef, useCallback, useEffect, useRef, useState } from 'react';
 import { Icon, type IconName } from '@components/Icon';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
-import { Kbd } from '@components/Kbd';
 import { cn } from '@utils/cn';
 import { getCommandSystem } from '@core/commands/CommandSystem';
 import { asCommandId } from '@app-types/common';
@@ -60,20 +64,8 @@ import {
   RESOLUTION_PERCENT,
   type PreviewResolution,
 } from '@stores/renderQualityStore';
-import { useViewerLutStore } from '@stores/viewerLutStore';
 import { useCompareStore, COMPARE_MODE_LABEL, type CompareMode } from '@stores/compareStore';
-import {
-  useViewportDisplayStore,
-  DISPLAY_MODE_LABEL,
-  type DisplayMode,
-} from '@stores/viewportDisplayStore';
-import {
-  BOOKMARK_SLOTS,
-  bookmarksForActiveComp,
-  recallCameraBookmark,
-  removeCameraBookmark,
-  saveCameraBookmark,
-} from '@core/workspace/cameraBookmarks';
+import { useViewportDisplayStore } from '@stores/viewportDisplayStore';
 import { useActiveCompRootId } from '@hooks/useMirrorFrame';
 import {
   PreviewMenu,
@@ -88,7 +80,7 @@ import { isDisplayShed, type DisplayGroup } from './transportOverflow';
 import styles from './ViewportDisplayControls.module.css';
 
 // The ladder lives with the transport bar's, in `transportOverflow.ts` — it is
-// the first ten rungs of that one now. Re-exported so importers keep reading
+// the first rungs of that one now. Re-exported so importers keep reading
 // it from the component that walks it.
 export { DISPLAY_DEMOTE_ORDER, isDisplayShed, type DisplayGroup } from './transportOverflow';
 
@@ -101,7 +93,7 @@ function run(id: string): void {
   void getCommandSystem().execute(asCommandId(id));
 }
 
-/** Open the viewport in its own window. Also reachable from the panel grip menu. */
+/** Open the viewport in its own window — the Composition panel menu's Pop Out row. */
 export function popOutViewport(): void {
   // Through the desktop's pop-out channel, as panels pop out: a `window.open`
   // child is not a window main knows, so the engine had nowhere to send its
@@ -140,12 +132,6 @@ const LAYOUT_ICON: Record<ViewLayout, IconName> = {
   '1': 'square',
   '2': 'panel-left',
   '4': 'grid',
-};
-
-const DISPLAY_ICON: Record<DisplayMode, IconName> = {
-  shaded: 'solid',
-  wireframe: 'cube',
-  bounds: 'frame',
 };
 
 /** The user's guides, or none when the engine is not up (tests, the popout). */
@@ -199,46 +185,101 @@ const Trigger = forwardRef<HTMLButtonElement, TriggerProps>(function Trigger(
   );
 });
 
-/** The bookmark rows: nine slots, recall by click, save with Shift, clear with Alt. */
-function useBookmarkItems(): { items: DropdownItem[]; count: number } {
-  // Subscribed to the two things that change the answer — the bookmark table
-  // and which comp is active — so a save from the keyboard or a comp switch
-  // re-lists without a manual refresh.
-  const table = useGuidesStore((s) => s.cameraBookmarks);
-  const activeTabId = useProjectStore((s) => s.activeTabId);
-  const bookmarks = useMemo(() => {
-    void table; void activeTabId;
-    return bookmarksForActiveComp();
-  }, [table, activeTabId]);
-  const bySlot = useMemo(() => new Map(bookmarks.map((b) => [b.slot, b])), [bookmarks]);
+/** Exposure as AE's footer prints it: signed, one decimal. */
+export function formatStops(stops: number): string {
+  return `${stops > 0 ? '+' : ''}${stops.toFixed(1)}`;
+}
 
-  const items: DropdownItem[] = [
-    { type: 'label', label: 'Ctrl+Alt+1…9 recalls · add Shift to save' },
-    ...BOOKMARK_SLOTS.map<DropdownItem>((n) => {
-      const b = bySlot.get(n);
-      return {
-        type: 'item',
-        id: `vd-bookmark-${n}`,
-        label: (
-          <span className={styles.slotRow}>
-            <Kbd chord={`Ctrl+Alt+${n}`} size="sm" className={styles.slotKey} />
-            <span className={b ? styles.slotName : `${styles.slotName} ${styles.slotEmpty}`}>
-              {b ? b.name : 'Empty — Shift-click to save this view'}
-            </span>
-          </span>
-        ),
-        // Shift saves, Alt clears, a plain click recalls — the same three
-        // gestures the keyboard has, so the popover teaches the keys.
-        onSelect: (mods) => {
-          if (mods.shiftKey) saveCameraBookmark(n);
-          else if (mods.altKey && b) removeCameraBookmark(n);
-          else if (b) recallCameraBookmark(n);
-          else saveCameraBookmark(n);
-        },
-      };
-    }),
-  ];
-  return { items, count: bookmarks.length };
+/** The exposure presets, for the overflow menu when the field is shed. */
+function exposureMenuItems(m: Pick<ViewportDisplayModel, 'exposure' | 'setExposure'>): DropdownItem[] {
+  return [-2, -1, 0, 1, 2].map<DropdownItem>((stops) => ({
+    type: 'checkbox',
+    id: `vd-exposure-${stops}`,
+    label: stops === 0 ? 'Reset Exposure (0.0)' : formatStops(stops),
+    checked: Math.abs(m.exposure - stops) < 0.05,
+    onChange: () => m.setExposure(stops),
+  }));
+}
+
+/**
+ * AE's Adjust Exposure: the icon resets to 0 (lit while it is not 0), the value
+ * scrubs by dragging (0.1 stop per pixel) or is typed after a double-click.
+ * The viewer only — no render, no export, no undo (setViewport `exposure`).
+ */
+function ExposureControl({ stops, onChange }: { stops: number; onChange: (stops: number) => void }): JSX.Element {
+  const [editing, setEditing] = useState(false);
+  const [raw, setRaw] = useState('');
+  const stopDrag = useRef<(() => void) | null>(null);
+  useEffect(() => () => stopDrag.current?.(), []);
+  const onPointerDown = useCallback((e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const startX = e.clientX;
+    const startV = stops;
+    const move = (me: PointerEvent): void => onChange(Math.round((startV + (me.clientX - startX) * 0.1) * 10) / 10);
+    const up = (): void => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      stopDrag.current = null;
+    };
+    stopDrag.current = up;
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  }, [stops, onChange]);
+  const commit = (): void => {
+    const v = parseFloat(raw);
+    if (Number.isFinite(v)) onChange(v);
+    setEditing(false);
+  };
+  return (
+    <span className={styles.exposure} role="group" aria-label="Exposure">
+      <button
+        type="button"
+        className={cn(styles.control, stops !== 0 && styles.controlActive)}
+        aria-label={stops !== 0 ? `Reset Exposure (now ${formatStops(stops)})` : 'Adjust Exposure'}
+        title={stops !== 0 ? `Exposure ${formatStops(stops)} stops — click to reset (viewer only)` : 'Adjust Exposure — drag the value; viewer only, never in output'}
+        onClick={() => onChange(0)}
+      >
+        <Icon name="theme" size="sm" />
+      </button>
+      {editing ? (
+        <input
+          className={styles.exposureInput}
+          aria-label="Exposure in stops"
+          value={raw}
+          autoFocus
+          onChange={(e) => setRaw(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commit();
+            if (e.key === 'Escape') setEditing(false);
+          }}
+        />
+      ) : (
+        <span
+          className={styles.exposureValue}
+          role="spinbutton"
+          aria-label="Exposure in stops"
+          aria-valuenow={stops}
+          aria-valuemin={-40}
+          aria-valuemax={40}
+          tabIndex={0}
+          title="Exposure (stops) · drag or double-click to type"
+          onPointerDown={onPointerDown}
+          onDoubleClick={() => {
+            setRaw(stops.toFixed(1));
+            setEditing(true);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowUp') onChange(Math.round((stops + 0.1) * 10) / 10);
+            if (e.key === 'ArrowDown') onChange(Math.round((stops - 0.1) * 10) / 10);
+          }}
+        >
+          {formatStops(stops)}
+        </span>
+      )}
+    </span>
+  );
 }
 
 /**
@@ -261,18 +302,18 @@ export interface ViewportDisplayModel {
   resolution: PreviewResolution;
   resolutionItems: DropdownItem[];
   previewItems: DropdownItem[];
-  lut: boolean;
-  lutName: string | null;
-  lutItems: DropdownItem[];
+  /** The Preview menu's trigger is lit: something cheaper than the real frame is on. */
+  previewDegraded: boolean;
   overlayItems: DropdownItem[];
   overlaysActive: boolean;
   compareVisible: boolean;
   compareMode: CompareMode;
   compareItems: DropdownItem[];
-  displayMode: DisplayMode;
-  displayItems: DropdownItem[];
-  bookmarkItems: DropdownItem[];
-  bookmarkCount: number;
+  /** AE's Adjust Exposure (stops, viewer only) and Toggle Transparency Grid. */
+  exposure: number;
+  setExposure: (stops: number) => void;
+  transparencyGrid: boolean;
+  toggleTransparencyGrid: () => void;
 }
 
 export function useViewportDisplayModel(): ViewportDisplayModel {
@@ -337,7 +378,7 @@ export function useViewportDisplayModel(): ViewportDisplayModel {
     onChange: () => setChannel(c),
   }));
 
-  // ── Resolution — the only resolution control in the app ────────────
+  // ── Resolution (also the Preview panel's) ──────────────────────────
   const resolution = useRenderQualityStore((s) => s.resolution);
   const setResolution = useRenderQualityStore((s) => s.setResolution);
   const resolutionItems = ([1, 2, 3, 4] as PreviewResolution[]).map<DropdownItem>((r) => ({
@@ -350,17 +391,6 @@ export function useViewportDisplayModel(): ViewportDisplayModel {
 
   // ── Preview ────────────────────────────────────────────────────────
   const preview = usePreviewMenuItems();
-
-  // ── Viewer LUT ─────────────────────────────────────────────────────
-  const lut = useViewerLutStore((s) => s.lut);
-  const lutName = useViewerLutStore((s) => s.name);
-  const lutItems: DropdownItem[] = [
-    { type: 'label', label: lut ? (lutName ?? 'Viewer LUT loaded') : 'No viewer LUT' },
-    { type: 'item', id: 'vd-lut-load', label: 'Load .cube LUT…', icon: 'upload', onSelect: () => run(VIEWPORT_COMMAND_IDS.viewerLutLoad) },
-    { type: 'item', id: 'vd-lut-clear', label: 'Clear Viewer LUT', disabled: !lut, onSelect: () => run(VIEWPORT_COMMAND_IDS.viewerLutClear) },
-    { type: 'separator' },
-    { type: 'label', label: 'A monitor look for this viewport only — never in output.' },
-  ];
 
   // ── Overlays ───────────────────────────────────────────────────────
   const grid = useGuidesStore((s) => s.grid);
@@ -484,18 +514,11 @@ export function useViewportDisplayModel(): ViewportDisplayModel {
     { type: 'item', id: 'vd-cmp-clear', label: `Clear ${snapshotCount} Snapshot${snapshotCount === 1 ? '' : 's'}`, disabled: snapshotCount === 0, onSelect: () => run(VIEWPORT_COMMAND_IDS.compareClear) },
   ];
 
-  // ── Display mode ───────────────────────────────────────────────────
-  const displayMode = useViewportDisplayStore((s) => s.displayMode);
-  const displayItems = (Object.keys(DISPLAY_MODE_LABEL) as DisplayMode[]).map<DropdownItem>((m) => ({
-    type: 'checkbox',
-    id: `vd-disp-${m}`,
-    label: DISPLAY_MODE_LABEL[m],
-    checked: displayMode === m,
-    onChange: () => run(VIEWPORT_COMMAND_IDS.displayMode(m)),
-  }));
-
-  // ── Camera bookmarks ───────────────────────────────────────────────
-  const bookmarks = useBookmarkItems();
+  // ── Exposure / transparency grid (viewer only, AE's footer) ────────
+  const exposure = useViewportDisplayStore((s) => s.exposure);
+  const setExposure = useViewportDisplayStore((s) => s.setExposure);
+  const transparencyGrid = useViewportDisplayStore((s) => s.transparencyGrid);
+  const toggleTransparencyGrid = useViewportDisplayStore((s) => s.toggleTransparencyGrid);
 
   return {
     viewLayout,
@@ -507,18 +530,16 @@ export function useViewportDisplayModel(): ViewportDisplayModel {
     resolution,
     resolutionItems,
     previewItems: preview.items,
-    lut: !!lut,
-    lutName: lutName ?? null,
-    lutItems,
+    previewDegraded: preview.degraded,
     overlayItems,
     overlaysActive,
     compareVisible,
     compareMode,
     compareItems,
-    displayMode,
-    displayItems,
-    bookmarkItems: bookmarks.items,
-    bookmarkCount: bookmarks.count,
+    exposure,
+    setExposure,
+    transparencyGrid,
+    toggleTransparencyGrid,
   };
 }
 
@@ -536,15 +557,13 @@ export function displayOverflowItems(m: ViewportDisplayModel, level: number): Dr
   if (shed('channel')) overflow.push({ type: 'item', id: 'vd-of-channel', icon: CHANNEL_ICON[m.channel], label: `Channel: ${CHANNEL_LABEL[m.channel]}`, submenu: m.channelItems });
   if (shed('resolution')) overflow.push({ type: 'item', id: 'vd-of-resolution', label: `Resolution: ${RESOLUTION_LABELS[m.resolution]}`, submenu: m.resolutionItems });
   if (shed('preview')) overflow.push({ type: 'item', id: 'vd-of-preview', icon: 'tv', label: 'Preview', submenu: m.previewItems });
-  if (shed('lut')) overflow.push({ type: 'item', id: 'vd-of-lut', icon: 'sliders-h', label: 'Viewer LUT', submenu: m.lutItems });
+  if (shed('transparency')) overflow.push({ type: 'checkbox', id: 'vd-of-transparency', label: 'Transparency Grid', checked: m.transparencyGrid, onChange: m.toggleTransparencyGrid });
   if (shed('overlays')) overflow.push({ type: 'item', id: 'vd-of-overlays', icon: 'grid', label: 'Overlays', submenu: m.overlayItems });
+  if (shed('exposure')) overflow.push({ type: 'item', id: 'vd-of-exposure', icon: 'theme', label: `Exposure: ${formatStops(m.exposure)}`, submenu: exposureMenuItems(m) });
   if (shed('compare')) {
     overflow.push({ type: 'item', id: 'vd-of-snapshot', icon: 'camera', label: 'Take Snapshot', shortcut: 'F5', onSelect: () => run(VIEWPORT_COMMAND_IDS.snapshot) });
     overflow.push({ type: 'item', id: 'vd-of-compare', icon: 'wipe', label: 'Compare', submenu: m.compareItems });
   }
-  if (shed('displayMode')) overflow.push({ type: 'item', id: 'vd-of-display', icon: DISPLAY_ICON[m.displayMode], label: `Display: ${DISPLAY_MODE_LABEL[m.displayMode]}`, submenu: m.displayItems });
-  if (shed('bookmarks')) overflow.push({ type: 'item', id: 'vd-of-bookmarks', icon: 'push-pin', label: 'Camera Bookmarks', submenu: m.bookmarkItems });
-  if (shed('popout')) overflow.push({ type: 'item', id: 'vd-of-popout', icon: 'pop-out', label: 'Pop Out Viewport', onSelect: popOutViewport });
   return overflow;
 }
 
@@ -628,27 +647,6 @@ export function ViewportDisplayControlsView({
 
       {showRight && (
         <>
-          {!shed('overlays') && (
-            <Dropdown
-              placement="top-end"
-              trigger={<Trigger icon="grid" label="Overlays — grid, rulers, guides, HUD, overlay opacity" active={m.overlaysActive} chevron />}
-              items={m.overlayItems}
-            />
-          )}
-          {!shed('displayMode') && (
-            <Dropdown
-              placement="top-end"
-              trigger={<Trigger icon={DISPLAY_ICON[m.displayMode]} label={`Display mode: ${DISPLAY_MODE_LABEL[m.displayMode]}`} active={m.displayMode !== 'shaded'} />}
-              items={m.displayItems}
-            />
-          )}
-          {!shed('channel') && (
-            <Dropdown
-              placement="top-end"
-              trigger={<Trigger icon={CHANNEL_ICON[m.channel]} text={CHANNEL_LABEL[m.channel]} label={`Show channel: ${CHANNEL_LABEL[m.channel]}`} active={m.channel !== 'rgb'} />}
-              items={m.channelItems}
-            />
-          )}
           {!shed('resolution') && (
             <Dropdown
               placement="top-end"
@@ -659,23 +657,33 @@ export function ViewportDisplayControlsView({
           {!shed('preview') && (
             <PreviewMenu className={styles.control} activeClassName={cn(styles.control, styles.controlActive)} placement="top-end" />
           )}
-          {!shed('lut') && (
+          {!shed('transparency') && (
+            <button
+              type="button"
+              className={cn(styles.control, m.transparencyGrid && styles.controlActive)}
+              aria-label="Toggle Transparency Grid"
+              aria-pressed={m.transparencyGrid}
+              title={m.transparencyGrid ? 'Transparency Grid: on — transparent areas show a checkerboard' : 'Transparency Grid: off — transparent areas show the background colour'}
+              onClick={m.toggleTransparencyGrid}
+            >
+              <Icon name="mask-square" size="sm" />
+            </button>
+          )}
+          {!shed('overlays') && (
             <Dropdown
               placement="top-end"
-              trigger={<Trigger icon="sliders-h" label={m.lut ? `Viewer LUT: ${m.lutName ?? 'loaded'}` : 'Viewer LUT'} active={m.lut} />}
-              items={m.lutItems}
+              trigger={<Trigger icon="grid" label="Overlays — grid, rulers, guides, HUD, overlay opacity" active={m.overlaysActive} chevron />}
+              items={m.overlayItems}
             />
           )}
-          {!shed('bookmarks') && (
+          {!shed('channel') && (
             <Dropdown
               placement="top-end"
-              trigger={<Trigger icon="push-pin" label={`Camera bookmarks (${m.bookmarkCount} saved)`} active={m.bookmarkCount > 0} />}
-              items={m.bookmarkItems}
+              trigger={<Trigger icon={CHANNEL_ICON[m.channel]} text={CHANNEL_LABEL[m.channel]} label={`Show channel: ${CHANNEL_LABEL[m.channel]}`} active={m.channel !== 'rgb'} />}
+              items={m.channelItems}
             />
           )}
-          {!shed('popout') && (
-            <Trigger icon="pop-out" label="Pop out the viewport preview into its own window" onClick={popOutViewport} />
-          )}
+          {!shed('exposure') && <ExposureControl stops={m.exposure} onChange={m.setExposure} />}
           {ownOverflow.length > 0 && (
             <Dropdown
               placement="top-end"

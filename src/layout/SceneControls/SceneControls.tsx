@@ -5,10 +5,10 @@
  * manipulates, it does not create.
  *
  * Deliberately NOT here (each had exactly one other, better home):
- *  - Free/Fixed workspace lock → ViewportTools, in the timeline's tool row.
+ *  - Free/Fixed workspace lock → the lock button in the Composition tab
+ *    strip (`Tabs/EditorTabs.tsx`).
  *  - Insert camera / light / cube / sphere / cylinder / 3D text → the TopNav
  *    "New layer" dropdown, the single home for creating layers.
- *  - "CPU fallback" badge → ViewportTools, in the timeline's tool row.
  *
  * AE'S TOOLBAR (2026-10-07): the camera tools and the gizmo modes are each one
  * flyout, as AE's are; the axis space is AE's three Local / World / View

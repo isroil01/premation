@@ -128,26 +128,14 @@ const PEN_TOOLS: ToolDef[] = [
  * The Knife, appended to the Pen flyout — it EDITS an outline rather than
  * drawing one, which is why it sits with the pen tools and not the shapes.
  *
- * Deliberately NOT an entry in `PEN_TOOLS`. `toolCommands.test.ts` walks that
- * list and requires a matching `tool.<id>` in `buildToolCommands` — the check
- * that keeps every toolbar tool rebindable from Customize… and findable in the
- * palette — and registering `tool.knife` there is outside this change. Listing
- * the Knife separately keeps that guard TELLING THE TRUTH (it is not yet a
- * rebindable command) instead of being dodged by a rename; the entry moves into
- * `PEN_TOOLS` unchanged the moment `{ tool: 'knife', label: 'Knife Tool',
- * chord: { key: 'k' } }` lands in Providers.
- *
- * NO KEYBOARD SHORTCUT until that line lands. `KnifeTool.shortcut` is `k` and is
- * unique across the builtin set, but `ToolManager.activateByShortcut` is not the
- * app's tool-key channel — the app only ever feeds Space into the engine
- * (`useSpaceTransport`) and drives every other tool key from the command
- * registry. So this flyout item and the Pathfinder section's button are the two
- * live routes to the Knife today, and the tooltip does not promise a third.
+ * Its key is Shift+K (`tool.knife` in Providers' tool commands), so it is
+ * rebindable and in the palette like every other tool; it stays out of
+ * `PEN_TOOLS` only because the Pen flyout lists the pen family proper.
  */
 const KNIFE_FLYOUT = {
   tool: 'knife' as Tool,
   icon: 'knife' as IconName,
-  label: 'Knife Tool — drag across a shape to cut its path',
+  label: 'Knife Tool (Shift+K) — drag across a shape to cut its path',
 };
 
 const SHAPE_TOOLS: ToolDef[] = [

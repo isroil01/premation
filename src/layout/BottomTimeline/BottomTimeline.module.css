@@ -1245,6 +1245,11 @@ button.play:hover {
   background: var(--color-surface-0);
 }
 
+/* Auto-Keyframe while recording: the record colour, as a stopwatch that is armed. */
+.compSwitchRec {
+  color: var(--color-danger);
+}
+
 .compSwitch:focus-visible {
   outline: 1px solid var(--color-focus-ring);
   outline-offset: 1px;

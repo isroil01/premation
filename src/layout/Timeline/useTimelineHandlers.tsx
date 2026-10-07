@@ -92,6 +92,9 @@ import { customPrompt, customAlert } from '@components/Modal';
 import type { MutableRefObject } from 'react';
 import { applyTransitionEdit } from '@layout/EditorLayout/transitionInsertEdits';
 import { TRANSITION_ITEMS, getTransitionItem } from '@core/library/transitionLibrary';
+import { hasPositionKeys, hasPositionTangents } from '@core/mirror/motionFacts';
+import { smoothPositionPath, straightenPositionPath } from '@core/mirror/positionTracks';
+import { editPositionKeys } from '@layout/Workspace/viewportEdits';
 
 /**
  * The value a property HAS at comp `seconds`: the evaluated value when the
@@ -516,6 +519,38 @@ export function useTimelineHandlers(tracksRef: MutableRefObject<ReadonlyArray<Ti
           },
         ],
       },
+      ...(hasPositionKeys(documentMirror(), hit.sel.layer)
+        ? [
+            {
+              /*
+               * The layer's motion path as a whole (they were two buttons in the
+               * viewer's transport row): Auto-Bezier smooths it through every
+               * Position key, Straighten drops the spatial tangents. One undo each.
+               */
+              id: 'motion-path',
+              label: 'Motion Path',
+              children: [
+                {
+                  id: 'motion-path-smooth',
+                  label: 'Smooth (Auto-Bezier)',
+                  onSelect: () => {
+                    const layer = hit.sel.layer;
+                    void editPositionKeys(layer, 'Smooth motion path', (scratch) => smoothPositionPath(layer, scratch));
+                  },
+                },
+                {
+                  id: 'motion-path-straighten',
+                  label: 'Straighten',
+                  disabled: !hasPositionTangents(documentMirror(), hit.sel.layer),
+                  onSelect: () => {
+                    const layer = hit.sel.layer;
+                    void editPositionKeys(layer, 'Straighten motion path', (scratch) => straightenPositionPath(layer, scratch));
+                  },
+                },
+              ],
+            },
+          ]
+        : []),
       {
         // The speed-graph maths was drag-only. A number you can type is the
         // whole reason AE ships this dialog — see KeyframeVelocityDialog.

@@ -1,6 +1,8 @@
 /**
- * The viewport's ONE zoom control: −, a scrubbable percentage, the preset
- * menu (Fit + AE's magnification ladder), + and Fit.
+ * The viewport's ONE zoom control, AE's magnification popup: a scrubbable
+ * percentage and its preset menu (Fit first, then AE's ladder). The −, + and
+ * Fit buttons that flanked it were five controls for one value (2026-10-07);
+ * the wheel, the +/− keys and the menu's Fit row do the same.
  *
  * It was `TopNav/ViewControls.ZoomField`, and the same presets sat a second
  * time in the View Options menu as "magnification". That menu is gone; this
@@ -157,9 +159,6 @@ export function ZoomField(): JSX.Element {
 
   return (
     <span className={styles.zoomGroup} role="group" aria-label="Viewport zoom">
-      <button type="button" className={styles.tool} onClick={() => getWorkspaceController().zoomOut()} title="Zoom out (-)" aria-label="Zoom out">
-        <Icon name="zoom-out" size="sm" />
-      </button>
       <ScrubField
         value={zoom}
         onChange={(v) => getWorkspaceController().setZoomPercent(v)}
@@ -168,35 +167,17 @@ export function ZoomField(): JSX.Element {
         max={6400}
         step={1}
         digits={0}
-        title="Zoom · drag or double-click to type"
+        title="Magnification · drag or double-click to type (wheel, + and − zoom too)"
       />
-      {/* Magnification presets — AE's zoom menu, so a discrete jump to 100% or
-          Fit does not require nudging the ±1.2× steps or typing. The chevron
-          sits on the % field; the field itself still scrubs and accepts typed
-          values. */}
       <Dropdown
         placement="top-end"
         trigger={
-          <button type="button" className={styles.tool} title="Magnification presets" aria-label="Magnification presets">
+          <button type="button" className={styles.tool} title="Magnification presets — Fit, 12.5% … 800%" aria-label="Magnification presets">
             <Icon name="chevron-down" size="sm" className={styles.chevron} />
           </button>
         }
         items={zoomMenuItems(zoom)}
       />
-      <button type="button" className={styles.tool} onClick={() => getWorkspaceController().zoomIn()} title="Zoom in (+)" aria-label="Zoom in">
-        <Icon name="zoom-in" size="sm" />
-      </button>
-      {/* No key is advertised here because none is registered — the tooltip
-          used to promise Shift+F, which did nothing. */}
-      <button
-        type="button"
-        className={styles.tool}
-        onClick={() => getWorkspaceController().fitComposition()}
-        title="Fit comp in view"
-        aria-label="Fit comp in view"
-      >
-        <Icon name="fit" size="sm" />
-      </button>
     </span>
   );
 }

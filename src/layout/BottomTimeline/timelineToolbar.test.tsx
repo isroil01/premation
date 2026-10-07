@@ -173,7 +173,9 @@ it('the listing toggles are rows of the View menu; Hide Shy is AE\'s header swit
   const t = toolbar();
   expect(within(t).getByRole('button', { name: 'Hide Shy Layers' })).toBeInTheDocument();
   expect(within(t).getByRole('button', { name: 'Enable Motion Blur' })).toBeInTheDocument();
-  expect(within(t).getByRole('button', { name: 'Draft 3D' })).toBeInTheDocument();
+  expect(within(t).getByRole('button', { name: 'Auto-Keyframe mode' })).toBeInTheDocument();
+  // Draft 3D is the Composition panel's button (AE 2022+), not a timeline switch.
+  expect(within(t).queryByRole('button', { name: 'Draft 3D' })).toBeNull();
   for (const name of [
     'Proportional Scrubbing', 'Highlight what changed', 'Transcript lane',
     'Toggle Switches / Modes', 'Timeline columns', 'Change timeline row height',
