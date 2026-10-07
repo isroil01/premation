@@ -113,19 +113,19 @@ describe('where the section appears', () => {
     for (const row of ['Ambient', 'Diffuse', 'Specular', 'Light Transmission']) {
       expect(noField(row)).toBeNull();
     }
-    expect(screen.queryByText('Face Materials')).toBeNull();
+    expect(screen.queryByText('Sides')).toBeNull();
   });
 
   it('carries the per-face overrides once the layer is extruded', async () => {
     const box = await threeD('box');
     mount(box);
-    expect(screen.queryByText('Face Materials')).toBeNull();
+    expect(screen.queryByText('Sides')).toBeNull();
     cleanup();
     await act(async () => {
       await h.run({ type: 'setProperty', prop: { layer: box, path: 'geometry/extrusionDepth' }, value: values.scalar(40) });
     });
     mount(box);
-    expect(screen.getByText('Face Materials')).toBeInTheDocument();
+    expect(screen.getByText('Sides')).toBeInTheDocument();
   });
 });
 

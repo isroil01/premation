@@ -26,6 +26,7 @@
  * the strokes above it; a shortened dash pattern drops its slots' tracks).
  */
 
+import type { ReactNode } from 'react';
 import type { Command } from '@motion/engine-api';
 import { Icon } from '@components/Icon';
 import { Checkbox } from '@components/Checkbox';
@@ -72,6 +73,7 @@ import { ColorKfRow } from '../ColorKfRow';
 import { AnimatablePaintRow } from './AnimatablePaintRow';
 import { PaintOpRows } from './PaintOpRows';
 import { StopList } from './StopLists';
+import { SummaryChip, TwirlGroup } from './TwirlGroup';
 import { strokeEdit, strokePatchCommands, strokesCommands } from './paintEdits';
 import styles from '../TransformSection.module.css';
 import effStyles from '../../Effects/EffectsPanel.module.css';
@@ -159,6 +161,9 @@ function strokeAccess(index: number, key: string, read: (s: Stroke, nodeId: stri
   }
   return hit.access;
 }
+
+/** How a closed stroke row names its alignment. */
+const ALIGN_LABEL: Record<StrokeAlign, string> = { center: 'Center', inside: 'Inside', outside: 'Outside' };
 
 /** A dash slot's AE label: Dash, Gap, Dash 2, Gap 2, … */
 function dashLabel(k: number): string {
@@ -281,32 +286,37 @@ function StrokeBlock({ nodeId, index, stroke }: { nodeId: string; index: number;
         />
       )}
 
-      {/* ── Dashes: AE's "+" / "−", up to three Dash/Gap pairs ── */}
-      <div className={styles.popoverRow}>
-        <span className={styles.popoverLabel}>Dashes</span>
-        <div style={{ display: 'flex', gap: 4 }}>
-          <button
-            type="button"
-            className={effStyles.addChip}
-            onClick={addDash}
-            disabled={stroke.dash.length >= MAX_STROKE_DASH_ENTRIES}
-            aria-label={`Add dash or gap to stroke ${index + 1}`}
-            title="Add a Dash (then a Gap) — up to three pairs"
-          >
-            <Icon name="plus" size="sm" />
-          </button>
-          <button
-            type="button"
-            className={effStyles.addChip}
-            onClick={removeDash}
-            disabled={stroke.dash.length === 0}
-            aria-label={`Remove last dash or gap from stroke ${index + 1}`}
-            title="Remove the last Dash or Gap"
-          >
-            <Icon name="minus" size="sm" />
-          </button>
-        </div>
-      </div>
+      {/* ── Dashes: AE's "+" / "−" on the group row, up to three Dash/Gap pairs ── */}
+      <TwirlGroup
+        prefKey={`contents.stroke.${index}.dashes`}
+        label="Dashes"
+        defaultOpen={stroke.dash.length > 0}
+        summary={stroke.dash.length > 0 ? stroke.dash.map((d) => Math.round(d * 10) / 10).join(', ') : 'none'}
+        trailing={(
+          <>
+            <button
+              type="button"
+              className={effStyles.addChip}
+              onClick={addDash}
+              disabled={stroke.dash.length >= MAX_STROKE_DASH_ENTRIES}
+              aria-label={`Add dash or gap to stroke ${index + 1}`}
+              title="Add a Dash (then a Gap) — up to three pairs"
+            >
+              <Icon name="plus" size="sm" />
+            </button>
+            <button
+              type="button"
+              className={effStyles.addChip}
+              onClick={removeDash}
+              disabled={stroke.dash.length === 0}
+              aria-label={`Remove last dash or gap from stroke ${index + 1}`}
+              title="Remove the last Dash or Gap"
+            >
+              <Icon name="minus" size="sm" />
+            </button>
+          </>
+        )}
+      >
       {stroke.dash.map((_, k) => {
         const slot = dashParamAt(k);
         if (!slot) return null;
@@ -324,6 +334,7 @@ function StrokeBlock({ nodeId, index, stroke }: { nodeId: string; index: number;
           access={acc('dashOffset', (s) => s.dashOffset ?? 0)}
         />
       )}
+      </TwirlGroup>
 
       {/* ── Taper (AE 17.1) ──
           Every row is keyframeable and folded by `resolveStrokeTracks`. Dash and
@@ -331,6 +342,14 @@ function StrokeBlock({ nodeId, index, stroke }: { nodeId: string; index: number;
           whole path. Length Units switches keep the DISPLAYED number (50% ↔
           50 px), since the path length is not known here. A static edit is the
           whole stack (it may have to seed the ramp, see taperPatch). */}
+      <TwirlGroup
+        prefKey={`contents.stroke.${index}.taper`}
+        label="Taper"
+        defaultOpen={hasTaper}
+        summary={hasTaper
+          ? `${Math.round((stroke.taper?.startWidth ?? 1) * 100)}% → ${Math.round((stroke.taper?.endWidth ?? 1) * 100)}%`
+          : 'off'}
+      >
       <AnimatablePaintRow
         nodeId={nodeId} prop={path('taperStartWidth')} label="Taper Start"
         access={acc('taperStartWidth', (s) => s.taper?.startWidth ?? 1)}
@@ -388,8 +407,15 @@ function StrokeBlock({ nodeId, index, stroke }: { nodeId: string; index: number;
           />
         </>
       )}
+      </TwirlGroup>
 
       {/* ── Wave ── */}
+      <TwirlGroup
+        prefKey={`contents.stroke.${index}.wave`}
+        label="Wave"
+        defaultOpen={hasWave}
+        summary={hasWave ? `${Math.round((stroke.wave?.amount ?? 0) * 10) / 10}` : 'off'}
+      >
       <AnimatablePaintRow
         nodeId={nodeId} prop={path('waveAmount')} label="Wave Amount"
         access={acc('waveAmount', (s) => s.wave?.amount ?? 0)}
@@ -437,6 +463,7 @@ function StrokeBlock({ nodeId, index, stroke }: { nodeId: string; index: number;
           />
         </>
       )}
+      </TwirlGroup>
 
       {/* ── Gradient Stroke ──
           An optional paint that overrides the solid colour. */}
@@ -526,35 +553,47 @@ export function StrokeRows({ nodeId }: { nodeId: string }): JSX.Element | null {
   const primary = mirrorStrokeAt(m, nodeId, 0);
   const animatedAt = (i: number): boolean => strokeTrackPathsFor(i).some((p) => isTrackAnimated(m, nodeId, p));
 
+  const summaryOf = (st: Stroke | undefined): ReactNode => (st?.enabled
+    ? <><SummaryChip stroke color={st.color} />{`${Math.round(st.width * 10) / 10} · ${ALIGN_LABEL[st.align]}${st.dash.length > 0 ? ' · dashed' : ''}`}</>
+    : 'off');
+
   return (
     <>
-        <div className={styles.subhead} style={{ marginTop: 10 }}>
-          Stroke
-          {animatedAt(0) && <span className={styles.animatedDot} />}
-        </div>
-        <div className={styles.popoverRow}>
-          <span className={styles.popoverLabel}>Enabled</span>
-          <Checkbox
-            checked={primary?.enabled ?? false}
-            onChange={() => { void strokeEdit((primary?.enabled ?? false) ? 'Disable Stroke' : 'Enable Stroke', nodeId, 0, { enabled: !(primary?.enabled ?? false) }); }}
-          />
-        </div>
-        {primary?.enabled && <StrokeBlock nodeId={nodeId} index={0} stroke={primary} />}
+        {/* AE's Stroke group: one twirl row per stroke, summarised while closed. */}
+        <TwirlGroup
+          prefKey="contents.stroke.0"
+          label={<>Stroke 1{animatedAt(0) && <span className={styles.animatedDot} />}</>}
+          defaultOpen
+          summary={summaryOf(primary)}
+          trailing={(
+            <Checkbox
+              checked={primary?.enabled ?? false}
+              onChange={() => { void strokeEdit((primary?.enabled ?? false) ? 'Disable Stroke' : 'Enable Stroke', nodeId, 0, { enabled: !(primary?.enabled ?? false) }); }}
+              aria-label="Stroke 1 enabled"
+            />
+          )}
+        >
+          {primary?.enabled
+            ? <StrokeBlock nodeId={nodeId} index={0} stroke={primary} />
+            : <span className={styles.popoverLabel}>Tick the box to draw a stroke.</span>}
+        </TwirlGroup>
 
-        {/* Strokes 2+ — full citizens, each with every row the first one has. */}
-        {strokes.slice(1).map((s, i) => {
+        {/* Strokes 2+ — full citizens, each with every row the first one has,
+            closed until twirled open. */}
+        {strokes.slice(1).map((st, i) => {
           const index = i + 1;
           return (
-            <div key={`xstroke_${index}`} style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
-              <div className={styles.popoverRow}>
-                <span className={styles.subhead} style={{ margin: 0 }}>
-                  Stroke {index + 1}
-                  {animatedAt(index) && <span className={styles.animatedDot} />}
-                </span>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <TwirlGroup
+              key={`xstroke_${index}`}
+              prefKey={`contents.stroke.${index}`}
+              label={<>Stroke {index + 1}{animatedAt(index) && <span className={styles.animatedDot} />}</>}
+              defaultOpen={false}
+              summary={summaryOf(st)}
+              trailing={(
+                <>
                   <Checkbox
-                    checked={s.enabled}
-                    onChange={() => { void strokeEdit(s.enabled ? `Disable Stroke ${index + 1}` : `Enable Stroke ${index + 1}`, nodeId, index, { enabled: !s.enabled }); }}
+                    checked={st.enabled}
+                    onChange={() => { void strokeEdit(st.enabled ? `Disable Stroke ${index + 1}` : `Enable Stroke ${index + 1}`, nodeId, index, { enabled: !st.enabled }); }}
                     aria-label={`Stroke ${index + 1} enabled`}
                   />
                   <button
@@ -566,10 +605,11 @@ export function StrokeRows({ nodeId }: { nodeId: string }): JSX.Element | null {
                   >
                     <Icon name="close" size="sm" />
                   </button>
-                </div>
-              </div>
-              {s.enabled && <StrokeBlock nodeId={nodeId} index={index} stroke={s} />}
-            </div>
+                </>
+              )}
+            >
+              {st.enabled && <StrokeBlock nodeId={nodeId} index={index} stroke={st} />}
+            </TwirlGroup>
           );
         })}
         {(primary?.enabled ?? false) && (

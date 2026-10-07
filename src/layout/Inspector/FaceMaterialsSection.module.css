@@ -1,0 +1,23 @@
+/* The Sides group's rows (Material Options). AE greys: no accent bar. */
+.controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.note {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+}
+
+/* The side picked on canvas: a full-row tint, as a selected row elsewhere. */
+.picked {
+  background: var(--color-selected);
+}
+
+.hint {
+  margin: 2px 0 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  line-height: 1.4;
+}

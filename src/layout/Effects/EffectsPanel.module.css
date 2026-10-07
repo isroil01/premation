@@ -444,12 +444,12 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  min-height: 26px;
-  padding: 2px 6px 2px 4px;
+  min-height: var(--control-height-row);
+  padding: 0 6px 0 4px;
   user-select: none;
   font-family: var(--font-family-sans);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-regular);
   min-width: 0;
 }
 
@@ -902,4 +902,16 @@
 .fxPreviewCat {
   font-size: var(--font-size-micro);
   color: var(--color-text-muted);
+}
+
+/* Effect header extras (grip, empty label swatch, ↑ ↓ ✕) — drawn on hover or
+   keyboard focus only, so the resting header reads as AE's: ▾ [fx] Name … Reset. */
+.effectCardHead .headHover {
+  opacity: 0;
+  transition: opacity var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.effectCardHead:hover .headHover,
+.effectCardHead:focus-within .headHover {
+  opacity: 1;
 }

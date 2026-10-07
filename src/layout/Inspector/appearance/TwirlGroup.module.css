@@ -1,0 +1,85 @@
+/* An After Effects twirl row: 22px, ▶ / ▼, name, then a quiet summary. */
+.group {
+  display: flex;
+  flex-direction: column;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-height-row);
+  min-width: 0;
+}
+
+.twirl {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.twirl:focus-visible {
+  outline: 1px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+
+.arrow {
+  width: 10px;
+  font-size: var(--font-size-micro);
+  color: var(--color-text-tertiary);
+  text-align: center;
+}
+
+.label {
+  white-space: nowrap;
+}
+
+.summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+}
+
+.trailing {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+  flex: none;
+}
+
+/* Children indent one twirl step, as AE's timeline nests a group's rows. */
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 14px;
+}
+
+.chip,
+.chipStroke {
+  display: inline-block;
+  flex: none;
+  width: 16px;
+  height: 11px;
+  border: 1px solid var(--color-border-structural);
+}
+
+.chipStroke {
+  border-width: 3px;
+  background: transparent;
+}

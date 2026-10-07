@@ -729,8 +729,11 @@ function effectLabelColorMenuItems(
 }
 
 /** Right-click on an effect's header: AE's Duplicate (Ctrl+D) and Copy, plus Reset / Remove. */
-function effectHeaderMenuItems(nodeId: string, effectId: string, name: string): ContextMenuItem[] {
+function effectHeaderMenuItems(nodeId: string, effectId: string, name: string, index: number, count: number): ContextMenuItem[] {
   return [
+    { id: 'fx-up', label: 'Move Up', icon: 'arrow-up', disabled: index === 0, onSelect: () => { void nudgeEffectEdit(nodeId, effectId, -1); } },
+    { id: 'fx-down', label: 'Move Down', icon: 'arrow-down', disabled: index === count - 1, onSelect: () => { void nudgeEffectEdit(nodeId, effectId, 1); } },
+    { id: 'fx-sep0', separator: true },
     { id: 'fx-duplicate', label: 'Duplicate', icon: 'copy', onSelect: () => { void duplicateEffectEdit(nodeId, effectId, name); } },
     { id: 'fx-copy', label: 'Copy', onSelect: () => { void copyEffectsEdit(nodeId, [effectId]); } },
     { id: 'fx-sep', separator: true },
@@ -875,7 +878,10 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
               setDropIndex(null);
             }}
           >
-            {/* AE Effect Controls header: ▾ fx Name .......... Reset */}
+            {/* AE Effect Controls header: ▾ [fx] Name .......... Reset. The
+                grip, label swatch and ↑ ↓ ✕ only show on hover or focus
+                (2026-10-07): reorder by dragging the header, and Move Up /
+                Move Down / Remove are also on its right-click menu. */}
             <div
               className={cn(
                 panel.effectCardHead,
@@ -893,10 +899,10 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
               onDragEnd={() => { setDragId(null); setDropIndex(null); }}
               onContextMenu={(ev) => {
                 ev.preventDefault();
-                openContextMenu(ev.clientX, ev.clientY, effectHeaderMenuItems(nodeId, e.id, name));
+                openContextMenu(ev.clientX, ev.clientY, effectHeaderMenuItems(nodeId, e.id, name, i, effects.length));
               }}
             >
-              <span className={panel.dragGrip} aria-hidden title="Drag to reorder">
+              <span className={cn(panel.dragGrip, panel.headHover)} aria-hidden title="Drag to reorder">
                 <Icon name="grip-vertical" size="sm" />
               </span>
               <button
@@ -917,7 +923,7 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
 
               <button
                 type="button"
-                className={panel.labelSwatch}
+                className={cn(panel.labelSwatch, !e.labelColor && panel.headHover)}
                 style={e.labelColor ? { background: e.labelColor } : undefined}
                 title="Label Color"
                 aria-label={`Label color for ${name}`}
@@ -933,8 +939,6 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
                 }}
               />
 
-              <span className={panel.fxMark} aria-hidden>fx</span>
-
               <span
                 className={off ? panel.itemLabelOff : panel.itemLabel}
                 // Selecting the card is what shows its canvas handles. Twelve
@@ -949,7 +953,7 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
                 {name}
               </span>
 
-              <div className={panel.itemActions}>
+              <div className={cn(panel.itemActions, panel.headHover)}>
                 <button
                   type="button"
                   className={panel.remove}

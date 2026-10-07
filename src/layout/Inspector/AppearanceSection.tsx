@@ -20,12 +20,10 @@
 
 import { memo, useCallback } from 'react';
 import type { Command } from '@motion/engine-api';
-import { Icon } from '@components/Icon';
 import { useSelectionStore } from '@stores/selectionStore';
 import { documentMirror } from '@stores/documentMirror';
-import { useMirrorComp, useMirrorLayer, useMirrorTreeShape } from '@hooks/useMirror';
+import { useMirrorLayer, useMirrorTreeShape } from '@hooks/useMirror';
 import { uiKindOf } from '@core/mirror/layerKinds';
-import { childOrderOf } from '@core/mirror/layerTree';
 import { isLayer } from '@core/mirror/docFacts';
 import { edit } from '@core/engine/uiEdits';
 import { mirrorFill, mirrorStrokeAt } from '@core/mirror/paintFields';
@@ -38,7 +36,6 @@ import { FillRows } from './appearance/FillRows';
 import { StrokeRows } from './appearance/StrokeRows';
 import { CornerRows } from './appearance/CornerRows';
 import styles from './TransformSection.module.css';
-import effStyles from '../Effects/EffectsPanel.module.css';
 
 export function AppearancePresetAction({
   nodeId,
@@ -178,15 +175,13 @@ export async function ungroupNode(nodeId: string, children: ReadonlyArray<string
 }
 
 function AppearanceSectionInner({ nodeId }: { nodeId: string }): JSX.Element | null {
-  // B4: the header (kind), the property tree (whether the layer has a Style —
-  // its catalog lists `layer/cornersLinked` exactly then) and the composition's
-  // stack (the layers parented to this one). The rows below watch their own
-  // properties.
+  // B4: the header (kind) and the property tree (whether the layer has a
+  // Style — its catalog lists `layer/cornersLinked` exactly then). The rows
+  // below watch their own properties.
   const layer = useMirrorLayer(nodeId);
   // SHAPE only (`nodes.has`): a value write on the layer — every step of a viewport drag — must not
   // re-render this section and its rows.
   const tree = useMirrorTreeShape(nodeId);
-  useMirrorComp(layer?.comp);
 
   // No early return above this line: every hook below has to run on every
   // render, including the ones for a node that has just been deleted. Returning
@@ -195,44 +190,14 @@ function AppearanceSectionInner({ nodeId }: { nodeId: string }): JSX.Element | n
   const hasStyle = tree?.nodes.has('layer/cornersLinked') === true;
   const isText = uiKindOf(layer) === 'text';
 
-  // Hoisted above the `!layer` guard with the other hooks — it used to sit
-  // below it, which is what made the hook count vary between renders.
-  const selectedIds = useSelectionStore((s) => s.ids);
-
   if (!layer || (!hasStyle && !isText)) return null;
-
-  const childIds = childOrderOf(documentMirror(), nodeId);
-  const isGroupNode = childIds.length > 0 || layer.kind === 'group';
 
   return (
     <div className={styles.section}>
 
-      {/* Group Assembly Actions (Group / Ungroup Sub-Parts) */}
-      <div style={{ display: 'flex', gap: 6, marginBottom: 12, padding: '0 4px' }}>
-        {selectedIds.length > 1 && (
-          <button
-            type="button"
-            className={effStyles.addChip}
-            style={{ flex: 1, justifyContent: 'center', background: 'rgba(245, 176, 65, 0.12)', color: '#f5b041', borderColor: 'rgba(245, 176, 65, 0.35)', gap: 5 }}
-            onClick={() => { void groupSelection(selectedIds); }}
-          >
-            <Icon name="folder" size="sm" style={{ color: '#f5b041' }} />
-            <span>Group Parts (⌘G)</span>
-          </button>
-        )}
-        {isGroupNode && (
-          <button
-            type="button"
-            className={effStyles.addChip}
-            style={{ flex: 1, justifyContent: 'center', borderColor: 'var(--color-border-glass)', gap: 5 }}
-            onClick={() => { void ungroupNode(nodeId, childIds); }}
-          >
-            <Icon name="layout" size="sm" />
-            <span>Detach Parts (Ungroup)</span>
-          </button>
-        )}
-      </div>
-
+      {/* Group / Ungroup are layer commands — the layer's right-click menu and
+          the Layer menu, where After Effects keeps them — not amber chips at
+          the top of the layer's paint (2026-10-07). */}
       {/* A six-button "Quick Style Presets" grid lived here — a second preset
           grid ONE ACCORDION away from the registry-backed Style Presets section
           in this same panel, with its own hard-coded looks that bypassed
@@ -243,11 +208,13 @@ function AppearanceSectionInner({ nodeId }: { nodeId: string }): JSX.Element | n
         {/* Text layers own Character Color in CharacterPanel. Editing paint fill
             here wrote the same prop and looked like a duplicate background
             picker — hide Fill chrome on text; Stroke remains. */}
+        {/* AE's Contents order: the shape's own parameter (Roundness), then
+            Fill, then Stroke. */}
+        {hasStyle && <CornerRows nodeId={nodeId} />}
+
         {!isText && <FillRows nodeId={nodeId} />}
 
         <StrokeRows nodeId={nodeId} />
-
-        {hasStyle && <CornerRows nodeId={nodeId} />}
       </div>
     </div>
   );

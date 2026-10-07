@@ -204,21 +204,18 @@
   gap: var(--space-2);
 }
 
-/* Small group heading inside a section (Fill / Stroke / Corners …).
-   Same label language as the Graph panel: micro uppercase + a hairline. */
+/* A sub-group name inside a section. Sentence case at the row size, no rule
+   under it: After Effects' groups are told apart by indent and order, not by
+   uppercase headings (2026-10-07). */
 .subhead {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  font-size: var(--font-size-micro);
-  font-weight: var(--font-weight-semibold);
-  text-transform: uppercase;
-  letter-spacing: var(--letter-spacing-uppercase);
-  color: var(--color-text-tertiary);
-  margin-top: var(--space-4);
-  margin-bottom: var(--space-2);
-  padding-bottom: var(--space-2);
-  border-bottom: 1px solid var(--color-border-subtle);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-regular);
+  color: var(--color-text-primary);
+  min-height: var(--control-height-row);
+  margin-top: var(--space-2);
 }
 
 .subhead:first-child {
@@ -297,7 +294,6 @@
   background: var(--color-primary);
   border-radius: 50%;
   display: inline-block;
-  box-shadow: 0 0 4px var(--color-primary);
 }
 
 /* ── Popover Dropdown Styling ── */
@@ -329,7 +325,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  min-height: 28px;
+  min-height: var(--control-height-row);
   margin-bottom: 2px;
 }
 
