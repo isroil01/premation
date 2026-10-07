@@ -2784,3 +2784,39 @@
     display: none;
   }
 }
+
+/* Library ▸ Transitions: the two groups, named by how they are added. */
+.libSectionTitle {
+  padding: var(--space-3) var(--space-3) var(--space-2);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.libCutRow {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+  padding: 0 var(--space-3) var(--space-2);
+}
+
+.libCutItem {
+  height: var(--control-height-md);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-field-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-1);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: grab;
+}
+
+.libCutItem:hover {
+  border-color: var(--color-text-tertiary);
+}
+
+.libCutItem:focus-visible {
+  outline: 1px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}

@@ -2474,3 +2474,15 @@
   border-color: var(--color-focus-ring);
   background: var(--color-surface-1);
 }
+
+/* Where a dragged Library transition will land: a lit bar end. */
+.transitionEdgeTarget {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 6px;
+  background: var(--color-primary);
+  opacity: 0.8;
+  pointer-events: none;
+  z-index: 3;
+}

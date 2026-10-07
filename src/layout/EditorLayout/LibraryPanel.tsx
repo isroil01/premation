@@ -52,6 +52,11 @@ import { prepareLottiePreview, drawLottiePreview } from '@core/library/lottiePre
 import type { LottieJson } from '@core/lottie/lottieImport';
 import { TemplateFieldsPanel } from '@layout/Templates/TemplateFieldsPanel';
 import { LibraryBrowser, FavoriteStar } from './LibraryBrowser';
+import { TRANSITION_KINDS, TRANSITION_LABEL } from '@core/timeline/transitionModel';
+import { markLayerTransitionDrag, startCutTransitionDrag } from '@layout/Timeline/transitionDrag';
+import { TRANSITION_COMMAND_PREFIX } from '@layout/Timeline/transitionCommands';
+import { getCommandSystem } from '@core/commands/CommandSystem';
+import { asCommandId } from '@app-types/common';
 import styles from './panels.module.css';
 
 const SHAPE_PRESETS = [
@@ -381,9 +386,13 @@ function TransitionCard({ item, onApply }: { item: TransitionItem; onApply: () =
       className={styles.libMotionItem}
       title={item.solidOnly
         ? `${item.name} — inserts a choreographed solid at the playhead`
-        : `${item.name} — applies to the selected layers (or inserts a solid)`}
+        : `${item.name} — drag onto a layer's start or end in the timeline, or click to apply to the selected layers`}
       draggable
-      onDragStart={(e) => setCanvasDrag(e, { kind: 'transition', transId: item.id, name: item.name })}
+      onDragStart={(e) => {
+        setCanvasDrag(e, { kind: 'transition', transId: item.id, name: item.name });
+        // Droppable on a timeline bar's start / end (its entrance / exit).
+        if (!item.solidOnly) markLayerTransitionDrag(e.dataTransfer, item.id);
+      }}
       onClick={onApply}>
       <span style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1, minWidth: 0 }}>
         <canvas
@@ -430,11 +439,34 @@ function TransitionsContent(): JSX.Element {
   return (
     <LibraryBrowser items={TRANSITION_ITEMS} categories={TRANSITION_CATEGORIES} noun="transition">
       {(items) => (
-        <div className={styles.libList}>
-          {items.map((item) => (
-            <TransitionCard key={item.id} item={item} onApply={() => { void apply(item.id, item.name); }} />
-          ))}
-        </div>
+        <>
+          {/* Cut transitions: engine transition records between two
+              adjacent bars. Drag one onto a cut in the timeline; a click adds
+              it at the cut nearest the playhead. */}
+          <div className={styles.libSectionTitle}>Cut Transitions — drag onto a cut</div>
+          <div className={styles.libCutRow}>
+            {TRANSITION_KINDS.map((kind) => (
+              <button
+                key={kind}
+                type="button"
+                draggable
+                className={styles.libCutItem}
+                title={`${TRANSITION_LABEL[kind]} — drag onto the cut between two layers in the timeline, or click to add it at the cut nearest the playhead`}
+                aria-label={`${TRANSITION_LABEL[kind]} cut transition`}
+                onDragStart={(e) => startCutTransitionDrag(e.dataTransfer, kind)}
+                onClick={() => { void getCommandSystem().execute(asCommandId(`${TRANSITION_COMMAND_PREFIX}add.${kind}`)); }}
+              >
+                {TRANSITION_LABEL[kind]}
+              </button>
+            ))}
+          </div>
+          <div className={styles.libSectionTitle}>Layer Transitions — drag onto a layer's start or end</div>
+          <div className={styles.libList}>
+            {items.map((item) => (
+              <TransitionCard key={item.id} item={item} onApply={() => { void apply(item.id, item.name); }} />
+            ))}
+          </div>
+        </>
       )}
     </LibraryBrowser>
   );

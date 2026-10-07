@@ -184,9 +184,6 @@ describe('no row wraps', () => {
     expect(col).not.toContain('overflow: hidden;');
     // The navigator's pinned form is placed absolutely over the lanes.
     expect(block(source, '.navigatorColPinned {')).toContain('position: absolute;');
-    // The chips must not shrink, or the row never reports the deficit that
-    // swaps them for their menu.
-    expect(block(css('Timeline/transitionPalette.module.css'), '.palette {')).toContain('flex-shrink: 0;');
   });
 
   it('at 1100px every row has a shed rung that ends in one overflow trigger', () => {

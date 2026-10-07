@@ -37,7 +37,7 @@ import { ROW_HEIGHT_PRESETS, ROW_HEIGHT_MIN, ROW_HEIGHT_MAX, rowHeightFromDrag }
 import { collectClipSnapTargets, snapClipTime } from './clipSnap';
 import { collectClipCuts, findClipCutNear, type ClipCut } from './clipCuts';
 import { useTimelineEditModeStore } from './timelineEditMode';
-import { readTransitionDrag, isTransitionDrag } from './transitionPalette';
+import { isLayerTransitionDrag, isTransitionDrag, readLayerTransitionDrag, readTransitionDrag } from './transitionDrag';
 import { hasCanvasDrag, readCanvasDrag } from '@core/dnd/canvasDrag';
 import { documentMirror } from '@stores/documentMirror';
 import { barOf, replaceSourceWithAsset, replaceTargetAt, splitLayersAt, timeStretchEdit } from './timelineEdits';
@@ -148,6 +148,11 @@ export interface TimelineProps {
   ) => void;
   /** Clip edge trimmed to an absolute time (seconds). `ripple` closes the gap on in/out trim. */
   onClipTrim?: (clipId: string, edge: 'start' | 'end', time: number, opts?: { ripple?: boolean }) => void;
+  /**
+   * A Library layer transition dropped on a bar: `edge` is the end the drop
+   * landed nearer to — 'in' becomes the layer's entrance, 'out' its exit.
+   */
+  onLayerTransitionDrop?: (transId: string, trackId: string, edge: 'in' | 'out') => void;
   /** Alt-drag clip body: slip source under a fixed bar (sourceInSec). */
   onClipSlip?: (clipId: string, sourceInSec: number) => void;
   /** Shift+Alt-drag clip body: slide bar + trim abutting neighbors (new start sec). */
@@ -296,6 +301,7 @@ function Timeline({
   onClipMove,
   onClipMoveMany,
   onClipTrim,
+  onLayerTransitionDrop,
   onClipSlip,
   onClipSlide,
   onClipContextMenu,
@@ -1555,8 +1561,44 @@ function Timeline({
     [rulerStackHeight, trackHeight, rows],
   );
 
+  /**
+   * The bar end a layer-transition drop is aimed at: the row under the
+   * pointer, and whichever end of that layer's bar the pointer is nearer to.
+   */
+  const lanesEdgeAt = useCallback(
+    (clientX: number, clientY: number): { trackId: string; edge: 'in' | 'out'; time: number; rowIndex: number } | null => {
+      const lanes = lanesRef.current;
+      if (!lanes) return null;
+      const time = lanesTimeAt(clientX);
+      if (time === null) return null;
+      const rect = lanes.getBoundingClientRect();
+      const y = clientY - rect.top + lanes.scrollTop - rulerStackHeight - TIMELINE_TOP_PADDING;
+      const rowIndex = Math.floor(y / trackHeight);
+      const row = rowIndex >= 0 ? rows[rowIndex] : undefined;
+      const clips = row?.track.clips ?? [];
+      if (!row || clips.length === 0) return null;
+      const start = Math.min(...clips.map((c) => c.start));
+      const end = Math.max(...clips.map((c) => c.start + c.duration));
+      const edge = time - start <= end - time ? 'in' : 'out';
+      return { trackId: row.track.id as string, edge, time: edge === 'in' ? start : end, rowIndex };
+    },
+    [lanesTimeAt, rulerStackHeight, trackHeight, rows],
+  );
+  const [dropEdge, setDropEdge] = useState<{ time: number; rowIndex: number } | null>(null);
+
   const onLanesDragOver = useCallback(
     (e: ReactDragEvent<HTMLDivElement>): void => {
+      if (isLayerTransitionDrag(e.dataTransfer)) {
+        const hit = lanesEdgeAt(e.clientX, e.clientY);
+        setDropEdge((cur) => (hit
+          ? (cur && cur.time === hit.time && cur.rowIndex === hit.rowIndex ? cur : { time: hit.time, rowIndex: hit.rowIndex })
+          : null));
+        if (hit) {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'copy';
+        }
+        return;
+      }
       if (!isTransitionDrag(e.dataTransfer)) {
         // AE Alt-drag from the Assets panel onto a layer bar: replace source.
         if (e.altKey && hasCanvasDrag(e)) {
@@ -1572,7 +1614,7 @@ function Timeline({
       const key = cut ? cutKeyOf(cut) : null;
       setDropCutKey((k) => (k === key ? k : key));
     },
-    [lanesCutAt],
+    [lanesCutAt, lanesEdgeAt],
   );
 
   const onLanesDrop = useCallback(
@@ -1580,6 +1622,16 @@ function Timeline({
       const kind = readTransitionDrag(e.dataTransfer);
       setDropCutKey(null);
       setChipDragging(false);
+      setDropEdge(null);
+      const layerTransition = readLayerTransitionDrag(e.dataTransfer);
+      if (layerTransition) {
+        const hit = lanesEdgeAt(e.clientX, e.clientY);
+        if (!hit) return;
+        e.preventDefault();
+        e.stopPropagation();
+        onLayerTransitionDrop?.(layerTransition, hit.trackId, hit.edge);
+        return;
+      }
       if (!kind) {
         // Alt-drop an asset on a layer's lane → replace that layer's source
         // (transforms, keyframes and effects kept).
@@ -1595,7 +1647,7 @@ function Timeline({
       setTransitionError(cut ? null : 'Drop a transition on a cut — the point where one clip ends and the next begins.');
       if (cut) applyTransition(cut, kind);
     },
-    [lanesCutAt, applyTransition, lanesTrackIdAt],
+    [lanesCutAt, applyTransition, lanesTrackIdAt, lanesEdgeAt, onLayerTransitionDrop],
   );
 
   /** Double-click a cut → the default 12-frame cross dissolve. */
@@ -2681,6 +2733,7 @@ function Timeline({
             onDragLeave={() => {
               setDropCutKey(null);
               setChipDragging(false);
+              setDropEdge(null);
             }}
             onDrop={onLanesDrop}
             onDoubleClick={onLanesDoubleClick}
@@ -2688,6 +2741,18 @@ function Timeline({
             {/* Snap indicator — a vertical line at whatever the in-flight drag
                 latched onto. Without it, snapping is a mystery force: the
                 keyframe stops where you did not put it and nothing says why. */}
+            {/* A Library layer transition in flight: the bar end it will land
+                on (its entrance at the in-point, its exit at the out-point). */}
+            {dropEdge && (
+              <div
+                className={styles.transitionEdgeTarget}
+                style={{
+                  transform: `translate(${TIMELINE_LEFT_OFFSET + dropEdge.time * pps - 3}px, ${TIMELINE_TOP_PADDING + dropEdge.rowIndex * trackHeight}px)`,
+                  height: trackHeight,
+                }}
+                aria-hidden
+              />
+            )}
             {kfSnap && (
               <div
                 className={cn(

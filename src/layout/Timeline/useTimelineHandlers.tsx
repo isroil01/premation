@@ -90,6 +90,8 @@ import { itemAsset } from '@core/mirror/itemAssets';
 import { customPrompt, customAlert } from '@components/Modal';
 
 import type { MutableRefObject } from 'react';
+import { applyTransitionEdit } from '@layout/EditorLayout/transitionInsertEdits';
+import { getTransitionItem } from '@core/library/transitionLibrary';
 
 /**
  * The value a property HAS at comp `seconds`: the evaluated value when the
@@ -963,7 +965,30 @@ export function useTimelineHandlers(tracksRef: MutableRefObject<ReadonlyArray<Ti
     void toggleLayerFlagEdit(trackId, flag);
   };
 
+  /**
+   * A Library layer transition dropped on a bar's start or end: that layer's
+   * entrance (from its in-point) or exit (ending at its out-point), keyed by
+   * the Library's recipe — one undo entry.
+   */
+  const handleLayerTransitionDrop = (transId: string, trackId: string, edge: 'in' | 'out'): void => {
+    const item = getTransitionItem(transId);
+    const layer = documentMirror().layer(trackId);
+    if (!item || !layer) return;
+    const inSec = flicksToSeconds(layer.timing.inPoint);
+    const outSec = flicksToSeconds(layer.timing.outPoint);
+    const time = edge === 'in' ? inSec : Math.max(inSec, outSec - item.duration);
+    void applyTransitionEdit(transId, `Apply ${item.name}`, { layer: trackId, time }).then((result) => {
+      const notify = useUIStore.getState().notify;
+      if (!result) {
+        notify({ level: 'warning', message: item.solidOnly ? `${item.name} inserts a solid — click it in the Library instead` : `Could not apply ${item.name}`, durationMs: 2600 });
+        return;
+      }
+      notify({ level: 'success', message: `${item.name} ${edge === 'in' ? 'entrance' : 'exit'} on ${layer.name}`, durationMs: 1800 });
+    });
+  };
+
   return {
+    handleLayerTransitionDrop,
     selectedPropertyKeys,
     handlePropertySelect,
     toggleTrackVisible,
@@ -1009,6 +1034,7 @@ export function timelineHandlerProps(h: TimelineHandlers) {
     onClipMove: h.handleClipMove,
     onClipMoveMany: h.handleClipMoveMany,
     onClipTrim: h.handleClipTrim,
+    onLayerTransitionDrop: h.handleLayerTransitionDrop,
     onClipSlip: h.handleClipSlip,
     onClipSlide: h.handleClipSlide,
     onClipContextMenu: h.handleClipContextMenu,
