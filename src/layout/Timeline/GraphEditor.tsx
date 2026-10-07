@@ -84,8 +84,6 @@ import { mirrorPropertyMeta } from '@core/mirror/metaFacts';
 import {
   withOutgoingSpeed,
   withIncomingSpeed,
-  withOutgoingInfluence,
-  withIncomingInfluence,
   withOutgoingSlope,
   withIncomingSlope,
   outgoingSpeed,
@@ -1908,12 +1906,6 @@ export function GraphEditor({
             <button type="button" className={pillClass('EaseOut')} aria-pressed={activePreset === 'EaseOut'} aria-label="Easy Ease Out" onClick={() => handleApplyPreset('EaseOut')} title="Easy Ease Out (Ctrl+Shift+F9)">
               <Icon name="arrow-left" size="sm" />
             </button>
-            <button type="button" className={pillClass('Linear')} aria-pressed={activePreset === 'Linear'} aria-label="Linear interpolation" onClick={() => handleApplyPreset('Linear')} title="Linear">
-              <Icon name="line" size="sm" />
-            </button>
-            <button type="button" className={pillClass('Hold')} aria-pressed={activePreset === 'Hold'} aria-label="Hold interpolation" onClick={() => handleApplyPreset('Hold')} title="Toggle Hold">
-              <Icon name="keyframe" size="sm" />
-            </button>
           </div>
         )}
 
@@ -1922,8 +1914,9 @@ export function GraphEditor({
             selection, which is what the timeline and F9 already operate on. */}
         {selectedKfData && (
           <div className={styles.btnGroup}>
-            {/* Interpolation KIND — a different axis from the pills beside it
-                (those pick a named CURVE). See `easingVocabulary`. */}
+            {/* Interpolation KIND (Linear, Bezier, Auto / Continuous Bezier,
+                Hold) — the ease pills beside it pick a named CURVE. Linear and
+                Hold live only here, not as pills too. See `easingVocabulary`. */}
             <select
               className={styles.select}
               aria-label="Easing kind"
@@ -2026,110 +2019,9 @@ export function GraphEditor({
               />
             </div>
 
-            {mode === 'value' ? (
-              <div style={{ width: 65 }}>
-                <span className={styles.fieldLabel}>v=</span>
-                <ValueField
-                  value={selectedKfData.value}
-                  precision={2}
-                  onChange={(newV: number) => {
-                    void commitMemberWrites('Set Keyframe Value', selectedKfData.nodeId, selectedKfData.prop, [
-                      { t: selectedKfData.t, value: newV },
-                    ]);
-                  }}
-                />
-              </div>
-            ) : (
-              <>
-                {selectedKfData.inSpeed !== undefined && (
-                  <div style={{ width: 68 }}>
-                    <span className={styles.fieldLabel}>In:</span>
-                    <ValueField
-                      value={selectedKfData.inSpeed}
-                      precision={1}
-                      min={0}
-                      onChange={(newSpeed: number) => {
-                        const writes = speedWrites(selectedKfData.nodeId, selectedKfData.prop, selectedKfData.t, newSpeed, 'in');
-                        // Typing a one-sided speed is an explicit split.
-                        if (selectedKfData.outSpeed !== undefined && Math.abs(newSpeed - selectedKfData.outSpeed) > 1e-6) {
-                          writes.push({ t: selectedKfData.t, continuous: false });
-                        }
-                        void commitMemberWrites('Set Incoming Speed', selectedKfData.nodeId, selectedKfData.prop, writes);
-                      }}
-                    />
-                  </div>
-                )}
-                {selectedKfData.inInfluence !== undefined && (
-                  <div style={{ width: 62 }}>
-                    <span className={styles.fieldLabel}>In%:</span>
-                    <ValueField
-                      value={Math.round(selectedKfData.inInfluence * 100)}
-                      unit="%"
-                      precision={0}
-                      min={1}
-                      max={99}
-                      onChange={(newPct: number) => {
-                        const trackKfs = trackKeys(selectedKfData.nodeId, selectedKfData.prop);
-                        const idx = trackKfs ? findKfIndex(trackKfs, selectedKfData.t) : -1;
-                        if (idx > 0 && trackKfs) {
-                          const prevKf = trackKfs[idx - 1]!;
-                          const dtPrev = selectedKfData.t - prevKf.t;
-                          const dvPrev = selectedKfData.value - prevKf.value;
-                          const bz = withIncomingInfluence(effectiveBezier(prevKf), dvPrev, dtPrev, newPct / 100);
-                          void commitMemberWrites('Set Incoming Influence', selectedKfData.nodeId, selectedKfData.prop, [
-                            bezierWrite(prevKf, bz, prevKf.continuous),
-                          ]);
-                        }
-                      }}
-                    />
-                  </div>
-                )}
-                {selectedKfData.outSpeed !== undefined && (
-                  <div style={{ width: 68 }}>
-                    <span className={styles.fieldLabel}>Out:</span>
-                    <ValueField
-                      value={selectedKfData.outSpeed}
-                      precision={1}
-                      min={0}
-                      onChange={(newSpeed: number) => {
-                        const writes = speedWrites(selectedKfData.nodeId, selectedKfData.prop, selectedKfData.t, newSpeed, 'out');
-                        if (selectedKfData.inSpeed !== undefined && Math.abs(newSpeed - selectedKfData.inSpeed) > 1e-6) {
-                          writes.push({ t: selectedKfData.t, continuous: false });
-                        }
-                        void commitMemberWrites('Set Outgoing Speed', selectedKfData.nodeId, selectedKfData.prop, writes);
-                      }}
-                    />
-                  </div>
-                )}
-                {selectedKfData.outInfluence !== undefined && (
-                  <div style={{ width: 62 }}>
-                    <span className={styles.fieldLabel}>Out%:</span>
-                    <ValueField
-                      value={Math.round(selectedKfData.outInfluence * 100)}
-                      unit="%"
-                      precision={0}
-                      min={1}
-                      max={99}
-                      onChange={(newPct: number) => {
-                        const trackKfs = trackKeys(selectedKfData.nodeId, selectedKfData.prop);
-                        const idx = trackKfs ? findKfIndex(trackKfs, selectedKfData.t) : -1;
-                        if (idx >= 0 && trackKfs && idx < trackKfs.length - 1) {
-                          const self = trackKfs[idx]!;
-                          const nextKf = trackKfs[idx + 1]!;
-                          const dt = nextKf.t - self.t;
-                          const dv = nextKf.value - self.value;
-                          const bz = withOutgoingInfluence(effectiveBezier(self), dv, dt, newPct / 100);
-                          void commitMemberWrites('Set Outgoing Influence', selectedKfData.nodeId, selectedKfData.prop, [
-                            bezierWrite(self, bz, self.continuous),
-                          ]);
-                        }
-                      }}
-                    />
-                  </div>
-                )}
-              </>
-            )}
-
+            {/* Value, speeds and influences are the numeric strip under the
+                graph (one set of fields, AE's Keyframe Velocity numbers);
+                the toolbar keeps the key's time. */}
             {selectedKfData.easing === 'bezier' && (
               <button
                 type="button"

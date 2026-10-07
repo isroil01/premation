@@ -3,13 +3,17 @@
  *
  * Left to right:
  *
- *   [split · trim in · trim out] · timecode current / total ·
+ *   timecode current / total ·
  *   [go to start · previous frame · PLAY · next frame · go to end] ·
- *   [loop · marker] · the scene tools (`ViewportTools`: motion path, the 3D
+ *   [loop · auto-keyframe] · the scene tools (`ViewportTools`: motion path, the 3D
  *   switch, auto-keyframe, the status badges) · the display controls
  *   (`ViewportDisplayControls`: layout, channel, resolution, preview, LUT,
  *   overlays, snapshot + compare, display mode, bookmarks, pop out) · the
  *   zoom field
+ *
+ * Split / Trim In / Trim Out and Add Marker are not buttons here (2026-10-07):
+ * AE's Composition panel has none, and each is a chord (Ctrl+Shift+D, Alt+[,
+ * Alt+], * / Numpad *), a clip right-click row and a Layer menu row.
  *
  * The five transport buttons in the middle are the only set of them in the
  * app. The JKL shuttle and the in / out marks that used to sit beside them as
@@ -48,8 +52,6 @@ import {
   stepForward,
   togglePlayTransport,
 } from '@core/timeline/timelineView';
-import { splitSelectedAtPlayhead, trimSelectedEndToPlayhead, trimSelectedStartToPlayhead } from '@layout/Timeline/timelineEdits';
-import { addCompMarkerAtPlayhead, addLayerMarkersAtPlayhead } from '@layout/Timeline/markerCommands';
 import { ViewportTools } from './ViewportTools';
 import { ViewportDisplayControlsView, displayOverflowItems, useViewportDisplayModel } from './ViewportDisplayControls';
 import { ZoomField, useZoomPercent, zoomMenuItems } from './ZoomField';
@@ -58,7 +60,6 @@ import { useWorkspaceStore } from '@stores/projectStore';
 import { LiveTimecode } from '@layout/Timeline/LiveTimecode';
 import { useActiveMirrorComp } from '@hooks/useMirror';
 import { settingsDurationSeconds, settingsFps, settingsStartFrame } from '@core/mirror/compFacts';
-import { useSelectionStore } from '@stores/selectionStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { displayLevelFor, isDemoted, type TransportGroup } from './transportOverflow';
 import { useTransportDemote } from './useTransportDemote';
@@ -76,7 +77,6 @@ import styles from './TransportBar.module.css';
 export const TransportBar = memo(function TransportBar(): JSX.Element {
   const ws = useWorkspaceStore((s) => (s.activeTabId ? s.tabs[s.activeTabId] : null));
   const activeTabId = useWorkspaceStore((s) => s.activeTabId);
-  const selectedIds = useSelectionStore((s) => s.ids);
   const settings = useActiveMirrorComp()?.settings;
   const fps = settingsFps(settings);
   const startFrame = settingsStartFrame(settings);
@@ -100,21 +100,10 @@ export const TransportBar = memo(function TransportBar(): JSX.Element {
   const display = useViewportDisplayModel();
   const zoom = useZoomPercent();
 
-  // The timeline's own edits (engine API, one entry each, the legacy labels).
-  const splitAtPlayhead = (): void => { void splitSelectedAtPlayhead(selectedIds); };
-  const trimInToPlayhead = (): void => { void trimSelectedStartToPlayhead(selectedIds); };
-  const trimOutToPlayhead = (): void => { void trimSelectedEndToPlayhead(selectedIds); };
   const toggleLoop = (): void => {
     setTransportLooping(!looping);
     setLooping(!looping);
   };
-  // One layer selected → a layer marker on it; otherwise a comp marker. The
-  // timeline's marker commands (their colour gap is documented there).
-  const addMarker = (): void => {
-    if (selectedIds.length === 1 && addLayerMarkersAtPlayhead() > 0) return;
-    addCompMarkerAtPlayhead();
-  };
-
   const autoKeyframe = usePreferenceStore((s) => s.timelineAutoKeyframe);
   const toggleAutoKeyframe = (): void => {
     usePreferenceStore.getState().set('timelineAutoKeyframe', !autoKeyframe);
@@ -126,18 +115,10 @@ export const TransportBar = memo(function TransportBar(): JSX.Element {
   const displayItems = displayOverflowItems(display, displayLevel);
   const overflowItems = useMemo<DropdownItem[]>(() => {
     const items: DropdownItem[] = [];
-    if (shed('clipEdits')) {
-      items.push(
-        { type: 'item', id: 'tb-split', label: 'Split Layer at Playhead', icon: 'scissors', shortcut: 'Ctrl+Shift+D', onSelect: splitAtPlayhead },
-        { type: 'item', id: 'tb-trim-in', label: 'Trim In-Point to Playhead', icon: 'trim-in', shortcut: 'Alt+[', onSelect: trimInToPlayhead },
-        { type: 'item', id: 'tb-trim-out', label: 'Trim Out-Point to Playhead', icon: 'trim-out', shortcut: 'Alt+]', onSelect: trimOutToPlayhead },
-      );
-    }
     if (shed('loopMarker')) {
       if (items.length) items.push({ type: 'separator' });
       items.push(
         { type: 'checkbox', id: 'tb-loop', label: 'Loop Playback', checked: looping, onChange: toggleLoop },
-        { type: 'item', id: 'tb-marker', label: selectedIds.length === 1 ? 'Add Layer Marker' : 'Add Composition Marker', icon: 'marker', onSelect: addMarker },
         { type: 'checkbox', id: 'tb-autokey', label: 'Auto-Keyframe Mode', checked: autoKeyframe, onChange: toggleAutoKeyframe },
       );
     }
@@ -151,7 +132,7 @@ export const TransportBar = memo(function TransportBar(): JSX.Element {
     }
     return items;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [level, looping, selectedIds, zoom, displayItems, autoKeyframe]);
+  }, [level, looping, zoom, displayItems, autoKeyframe]);
 
   return (
     <div
@@ -179,43 +160,6 @@ export const TransportBar = memo(function TransportBar(): JSX.Element {
           <ViewportDisplayControlsView model={display} level={displayLevel} overflow="host" section="layout" />
         </div>
 
-        {!shed('clipEdits') && (
-          <>
-            <div className={styles.divider} />
-
-            {/* Layer clip operations: Split, Trim In, Trim Out */}
-            <div className={styles.cluster}>
-              <button
-                type="button"
-                className={styles.btn}
-                title="Split Layer at Playhead (Ctrl+Shift+D)"
-                aria-label="Split Layer at Playhead"
-                onClick={splitAtPlayhead}
-              >
-                <Icon name="scissors" size="sm" />
-              </button>
-              <button
-                type="button"
-                className={styles.btn}
-                title="Trim In-Point to Playhead (Alt+[)"
-                aria-label="Trim In-Point to Playhead"
-                onClick={trimInToPlayhead}
-              >
-                <Icon name="trim-in" size="sm" />
-              </button>
-              <button
-                type="button"
-                className={styles.btn}
-                title="Trim Out-Point to Playhead (Alt+])"
-                aria-label="Trim Out-Point to Playhead"
-                onClick={trimOutToPlayhead}
-              >
-                <Icon name="trim-out" size="sm" />
-              </button>
-            </div>
-          </>
-        )}
-
         <div className={styles.divider} />
 
         <div
@@ -237,7 +181,7 @@ export const TransportBar = memo(function TransportBar(): JSX.Element {
           <>
             <div className={styles.divider} />
 
-            {/* Playback modes & recording: Loop, Marker, Auto-Keyframe */}
+            {/* Playback modes & recording: Loop, Auto-Keyframe */}
             <div className={styles.cluster}>
               <button
                 type="button"
@@ -248,15 +192,6 @@ export const TransportBar = memo(function TransportBar(): JSX.Element {
                 onClick={toggleLoop}
               >
                 <Icon name="loop" size="sm" />
-              </button>
-              <button
-                type="button"
-                className={styles.btn}
-                title={selectedIds.length === 1 ? 'Add Layer Marker' : 'Add Composition Marker'}
-                aria-label={selectedIds.length === 1 ? 'Add Layer Marker' : 'Add Composition Marker'}
-                onClick={addMarker}
-              >
-                <Icon name="marker" size="sm" />
               </button>
               <button
                 type="button"

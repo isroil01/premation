@@ -129,7 +129,7 @@ describe('the shed ladder', () => {
 
   it('leads the transport bar\'s ladder: all ten go before any of the bar\'s own groups', () => {
     expect([...TRANSPORT_DEMOTE_ORDER.slice(0, DISPLAY_DEMOTE_ORDER.length)]).toEqual([...DISPLAY_DEMOTE_ORDER]);
-    expect(TRANSPORT_DEMOTE_ORDER[DISPLAY_DEMOTE_ORDER.length]).toBe('clipEdits');
+    expect(TRANSPORT_DEMOTE_ORDER[DISPLAY_DEMOTE_ORDER.length]).toBe('loopMarker');
   });
 
   it('standalone, at the top of the ladder every control is a row of its own overflow menu, none is merely hidden', () => {

@@ -174,15 +174,8 @@ export function ViewportTools(): JSX.Element | null {
         </div>
       )}
 
-      {hasAnyAnim && !hasPositionAnim && (
-        <div className={styles.group}>
-          <span className={styles.animatedChip} title="This layer has keyframes (twirl it open in the timeline)">
-            <Icon name="keyframe" size="sm" />
-            Animated
-          </span>
-          <span className={styles.sep} />
-        </div>
-      )}
+      {/* No "Animated" chip: the keyframe diamonds in the timeline already
+          say so (2026-10-07). */}
 
       {/* ── Selection "3D Layer" switch — AE's cube, one obvious button ── */}
       {eligible3D.length > 0 && (

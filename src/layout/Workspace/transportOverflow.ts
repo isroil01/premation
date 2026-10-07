@@ -55,11 +55,11 @@ export function isDisplayShed(group: DisplayGroup, level: number): boolean {
  * Each entry is a group, not a single button: splitting the three clip edits
  * across a row and a menu would be worse than having them in either one.
  */
-export const TRANSPORT_GROUP_ORDER = ['clipEdits', 'loopMarker', 'zoom'] as const;
+export const TRANSPORT_GROUP_ORDER = ['loopMarker', 'zoom'] as const;
 
 export type TransportGroup = (typeof TRANSPORT_GROUP_ORDER)[number];
 
-/** The whole ladder: every display control, then the bar's own three groups. */
+/** The whole ladder: every display control, then the bar's own two groups. */
 export const TRANSPORT_DEMOTE_ORDER = [...DISPLAY_DEMOTE_ORDER, ...TRANSPORT_GROUP_ORDER] as const;
 
 export type TransportRung = (typeof TRANSPORT_DEMOTE_ORDER)[number];

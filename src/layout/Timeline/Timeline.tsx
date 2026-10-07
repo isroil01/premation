@@ -2834,8 +2834,6 @@ function Timeline({
                     onClipDown={onClipDown}
                     onClipContextMenu={onClipContextMenu}
                     onActivate={onTrackActivate}
-                    clipMuted={row.track.audioMuted}
-                    onClipMuteToggle={onClipMuteToggle}
                   />
                 );
               }
