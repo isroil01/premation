@@ -41,6 +41,7 @@ import type { ProviderId } from '@motion/ai-tools';
 import { analyseSceneAudioForCaster } from './audioForCaster';
 import { streamTurn, recordAiPathFailure, type AgentEvents } from './AgentLoop';
 import { renderCritiqueEvidence } from './filmstrip';
+import { askJson, extractJson } from './askJson';
 
 export interface CasterRunOptions {
   provider: GatewayProviderId;
@@ -99,162 +100,24 @@ export interface CasterRunResult {
   variantScores: readonly number[];
 }
 
-/** Pull the first balanced JSON object or array out of a model's prose. */
-function extractJson(text: string): unknown {
-  const trimmed = text.trim();
-  // Fenced block first — the most common wrapper and the cheapest to strip.
-  const fenced = /```(?:json)?\s*([\s\S]*?)```/.exec(trimmed);
-  const body = fenced?.[1]?.trim() ?? trimmed;
-
-  const start = body.search(/[[{]/);
-  if (start < 0) return undefined;
-  const open = body[start]!;
-  const close = open === '{' ? '}' : ']';
-
-  // Balance-scan rather than a greedy regex: a prose tail after the object is
-  // common, and `body.slice(start, body.lastIndexOf(close) + 1)` swallows it when
-  // the prose itself contains a brace.
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  for (let i = start; i < body.length; i++) {
-    const ch = body[i]!;
-    if (escaped) { escaped = false; continue; }
-    if (ch === '\\') { escaped = true; continue; }
-    if (ch === '"') { inString = !inString; continue; }
-    if (inString) continue;
-    if (ch === open) depth++;
-    else if (ch === close) {
-      depth--;
-      if (depth === 0) {
-        try {
-          return JSON.parse(body.slice(start, i + 1));
-        } catch {
-          return undefined;
-        }
-      }
-    }
-  }
-  return undefined;
-}
-
-/** One structured-output call. Returns the parsed value, or undefined. */
 /**
- * A compact, human-readable sketch of a JSON schema.
- *
- * Used only on the schema-less retry path, where the model has to be told the
- * shape in prose. Generated FROM the schema rather than written by hand, so it
- * cannot drift out of step with it.
+ * One structured-output call through the shared `askJson` (moved to
+ * askJson.ts when author mode needed the same call). The caster's responses
+ * are short, so a cut-off one is treated as unparseable.
  */
-function shapeHint(schema: unknown, depth = 0): string {
-  if (!schema || typeof schema !== 'object' || depth > 4) return '...';
-  const s = schema as Record<string, any>;
-  if (s.type === 'array') return `[${shapeHint(s.items, depth + 1)}]`;
-  if (s.type === 'object' && s.properties) {
-    const required: string[] = Array.isArray(s.required) ? s.required : [];
-    const parts = Object.entries(s.properties as Record<string, any>).map(([k, v]) => {
-      const mark = required.includes(k) ? '' : '?';
-      return `"${k}"${mark}: ${shapeHint(v, depth + 1)}`;
-    });
-    return `{ ${parts.join(', ')} }`;
-  }
-  if (Array.isArray(s.enum)) return s.enum.map((e: unknown) => JSON.stringify(e)).join('|');
-  return String(s.type ?? 'any');
-}
-
-async function askJson(
+async function askJsonValue(
   o: CasterRunOptions,
   system: string,
   user: string,
   responseSchema: AiRequest['responseSchema'],
   images?: readonly AiImage[],
 ): Promise<unknown> {
-  const req: AiRequest = {
-    model: o.model,
-    system,
-    messages: [{ role: 'user', content: user, ...(images?.length ? { images } : {}) }],
-    // No tools. The caster's model calls decide; they never act, and offering a
-    // tool here is offering it a way to bypass the library.
-    tools: [],
-    ...(responseSchema ? { responseSchema } : {}),
-  };
-
-  /**
-   * One attempt. Returns the text, or an error string.
-   *
-   * Separated from the retry below so the schema-less second attempt goes down
-   * exactly the same path rather than a parallel one.
-   */
-  const attempt = async (request: AiRequest): Promise<{ text: string } | { error: string }> => {
-    let text = '';
-    try {
-      for await (const ev of streamTurn(o.provider, o.dialect, o.model, request, o.signal)) {
-        if (ev.type === 'text_delta') text += ev.text;
-        else if (ev.type === 'error') return { error: `${ev.code}: ${ev.message}` };
-      }
-    } catch (err) {
-      return { error: err instanceof Error ? err.message : String(err) };
-    }
-    return { text };
-  };
-
-  let res = await attempt(req);
-
-  /**
-   * Retry without the response schema when the provider rejects it.
-   *
-   * Structured output is not one feature — each provider implements a different
-   * subset of JSON Schema, and Gemini's is the narrowest. Measured against a
-   * live key: `BRIEF_SCHEMA` returns `400 INVALID_ARGUMENT`, and the same schema
-   * with its nested `content` object removed succeeds. Nothing in the type
-   * system says which shapes each provider will take, and the tests could not
-   * have caught it — a mock accepts every schema.
-   *
-   * The schema is a convenience here, not a guarantee: `extractJson` already
-   * balance-scans free-form text, and `coerceBrief` / `coercePicks` already
-   * validate and repair whatever comes back, because a model can return
-   * malformed JSON inside a schema-constrained response too. So dropping the
-   * schema costs a little output stability and loses nothing that was load-
-   * bearing.
-   *
-   * Recorded, never silent — a run that quietly degraded on every call would
-   * look identical to one that never needed to.
-   */
-  if ('error' in res && req.responseSchema) {
-    recordAiPathFailure('caster', `schema rejected by ${o.dialect} (${res.error}); retrying without it`);
-    const { responseSchema: _dropped, ...withoutSchema } = req;
-    res = await attempt({
-      ...withoutSchema,
-      // The schema carried the shape instruction, so the prompt has to carry it
-      // instead — and "return JSON" is not enough.
-      //
-      // Measured: with only that instruction Gemini returned well-formed JSON
-      // whose beats had EMPTY content objects, so every beat then failed layout
-      // casting with "no layout can hold this beat's content". The request
-      // stopped 400-ing and started succeeding at producing nothing usable,
-      // which is the worse failure of the two because it looks like it worked.
-      //
-      // Spelling the shape out from the schema itself keeps the two in step —
-      // a schema change cannot leave a stale hand-written example behind.
-      system:
-        `${system}
-
-Return ONLY a single JSON object matching this shape — no prose, ` +
-        `no code fences, and every listed key present:
-${shapeHint(req.responseSchema)}`,
-    });
-  }
-
-  if ('error' in res) {
-    recordAiPathFailure('caster', res.error);
-    return undefined;
-  }
-
-  const parsed = extractJson(res.text);
-  if (parsed === undefined) {
-    recordAiPathFailure('caster', `unparseable response (${res.text.length} chars): ${res.text.slice(0, 160)}`);
-  }
-  return parsed;
+  const res = await askJson(o, system, user, {
+    ...(responseSchema ? { schema: responseSchema } : {}),
+    ...(images?.length ? { images } : {}),
+    path: 'caster',
+  });
+  return res.value;
 }
 
 // ── Response schemas ──────────────────────────────────────────────────
@@ -421,7 +284,7 @@ export async function runCasterPipeline(
           `look — read the palette, the type, the density and the mood from ${o.images.length > 1 ? 'them' : 'it'} ` +
           `and choose the pack and accent that come closest. Do not describe the image back.`
         : userPrompt;
-      const raw = await askJson(o, system, withRefs, BRIEF_SCHEMA, o.images);
+      const raw = await askJsonValue(o, system, withRefs, BRIEF_SCHEMA, o.images);
       return coerceBrief(raw, userPrompt);
     },
     cast: async (prompts, kind) => {
@@ -432,7 +295,7 @@ export async function runCasterPipeline(
         ? 'Choose one layout per beat. Return { picks: [{ beatIndex, id, seed }] } and nothing else.'
         : 'Choose one technique per beat. Return { picks: [{ beatIndex, id, params, seed }] } and nothing else.';
       const user = prompts.map((p) => p.prompt).join('\n\n───\n\n');
-      const raw = await askJson(o, system, user, CAST_SCHEMA);
+      const raw = await askJsonValue(o, system, user, CAST_SCHEMA);
       return coercePicks(raw);
     },
   };

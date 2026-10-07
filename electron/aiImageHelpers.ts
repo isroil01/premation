@@ -42,3 +42,46 @@ export function parseGeminiImageBody(raw: unknown): { base64: string; mime: stri
   const mime = typeof first?.mimeType === 'string' && first.mimeType ? first.mimeType : 'image/png';
   return { base64: b64, mime };
 }
+
+/**
+ * Image models per provider, best first. Fixed here — never taken from the
+ * renderer — so the Gemini path concat stays closed (see IMAGE_ENDPOINTS).
+ *
+ * A ladder rather than one id: `gpt-image-1` needs a verified OpenAI
+ * organisation and `imagen-4.0` is not on every Gemini key, so an account
+ * without the newer model steps down to the one it has instead of failing.
+ */
+export const IMAGE_MODEL_LADDER = {
+  openai: ['gpt-image-1', 'dall-e-3'],
+  gemini: ['imagen-4.0-generate-001', 'imagen-3.0-generate-002'],
+} as const;
+
+/** Clamp a requested size onto a size `gpt-image-1` accepts. */
+export function gptImageSize(width: number, height: number): '1024x1024' | '1536x1024' | '1024x1536' {
+  const ratio = width / Math.max(1, height);
+  if (ratio > 1.2) return '1536x1024';
+  if (ratio < 0.8) return '1024x1536';
+  return '1024x1024';
+}
+
+/** The OpenAI images request body for one model of the ladder. */
+export function openaiImageBody(model: string, prompt: string, width: number, height: number): Record<string, unknown> {
+  // gpt-image-1 always returns base64 and rejects `response_format`; DALL·E 3
+  // needs it to return bytes rather than a URL.
+  return model === 'dall-e-3'
+    ? { model, prompt, n: 1, size: openaiImageSize(width, height), response_format: 'b64_json' }
+    : { model, prompt, n: 1, size: gptImageSize(width, height) };
+}
+
+/**
+ * Whether a failed image request should try the next model down.
+ *
+ * Only for "this model is not available to this key": a 404, a 403 (an
+ * unverified organisation for gpt-image-1), or a 400 that names the model. An
+ * auth failure, a rate limit or an outage would fail the same way on the next
+ * model and cost a second request to learn it.
+ */
+export function stepDownImageModel(status: number, body: string): boolean {
+  if (status === 404 || status === 403) return true;
+  return status === 400 && /model|verif|not (?:found|available|supported)|does not exist/i.test(body);
+}

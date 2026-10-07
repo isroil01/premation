@@ -44,3 +44,23 @@ export function casterEnabled(): boolean {
 export function setCasterEnabled(on: boolean): void {
   caster = on;
 }
+
+/**
+ * Which generative mode a run uses when the composer has not chosen one.
+ *
+ * `author` (default): the model writes the whole composition as a scene
+ * script against the engine's vocabulary, looks at it and revises it
+ * (docs/AI_AUTHOR_MODE_PLAN.md). `library`: the caster, which picks templates
+ * and techniques from the hand-authored libraries. The caster stays either
+ * way — it is the fallback when an author run fails and the baseline the eval
+ * harness compares against.
+ */
+let authorDefault: 'author' | 'library' = 'author';
+
+export function authorModeDefault(): 'author' | 'library' {
+  return authorDefault;
+}
+
+export function setAuthorModeDefault(mode: 'author' | 'library'): void {
+  authorDefault = mode;
+}

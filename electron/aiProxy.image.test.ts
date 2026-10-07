@@ -9,10 +9,14 @@
  */
 
 import {
+  IMAGE_MODEL_LADDER,
   openaiImageSize,
   geminiAspectRatio,
+  gptImageSize,
+  openaiImageBody,
   parseOpenAiImageBody,
   parseGeminiImageBody,
+  stepDownImageModel,
 } from './aiImageHelpers';
 
 describe('openaiImageSize', () => {
@@ -72,5 +76,31 @@ describe('parseGeminiImageBody', () => {
 
   it('returns null when predictions are empty', () => {
     expect(parseGeminiImageBody({ predictions: [] })).toBeNull();
+  });
+});
+
+describe('the image-model ladder', () => {
+  it('tries the newest model first and keeps the old one as the floor', () => {
+    expect(IMAGE_MODEL_LADDER.openai).toEqual(['gpt-image-1', 'dall-e-3']);
+    expect(IMAGE_MODEL_LADDER.gemini[0]).toMatch(/^imagen-4\.0/);
+    expect(IMAGE_MODEL_LADDER.gemini.at(-1)).toMatch(/^imagen-3\.0/);
+  });
+
+  it('builds each OpenAI model the body it accepts', () => {
+    // gpt-image-1 rejects response_format and has its own size set.
+    expect(openaiImageBody('gpt-image-1', 'a red fox in snow', 1920, 1080)).toEqual({ model: 'gpt-image-1', prompt: 'a red fox in snow', n: 1, size: '1536x1024' });
+    expect(openaiImageBody('dall-e-3', 'a red fox in snow', 1920, 1080)).toEqual({ model: 'dall-e-3', prompt: 'a red fox in snow', n: 1, size: '1792x1024', response_format: 'b64_json' });
+    expect(gptImageSize(1080, 1920)).toBe('1024x1536');
+    expect(gptImageSize(1080, 1080)).toBe('1024x1024');
+  });
+
+  it('steps down only when the model is unavailable to the key', () => {
+    expect(stepDownImageModel(404, '')).toBe(true);
+    expect(stepDownImageModel(403, 'Your organization must be verified to use the model gpt-image-1')).toBe(true);
+    expect(stepDownImageModel(400, 'The model imagen-4.0-generate-001 does not exist')).toBe(true);
+    expect(stepDownImageModel(400, 'prompt rejected by safety system')).toBe(false);
+    expect(stepDownImageModel(401, '')).toBe(false);
+    expect(stepDownImageModel(429, '')).toBe(false);
+    expect(stepDownImageModel(500, '')).toBe(false);
   });
 });

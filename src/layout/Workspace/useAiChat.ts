@@ -22,6 +22,8 @@ import { DEFAULT_COMPOSITION } from '@stores/compositionStore';
 import { activeCompSettingsNow } from '@hooks/useMirrorFrame';
 import { settingsDurationSeconds, settingsFps } from '@core/mirror/compFacts';
 import { casterPacks } from '@core/ai/CasterRunner';
+import { AUTHOR_STAGE_LABELS } from '@core/ai/author/stages';
+import { authorModeDefault } from '@core/config/flags';
 import { api, isAuthenticated, type AiConversationSummary } from '@core/api/client';
 import { aiRunsThroughBackend } from '@core/config/edition';
 import {
@@ -275,9 +277,23 @@ export const PIPELINE_STAGE_LABELS = [
   'Reviewing the result',
 ] as const;
 
+/**
+ * The checklist per generative mode. Author mode is a different run with
+ * different stages (source of truth: `core/ai/author/stages.ts`, emitted by
+ * `AuthorRunner.ts`); showing the caster's list over it would be the same
+ * promise-about-a-pipeline-that-is-not-running this table once was.
+ */
+export const PIPELINE_STAGE_LABELS_BY_MODE: Readonly<Record<'library' | 'author', readonly string[]>> = {
+  library: PIPELINE_STAGE_LABELS,
+  author: AUTHOR_STAGE_LABELS,
+};
+
 /** Map an onActivity label to its canonical stage index (-1 if not a stage). */
-function matchStageIndex(label: string): number {
+function matchStageIndex(label: string, mode: 'library' | 'author' = 'library'): number {
   const l = label.toLowerCase();
+  if (mode === 'author') {
+    return AUTHOR_STAGE_LABELS.findIndex((s) => l.startsWith(s.toLowerCase()));
+  }
   if (l.includes('creative brief')) return 0;
   if (l.includes('casting layout')) return 1;
   if (l.includes('casting motion')) return 2;
@@ -342,6 +358,11 @@ export interface AiDirection {
   totalDurationMs?: number;
   /** How many alternatives to emit and rank. 1 = the previous behaviour. */
   variants: number;
+  /**
+   * Author (the model writes the composition) or Library (the caster picks
+   * templates). Unset = `authorModeDefault()`.
+   */
+  mode?: 'library' | 'author';
 }
 
 export function useAiChat(): UseAiChat {
@@ -354,6 +375,13 @@ export function useAiChat(): UseAiChat {
   const [conversations, setConversations] = useState<AiConversationSummary[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
 
+  /**
+   * The mode of the run in flight. An author run that fails falls back to the
+   * caster, whose labels then match the library list — so a label is tried
+   * against the run's own mode first and the library's second.
+   */
+  const runModeRef = useRef<'library' | 'author'>('library');
+
   /** Advance the pipeline stage list when an onActivity label matches a stage. */
   const advancePipelineStage = useCallback((label: string) => {
     const l = label.toLowerCase();
@@ -361,10 +389,15 @@ export function useAiChat(): UseAiChat {
       setPipelineStages(null);
       return false;
     }
-    const idx = matchStageIndex(label);
+    let mode = runModeRef.current;
+    let idx = matchStageIndex(label, mode);
+    if (idx === -1 && mode === 'author') {
+      idx = matchStageIndex(label, 'library');
+      if (idx !== -1) mode = 'library';
+    }
     if (idx === -1) return false;
     setPipelineStages((prev) => {
-      const stages: PipelineStage[] = PIPELINE_STAGE_LABELS.map((stLabel, i) => ({
+      const stages: PipelineStage[] = PIPELINE_STAGE_LABELS_BY_MODE[mode].map((stLabel, i) => ({
         label: stLabel,
         status: i < idx ? 'done' : i === idx ? 'active' : 'pending',
       }));
@@ -754,6 +787,8 @@ export function useAiChat(): UseAiChat {
     // defeated project and conversation memory on exactly the runs after a
     // project switch.
     const pinned = directionRef.current;
+    const runMode = pinned.mode ?? authorModeDefault();
+    runModeRef.current = runMode;
     const boundProjectId = useCloudProjectStore.getState().projectId;
 
     const attachments = (images ?? []).map((i) => ({ mediaType: i.mediaType, dataBase64: i.dataBase64 }));
@@ -801,6 +836,7 @@ export function useAiChat(): UseAiChat {
             }
           : {}),
         ...(pinned.variants > 1 ? { variants: pinned.variants } : {}),
+        mode: runMode,
         history: history.current.slice(-HISTORY_TURNS),
         images: attachments.length ? attachments : undefined,
         // Both ids were already live in this hook and neither was ever passed

@@ -25,6 +25,7 @@ import { openAiSettings } from '@layout/Settings/openCustomizeDialog';
 import styles from './AiChatPanel.module.css';
 import { engineCompStill } from '@core/engine/engineStill';
 import { activeCompIdNow } from '@hooks/useMirror';
+import { authorModeDefault } from '@core/config/flags';
 
 /** BYOK providers offered in the picker, in display order. */
 const PROVIDER_OPTIONS: { id: GatewayProviderId; label: string }[] = [
@@ -180,7 +181,9 @@ export function AiChatPanel(): JSX.Element {
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
   const [modeDropdownOpen, setModeDropdownOpen] = useState(false);
   /** Which direction chip has its popover open, if any. */
-  const [openChip, setOpenChip] = useState<'look' | 'shape' | 'variants' | null>(null);
+  const [openChip, setOpenChip] = useState<'mode' | 'look' | 'shape' | 'variants' | null>(null);
+  /** The generative mode the next run takes: the user's pick, else the default. */
+  const mode = direction.mode ?? authorModeDefault();
   const modelPickerRef = useRef<HTMLDivElement | null>(null);
   const modePickerRef = useRef<HTMLDivElement | null>(null);
   const directionBarRef = useRef<HTMLDivElement | null>(null);
@@ -578,6 +581,37 @@ export function AiChatPanel(): JSX.Element {
               a duration, and nothing in the product could supply them, so the
               model guessed all four on every run. */}
           <div ref={directionBarRef} className={styles.directionBar}>
+            {/* Mode first: it decides what the other chips mean. In Author mode
+                the model writes the composition and a pinned look becomes a
+                mood for it; in Library mode the caster casts from the libraries. */}
+            <div
+              className={`${styles.directionChip} ${direction.mode ? styles.directionChipSet : ''}`}
+              title="Author: the model designs and animates the whole piece, then reviews and revises it. Library: picks from hand-made templates and techniques."
+              data-testid="ai-mode-chip"
+              onClick={() => setOpenChip((c) => (c === 'mode' ? null : 'mode'))}
+            >
+              <Icon name={mode === 'author' ? 'brush' : 'layers'} size="sm" />
+              {mode === 'author' ? 'Author' : 'Library'}
+              {openChip === 'mode' && (
+                <div className={styles.directionPopover} onClick={(e) => e.stopPropagation()}>
+                  <div className={styles.popoverHeader}>How the piece is made</div>
+                  {([
+                    ['author', 'Author', 'The model designs the whole composition in the engine\'s own vocabulary — 3D, effects, type, motion — then looks at the frames and revises what fails.'],
+                    ['library', 'Library', 'Casts layouts and techniques from the hand-made libraries. Faster and predictable; the range is the library\'s.'],
+                  ] as const).map(([id, label, intent]) => (
+                    <button
+                      key={id}
+                      type="button"
+                      className={`${styles.directionOption} ${mode === id ? styles.directionOptionActive : ''}`}
+                      onClick={() => { setDirection({ mode: id }); setOpenChip(null); }}
+                    >
+                      <span>{label}</span>
+                      <span className={styles.directionOptionIntent}>{intent}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             <div
               className={`${styles.directionChip} ${direction.lookPackId ? styles.directionChipSet : ''}`}
               title="Look pack - fixes palette, type, shape language, pacing and motion vocabulary"
@@ -688,7 +722,8 @@ export function AiChatPanel(): JSX.Element {
               )}
             </div>
 
-            <div
+            {/* Alternatives are re-seeded caster emits; an authored piece has none. */}
+            {mode === 'library' && <div
               className={`${styles.directionChip} ${direction.variants > 1 ? styles.directionChipSet : ''}`}
               title="Emit several alternatives and rank them - costs no extra model calls"
               onClick={() => setOpenChip((c) => (c === 'variants' ? null : 'variants'))}
@@ -715,7 +750,7 @@ export function AiChatPanel(): JSX.Element {
                   ))}
                 </div>
               )}
-            </div>
+            </div>}
           </div>
 
           <div className={styles.composerPill}>
