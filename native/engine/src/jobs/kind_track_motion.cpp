@@ -426,10 +426,10 @@ std::unique_ptr<JobResult> run_mask_track(const MaskJob& job, JobControl& contro
     if (job.method != maskfit::Method::vertices) {
       // AE parity 5.4: the whole mask by one transform fitted to every tracked
       // point (display px), applied to the shape in display px and back.
-      std::vector<tracking::Pt> src;
+      std::vector<tracking::Pt> fromPts;
       std::vector<tracking::Pt> dst;
       for (std::size_t k = 0; k < rest.size(); ++k) {
-        src.push_back(tracking::Pt{rest[k].x, rest[k].y});
+        fromPts.push_back(tracking::Pt{rest[k].x, rest[k].y});
         dst.push_back(tracking::Pt{slotAt[k].x, slotAt[k].y});
       }
       const auto toDisplay = [&](api::BezierPath& path, bool forward) {
@@ -449,11 +449,11 @@ std::unique_ptr<JobResult> run_mask_track(const MaskJob& job, JobControl& contro
       std::optional<maskfit::Affine> aff;
       std::optional<tracking::Mat3> hom;
       if (job.method == maskfit::Method::perspective) {
-        if (src.size() >= 4) hom = tracking::fit_homography(src, dst);
-        if (!hom) aff = maskfit::fit_affine(src, dst, src.size() >= 3 ? maskfit::Method::affine : maskfit::Method::position);
+        if (fromPts.size() >= 4) hom = tracking::fit_homography(fromPts, dst);
+        if (!hom) aff = maskfit::fit_affine(fromPts, dst, fromPts.size() >= 3 ? maskfit::Method::affine : maskfit::Method::position);
       } else {
-        aff = maskfit::fit_affine(src, dst, job.method);
-        if (!aff) aff = maskfit::fit_affine(src, dst, maskfit::Method::position);
+        aff = maskfit::fit_affine(fromPts, dst, job.method);
+        if (!aff) aff = maskfit::fit_affine(fromPts, dst, maskfit::Method::position);
       }
       for (api::BezierPath& path : paths) {
         toDisplay(path, true);
