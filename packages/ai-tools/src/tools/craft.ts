@@ -462,7 +462,7 @@ export const generateVideoDef: AiToolDef = {
       model: {
         type: 'string',
         enum: VIDEO_MODELS.map((m) => m.id),
-        description: `Which model makes it. Omit for the user\'s default. ${PREVIEW_VIDEO_MODEL} is a free placeholder clip.`,
+        description: `Which model makes it. Omit for the user's default. ${PREVIEW_VIDEO_MODEL} is a free placeholder clip.`,
       },
       fit: {
         type: 'string',
