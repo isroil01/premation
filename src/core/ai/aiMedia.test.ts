@@ -5,6 +5,7 @@
 import { setEdition } from '@core/config/edition';
 import { generateVideoBytes, localMediaAvailable } from './aiMedia';
 import { AiTransportError } from './aiTransport';
+import { PREVIEW_VIDEO_MODEL } from '@motion/ai-tools';
 import type { AiMediaResult } from '@app-types/motionEditor';
 
 const generateVideo = jest.fn();
@@ -43,6 +44,20 @@ describe('generateVideoBytes', () => {
   beforeEach(() => {
     generateVideo.mockReset();
     clearShell();
+  });
+
+  it('answers the preview model locally in every edition — no backend, no shell, no key', async () => {
+    for (const edition of ['server', 'local'] as const) {
+      setEdition(edition);
+      const res = await generateVideoBytes({ prompt: 'mist drifting over pines', model: PREVIEW_VIDEO_MODEL, durationSec: 4 });
+      expect(res.ok).toBe(true);
+      if (res.ok) {
+        expect(res.mime).toBe('video/mp4');
+        // A real MP4: the 'ftyp' box sits at byte 4.
+        expect(Buffer.from(res.base64, 'base64').subarray(4, 8).toString('latin1')).toBe('ftyp');
+      }
+    }
+    expect(generateVideo).not.toHaveBeenCalled();
   });
 
   it('uses the backend on the server edition', async () => {

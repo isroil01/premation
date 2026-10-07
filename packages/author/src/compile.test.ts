@@ -177,6 +177,22 @@ describe('compileScript', () => {
     expect(rebuildCalls(out, [])).toEqual([]);
   });
 
+  it('places a generated clip at its in point and keeps the call inside the schema', () => {
+    const s = base({
+      beats: [{
+        name: 'A', purpose: '', startSec: 2, endSec: 6,
+        layers: [{ id: 'plate', kind: 'video', name: 'Plate', inSec: 0.5, video: { prompt: 'slow drift over a misty pine forest', durationSec: 5, aspect: 'landscape', fit: 'cover' }, props: { opacity: 80 } }],
+      }],
+    });
+    const out = compileScript(s);
+    const gen = calls(out.calls, 'generate_video')[0]!;
+    expect(gen.args).toEqual({ id: 'plate', prompt: 'slow drift over a misty pine forest', durationSec: 5, aspect: 'landscape', fit: 'cover', startSec: 2.5 });
+    const def = ALL_TOOL_DEFS.find((d) => d.name === 'generate_video')!;
+    expect(validate(def.inputSchema, gen.args).ok).toBe(true);
+    const bar = (calls(out.calls, 'set_layer_timing').at(-1)!.args.items as Array<Record<string, unknown>>).find((i) => i.nodeId === 'plate');
+    expect(bar).toEqual({ nodeId: 'plate', inSec: 2.5, outSec: 6, startSec: 2.5 });
+  });
+
   it('batches keyframes at the schema limit', () => {
     const keys = Array.from({ length: 250 }, (_, i) => ({ t: i * 0.01, v: i }));
     const s = base({ beats: [{ name: 'A', purpose: '', startSec: 0, endSec: 6, layers: [{ id: 'n', kind: 'null', name: 'N', keys: { x: keys } }] }] });

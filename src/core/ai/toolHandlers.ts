@@ -26,7 +26,7 @@
  */
 
 import type { AiTool, ToolContext, ToolResult } from '@motion/ai-tools';
-import { ALL_TOOL_DEFS, bindAlias, mutates } from '@motion/ai-tools';
+import { ALL_TOOL_DEFS, PREVIEW_VIDEO_MODEL, bindAlias, mutates, snapVideoDuration, videoModel } from '@motion/ai-tools';
 import { EFFECT_DEFS, effectDefFor } from '@core/effects/effects';
 import { ANIMATOR_PARAMS } from '@core/text/textAnimators';
 import { isRiggableKind } from '@core/scene/rigLogo';
@@ -48,6 +48,8 @@ import { resolveStyle, buildCustomStyle, setRuntimeStyle, type CustomStyleInput 
 import { decodeBase64Bytes } from './decodeBase64';
 import { generateImageBytes } from './aiImage';
 import { generateVideoBytes, generateSpeechBytes, generate3dBytes } from './aiMedia';
+import { cachedAsset, generationKey, rememberAsset } from './aiMediaCache';
+import { useAiMediaPrefsStore } from '@stores/aiMediaPrefsStore';
 import { exportCompositionVideo } from './aiExport';
 import type { AiImageResult, AiMediaResult } from '@app-types/motionEditor';
 import type { EntranceArchetype } from './archetypes';
@@ -985,6 +987,18 @@ const generateImage: AiTool['handler'] = async (input, ctx) => {
 
   const provider = useAiProviderStore.getState().provider;
 
+  // Same request, same asset: a replayed call (an author-mode revision) must
+  // not generate — and bill — the same picture again.
+  const key = generationKey({ kind: 'image', prompt, model: provider, aspect, ...dims });
+  const reusedId = cachedAsset(key, (id) => useAssetStore.getState().assets.some((a) => a.id === id));
+  const reused = reusedId ? useAssetStore.getState().assets.find((a) => a.id === reusedId) : undefined;
+  if (reused) {
+    const id = await insertAssetLayer(ctx.engine, reused, { x, y });
+    if (!id) return fail(`Could not place the existing image "${reused.name}".`);
+    bindAlias(ctx, alias, id);
+    return ok(`Reused the image "${reused.name}" generated earlier for the same prompt and placed it as layer '${id}'.`, { id, assetId: reused.id, reused: true });
+  }
+
   let res: AiImageResult;
   try {
     res = await generateImageBytes({ provider, prompt, ...dims });
@@ -1010,6 +1024,7 @@ const generateImage: AiTool['handler'] = async (input, ctx) => {
   // The bytes become a footage item through the engine (`importBytes`: the
   // same importer as a picked file), then a layer like any placed asset.
   const asset = await importAssetBytes(ctx.engine, file);
+  rememberAsset(key, asset.id);
   const id = await insertAssetLayer(ctx.engine, asset, { x, y });
   if (!id) return fail(`Generated "${name}" and added it to the library, but could not resolve the new layer id.`);
   bindAlias(ctx, alias, id);
@@ -1035,27 +1050,78 @@ async function bytesToAsset(
   return { ok: true, asset: await importAssetBytes(ctx.engine, file) };
 }
 
+/**
+ * Generate a clip and place it: model, length, frame shape, fit and WHEN.
+ *
+ * - The model is the call's, else the user's default (Settings → Assistant →
+ *   Media), which is the free preview until they pick a paid one.
+ * - The length is snapped to one the model makes, and the reply says so.
+ * - The same request in the same session reuses its asset (aiMediaCache): an
+ *   author-mode revision that replays this call must not pay for it twice.
+ * - `startSec` places the layer's bar (`applyLayerTiming`): the clip's first
+ *   frame plays at startSec and the layer ends with the clip.
+ * - `fit: "cover"` scales the contain-fitted layer up until it fills the frame.
+ */
 const generateVideo: AiTool['handler'] = async (input, ctx) => {
-  const { id: alias, prompt, durationSec, x, y } = input as {
-    id?: string; prompt: string; durationSec?: number; x?: number; y?: number;
+  const i = input as {
+    id?: string; prompt: string; durationSec?: number; aspect?: 'landscape' | 'portrait' | 'square';
+    startSec?: number; model?: string; fit?: 'contain' | 'cover'; x?: number; y?: number;
   };
-  let res: AiMediaResult;
-  try {
-    res = await generateVideoBytes({ prompt, durationSec });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return fail(`Video generation failed: ${message}. The scene is unchanged.`);
+  const model = videoModel(i.model ?? useAiMediaPrefsStore.getState().videoModel) ?? videoModel(PREVIEW_VIDEO_MODEL)!;
+  const durationSec = snapVideoDuration(model, i.durationSec);
+  const aspect = i.aspect && model.aspects.includes(i.aspect) ? i.aspect : model.aspects[0]!;
+  const notes: string[] = [];
+  if (i.durationSec !== undefined && i.durationSec !== durationSec) notes.push(`${model.label} makes ${model.durations.join(' / ')} s clips, so it is ${durationSec}s, not ${i.durationSec}s`);
+  if (i.aspect && i.aspect !== aspect) notes.push(`${model.label} makes ${model.aspects.join(' / ')} clips, so it is ${aspect}`);
+
+  const key = generationKey({ kind: 'video', prompt: i.prompt, model: model.id, aspect, durationSec });
+  const assets = () => useAssetStore.getState().assets;
+  const reusedId = cachedAsset(key, (id) => assets().some((a) => a.id === id));
+  let asset = reusedId ? assets().find((a) => a.id === reusedId) : undefined;
+  let name = asset?.name ?? '';
+  if (!asset) {
+    let res: AiMediaResult;
+    try {
+      res = await generateVideoBytes({ prompt: i.prompt, durationSec, model: model.id, aspect });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return fail(`Video generation failed: ${message}. The scene is unchanged.`);
+    }
+    if (!res.ok) return fail(`Video generation failed: ${res.message}. The scene is unchanged.`);
+    name = `${i.prompt.slice(0, 36).replace(/[^\w -]/g, '').trim() || 'generated'}.${res.extension}`;
+    const placed = await bytesToAsset(ctx, res, name, 'video/mp4');
+    if (!placed.ok) return fail(placed.message);
+    asset = placed.asset;
+    rememberAsset(key, asset.id);
   }
-  if (!res.ok) return fail(`Video generation failed: ${res.message}. The scene is unchanged.`);
 
-  const name = `${prompt.slice(0, 36).replace(/[^\w -]/g, '').trim() || 'generated'}.${res.extension}`;
-  const placed = await bytesToAsset(ctx, res, name, 'video/mp4');
-  if (!placed.ok) return fail(placed.message);
-
-  const nodeId = await insertAssetLayer(ctx.engine, placed.asset, { x, y });
+  const nodeId = await insertAssetLayer(ctx.engine, asset, { x: i.x, y: i.y });
   if (!nodeId) return fail(`Generated "${name}" but could not resolve the new layer id.`);
-  bindAlias(ctx, alias, nodeId);
-  return ok(`Generated a video clip and placed it as layer '${nodeId}'. Asset "${name}" is in the library.`, { id: nodeId });
+  bindAlias(ctx, i.id, nodeId);
+
+  if (i.fit === 'cover') {
+    const comp = await ctx.comp.get();
+    const w = asset.metadata?.width;
+    const h = asset.metadata?.height;
+    if (w && h) {
+      // The insert contain-fits; cover is that, scaled by the ratio of the two fits.
+      const k = Math.max(comp.width / w, comp.height / h) / Math.min(comp.width / w, comp.height / h);
+      await ctx.scene.setProp(nodeId, 'scaleX', k);
+      await ctx.scene.setProp(nodeId, 'scaleY', k);
+    } else {
+      notes.push('the clip\'s size is not known yet, so it is contain-fitted rather than covering the frame');
+    }
+  }
+  const start = i.startSec ?? 0;
+  await applyLayerTiming(ctx.engine, [{ nodeId, startSec: start, inSec: start, outSec: start + durationSec }]);
+
+  return ok(
+    `${reusedId ? 'Reused' : 'Generated'} a ${durationSec}s ${aspect} clip with ${model.label} and placed it as layer '${nodeId}', ` +
+      `playing ${start}s → ${start + durationSec}s${i.fit === 'cover' ? ', covering the frame' : ''}. Asset "${name}" is in the library.` +
+      (notes.length ? ` Note: ${notes.join('; ')}.` : '') +
+      (model.paid ? '' : ' This is the free PREVIEW clip — a stand-in for layout and timing; pick a paid video model in Settings for real footage.'),
+    { id: nodeId, assetId: asset.id, model: model.id, durationSec, reused: !!reusedId },
+  );
 };
 
 const generateSpeech: AiTool['handler'] = async (input, ctx) => {

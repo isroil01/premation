@@ -209,6 +209,7 @@ export function vocabularyCard(): string {
     '  camera: frames 3D layers (focalLength, poi*, orbit*, dof*); light: lights layers that have threeD and acceptsLights (set `light`).',
     '  gradient: full-frame gradient backdrop (set `gradient`: stops, kind linear|radial|corners, angle, centerX/centerY/radius in %).',
     '  image: a generated picture (set `image`: prompt = subject and look, aspect). svg: your own vector (set `svg`: markup).',
+    '  video: a generated clip (set `video`: prompt = subject, light and camera with no text, durationSec, aspect, fit contain|cover, model optional) — b-roll or a background plate under authored type.',
     '  particle: a particle emitter with the engine default look — prefer effects (snowfall, rainfall, particle-systems, cc-bubbles) for styled particles.',
     '',
     `Static props (layer.props): ${staticLine()}.`,

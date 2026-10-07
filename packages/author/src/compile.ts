@@ -80,7 +80,7 @@ class Emitter {
 }
 
 /** One layer's creation call. */
-function createCall(e: Emitter, l: LayerSpec, props: Record<string, unknown>): void {
+function createCall(e: Emitter, l: LayerSpec, props: Record<string, unknown>, offset: number): void {
   const at = { ...(props.x !== undefined ? { x: props.x } : {}), ...(props.y !== undefined ? { y: props.y } : {}) };
   switch (l.kind) {
     case 'gradient': {
@@ -114,6 +114,8 @@ function createCall(e: Emitter, l: LayerSpec, props: Record<string, unknown>): v
         ...(v.aspect ? { aspect: v.aspect } : {}),
         ...(v.model ? { model: v.model } : {}),
         ...(v.fit ? { fit: v.fit } : {}),
+        // The clip's first frame at the layer's in point; the bar call below trims its end.
+        startSec: round(offset + (l.inSec ?? 0)),
         ...at,
       });
       return;
@@ -296,7 +298,7 @@ function emitLayers(
   offset: number,
   span: number | null,
 ): void {
-  for (const l of ls) createCall(e, l, staticProps(script, l));
+  for (const l of ls) createCall(e, l, staticProps(script, l), offset);
   const keys: KeyItem[] = [];
   const expressions: ToolCall[] = [];
   for (const l of ls) styleLayer(e, script, l, l.parent ?? root ?? undefined, offset, keys, expressions);

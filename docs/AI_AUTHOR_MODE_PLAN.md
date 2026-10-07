@@ -222,3 +222,32 @@ author pipeline has already looked at its work.
   as a hint.
 - **Native suites.** The `*.native.test.ts` files need the engine; they are
   written against the harness and run on the Windows machine.
+
+## As built (2026-10-07) and follow-ups
+
+All five milestones landed on `native-core-ail2wg`, one commit each.
+Additions beyond the text above, each needed by the compiler:
+
+- `add_path_operator` also takes an `id` handle, and the registry resolves
+  handles one object deep (`update_layer.matte.sourceId`).
+- `generate_image` and `generate_video` reuse the asset of an identical
+  earlier request (`aiMediaCache.ts`), because an author-mode revision
+  replays a beat's calls and must not pay for its imagery twice.
+- The preview video model (`preview/placeholder`) is the default until a
+  paid model is picked in Settings; it serves a small embedded clip.
+
+Follow-ups:
+
+- **Native suites to run on a machine with the engine built**:
+  `src/core/ai/layerTiming.native.test.ts`,
+  `src/core/ai/animatableCatalog.native.test.ts` (gates
+  `SAMPLED_LAYER_PROPS`), `src/core/ai/videoPlacement.native.test.ts`, and the
+  eval `src/core/ai/author/eval/authorEval.native.test.ts` (needs `AI_EVAL=1`,
+  and `AI_EVAL_RECORD=1` + `ANTHROPIC_API_KEY` for its first run — no fixtures
+  are committed yet).
+- **motion-back parity** (separate repository): `/ai/video` should accept
+  `model` and `aspect` and allowlist the same `FAL_VIDEO_MODELS`; until then
+  the server edition sends them and the gateway ignores them.
+- **Tune from the eval**: chunk size, token caps and `MAX_AUTHOR_ROUNDS` are
+  first guesses; the eval's author-vs-library table is what should move them,
+  and whether `authorModeDefault()` stays `author`.
