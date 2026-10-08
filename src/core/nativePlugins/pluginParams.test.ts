@@ -1,11 +1,11 @@
 import {
-  addStop,
+  withStopAdded,
   fileTypeList,
   fileTypeMatches,
   gradientCss,
   gradientStops,
   gradientValue,
-  importForFileParam,
+  fileParamImportCommand,
   stopHex,
   withHex,
 } from './pluginParams';
@@ -29,7 +29,7 @@ describe('plugin SDK 1.1 params, editor side', () => {
     expect(stopHex(s[1]!)).toBe('#ffffff');
     expect(withHex(s[0]!, '#ff8000')).toMatchObject({ r: 1, g: 128 / 255, b: 0, a: 1 });
     expect(withHex(s[0]!, 'red')).toBe(s[0]);
-    const three = addStop(s);
+    const three = withStopAdded(s);
     expect(three.map((x) => x.position)).toEqual([0, 0.5, 1]);
     expect(three[1]).toMatchObject({ r: 0.5, g: 0.5, b: 0.5 });
     expect(gradientCss(s)).toBe('linear-gradient(to right, rgba(0, 0, 0, 1) 0%, rgba(255, 255, 255, 1) 100%)');
@@ -40,7 +40,7 @@ describe('plugin SDK 1.1 params, editor side', () => {
     expect(fileTypeMatches('warm.CUBE', 'cube|3dl')).toBe(true);
     expect(fileTypeMatches('warm.png', 'cube')).toBe(false);
     expect(fileTypeMatches('anything', '')).toBe(true);
-    expect(importForFileParam('/a/b.cube')).toEqual({
+    expect(fileParamImportCommand('/a/b.cube')).toEqual({
       type: 'importFiles',
       files: [{ path: '/a/b.cube', asSequence: false, createComposition: false, asData: true }],
     });

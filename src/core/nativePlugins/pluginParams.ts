@@ -64,7 +64,7 @@ export function gradientCss(stops: readonly GradientStop[]): string {
 }
 
 /** A new stop halfway into the widest gap, coloured as the gradient there. */
-export function addStop(stops: readonly GradientStop[]): GradientStop[] {
+export function withStopAdded(stops: readonly GradientStop[]): GradientStop[] {
   const s = [...stops].sort((x, y) => x.position - y.position);
   if (s.length === 0) return DEFAULT_GRADIENT.map((x) => ({ ...x }));
   let at = 0;
@@ -102,6 +102,6 @@ export function fileTypeMatches(name: string, types: string | undefined): boolea
 }
 
 /** Import a picked file for a FILE param: a `data` item, never probed as footage. */
-export function importForFileParam(path: string): Command {
+export function fileParamImportCommand(path: string): Command {
   return { type: 'importFiles', files: [{ path, asSequence: false, createComposition: false, asData: true }] };
 }

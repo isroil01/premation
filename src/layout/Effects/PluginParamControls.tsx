@@ -11,13 +11,13 @@ import { Button } from '@components/Button';
 import { engine } from '@core/engine/engineInstance';
 import { reportEngineError } from '@core/engine/uiEdits';
 import {
-  addStop,
+  withStopAdded,
   fileTypeList,
   fileTypeMatches,
   gradientCss,
   gradientStops,
   gradientValue,
-  importForFileParam,
+  fileParamImportCommand,
   stopHex,
   withHex,
   type GradientStop,
@@ -105,7 +105,7 @@ export function PluginGradientField({
         </div>
       ))}
       <div>
-        <Button size="sm" variant="secondary" disabled={stops.length >= 256} onClick={() => write(addStop(stops))}>
+        <Button size="sm" variant="secondary" disabled={stops.length >= 256} onClick={() => write(withStopAdded(stops))}>
           Add Stop
         </Button>
       </div>
@@ -148,7 +148,7 @@ export function PluginFileField({
     const client = engine();
     const opened = await client.beginGesture(`Set ${label}`);
     if (!opened.ok) return reportEngineError(`Set ${label}`, opened.error);
-    const imported = await client.execute(importForFileParam(path));
+    const imported = await client.execute(fileParamImportCommand(path));
     const item = imported.ok ? (imported.value as { items?: string[] }).items?.[0] : undefined;
     if (!imported.ok) reportEngineError(`Set ${label}`, imported.error);
     if (item) onChange(item);
