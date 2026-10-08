@@ -745,6 +745,12 @@ async function authRequest(path: string, body: unknown): Promise<AuthResult> {
   };
 }
 
+/**
+ * The plugin SDK this build's engine hosts (native/sdk/include/premation_sdk/pr_types.h
+ * PR_SDK_VERSION_MAJOR.MINOR). The store lists only plugins it can load.
+ */
+export const ENGINE_PLUGIN_SDK = '1.1';
+
 /** A native plugin in the store (motion-back plugins.service browse / detail; docs/PLUGIN_STORE.md §3). */
 export interface StorePluginSummary {
   id: string;
@@ -1375,8 +1381,8 @@ export const api = {
   // ── Plugin store (native plugins, free only; docs/PLUGIN_STORE.md) ──
   /** Browse native plugins (public ones, plus nothing private: private plugins are only on `myPlugins`). */
   browseNativePlugins: (params: { q?: string; category?: string; sort?: string; limit?: number; offset?: number } = {}) =>
-    // The registry filters on `kind` (motion-back plugins.service browse).
-    request<StorePluginPage>(`/plugins${query({ kind: 'native', ...params })}`).then((page) => ({
+    // The registry filters on `kind` and on what this engine's SDK loads (motion-back plugins.service browse).
+    request<StorePluginPage>(`/plugins${query({ kind: 'native', sdk: ENGINE_PLUGIN_SDK, ...params })}`).then((page) => ({
       items: (page.items ?? []).map(storePluginFromWire),
       total: page.total,
     })),

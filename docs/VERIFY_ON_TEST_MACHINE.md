@@ -162,6 +162,24 @@ the WGSL compiled with naga. Everything below did not run.
       one "Missing plugin …" notice, renders the layer unaffected, keeps the
       effect after a save and reopen.
 
+## Plugin platform P4 — SDK 1.1 camera / lights / layer transforms (2026-10-08, docs/PLUGIN_SDK.md)
+
+Run in the cloud session: `engine_plugins_tests` `[scene]` on the headless
+engine (the `particles` sample through the default view, a dollied camera, a
+light and an emitter layer; the chain-entry encode/decode). Not run (needs
+the Dawn build and the render graph):
+
+- [ ] `scene/` and `plugins/scene_finish.cpp` compile in the engine build
+      (`encode_native_scene` is called from `finish_native_frame`).
+- [ ] Add a golden render test (packages/render-tests) that applies the
+      `particles` sample to a comp-sized solid and orbits a camera over 3
+      frames; bless it on the GPU box. Moving the camera must change the
+      frame; moving an unrelated layer must not re-render the effect.
+- [ ] A 3D layer as the Emitter: the burst sits at the layer's position
+      (`RenderThreeD.model` is the matrix used) — and a 2D layer at z = 0.
+- [ ] Lights: a red ambient light tints the particles red in the viewer and
+      in an export.
+
 ## Plugin platform P3 — Premation Cloud plugins (2026-10-08, docs/PLUGIN_STORE.md §4b)
 
 Run in the cloud session: motion-back tier / 402 / token specs; the headless

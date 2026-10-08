@@ -137,6 +137,8 @@ void finish_native_frame(const scene::BuildContext& c, std::string_view comp, do
         }
         continue;
       }
+      // SDK 1.1: the camera / lights / layer matrices the effect declared it reads, at this frame.
+      encode_native_scene(e, *spec, frame.file.scene);
       if (!spec->has(PR_OUT_FLAG_WIDE_TIME_INPUT)) continue;
       RenderInputs in;
       decode_native_fx(e, *spec, in);

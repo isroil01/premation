@@ -6,6 +6,7 @@
  *   pr_params.h   the declarative parameter model
  *   pr_gpu.h      the GPU path (the engine's Dawn / WebGPU device and textures)
  *   pr_host.h     the host callback suite
+ *   pr_scene.h    the comp camera, lights and layer transforms (SDK 1.1)
  *   pr_effect.h   the entry point, command selectors, in/out data, flags
  *
  * Guide: docs/PLUGIN_SDK.md. Samples: native/sdk/samples/.
@@ -17,6 +18,7 @@
 #include "pr_gpu.h"
 #include "pr_host.h"
 #include "pr_params.h"
+#include "pr_scene.h"
 #include "pr_types.h"
 #include "pr_world.h"
 

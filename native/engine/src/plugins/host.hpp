@@ -106,6 +106,35 @@ struct ParamValue {
   std::vector<std::uint8_t> arb;
 };
 
+/// SDK 1.1 (pr_scene.h): the comp's camera at the frame, as the engine evaluated it.
+struct SceneCamera {
+  bool hasCamera = false;
+  bool orthographic = false;
+  bool dofEnabled = false;
+  std::array<double, 16> view{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+  std::array<double, 16> projection{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+  std::array<double, 3> eye{};
+  double zoom = 0;
+  double focusDistance = 0;
+  double aperture = 0;
+};
+
+/// SDK 1.1: one comp light at the frame (RenderLight3D's fields, in pr_scene.h's terms).
+struct SceneLight {
+  std::int32_t type = 0;  ///< PrLightType
+  std::array<double, 3> color{1, 1, 1};
+  double intensity = 1;
+  std::array<double, 3> position{};
+  std::array<double, 3> direction{};
+  double coneAngle = 0;
+  double coneFeather = 0;
+  std::int32_t falloff = 0;
+  double falloffDistance = 0;
+  bool castsShadows = false;
+  double shadowDarkness = 0;
+  double shadowDiffusion = 0;
+};
+
 /// Everything a render selector call needs besides pixels.
 struct RenderInputs {
   std::string matchName;
@@ -122,6 +151,15 @@ struct RenderInputs {
   std::array<double, 9> layerToWorld{1, 0, 0, 0, 1, 0, 0, 0, 1};
   std::uint32_t projectBits = 16;
   bool draft = false;
+  /// SDK 1.1 — present when the effect declared PR_OUT_FLAG_USES_CAMERA (scene_finish fills it).
+  std::optional<SceneCamera> camera;
+  /// SDK 1.1 — PR_OUT_FLAG_USES_LIGHTS.
+  std::optional<std::vector<SceneLight>> lights;
+  /// SDK 1.1 — PR_OUT_FLAG_USES_LAYER_TRANSFORMS: a LAYER param's world matrix (column-major),
+  /// parallel to `values` (nullopt = the param names no layer / none evaluated).
+  std::vector<std::optional<std::array<double, 16>>> layerMatrices;
+  /// The comp size (the default camera's film).
+  double compW = 0, compH = 0;
 };
 
 /// A layer checkout asked for in SMART_PRE_RENDER.

@@ -15,6 +15,7 @@
 #include "json.hpp"
 #include "log.hpp"
 #include "manifest.hpp"
+#include "transform.hpp"
 #include "module.hpp"
 #include "values.hpp"
 #include "workers.hpp"
@@ -48,6 +49,9 @@ struct PrHost {
   /// Handles created during a render selector: disposed when it returns.
   std::vector<PrHandle> scoped;
   bool renderSelector = false;
+  /// SDK 1.1 — the render selector's inputs and effect (get_comp_camera, …).
+  const premation::plugins::RenderInputs* inputs = nullptr;
+  std::uint32_t outFlags = 0;
   /// iterate(): a job crashed on a worker (the instance is disabled like a crash on the caller).
   premation::plugins::Fault iterateFault;
   std::atomic<bool> iterateStop{false};
@@ -488,6 +492,120 @@ PrErr PR_CALL cb_checkout_layer(PrHost* h, std::uint32_t paramIndex, std::uint32
   return PR_ERR_NONE;
 }
 
+// ── SDK 1.1: the comp camera, lights and layer transforms (pr_scene.h) ──────
+
+/// Copy what fits of `src` into a caller struct whose first field is its `struct_size`.
+template <typename T>
+PrErr copy_sized(T* dst, const T& src) {
+  if (dst == nullptr) return PR_ERR_INVALID_PARAM;
+  const std::uint32_t size = dst->struct_size;
+  if (size < sizeof(std::uint32_t)) return PR_ERR_INVALID_PARAM;
+  std::memcpy(reinterpret_cast<unsigned char*>(dst) + sizeof(std::uint32_t),  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast): sized C struct
+              reinterpret_cast<const unsigned char*>(&src) + sizeof(std::uint32_t),  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+              std::min<std::size_t>(size, sizeof(T)) - sizeof(std::uint32_t));
+  return PR_ERR_NONE;
+}
+
+/// Shared gate: a render selector, the effect declared `flag`, and the frame's own time.
+PrErr scene_gate(PrHost* h, std::uint32_t flag, std::int64_t time) {
+  if (h == nullptr || !h->renderSelector || h->inputs == nullptr) return PR_ERR_INVALID_CALLBACK;
+  if ((h->outFlags & flag) == 0) return PR_ERR_INVALID_CALLBACK;
+  if (time != h->inputs->layerTime && time != h->inputs->compTime) return PR_ERR_UNSUPPORTED;
+  return PR_ERR_NONE;
+}
+
+/// A rigid view matrix's inverse (rotation transposed, translation back-rotated).
+std::array<double, 16> rigid_inverse(const std::array<double, 16>& v) {
+  std::array<double, 16> w{};
+  for (std::size_t c = 0; c < 3; ++c) {
+    for (std::size_t r = 0; r < 3; ++r) w.at(c * 4 + r) = v.at(r * 4 + c);
+  }
+  for (std::size_t r = 0; r < 3; ++r) {
+    w.at(12 + r) = -(w.at(r) * v.at(12) + w.at(4 + r) * v.at(13) + w.at(8 + r) * v.at(14));
+  }
+  w.at(15) = 1;
+  return w;
+}
+
+PrErr PR_CALL cb_get_comp_camera(PrHost* h, std::int64_t time, PrCamera* out) {
+  if (const PrErr e = scene_gate(h, PR_OUT_FLAG_USES_CAMERA, time); e != PR_ERR_NONE) return e;
+  const RenderInputs& in = *h->inputs;
+  const double w = in.compW > 0 ? in.compW : static_cast<double>(in.worldW);
+  const double ht = in.compH > 0 ? in.compH : static_cast<double>(in.worldH);
+  SceneCamera cam;
+  if (in.camera && in.camera->hasCamera) {
+    cam = *in.camera;
+  } else {
+    // The comp's default view: After Effects' default camera, centred on the comp.
+    const motion::xf::Camera def = motion::xf::default_camera(w, ht);
+    cam.view = motion::xf::camera_view_matrix(def);
+    cam.projection = motion::xf::camera_projection_matrix(def);
+    cam.eye = {def.position.x, def.position.y, def.position.z};
+    cam.zoom = def.focal_length;
+    cam.focusDistance = def.focal_length;
+  }
+  PrCamera c{};
+  c.struct_size = sizeof(PrCamera);
+  c.has_camera = in.camera && in.camera->hasCamera ? 1 : 0;
+  c.orthographic = cam.orthographic ? 1 : 0;
+  c.dof_enabled = cam.dofEnabled ? 1 : 0;
+  const std::array<double, 16> world = rigid_inverse(cam.view);
+  std::copy(world.begin(), world.end(), std::begin(c.world));
+  std::copy(cam.view.begin(), cam.view.end(), std::begin(c.view));
+  std::copy(cam.projection.begin(), cam.projection.end(), std::begin(c.projection));
+  std::copy(cam.eye.begin(), cam.eye.end(), std::begin(c.position));
+  c.zoom = cam.zoom > 0 ? cam.zoom : cam.projection[5];
+  c.fov_y = c.zoom > 0 ? 2 * std::atan(ht / 2 / c.zoom) : 0;
+  c.film_width = w;
+  c.film_height = ht;
+  c.focus_distance = cam.focusDistance;
+  c.aperture = cam.aperture;
+  return copy_sized(out, c);
+}
+
+PrErr PR_CALL cb_get_comp_lights(PrHost* h, std::int64_t time, PrLight* out, std::uint32_t capacity, std::uint32_t* count) {
+  if (const PrErr e = scene_gate(h, PR_OUT_FLAG_USES_LIGHTS, time); e != PR_ERR_NONE) return e;
+  if (count == nullptr || (capacity > 0 && out == nullptr)) return PR_ERR_INVALID_PARAM;
+  const std::vector<SceneLight> none;
+  const std::vector<SceneLight>& lights = h->inputs->lights ? *h->inputs->lights : none;
+  const auto n = static_cast<std::uint32_t>(std::min<std::size_t>(lights.size(), PR_MAX_LIGHTS));
+  *count = n;
+  // The caller's array is laid out at ITS struct size (the first element's struct_size).
+  const std::uint32_t stride = capacity > 0 ? out->struct_size : 0;
+  if (capacity > 0 && stride < sizeof(std::uint32_t)) return PR_ERR_INVALID_PARAM;
+  for (std::uint32_t i = 0; i < std::min(n, capacity); ++i) {
+    const SceneLight& s = lights[i];
+    PrLight l{};
+    l.struct_size = sizeof(PrLight);
+    l.type = s.type;
+    std::copy(s.color.begin(), s.color.end(), std::begin(l.color));
+    l.intensity = s.intensity;
+    std::copy(s.position.begin(), s.position.end(), std::begin(l.position));
+    std::copy(s.direction.begin(), s.direction.end(), std::begin(l.direction));
+    l.cone_angle = s.coneAngle;
+    l.cone_feather = s.coneFeather;
+    l.falloff = s.falloff;
+    l.falloff_distance = s.falloffDistance;
+    l.casts_shadows = s.castsShadows ? 1 : 0;
+    l.shadow_darkness = s.shadowDarkness;
+    l.shadow_diffusion = s.shadowDiffusion;
+    auto* slot = reinterpret_cast<PrLight*>(reinterpret_cast<unsigned char*>(out) + std::size_t{i} * stride);  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast): the caller's sized array
+    slot->struct_size = stride;
+    if (const PrErr e = copy_sized(slot, l); e != PR_ERR_NONE) return e;
+  }
+  return PR_ERR_NONE;
+}
+
+PrErr PR_CALL cb_get_layer_transform(PrHost* h, std::uint32_t paramIndex, std::int64_t time, double* out) {
+  if (const PrErr e = scene_gate(h, PR_OUT_FLAG_USES_LAYER_TRANSFORMS, time); e != PR_ERR_NONE) return e;
+  if (out == nullptr || paramIndex == 0 || paramIndex > h->inputs->values.size()) return PR_ERR_INVALID_PARAM;
+  if (h->params == nullptr || h->params->at(paramIndex - 1).type != PR_PARAM_LAYER) return PR_ERR_INVALID_PARAM;
+  const auto& ms = h->inputs->layerMatrices;
+  if (paramIndex - 1 >= ms.size() || !ms[paramIndex - 1]) return PR_ERR_NOT_FOUND;
+  std::copy(ms[paramIndex - 1]->begin(), ms[paramIndex - 1]->end(), out);
+  return PR_ERR_NONE;
+}
+
 PrErr PR_CALL cb_checkout_layer_pixels(PrHost* h, std::uint32_t checkoutId, PrWorld** world) {
   if (h == nullptr || h->cmd != PR_CMD_SMART_RENDER || h->source == nullptr || world == nullptr) return PR_ERR_INVALID_CALLBACK;
   *world = h->source->cpu_checkout(checkoutId);
@@ -633,6 +751,9 @@ PluginHost::PluginHost(HostOptions options) : impl_(std::make_unique<Impl>(*this
   s.log = &cb_log;
   s.iterate = &cb_iterate;
   s.iterate_threads = &cb_iterate_threads;
+  s.get_comp_camera = &cb_get_comp_camera;
+  s.get_comp_lights = &cb_get_comp_lights;
+  s.get_layer_transform = &cb_get_layer_transform;
 
   int threads = m.options.threads;
   if (threads <= 0) threads = std::clamp(static_cast<int>(std::thread::hardware_concurrency()) - 1, 0, 16);
@@ -1465,6 +1586,8 @@ CallResult PluginHost::Impl::call_render(Plugin& p, EffectSpec& e, const RenderI
   fill_in_data(d, in);
   ctx.cmd = cmd;
   ctx.renderSelector = true;
+  ctx.inputs = &in;
+  ctx.outFlags = e.outFlags;
   ctx.numParams = d.num_params;
   ctx.params = &e.params;
   d.sequence_data = sequence;
@@ -1560,6 +1683,8 @@ CallResult PluginHost::render_cpu(const RenderInputs& in, CheckoutSource& io, Pr
     m.fill_in_data(d, in);
     ctx.cmd = PR_CMD_RENDER;
     ctx.renderSelector = true;
+    ctx.inputs = &in;
+    ctx.outFlags = e->outFlags;
     ctx.numParams = d.num_params;
     ctx.params = &e->params;
     d.sequence_data = lease.sequence();

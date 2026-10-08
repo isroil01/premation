@@ -9,10 +9,10 @@ so an AE plugin author can find their way around.
 | | |
 |---|---|
 | Headers | `native/sdk/include/premation_sdk/` (C, versioned ABI; `premation_sdk.h` includes all) |
-| Samples | `native/sdk/samples/` — `ripple` (CPU), `rings` (generator + sequence data + button), `checkout` (Layer Displace, Time Echo), `grade` (GPU) |
+| Samples | `native/sdk/samples/` — `ripple` (CPU), `rings` (generator + sequence data + button), `checkout` (Layer Displace, Time Echo), `grade` (GPU), `particles` (SDK 1.1: comp camera, lights, layer transforms) |
 | Host | `native/engine/src/plugins/` (runs inside `premation-engine`) |
 | Tool | `premation-plugins` — list, render, crash-check a plugin folder without an editor |
-| Tests | `engine_plugins_tests` (`tests/test_plugin_host.cpp`, `tests/test_plugin_session.cpp`) |
+| Tests | `engine_plugins_tests` (`tests/test_plugin_host.cpp`, `tests/test_plugin_session.cpp`, `tests/test_plugin_scene.cpp`, `tests/test_plugin_entitlement.cpp`) |
 
 ## Packaging
 
@@ -126,6 +126,33 @@ another time, `finish_native_frame` (`scene_finish.cpp`) builds that layer at
 that time and adds it as a hidden renderable `<layer>@<flicks>`. A frame stays a
 pure function of the document: preview, export and a restarted engine render
 the same pixels.
+
+## The comp camera and lights (SDK 1.1, `pr_scene.h`)
+
+AE's `PF_Cmd`-era plugins read the comp camera and lights through
+`AEGP_GetEffectCamera` / `AEGP_GetLayerToWorldXform`; Particular, Element 3D,
+Plexus and Optical Flares are built on them. SDK 1.1 appends three host
+callbacks to `PrHostSuite` (an SDK 1.0 plugin never reads past the old end; a
+1.1 plugin checks `struct_size` first, see the `particles` sample):
+
+| Callback | Gives |
+|---|---|
+| `get_comp_camera(host, time, PrCamera*)` | camera → world and world → camera matrices, the projection (camera → comp px), eye, zoom, vertical FOV, film size, depth of field (focus distance, aperture). `has_camera = 0`: the comp's default view (After Effects' default camera, centred). |
+| `get_comp_lights(host, time, PrLight*, capacity, &count)` | every comp light: type, colour, intensity, position, direction, cone, falloff, shadows (≤ `PR_MAX_LIGHTS`). |
+| `get_layer_transform(host, param_index, time, double m[16])` | a `LAYER` param's world matrix (layer px → comp world px; a 2D layer at z = 0). |
+
+- **Declare what you read** in `GLOBAL_SETUP`: `PR_OUT_FLAG_USES_CAMERA`,
+  `PR_OUT_FLAG_USES_LIGHTS`, `PR_OUT_FLAG_USES_LAYER_TRANSFORMS`. Without the
+  flag the callback answers `PR_ERR_INVALID_CALLBACK`.
+- **Evaluated at the frame time** (`time` = `current_time`; another time
+  answers `PR_ERR_UNSUPPORTED`). `finish_native_frame` writes them from the
+  built frame into the effect's chain entry (`fx_wire.hpp`), so they are
+  inputs of that effect's render: moving the camera re-renders an effect that
+  reads it, and no other. The frame stays a pure function of the document.
+- World space is After Effects': pixels, +x right, +y down, +z away from the
+  viewer, matrices column-major.
+- The manifest says `"sdk": { "major": 1, "minor": 1 }`; an engine with SDK
+  1.0 lists such a plugin as failed ("needs SDK 1.1") instead of loading it.
 
 ## Sequence data
 

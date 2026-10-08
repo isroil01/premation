@@ -18,6 +18,7 @@
 
 #include "pr_gpu.h"
 #include "pr_params.h"
+#include "pr_scene.h"
 #include "pr_types.h"
 #include "pr_world.h"
 
@@ -94,6 +95,20 @@ typedef struct PrHostSuite {
    * non-zero PrErr. `thread_index` < iterate_threads() — index per-thread scratch with it. */
   PrErr(PR_CALL* iterate)(PrHost* host, int32_t count, void* refcon, PrIterateFn fn);
   int32_t(PR_CALL* iterate_threads)(PrHost* host);
+
+  /* ── SDK 1.1 (appended; check struct_size >= offsetof(PrHostSuite, get_layer_transform)
+   *    + sizeof(void*) before calling) ── the render selectors, at the frame's time
+   * (`time` must be in_data->current_time; another time answers PR_ERR_UNSUPPORTED).
+   * Declare PR_OUT_FLAG_USES_CAMERA / _USES_LIGHTS / _USES_LAYER_TRANSFORMS in
+   * GLOBAL_SETUP, or these answer PR_ERR_INVALID_CALLBACK. See pr_scene.h. */
+  PrErr(PR_CALL* get_comp_camera)(PrHost* host, int64_t time, PrCamera* out_camera);
+  /* Up to `capacity` lights into `out_lights` (each struct_size set by the caller);
+   * the comp's light count (≤ PR_MAX_LIGHTS) into *out_count. */
+  PrErr(PR_CALL* get_comp_lights)(PrHost* host, int64_t time, PrLight* out_lights, uint32_t capacity, uint32_t* out_count);
+  /* A PR_PARAM_LAYER param's world matrix (layer px → comp world px, column-major).
+   * PR_ERR_NOT_FOUND when the param names no layer. A 2D layer is its 2D
+   * transform at z = 0. */
+  PrErr(PR_CALL* get_layer_transform)(PrHost* host, uint32_t param_index, int64_t time, double out_matrix[16]);
 } PrHostSuite;
 
 #ifdef __cplusplus

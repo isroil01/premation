@@ -1,0 +1,12 @@
+{
+  "manifestVersion": 1,
+  "id": "com.premation.samples.particles",
+  "name": "Particles (sample)",
+  "version": "1.0.0",
+  "vendor": "Premation",
+  "sdk": { "major": 1, "minor": 1 },
+  "binary": { "windows": "particles.dll", "macos": "libparticles.dylib", "linux": "libparticles.so" },
+  "effects": [
+    { "matchName": "com.premation.samples.particles", "name": "Particles", "category": "Premation Samples" }
+  ]
+}

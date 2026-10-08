@@ -134,6 +134,13 @@ See §3 for the design. In order:
 
 ### P4 — SDK 1.1: camera, lights, comp
 
+**Status (2026-10-08):** built — `pr_scene.h`, the three callbacks appended
+to `PrHostSuite`, `PR_OUT_FLAG_USES_CAMERA / _LIGHTS / _LAYER_TRANSFORMS`, the
+scene written into the chain entry by `finish_native_frame` (`fx_wire`
+encode/decode), and the open `particles` sample, tested on the CPU host
+(`tests/test_plugin_scene.cpp`). The orbiting-camera golden render test runs
+on the GPU machine (docs/VERIFY_ON_TEST_MACHINE.md).
+
 The biggest unlock for deep plugins. Callbacks are **appended** to
 `PrHostSuite`, so SDK 1.0 plugins keep loading.
 

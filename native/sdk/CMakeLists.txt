@@ -80,6 +80,7 @@ endfunction()
 premation_sample_plugin(ripple samples/ripple/ripple.cpp)
 premation_sample_plugin(rings samples/rings/rings.cpp)
 premation_sample_plugin(checkout samples/checkout/checkout.cpp)
+premation_sample_plugin(particles samples/particles/particles.cpp)  # SDK 1.1: comp camera, lights, layer transforms
 
 # The GPU samples call WebGPU through the proc table the host hands over, so
 # they link no Dawn — they need only the headers (webgpu.h, dawn_proc_table.h).

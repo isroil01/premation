@@ -83,6 +83,11 @@ typedef int32_t PrCmd;
 #define PR_OUT_FLAG_NON_PARAM_VARY (1u << 7)       /* output changes with time even when no param does */
 #define PR_OUT_FLAG_SEND_UPDATE_PARAMS_UI (1u << 8) /* wants UPDATE_PARAMS_UI */
 #define PR_OUT_FLAG_THREADED_RENDER (1u << 9)      /* render selectors are safe to run concurrently */
+/* SDK 1.1 (pr_scene.h): the effect reads the comp camera / lights / layer transforms;
+ * the engine evaluates them for it, and they become inputs of its render. */
+#define PR_OUT_FLAG_USES_CAMERA (1u << 10)
+#define PR_OUT_FLAG_USES_LIGHTS (1u << 11)
+#define PR_OUT_FLAG_USES_LAYER_TRANSFORMS (1u << 12)
 
 typedef int32_t PrQuality;
 #define PR_QUALITY_DRAFT 0
