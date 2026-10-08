@@ -48,6 +48,18 @@ export interface DownloadRecord {
   publisherKey: string;
   sha256: string;
   size: number;
+  /** The binary keys of the package served (the registry picks it for `?platform=`). */
+  platforms?: string[];
+}
+
+/**
+ * The machine key the registry picks a package for (`?platform=`; its
+ * `MACHINE_KEYS`, docs/PLUGIN_STORE.md §1). Windows on Arm runs the x64 build.
+ */
+export function machinePlatformKey(platform: NodeJS.Platform, arch: string): string {
+  if (platform === 'win32') return 'windows-x64';
+  if (platform === 'darwin') return arch === 'arm64' ? 'macos-arm64' : 'macos-x64';
+  return arch === 'arm64' ? 'linux-arm64' : 'linux-x64';
 }
 
 export interface InstalledPlugin {

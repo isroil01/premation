@@ -782,11 +782,11 @@ export interface StorePluginPage {
 }
 
 /**
- * A store listing as the page may read it. The registry answers with the
- * pre-0.9 JS-plugin shape too (no `kind`, `platforms`, `effects`, `sdk`), and
- * `GET /plugins` does not filter on `kind` yet, so every array and the kind
- * get a default here instead of in each caller: a missing `platforms` threw
- * in `runsHere` and blanked the dashboard's Plugins page.
+ * A store listing as the page may read it. Rows published before the registry
+ * knew native plugins answer the pre-0.9 JS-plugin shape (no `kind`,
+ * `platforms`, `effects`, `sdk`), so every array and the kind get a default
+ * here instead of in each caller: a missing `platforms` threw in `runsHere`
+ * and blanked the dashboard's Plugins page.
  */
 function storePluginFromWire<T extends StorePluginSummary>(p: T): T {
   return {
@@ -1372,12 +1372,11 @@ export const api = {
   // ── Plugin store (native plugins, free only; docs/PLUGIN_STORE.md) ──
   /** Browse native plugins (public ones, plus nothing private: private plugins are only on `myPlugins`). */
   browseNativePlugins: (params: { q?: string; category?: string; sort?: string; limit?: number; offset?: number } = {}) =>
-    request<StorePluginPage>(`/plugins${query({ kind: 'native', ...params })}`).then((page) => {
-      // Filtered here as well: a registry that ignores `kind` lists JS plugins 0.9 cannot run.
-      const all = (page.items ?? []).map(storePluginFromWire);
-      const items = all.filter((p) => p.kind === 'native');
-      return { items, total: items.length === all.length ? page.total : items.length };
-    }),
+    // The registry filters on `kind` (motion-back plugins.service browse).
+    request<StorePluginPage>(`/plugins${query({ kind: 'native', ...params })}`).then((page) => ({
+      items: (page.items ?? []).map(storePluginFromWire),
+      total: page.total,
+    })),
   /** One plugin's public listing. */
   storePluginDetail: (id: string) =>
     request<StorePluginDetail>(`/plugins/${encodeURIComponent(id)}`).then(storePluginFromWire),

@@ -41,6 +41,12 @@ phase unlocks for the next.
 
 Lets every later phase be delivered to users.
 
+**Status (2026-10-08):** built — motion-back branch `plugin-platform`
+(native reader, `PluginPackage`, R2 / local package store, `?kind=`,
+`?platform=` download record, verified-publisher policy) and the editor
+(`?platform=` on install, client `kind` filter removed). The gate below runs
+on the test machine (docs/VERIFY_ON_TEST_MACHINE.md).
+
 - **Backend (motion-back):**
   - Read `premation-plugin.json` in `plugin-package.ts`.
   - Add `PluginVersion.kind` (`js` | `native`), `sdk`, `platforms` and

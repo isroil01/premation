@@ -73,9 +73,21 @@ Existing routes keep their meaning; native packages are a second `kind` of
   client), checks `integrity` against the zip, and records:
   `sdkMajor`, `sdkMinor`, `effects` (match names, names, categories) and
   `artifacts: [{ platform, file, sha256, size }]` (one per `binary` key).
-  The bytes go to object storage (`StorageService`), not Postgres; the
-  version row keeps the storage key, `size` and `sha256`. Native packages may
-  be up to 256 MB.
+  Native packages may be up to 256 MB. Store ids are lowercase reverse-DNS
+  (`com.example.glow`), as for JS plugins: the first segment is the
+  publisher namespace.
+- **One package per platform.** A version is published either as one
+  package carrying every platform, or as one package per platform
+  (`pack-plugin.mjs --only-present` on each OS, then `sign-plugin.mjs
+  publish` each): a later publish of the same version with platforms the
+  version does not have yet adds them (`PluginPackage` rows). A platform
+  already published is never replaced, and every package of a version must
+  declare the same SDK and effects.
+- **Storage.** Package bytes go to Cloudflare R2 (S3 API) when
+  `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` and
+  `R2_BUCKET` are set, otherwise to local disk under `UPLOAD_DIR` behind
+  signed `/files` URLs. Not Postgres (`packageBytes` stays for legacy JS
+  rows only) and not Cloudinary (10 MB raw cap).
 - **Review policy.** Every native version is scanned (`plugin-scan.ts`):
   binary count, size, unexpected files, effects not owned by the id. A new
   version of a public native plugin whose publisher is not **verified** is
@@ -88,14 +100,20 @@ Existing routes keep their meaning; native packages are a second `kind` of
   detail, updates and download. Toggled with `PATCH /plugins/:id/listing
   { visibility }`. Enforced in `plugins.service.ts` browse, detail, download
   and updates (the existing behaviour, kept and tested for native).
-- `GET /plugins?kind=native` filters browse. Summaries and details carry
-  `kind`, `sdk: {major, minor}`, `platforms: string[]`, `effects`.
-- **Download.** `GET /plugins/:id/versions/:version/download` (and the
-  owner's `/plugins/mine/:id/...`) answers, for native,
-  `{ id, version, kind: "native", packageUrl, signature, publisherKey,
-  sha256, size, artifacts }` — `packageUrl` is a short-lived URL to the bytes
-  (no base64 in JSON for a 256 MB file). JS versions keep `package`
-  (base64).
+- `GET /plugins?kind=native` filters browse (`&sdk=1.0` keeps only what
+  that SDK loads). A caller naming only `apiVersion` is a pre-0.9 editor and
+  gets JS plugins. Summaries and details carry `kind`, `sdk: {major, minor}`,
+  `platforms: string[]`, `effects`.
+- **Download.** `GET /plugins/:id/versions/:version/download?platform=<machine>`
+  (and the owner's `/plugins/mine/:id/...`) answers, for native,
+  `{ id, version, kind: "native", platforms, packageUrl, signature,
+  publisherKey, sha256, size, artifacts, packages }` for the package that
+  machine resolves to (§1's key order; `machine` is `windows-x64`,
+  `macos-arm64`, `macos-x64`, `linux-x64` or `linux-arm64`). `packageUrl` is
+  a 15-minute presigned URL to the bytes (no base64 in JSON for a 256 MB
+  file); size, SHA-256 and signature are that package's own. A version with
+  no build for the machine answers 404 `code: "platform_unavailable"`. JS
+  versions keep `package` (base64).
 - `POST /plugins/updates { installed: [{ id, version }] }` answers the newer
   approved, visible versions.
 - `GET /plugins/revocations` — the signed revocation list, unchanged; the
@@ -106,7 +124,8 @@ Existing routes keep their meaning; native packages are a second `kind` of
 
 1. The page asks main to install `{ id, version, owner?: boolean }`. Main
    fetches the download record with the user's session (so private plugins
-   work for their owner), then the bytes from `packageUrl`.
+   work for their owner) and `?platform=` for this machine, then the bytes
+   from `packageUrl`.
 2. Verify: size and SHA-256 equal the record; the signature verifies over the
    bytes with `publisherKey`; and `publisherKey` is the key this machine
    pinned for the id at first install (a changed key is refused with a clear

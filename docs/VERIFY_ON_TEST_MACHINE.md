@@ -162,6 +162,36 @@ the WGSL compiled with naga. Everything below did not run.
       one "Missing plugin …" notice, renders the layer unaffected, keeps the
       effect after a save and reopen.
 
+## Plugin platform P1 — store end to end (2026-10-08, docs/PLUGIN_PLATFORM_PLAN.md)
+
+Built in a cloud session with no GPU. Run there: the motion-back suite
+(branch `plugin-platform`, 1511 tests incl. native publish → per-platform
+download, R2 SigV4 against AWS's published vectors), the editor's
+`electron/ipc/nativePlugins.test.ts`, `nativePluginStore.test.ts`,
+`src/core/api` and `src/core/nativePlugins` tests, typecheck and lint.
+Not run (needs Postgres, a real R2 bucket, Windows/macOS):
+
+- [ ] motion-back on real Postgres: migration
+      `20261008120000_native_plugin_packages` applies on top of dev's schema
+      (`npx prisma migrate deploy`); existing JS plugins still browse and
+      download.
+- [ ] Gate: publish the `grade` sample private with
+      `sign-plugin.mjs publish … --visibility private`, install it from
+      Dashboard ▸ Plugins ▸ Store (owner) on Windows and on macOS; the effect
+      appears in the Effects panel with no restart; export renders it.
+- [ ] Per-platform packages: pack `examples/plugin-ci` with `--only-present`
+      on two OSes, publish both as the same version; each machine's install
+      downloads only its own package (compare the size in the record with the
+      `.pplugin` you built on that OS).
+- [ ] Publishing public from an unverified publisher answers 403
+      `publisher_not_verified`; after an operator verifies the publisher
+      (`POST /api/publishers/<id>/verify/admin { "verified": true }` as an
+      admin) it publishes public and shows in the Store tab.
+- [ ] R2: with the four `R2_*` variables set against a real bucket, a
+      publish writes `plugin-packages/<id>/<version>/<sha256>.pplugin`, the
+      install downloads it from the presigned URL, and a link older than 15
+      minutes is refused by R2. Unpublishing removes the objects.
+
 ## AE parity step 2 (2026-10-06, docs/PLUGIN_STORE.md) — needs the GPU box and real platforms
 
 Run in the same Linux session: the headless engine's plugin host tests

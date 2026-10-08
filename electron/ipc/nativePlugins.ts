@@ -22,6 +22,7 @@ import { handle } from '../ipcGuard';
 import {
   engineArgsFor,
   installPackage,
+  machinePlatformKey,
   queueUninstall,
   readState,
   revokedInstalled,
@@ -94,6 +95,7 @@ export interface StoreDeps {
   authedFetch: (url: string, init: RequestInit) => Promise<Response>;
   publicFetch?: (url: string, init?: RequestInit) => Promise<Response>;
   platform?: NodeJS.Platform;
+  arch?: string;
 }
 
 const REVOCATIONS_FILE = '.revocations.json';
@@ -178,7 +180,9 @@ export function storeHandlers(deps: StoreDeps): {
       }
       const dir = deps.dir();
       const base = deps.apiBase();
-      const recordUrl = `${base}/plugins/${owner === true ? 'mine/' : ''}${encodeURIComponent(id)}/versions/${encodeURIComponent(version)}/download`;
+      // `platform` picks this machine's package: a version may hold one per platform.
+      const machine = machinePlatformKey(deps.platform ?? process.platform, deps.arch ?? process.arch);
+      const recordUrl = `${base}/plugins/${owner === true ? 'mine/' : ''}${encodeURIComponent(id)}/versions/${encodeURIComponent(version)}/download?platform=${machine}`;
       let record: DownloadRecord;
       try {
         const res = await deps.authedFetch(recordUrl, { method: 'GET' });
