@@ -781,6 +781,26 @@ export interface StorePluginPage {
   total: number;
 }
 
+/**
+ * A store listing as the page may read it. The registry answers with the
+ * pre-0.9 JS-plugin shape too (no `kind`, `platforms`, `effects`, `sdk`), and
+ * `GET /plugins` does not filter on `kind` yet, so every array and the kind
+ * get a default here instead of in each caller: a missing `platforms` threw
+ * in `runsHere` and blanked the dashboard's Plugins page.
+ */
+function storePluginFromWire<T extends StorePluginSummary>(p: T): T {
+  return {
+    ...p,
+    kind: p.kind ?? 'js',
+    sdk: p.sdk ?? null,
+    platforms: Array.isArray(p.platforms) ? p.platforms : [],
+    effects: Array.isArray(p.effects) ? p.effects : [],
+    categories: Array.isArray(p.categories) ? p.categories : [],
+    publisher: p.publisher ?? { namespace: '', displayName: '', verified: false },
+    description: p.description ?? '',
+  };
+}
+
 export interface StorePluginUpdate {
   id: string;
   latestVersion: string;
@@ -1352,13 +1372,22 @@ export const api = {
   // ── Plugin store (native plugins, free only; docs/PLUGIN_STORE.md) ──
   /** Browse native plugins (public ones, plus nothing private: private plugins are only on `myPlugins`). */
   browseNativePlugins: (params: { q?: string; category?: string; sort?: string; limit?: number; offset?: number } = {}) =>
-    request<StorePluginPage>(`/plugins${query({ kind: 'native', ...params })}`),
+    request<StorePluginPage>(`/plugins${query({ kind: 'native', ...params })}`).then((page) => {
+      // Filtered here as well: a registry that ignores `kind` lists JS plugins 0.9 cannot run.
+      const all = (page.items ?? []).map(storePluginFromWire);
+      const items = all.filter((p) => p.kind === 'native');
+      return { items, total: items.length === all.length ? page.total : items.length };
+    }),
   /** One plugin's public listing. */
-  storePluginDetail: (id: string) => request<StorePluginDetail>(`/plugins/${encodeURIComponent(id)}`),
+  storePluginDetail: (id: string) =>
+    request<StorePluginDetail>(`/plugins/${encodeURIComponent(id)}`).then(storePluginFromWire),
   /** What the signed-in user has published, private ones included. */
-  myPlugins: () => request<Array<StorePluginSummary & { visibility: 'public' | 'private' }>>('/plugins/mine/list'),
+  myPlugins: () =>
+    request<Array<StorePluginSummary & { visibility: 'public' | 'private' }>>('/plugins/mine/list')
+      .then((list) => list.map(storePluginFromWire)),
   /** The owner's view of one plugin (private ones included). */
-  myPluginDetail: (id: string) => request<StorePluginDetail>(`/plugins/mine/${encodeURIComponent(id)}/detail`),
+  myPluginDetail: (id: string) =>
+    request<StorePluginDetail>(`/plugins/mine/${encodeURIComponent(id)}/detail`).then(storePluginFromWire),
   /** Public or private, set by the publisher (public needs a verified publisher). */
   setPluginVisibility: (id: string, visibility: 'public' | 'private') =>
     request<StorePluginSummary>(`/plugins/${encodeURIComponent(id)}/listing`, {

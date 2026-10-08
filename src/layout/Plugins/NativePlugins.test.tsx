@@ -134,3 +134,29 @@ describe('installed plugins with the store', () => {
     expect(await screen.findByText('Removed on restart')).toBeInTheDocument();
   });
 });
+
+describe('the plugin store page', () => {
+  const originalFetch = global.fetch;
+  afterEach(() => {
+    global.fetch = originalFetch;
+    delete (window as { motionEditor?: unknown }).motionEditor;
+  });
+
+  it('survives a registry that ignores kind=native and answers with pre-0.9 JS listings', async () => {
+    // The live registry's shape: no kind, platforms, effects or sdk. `runsHere`
+    // used to throw on the missing platforms and blank the whole page.
+    const js = { id: 'com.acme.old', name: 'Old JS Plugin', description: 'd', latestVersion: '1.0.0', installs: 0, publisherKey: 'k', sha256: 's', updatedAt: '', publisher: { namespace: '', displayName: '', verified: false }, categories: [], license: null, iconUrl: null };
+    const native = { ...js, id: 'com.acme.glow', name: 'Acme Glow', kind: 'native', platforms: ['linux-x64'], effects: [], sdk: { major: 1, minor: 0 } };
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ items: [js, native], total: 2 }) });
+    (window as { motionEditor?: unknown }).motionEditor = {
+      plugins: { installed: jest.fn(async () => null), install: jest.fn(), host: { platform: 'linux', arch: 'x64' } },
+    };
+    const { PluginStoreBrowser } = await import('./PluginStore');
+    const store = { installed: null, updates: new Map(), busy: null, message: null, refresh: jest.fn(), install: jest.fn(), uninstall: jest.fn(), setEnabled: jest.fn(), clearMessage: jest.fn() };
+
+    render(<PluginStoreBrowser store={store} />);
+    expect(await screen.findByText('Acme Glow')).toBeInTheDocument();
+    expect(screen.queryByText('Old JS Plugin')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Install' })).toBeInTheDocument();
+  });
+});
