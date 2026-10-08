@@ -5,12 +5,17 @@
 // the "Shuffle Palette" button (USER_CHANGED_PARAM) — one undoable edit, saved
 // with the project, identical in preview and export.
 //
+// SDK 1.1 viewer overlay (PR_OUT_FLAG_CUSTOM_OVERLAY): DRAW_OVERLAY draws the
+// first three rings' outlines and a crosshair handle at Center; dragging it
+// (OVERLAY_DRAG) writes Center — the whole drag is one undo step.
+//
 //   Center (point) · Spacing · Rotation (angle) · Palette Mix · Color A · Color B
 //   Opacity · Shuffle Palette (button) ▸ Debug: Fault
 #include <premation_sdk/premation_sdk.h>
 
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstring>
 #include <numbers>
 
@@ -128,14 +133,47 @@ PrErr smart_render(const PrInData* in, PrOutData* out, PrParamDef* const* params
   return prs::for_rows(in, dst->height, row);
 }
 
+constexpr uint32_t kCenterHandle = 1;
+
+/// DRAW_OVERLAY: the centre handle and the first rings, in layer px.
+PrErr draw_overlay(const PrInData* in, PrParamDef* const* params) {
+  if (in->host->struct_size < offsetof(PrHostSuite, overlay_handle) + sizeof(void*)) return PR_ERR_UNSUPPORTED;
+  const double cx = prs::num(params, in, kCenter, 0);
+  const double cy = prs::num(params, in, kCenter, 1);
+  const double spacing = std::max(1.0, prs::num(params, in, kSpacing));
+  const float ring[4] = {1, 1, 1, 0.6F};  // NOLINT(cppcoreguidelines-avoid-c-arrays, modernize-avoid-c-arrays): the SDK's rgba
+  for (int r = 1; r <= 3; ++r) {
+    std::array<double, 2 * 48> xy{};
+    for (std::size_t i = 0; i < 48; ++i) {
+      const double a = static_cast<double>(i) * 2 * std::numbers::pi / 48;
+      xy.at(2 * i) = cx + std::cos(a) * spacing * r;
+      xy.at(2 * i + 1) = cy + std::sin(a) * spacing * r;
+    }
+    if (PrErr e = in->host->overlay_path(in->host_ref, xy.data(), 48, 1, ring); e != PR_ERR_NONE) return e;
+  }
+  return in->host->overlay_handle(in->host_ref, kCenterHandle, cx, cy, PR_OVERLAY_HANDLE_CROSSHAIR);
+}
+
+/// OVERLAY_DRAG: the centre follows the pointer.
+PrErr overlay_drag(const PrInData* in, PrParamDef* const* params, const PrOverlayDragExtra* drag) {
+  if (drag == nullptr || drag->handle_id != kCenterHandle) return PR_ERR_NONE;
+  for (uint32_t i = 1; i < in->num_params; ++i) {
+    if (params[i] != nullptr && params[i]->id == kCenter) {  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+      const double v[2] = {drag->x, drag->y};  // NOLINT(cppcoreguidelines-avoid-c-arrays, modernize-avoid-c-arrays): the SDK's value array
+      return in->host->set_param_value(in->host_ref, i, v, 2);
+    }
+  }
+  return PR_ERR_NONE;
+}
+
 PrErr PR_CALL rings_main(PrCmd cmd, const PrInData* in, PrOutData* out, PrParamDef* const* params, PrWorld* /*output*/,
                          void* extra) {
   switch (cmd) {
-    case PR_CMD_ABOUT: prs::message(out, "Rings 1.0 — Premation SDK sample (generator with sequence data)."); return PR_ERR_NONE;
+    case PR_CMD_ABOUT: prs::message(out, "Rings 1.1 — Premation SDK sample (generator with sequence data and a viewer overlay)."); return PR_ERR_NONE;
     case PR_CMD_GLOBAL_SETUP:
       out->my_version = PR_VERSION(1, 0, 0);
       out->out_flags = PR_OUT_FLAG_DEEP_COLOR_AWARE | PR_OUT_FLAG_FLOAT_COLOR_AWARE | PR_OUT_FLAG_SMART_RENDER |
-                       PR_OUT_FLAG_GENERATOR | PR_OUT_FLAG_SEQUENCE_DATA | PR_OUT_FLAG_THREADED_RENDER;
+                       PR_OUT_FLAG_GENERATOR | PR_OUT_FLAG_SEQUENCE_DATA | PR_OUT_FLAG_THREADED_RENDER | PR_OUT_FLAG_CUSTOM_OVERLAY;
       return PR_ERR_NONE;
     case PR_CMD_PARAMS_SETUP: return params_setup(in);
     case PR_CMD_SEQUENCE_SETUP: {
@@ -170,6 +208,8 @@ PrErr PR_CALL rings_main(PrCmd cmd, const PrInData* in, PrOutData* out, PrParamD
     }
     case PR_CMD_SMART_PRE_RENDER: return PR_ERR_NONE;  // a generator checks nothing out
     case PR_CMD_SMART_RENDER: return smart_render(in, out, params);
+    case PR_CMD_DRAW_OVERLAY: return draw_overlay(in, params);
+    case PR_CMD_OVERLAY_DRAG: return overlay_drag(in, params, static_cast<const PrOverlayDragExtra*>(extra));
     default: return PR_ERR_NONE;
   }
 }

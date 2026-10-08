@@ -50,6 +50,10 @@ extern "C" {
  *   GPU_DEVICE_SETUP           PrGpuDeviceSetupExtra*    see pr_gpu.h
  *   GPU_DEVICE_SETDOWN         PrGpuDeviceSetupExtra*
  *   SMART_RENDER_GPU           PrSmartRenderGpuExtra*
+ *   DRAW_OVERLAY (1.1)         PrOverlayExtra*           overlay_line / _path / _handle: the viewer
+ *                                                        overlay, in layer px (PR_OUT_FLAG_CUSTOM_OVERLAY)
+ *   OVERLAY_DRAG (1.1)         PrOverlayDragExtra*       a handle was dragged: set_param_value / set_arb_data
+ *                                                        (the whole drag is ONE undo step)
  */
 typedef int32_t PrCmd;
 #define PR_CMD_ABOUT 0
@@ -70,7 +74,9 @@ typedef int32_t PrCmd;
 #define PR_CMD_GPU_DEVICE_SETUP 15
 #define PR_CMD_GPU_DEVICE_SETDOWN 16
 #define PR_CMD_SMART_RENDER_GPU 17
-#define PR_CMD_COUNT 18
+#define PR_CMD_DRAW_OVERLAY 18 /* SDK 1.1 */
+#define PR_CMD_OVERLAY_DRAG 19 /* SDK 1.1 */
+#define PR_CMD_COUNT 20
 
 /* ── out flags (GLOBAL_SETUP) ─────────────────────────────────────────────── */
 #define PR_OUT_FLAG_DEEP_COLOR_AWARE (1u << 0)     /* processes 16-bit worlds */
@@ -88,6 +94,8 @@ typedef int32_t PrCmd;
 #define PR_OUT_FLAG_USES_CAMERA (1u << 10)
 #define PR_OUT_FLAG_USES_LIGHTS (1u << 11)
 #define PR_OUT_FLAG_USES_LAYER_TRANSFORMS (1u << 12)
+/* SDK 1.1: draws a viewer overlay (DRAW_OVERLAY) with draggable handles (OVERLAY_DRAG) — AE's PF_Cmd_EVENT. */
+#define PR_OUT_FLAG_CUSTOM_OVERLAY (1u << 13)
 
 typedef int32_t PrQuality;
 #define PR_QUALITY_DRAFT 0
@@ -155,6 +163,28 @@ typedef struct PrUserChangedParamExtra {
   uint32_t struct_size;
   uint32_t param_index; /* the param the user changed / the button pressed */
 } PrUserChangedParamExtra;
+
+/* SDK 1.1 — DRAW_OVERLAY. The params are the effect's values at the viewer's time. */
+typedef struct PrOverlayExtra {
+  uint32_t struct_size;
+  double layer_width; /* the layer, px: the overlay's coordinate space */
+  double layer_height;
+} PrOverlayExtra;
+
+#define PR_OVERLAY_DRAG_BEGIN 0
+#define PR_OVERLAY_DRAG_MOVE 1
+#define PR_OVERLAY_DRAG_END 2
+
+/* SDK 1.1 — OVERLAY_DRAG: handle `handle_id` (from overlay_handle) is at (x, y), layer px.
+ * Write params with set_param_value (an animated one keys at the current time). Every
+ * phase of one drag lands in the same undo step. */
+typedef struct PrOverlayDragExtra {
+  uint32_t struct_size;
+  uint32_t handle_id;
+  int32_t phase; /* PR_OVERLAY_DRAG_* */
+  double x, y;   /* the pointer, layer px */
+  double start_x, start_y; /* where the drag began, layer px */
+} PrOverlayDragExtra;
 
 typedef PrErr(PR_CALL* PrEffectMainFn)(PrCmd cmd, const PrInData* in_data, PrOutData* out_data,
                                         PrParamDef* const* params, PrWorld* output, void* extra);

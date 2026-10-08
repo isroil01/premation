@@ -42,6 +42,11 @@ NativeActionRequest request_for(const Node& node, const std::string& layer, cons
 }
 }  // namespace
 
+NativeActionRequest native_request(const Node& node, const std::string& layer, const std::string& effectId, const Json& e,
+                                   const NativeEffect& ne, api::Time time) {
+  return request_for(node, layer, effectId, e, ne, time);
+}
+
 std::vector<api::EffectParamUi> native_effect_ui(const Document& d, const std::string& layer, const std::string& path, api::Time time) {
   const Node& node = require_layer(d, layer);
   const std::vector<std::string> seg = split(path, '/');
@@ -122,20 +127,51 @@ void native_invoke_action(HCtx& x, const api::PropRef& group, const std::string&
 
   NativeActionRequest req = request_for(node, group.layer, effectId, *e, *ne, x.time);
   req.action = action;
-  const std::string dataGroup = native_data_group(effectId);
 
   const std::variant<NativeEdit, NativeFailure> result = NativeEffects::action(req);
   if (const auto* f = std::get_if<NativeFailure>(&result)) {
     fail(ErrorCode::internal, "plugin '" + ne->provider + "': " + f->message, {.layer = group.layer, .path = group.path});
   }
-  const NativeEdit& edit = std::get<NativeEdit>(result);
   x.label = [&]() -> std::string {
     for (const auto& [name, label] : ne->actions) {
       if (name == action) return label;
     }
     return ne->def.label;
   }();
+  apply_native_edit(x, group, effectId, std::get<NativeEdit>(result));
+}
 
+void native_overlay_drag(HCtx& x, const api::DragEffectOverlay& c) {
+  const api::PropRef& group = c.group;
+  Document& d = x.d;
+  const Node& node = require_layer(d, group.layer);
+  const std::vector<std::string> seg = split(group.path, '/');
+  const std::vector<Json> effects = read_node_effects(node);  // owns what `e` points into
+  const Json* e = seg.size() == 2 && seg[0] == "effects" ? find_by_id(effects, seg[1]) : nullptr;
+  const std::string type = e != nullptr && e->at("type").is_string() ? e->at("type").str() : "";
+  const NativeEffect* ne = NativeEffects::find(type);
+  if (e == nullptr || ne == nullptr || !ne->overlay) {
+    fail(ErrorCode::not_found, "no plugin effect with a viewer overlay at '" + group.path + "'", {.layer = group.layer, .path = group.path});
+  }
+  NativeActionRequest req = native_request(node, group.layer, seg[1], *e, *ne, x.time);
+  NativeOverlayDrag drag;
+  drag.handle = c.handle;
+  drag.phase = static_cast<std::int32_t>(std::min<std::uint32_t>(c.phase, 2));
+  drag.x = c.x;
+  drag.y = c.y;
+  drag.startX = c.start_x;
+  drag.startY = c.start_y;
+  const std::variant<NativeEdit, NativeFailure> result = NativeEffects::overlay_drag(req, drag);
+  if (const auto* f = std::get_if<NativeFailure>(&result)) {
+    fail(ErrorCode::internal, "plugin '" + ne->provider + "': " + f->message, {.layer = group.layer, .path = group.path});
+  }
+  x.label = ne->def.label;
+  apply_native_edit(x, group, seg[1], std::get<NativeEdit>(result));
+}
+
+void apply_native_edit(HCtx& x, const api::PropRef& group, const std::string& effectId, const NativeEdit& edit) {
+  Document& d = x.d;
+  const std::string dataGroup = native_data_group(effectId);
   if (!edit.params.empty()) {
     const PCtx pc = x.pc();
     for (const auto& [key, value] : edit.params) {

@@ -52,6 +52,25 @@ struct NativeEffect {
   /// Arbitrary-data params (PR_PARAM_ARBITRARY_DATA): not properties — bytes in fx.pluginData
   /// under native_arb_key(key), written by the plugin (USER_CHANGED_PARAM) or setPluginData.
   std::vector<std::string> arbitrary;
+  /// SDK 1.1 PR_OUT_FLAG_CUSTOM_OVERLAY: draws a viewer overlay (DRAW_OVERLAY) with draggable handles.
+  bool overlay = false;
+};
+
+/// SDK 1.1 — one item of a plugin's viewer overlay (DRAW_OVERLAY), layer px.
+struct NativeOverlayItem {
+  std::string kind;  ///< "line" | "path" | "handle"
+  std::vector<double> points;  ///< x, y pairs
+  bool closed = false;
+  std::vector<double> color;   ///< straight rgba 0..1; empty = the viewer's handle colour
+  std::uint32_t handle = 0;    ///< a handle's id (OVERLAY_DRAG)
+  std::uint32_t shape = 0;     ///< PR_OVERLAY_HANDLE_*
+};
+
+/// SDK 1.1 — dragEffectOverlay's pointer, layer px.
+struct NativeOverlayDrag {
+  std::uint32_t handle = 0;
+  std::int32_t phase = 0;  ///< PR_OVERLAY_DRAG_*
+  double x = 0, y = 0, startX = 0, startY = 0;
 };
 
 /// What invokeEffectAction hands the host.
@@ -111,6 +130,12 @@ class NativeEffects {
   static void set_query_handlers(ListFn list, UiFn ui);
   /// rescanPlugins: the host rescans its folders and answers listPlugins.
   static void set_rescan_handler(ListFn rescan);
+  /// SDK 1.1 viewer overlays: DRAW_OVERLAY (overlay geometry) and OVERLAY_DRAG (dragEffectOverlay).
+  using OverlayFn = std::function<std::variant<std::vector<NativeOverlayItem>, NativeFailure>(const NativeActionRequest&)>;
+  using DragFn = std::function<std::variant<NativeEdit, NativeFailure>(const NativeActionRequest&, const NativeOverlayDrag&)>;
+  static void set_overlay_handlers(OverlayFn draw, DragFn drag);
+  [[nodiscard]] static std::variant<std::vector<NativeOverlayItem>, NativeFailure> draw_overlay(const NativeActionRequest& r);
+  [[nodiscard]] static std::variant<NativeEdit, NativeFailure> overlay_drag(const NativeActionRequest& r, const NativeOverlayDrag& d);
   static void clear_handlers();
 
   /// addEffect: the initial flat sequence data for a new instance (nullopt = none).

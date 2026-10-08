@@ -620,6 +620,11 @@
     "type": "invokeEffectAction"
   },
   {
+    "id": 632,
+    "kind": "edit",
+    "type": "dragEffectOverlay"
+  },
+  {
     "id": 611,
     "kind": "edit",
     "type": "addProperties"

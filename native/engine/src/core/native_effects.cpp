@@ -36,6 +36,8 @@ struct State {
   NativeEffects::ListFn list;
   NativeEffects::UiFn ui;
   NativeEffects::ListFn rescan;
+  NativeEffects::OverlayFn overlay;
+  NativeEffects::DragFn drag;
   /// Plugin ids listed `locked` (no entitlement).
   std::vector<std::string> locked;
 };
@@ -132,6 +134,7 @@ void NativeEffects::clear_handlers() {
   set_handlers({}, {}, {});
   set_query_handlers({}, {});
   set_rescan_handler({});
+  set_overlay_handlers({}, {});
 }
 
 std::optional<std::vector<api::PluginInfo>> NativeEffects::rescan() {
@@ -164,6 +167,35 @@ std::variant<NativeEdit, NativeFailure> NativeEffects::action(const NativeAction
   }
   if (!fn) return NativeFailure{"no native plugin host is attached to this engine"};
   return fn(r);
+}
+
+void NativeEffects::set_overlay_handlers(OverlayFn draw, DragFn drag) {
+  State& s = state();
+  const std::scoped_lock lock(s.handlerMutex);
+  s.overlay = std::move(draw);
+  s.drag = std::move(drag);
+}
+
+std::variant<std::vector<NativeOverlayItem>, NativeFailure> NativeEffects::draw_overlay(const NativeActionRequest& r) {
+  State& s = state();
+  OverlayFn fn;
+  {
+    const std::scoped_lock lock(s.handlerMutex);
+    fn = s.overlay;
+  }
+  if (!fn) return NativeFailure{"no native plugin host is attached to this engine"};
+  return fn(r);
+}
+
+std::variant<NativeEdit, NativeFailure> NativeEffects::overlay_drag(const NativeActionRequest& r, const NativeOverlayDrag& d) {
+  State& s = state();
+  DragFn fn;
+  {
+    const std::scoped_lock lock(s.handlerMutex);
+    fn = s.drag;
+  }
+  if (!fn) return NativeFailure{"no native plugin host is attached to this engine"};
+  return fn(r, d);
 }
 
 bool NativeEffects::set_enabled(std::string_view plugin, bool enabled) {

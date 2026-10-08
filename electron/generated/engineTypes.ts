@@ -442,15 +442,19 @@ export type PurgeKind =
   | 'images';
 export const PurgeKindValues = ['all', 'ram', 'disk', 'undo', 'images'] as const;
 
-/** B4 — what the overlay geometry push carries for each subscribed layer (FrameGeometry, 95_frames). */
+/**
+ * B4 — what the overlay geometry push carries for each subscribed layer (FrameGeometry, 95_frames).
+ * `plugin` (plugin SDK 1.1): the viewer overlays the layer's native plugin effects draw (PR_CMD_DRAW_OVERLAY).
+ */
 export type OverlayKind =
   | 'transform'
   | 'bounds'
   | 'motionPath'
   | 'rig'
   | 'textBox'
-  | 'scene3d';
-export const OverlayKindValues = ['transform', 'bounds', 'motionPath', 'rig', 'textBox', 'scene3d'] as const;
+  | 'scene3d'
+  | 'plugin';
+export const OverlayKindValues = ['transform', 'bounds', 'motionPath', 'rig', 'textBox', 'scene3d', 'plugin'] as const;
 
 /** `planarRegion` (AE parity 3.4, Mocha class): `points` 0–3 are a region of a flat surface (TL, TR, BR, BL), tracked as one homography per frame from every feature inside it (exclusions: `excludeMasks`); `points` 4–7, when given, are the SURFACE whose corners the result follows (else the region's). The result is four tracks (the surface corners), applied as a corner pin. */
 export type TrackKind =
@@ -2534,6 +2538,17 @@ export interface InvokeEffectAction {
   group: PropRef;
   action: string;
   payload?: string;
+}
+
+/** Plugin SDK 1.1 — a drag of a plugin effect's viewer-overlay handle (PR_CMD_OVERLAY_DRAG; the handle comes from the `plugin` overlay kind). `x`, `y` is the pointer and `startX`, `startY` where the drag began, LAYER px; `phase` 0 begin, 1 move, 2 end. The plugin's param writes land like invokeEffectAction's (an animated param keys at `time`); the editor wraps a drag in beginGesture / endGesture, so the whole drag is ONE undo entry. `notFound` for an effect that draws no overlay. */
+export interface DragEffectOverlay {
+  group: PropRef;
+  handle: number;
+  x: number;
+  y: number;
+  startX: number;
+  startY: number;
+  phase: number;
 }
 
 /** AE's Add ▸ Property: add OPTIONAL properties that exist only once added — a text animator's Anchor Point, Skew Axis, Line Anchor, Character Value, Fill / Stroke Hue·Saturation·Brightness, Stroke Opacity, Fill Color, Stroke Color, and Font Axis properties ('axis<TAG>'). `parent` is the property group ('text/animators/<id>/props'); `names` are the new properties' path leaves. A property already present is kept as it is (AE's menu disables it). Returns the property paths in input order. Undo removes what this added. */
@@ -4667,6 +4682,25 @@ export interface OverlayLayerGeometry {
   scene?: OverlayScene3D;
   /** rig (B4 round 5): the layer's puppet pins / skeleton at the frame (OverlayRig); absent without a rig to show. A long rig spans several records: the `rig` arrays of a layer's records concatenate in arrival order. */
   rig?: OverlayRig;
+  /** plugin (SDK 1.1): what the layer's native plugin effects draw over the viewer (PR_CMD_DRAW_OVERLAY), evaluated at the frame's time, LAYER space. Items travel whole in plugin-only records (concatenate in arrival order). */
+  plugin: OverlayPluginItem[];
+}
+
+/** Plugin SDK 1.1 — one item of a plugin effect's viewer overlay, LAYER px (the layer's local space, as `box`). */
+export interface OverlayPluginItem {
+  /** The effect's path under the layer (`effects/<id>`), for dragEffectOverlay. */
+  effect: string;
+  /** `line` | `path` | `handle`. */
+  kind: string;
+  /** x, y pairs: a line's two ends, a path's points, a handle's position. */
+  points: number[];
+  closed: boolean;
+  /** Straight rgba 0..1; empty = the viewer's handle colour. */
+  color: number[];
+  /** A handle's id (dragEffectOverlay `handle`). */
+  handle: number;
+  /** A handle's shape: 0 square, 1 circle, 2 crosshair. */
+  shape: number;
 }
 
 /** B4 round 5 — one puppet pin as the rig resolves it at a time (OverlayRig, getRigPose). Layer space: the layer's local px, the space readGeometry's box is in. */
@@ -5471,6 +5505,7 @@ export type Command =
   | ({ type: 'copyPropertyGroups' } & CopyPropertyGroups)
   | ({ type: 'applyPreset' } & ApplyPreset)
   | ({ type: 'invokeEffectAction' } & InvokeEffectAction)
+  | ({ type: 'dragEffectOverlay' } & DragEffectOverlay)
   | ({ type: 'addProperties' } & AddProperties)
   | ({ type: 'removeProperties' } & RemoveProperties)
   | ({ type: 'pasteEffects' } & PasteEffects)
@@ -5643,6 +5678,7 @@ export type CommandResult =
   | ({ type: 'copyPropertyGroups' } & GroupList)
   | ({ type: 'applyPreset' } & GroupList)
   | ({ type: 'invokeEffectAction' } & Empty)
+  | ({ type: 'dragEffectOverlay' } & Empty)
   | ({ type: 'addProperties' } & PropertyPaths)
   | ({ type: 'removeProperties' } & Empty)
   | ({ type: 'pasteEffects' } & GroupList)
@@ -5968,6 +6004,7 @@ export interface CommandArgs {
   copyPropertyGroups: CopyPropertyGroups;
   applyPreset: ApplyPreset;
   invokeEffectAction: InvokeEffectAction;
+  dragEffectOverlay: DragEffectOverlay;
   addProperties: AddProperties;
   removeProperties: RemoveProperties;
   pasteEffects: PasteEffects;
@@ -6140,6 +6177,7 @@ export interface CommandResults {
   copyPropertyGroups: GroupList;
   applyPreset: GroupList;
   invokeEffectAction: Empty;
+  dragEffectOverlay: Empty;
   addProperties: PropertyPaths;
   removeProperties: Empty;
   pasteEffects: GroupList;

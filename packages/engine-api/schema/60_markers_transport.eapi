@@ -161,7 +161,8 @@ command setViewportFocus = 814 [control] { viewport: u32 = 1; layers: LayerId[] 
 command setViewerLut = 815 [control] { lut: string = 1; intensity: f64 = 2; }
 
 /// B4 — what the overlay geometry push carries for each subscribed layer (FrameGeometry, 95_frames).
-enum OverlayKind { transform = 0; bounds = 1; motionPath = 2; rig = 3; textBox = 4; scene3d = 8; }
+/// `plugin` (plugin SDK 1.1): the viewer overlays the layer's native plugin effects draw (PR_CMD_DRAW_OVERLAY).
+enum OverlayKind { transform = 0; bounds = 1; motionPath = 2; rig = 3; textBox = 4; scene3d = 8; plugin = 9; }
 /// B4 round 5 — one overlay's share of a subscription (setOverlayGeometry `groups`): its layers get ITS kinds, not every kind another overlay asked for.
 struct OverlayRequest { layers: LayerId[] = 1; kinds: OverlayKind[] = 2; }
 /// B4 — subscribe a viewport's overlays to FRAME-SYNCHRONOUS geometry (docs/TS_ENGINE_REMOVAL.md "Gaps"): from its next frame on, every FrameReady of `viewport` is preceded on the frame channel by FrameGeometry messages for `layers`, evaluated at that frame's own time and revision — the world matrices, drawn boxes, motion paths and text boxes the selection outline, gizmos and motion path draw, instead of a query per played frame. Replaces the viewport's previous subscription; no layers or no kinds = unsubscribe. Layers that do not exist are skipped. A control: no history, no revision.

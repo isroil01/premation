@@ -49,6 +49,8 @@ struct PrHost {
   /// Handles created during a render selector: disposed when it returns.
   std::vector<PrHandle> scoped;
   bool renderSelector = false;
+  /// SDK 1.1 — DRAW_OVERLAY's draw list.
+  std::vector<premation::doc::NativeOverlayItem>* overlay = nullptr;
   /// SDK 1.1 — the render selector's inputs and effect (get_comp_camera, …).
   const premation::plugins::RenderInputs* inputs = nullptr;
   std::uint32_t outFlags = 0;
@@ -606,6 +608,59 @@ PrErr PR_CALL cb_get_layer_transform(PrHost* h, std::uint32_t paramIndex, std::i
   return PR_ERR_NONE;
 }
 
+// ── SDK 1.1: the viewer overlay's draw list (DRAW_OVERLAY) ─────────────────
+
+// The overlay crosses the frame channel with every frame: small by construction. A path's
+// points fit one geometry record (overlay_geometry.cpp packs items whole).
+constexpr std::size_t kMaxOverlayItems = 256;
+constexpr std::size_t kMaxOverlayPoints = 2048;
+constexpr std::uint32_t kMaxOverlayPathPoints = 192;
+
+PrErr overlay_push(PrHost* h, doc::NativeOverlayItem item) {
+  if (h == nullptr || h->cmd != PR_CMD_DRAW_OVERLAY || h->overlay == nullptr) return PR_ERR_INVALID_CALLBACK;
+  if (h->overlay->size() >= kMaxOverlayItems) return PR_ERR_OUT_OF_MEMORY;
+  std::size_t points = item.points.size() / 2;
+  for (const auto& i : *h->overlay) points += i.points.size() / 2;
+  if (points > kMaxOverlayPoints) return PR_ERR_OUT_OF_MEMORY;
+  for (const double v : item.points) {
+    if (!std::isfinite(v)) return PR_ERR_INVALID_PARAM;
+  }
+  h->overlay->push_back(std::move(item));
+  return PR_ERR_NONE;
+}
+
+std::vector<double> rgba_of(const float* rgba) {
+  if (rgba == nullptr) return {};
+  return {rgba[0], rgba[1], rgba[2], rgba[3]};  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic): the SDK's 4-float colour
+}
+
+PrErr PR_CALL cb_overlay_line(PrHost* h, double x0, double y0, double x1, double y1, const float* rgba) {
+  doc::NativeOverlayItem i;
+  i.kind = "line";
+  i.points = {x0, y0, x1, y1};
+  i.color = rgba_of(rgba);
+  return overlay_push(h, std::move(i));
+}
+
+PrErr PR_CALL cb_overlay_path(PrHost* h, const double* xy, std::uint32_t count, std::int32_t closed, const float* rgba) {
+  if (xy == nullptr || count < 2 || count > kMaxOverlayPathPoints) return PR_ERR_INVALID_PARAM;
+  doc::NativeOverlayItem i;
+  i.kind = "path";
+  i.points.assign(xy, xy + std::size_t{count} * 2);  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic): the SDK's xy array
+  i.closed = closed != 0;
+  i.color = rgba_of(rgba);
+  return overlay_push(h, std::move(i));
+}
+
+PrErr PR_CALL cb_overlay_handle(PrHost* h, std::uint32_t id, double x, double y, std::uint32_t shape) {
+  doc::NativeOverlayItem i;
+  i.kind = "handle";
+  i.points = {x, y};
+  i.handle = id;
+  i.shape = shape <= PR_OVERLAY_HANDLE_CROSSHAIR ? shape : PR_OVERLAY_HANDLE_SQUARE;
+  return overlay_push(h, std::move(i));
+}
+
 PrErr PR_CALL cb_checkout_layer_pixels(PrHost* h, std::uint32_t checkoutId, PrWorld** world) {
   if (h == nullptr || h->cmd != PR_CMD_SMART_RENDER || h->source == nullptr || world == nullptr) return PR_ERR_INVALID_CALLBACK;
   *world = h->source->cpu_checkout(checkoutId);
@@ -637,7 +692,9 @@ PrErr PR_CALL cb_set_param_ui(PrHost* h, std::uint32_t index, std::uint32_t flag
 }
 
 PrErr PR_CALL cb_set_param_value(PrHost* h, std::uint32_t index, const double* value, std::uint32_t count) {
-  if (h == nullptr || h->cmd != PR_CMD_USER_CHANGED_PARAM || h->writes == nullptr || h->params == nullptr) return PR_ERR_INVALID_CALLBACK;
+  if (h == nullptr || (h->cmd != PR_CMD_USER_CHANGED_PARAM && h->cmd != PR_CMD_OVERLAY_DRAG) || h->writes == nullptr || h->params == nullptr) {
+    return PR_ERR_INVALID_CALLBACK;
+  }
   if (index == 0 || index > h->params->size() || value == nullptr || count == 0 || count > 4) return PR_ERR_INVALID_PARAM;
   std::array<double, 4> v{};
   for (std::uint32_t i = 0; i < count; ++i) v.at(i) = value[i];  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
@@ -646,7 +703,9 @@ PrErr PR_CALL cb_set_param_value(PrHost* h, std::uint32_t index, const double* v
 }
 
 PrErr PR_CALL cb_set_arb_data(PrHost* h, std::uint32_t index, const std::uint8_t* data, std::uint32_t size) {
-  if (h == nullptr || h->cmd != PR_CMD_USER_CHANGED_PARAM || h->arbWrites == nullptr || h->params == nullptr) return PR_ERR_INVALID_CALLBACK;
+  if (h == nullptr || (h->cmd != PR_CMD_USER_CHANGED_PARAM && h->cmd != PR_CMD_OVERLAY_DRAG) || h->arbWrites == nullptr || h->params == nullptr) {
+    return PR_ERR_INVALID_CALLBACK;
+  }
   if (index == 0 || index > h->params->size() || h->params->at(index - 1).type != PR_PARAM_ARBITRARY_DATA) return PR_ERR_INVALID_PARAM;
   if (size > 256U * 1024U) return PR_ERR_OUT_OF_MEMORY;  // setPluginData's per-key limit
   std::vector<std::uint8_t> bytes;
@@ -754,6 +813,9 @@ PluginHost::PluginHost(HostOptions options) : impl_(std::make_unique<Impl>(*this
   s.get_comp_camera = &cb_get_comp_camera;
   s.get_comp_lights = &cb_get_comp_lights;
   s.get_layer_transform = &cb_get_layer_transform;
+  s.overlay_line = &cb_overlay_line;
+  s.overlay_path = &cb_overlay_path;
+  s.overlay_handle = &cb_overlay_handle;
 
   int threads = m.options.threads;
   if (threads <= 0) threads = std::clamp(static_cast<int>(std::thread::hardware_concurrency()) - 1, 0, 16);
@@ -794,6 +856,10 @@ PluginHost::PluginHost(HostOptions options) : impl_(std::make_unique<Impl>(*this
       (void)scan();
       return plugin_infos();
     });
+    doc::NativeEffects::set_overlay_handlers([this](const doc::NativeActionRequest& r) { return draw_overlay(r); },
+                                             [this](const doc::NativeActionRequest& r, const doc::NativeOverlayDrag& d) {
+                                               return overlay_drag(r, d);
+                                             });
   }
 }
 
@@ -1131,6 +1197,7 @@ void PluginHost::Impl::register_document(const Plugin& p) {
     ne.gpu = e->has(PR_OUT_FLAG_GPU_RENDER);
     ne.supportsFloat = e->has(PR_OUT_FLAG_FLOAT_COLOR_AWARE);
     ne.generator = e->has(PR_OUT_FLAG_GENERATOR);
+    ne.overlay = e->has(PR_OUT_FLAG_CUSTOM_OVERLAY);
     for (const ParamSpec& s : e->params) {
       doc::EffectParamDef d;
       d.key = s.key;
@@ -1887,6 +1954,51 @@ std::variant<doc::NativeEdit, doc::NativeFailure> PluginHost::user_changed(const
     }
   }
   if (index == 0) return doc::NativeFailure{"no parameter '" + key + "'"};
+  PrUserChangedParamExtra x{};
+  x.struct_size = sizeof(PrUserChangedParamExtra);
+  x.param_index = index;
+  return instance_call(req, PR_CMD_USER_CHANGED_PARAM, index, &x, nullptr);
+}
+
+std::variant<std::vector<doc::NativeOverlayItem>, doc::NativeFailure> PluginHost::draw_overlay(const doc::NativeActionRequest& req) {
+  std::vector<doc::NativeOverlayItem> items;
+  PrOverlayExtra x{};
+  x.struct_size = sizeof(PrOverlayExtra);
+  auto r = instance_call(req, PR_CMD_DRAW_OVERLAY, 0, &x, &items);
+  if (auto* f = std::get_if<doc::NativeFailure>(&r)) return std::move(*f);
+  return items;
+}
+
+std::variant<doc::NativeEdit, doc::NativeFailure> PluginHost::overlay_drag(const doc::NativeActionRequest& req,
+                                                                           const doc::NativeOverlayDrag& d) {
+  PrOverlayDragExtra x{};
+  x.struct_size = sizeof(PrOverlayDragExtra);
+  x.handle_id = d.handle;
+  x.phase = d.phase;
+  x.x = d.x;
+  x.y = d.y;
+  x.start_x = d.startX;
+  x.start_y = d.startY;
+  return instance_call(req, PR_CMD_OVERLAY_DRAG, 0, &x, nullptr);
+}
+
+std::variant<doc::NativeEdit, doc::NativeFailure> PluginHost::instance_call(const doc::NativeActionRequest& req, std::int32_t cmd,
+                                                                            std::uint32_t /*paramIndex*/, void* extra,
+                                                                            std::vector<doc::NativeOverlayItem>* draw) {
+  Impl& m = *impl_;
+  EffectSpec* e = nullptr;
+  {
+    const std::shared_lock lock(m.pluginsMutex);
+    const auto it = m.effects.find(req.type);
+    if (it != m.effects.end()) e = it->second;
+  }
+  Plugin* p = e != nullptr ? m.plugin_of(e) : nullptr;
+  if (e == nullptr || p == nullptr || p->status != PluginStatus::loaded) {
+    return doc::NativeFailure{"the plugin that provides '" + req.type + "' is not loaded"};
+  }
+  if ((cmd == PR_CMD_DRAW_OVERLAY || cmd == PR_CMD_OVERLAY_DRAG) && !e->has(PR_OUT_FLAG_CUSTOM_OVERLAY)) {
+    return doc::NativeFailure{"'" + req.type + "' draws no overlay"};
+  }
 
   RenderInputs in;
   in.matchName = e->matchName;
@@ -1936,25 +2048,30 @@ std::variant<doc::NativeEdit, doc::NativeFailure> PluginHost::user_changed(const
   std::vector<std::pair<std::uint32_t, std::vector<std::uint8_t>>> arbWrites;
   std::vector<ParamUi> ui(e->params.size());
   for (std::size_t i = 0; i < e->params.size(); ++i) ui[i] = {e->params[i].key, e->params[i].name, true, (e->params[i].flags & PR_PARAM_FLAG_HIDDEN) != 0};
-  ctx.cmd = PR_CMD_USER_CHANGED_PARAM;
+  ctx.cmd = cmd;
   ctx.writes = &writes;
   ctx.arbWrites = &arbWrites;
   ctx.ui = &ui;
   ctx.params = &e->params;
   ctx.numParams = d.num_params;
+  ctx.overlay = draw;
   std::vector<PrParamDef*> ptrs;
   std::vector<PrParamDef> defs = m.param_defs(*e, in, ptrs);
   d.sequence_data = live;
   PrOutData out{};
   Impl::reset_out(out, e->globalData, live);
-  PrUserChangedParamExtra x{};
-  x.struct_size = sizeof(PrUserChangedParamExtra);
-  x.param_index = index;
-  CallResult r = m.invoke(p->manifest.id, e->main, PR_CMD_USER_CHANGED_PARAM, &d, &out, ptrs.data(), nullptr, &x);
+  if (cmd == PR_CMD_DRAW_OVERLAY) {
+    // The overlay is drawn in the layer's own px.
+    auto* ox = static_cast<PrOverlayExtra*>(extra);
+    ox->layer_width = in.layerW;
+    ox->layer_height = in.layerH;
+  }
+  CallResult r = m.invoke(p->manifest.id, e->main, cmd, &d, &out, ptrs.data(), nullptr, extra);
   if (r.ok && out.sequence_data != 0) live = out.sequence_data;
 
   doc::NativeEdit edit;
-  if (r.ok && e->has(PR_OUT_FLAG_SEQUENCE_DATA)) {
+  // DRAW_OVERLAY reads; only an edit flattens what the plugin changed.
+  if (r.ok && cmd != PR_CMD_DRAW_OVERLAY && e->has(PR_OUT_FLAG_SEQUENCE_DATA)) {
     ctx.cmd = PR_CMD_SEQUENCE_FLATTEN;
     d.sequence_data = live;
     Impl::reset_out(out, e->globalData, live);

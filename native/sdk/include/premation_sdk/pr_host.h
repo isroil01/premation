@@ -109,7 +109,19 @@ typedef struct PrHostSuite {
    * PR_ERR_NOT_FOUND when the param names no layer. A 2D layer is its 2D
    * transform at z = 0. */
   PrErr(PR_CALL* get_layer_transform)(PrHost* host, uint32_t param_index, int64_t time, double out_matrix[16]);
+
+  /* ── SDK 1.1, PR_CMD_DRAW_OVERLAY only ── the viewer overlay's draw list, layer px
+   * (the editor maps it with the layer like a mask). Colours are straight RGBA 0..1;
+   * NULL = the viewer's handle colour. At most 256 items and 2048 points per call, 192 per path. */
+  PrErr(PR_CALL* overlay_line)(PrHost* host, double x0, double y0, double x1, double y1, const float* rgba);
+  PrErr(PR_CALL* overlay_path)(PrHost* host, const double* xy, uint32_t point_count, int32_t closed, const float* rgba);
+  /* A draggable handle; `handle_id` comes back in PrOverlayDragExtra. `shape`: PR_OVERLAY_HANDLE_*. */
+  PrErr(PR_CALL* overlay_handle)(PrHost* host, uint32_t handle_id, double x, double y, uint32_t shape);
 } PrHostSuite;
+
+#define PR_OVERLAY_HANDLE_SQUARE 0
+#define PR_OVERLAY_HANDLE_CIRCLE 1
+#define PR_OVERLAY_HANDLE_CROSSHAIR 2
 
 #ifdef __cplusplus
 }

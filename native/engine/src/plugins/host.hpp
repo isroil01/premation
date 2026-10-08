@@ -272,6 +272,10 @@ class PluginHost {
   std::optional<std::vector<std::uint8_t>> initial_sequence(std::string_view matchName);
   /// USER_CHANGED_PARAM (invokeEffectAction).
   std::variant<doc::NativeEdit, doc::NativeFailure> user_changed(const doc::NativeActionRequest& r);
+  /// SDK 1.1 DRAW_OVERLAY: the effect instance's viewer overlay (layer px).
+  std::variant<std::vector<doc::NativeOverlayItem>, doc::NativeFailure> draw_overlay(const doc::NativeActionRequest& r);
+  /// SDK 1.1 OVERLAY_DRAG (dragEffectOverlay): what the plugin wrote for the handle's new position.
+  std::variant<doc::NativeEdit, doc::NativeFailure> overlay_drag(const doc::NativeActionRequest& r, const doc::NativeOverlayDrag& d);
   /// UPDATE_PARAMS_UI (getEffectUi): every param's UI state for these inputs.
   std::variant<std::vector<ParamUi>, std::string> params_ui(const RenderInputs& in);
   /// getEffectUi for a document effect instance (the document's static params, sequence and arbitrary data).
@@ -309,6 +313,11 @@ class PluginHost {
   [[nodiscard]] Impl& impl() noexcept { return *impl_; }
 
  private:
+  /// USER_CHANGED_PARAM / DRAW_OVERLAY / OVERLAY_DRAG on a private instance built from the
+  /// document's flat data: its params and sequence, the call, the flattened result.
+  std::variant<doc::NativeEdit, doc::NativeFailure> instance_call(const doc::NativeActionRequest& req, std::int32_t cmd,
+                                                                  std::uint32_t paramIndex, void* extra,
+                                                                  std::vector<doc::NativeOverlayItem>* draw);
   std::unique_ptr<Impl> impl_;
   std::atomic<std::uint64_t> frame_{0};
 };

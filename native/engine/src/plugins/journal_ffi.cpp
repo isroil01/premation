@@ -224,11 +224,11 @@ void CrashJournal::release(std::string_view pluginId) noexcept {
 }
 
 std::string_view command_name(std::int32_t cmd) noexcept {
-  static constexpr std::array<std::string_view, 18> kNames = {
+  static constexpr std::array<std::string_view, 20> kNames = {
       "ABOUT",           "GLOBAL_SETUP",       "GLOBAL_SETDOWN",   "PARAMS_SETUP",      "SEQUENCE_SETUP",
       "SEQUENCE_RESETUP", "SEQUENCE_FLATTEN",  "SEQUENCE_SETDOWN", "FRAME_SETUP",       "FRAME_SETDOWN",
       "RENDER",          "SMART_PRE_RENDER",   "SMART_RENDER",     "USER_CHANGED_PARAM", "UPDATE_PARAMS_UI",
-      "GPU_DEVICE_SETUP", "GPU_DEVICE_SETDOWN", "SMART_RENDER_GPU"};
+      "GPU_DEVICE_SETUP", "GPU_DEVICE_SETDOWN", "SMART_RENDER_GPU", "DRAW_OVERLAY",     "OVERLAY_DRAG"};
   return cmd >= 0 && static_cast<std::size_t>(cmd) < kNames.size() ? kNames.at(static_cast<std::size_t>(cmd)) : "a selector";
 }
 

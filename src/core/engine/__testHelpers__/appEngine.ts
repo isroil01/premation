@@ -83,7 +83,7 @@ async function nativeEngine(gpu = false): Promise<NativeEngine> {
  * `last`, published with that frame's FrameReady (the overlay geometry mirror),
  * and the slot is handed back.
  */
-function forwardFrames(n: NativeEngine): void {
+export function forwardFrames(n: NativeEngine): void {
   const parts = new Map<number, { generation: number; frame: number; layers: OverlayLayerGeometry[]; views: OverlayView[]; last: boolean }>();
   n.supervisor.on('frame', (m) => {
     if (m.type === 'geometry') {
@@ -107,7 +107,7 @@ function forwardFrames(n: NativeEngine): void {
 }
 
 /** Open the main viewport the way EngineSurface does, so its frames (and their geometry) flow. */
-async function openMainViewport(client: EngineClient): Promise<void> {
+export async function openMainViewport(client: EngineClient): Promise<void> {
   setEngineDrivenViewport(MAIN_VIEWPORT, true);
   unwrap(await client.execute({
     type: 'setViewport',

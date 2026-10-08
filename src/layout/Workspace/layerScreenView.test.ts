@@ -53,7 +53,7 @@ const CAM2_LENS = [200, 300, -1500, 1600, 960, 540, -25, 8, 0];
 const SCREEN: Camera2DLike = { worldToScreen: (p) => ({ x: p.x, y: p.y }), screenToWorld: (p) => ({ x: p.x, y: p.y }) };
 
 const record = (layer: string, matrix: number[]): OverlayLayerGeometry => ({
-  layer, matrix, box: [0, 0, 200, 100], corners: [], path: [], pathKeys: [], pins: [], bones: [], textBox: [], pathFrames: [], pathNow: [], local: [],
+  layer, matrix, box: [0, 0, 200, 100], corners: [], path: [], pathKeys: [], pins: [], bones: [], textBox: [], pathFrames: [], pathNow: [], local: [], plugin: [],
 });
 const viewOf = (mode: string, camera: string, lens: number[]): OverlayView => ({ mode, camera, liveCamera: camera, lens, compWidth: W, compHeight: H });
 

@@ -70,6 +70,7 @@ import { MiniFlowchart } from './MiniFlowchart';
 import { TextEditOverlay } from './TextEditOverlay';
 import { PuppetOverlay } from './PuppetOverlay';
 import { EffectHandleOverlay } from './EffectHandleOverlay';
+import { PluginOverlay } from './PluginOverlay';
 import { LiquifyBrushOverlay } from './LiquifyBrushOverlay';
 import { BoneOverlay } from './BoneOverlay';
 import { TrackPointOverlay } from './TrackPointOverlay';
@@ -684,6 +685,8 @@ export function WorkspaceViewport({
           <TextEditOverlay />
           <PuppetOverlay />
           <EffectHandleOverlay />
+          {/* Native plugin effects' own overlays and handles (plugin SDK 1.1). */}
+          <PluginOverlay />
           <LiquifyBrushOverlay />
           <BoneOverlay />
           <TrackPointOverlay />

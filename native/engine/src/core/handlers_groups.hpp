@@ -28,6 +28,7 @@ ResultOf<api::CopyPropertyGroups> handle(const api::CopyPropertyGroups& c, HCtx&
 ResultOf<api::PasteEffects> handle(const api::PasteEffects& c, HCtx& x);
 ResultOf<api::ApplyPreset> handle(const api::ApplyPreset& c, HCtx& x);
 ResultOf<api::InvokeEffectAction> handle(const api::InvokeEffectAction& c, HCtx& x);
+ResultOf<api::DragEffectOverlay> handle(const api::DragEffectOverlay& c, HCtx& x);
 
 /// textAnimators.ts `rekeyTextAnimatorTracks(node, mapAnim, mapSel?)`: move every
 /// `ta.*` track, expression and data track to the slots the maps give (nullopt

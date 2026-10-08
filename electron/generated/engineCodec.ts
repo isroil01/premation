@@ -196,8 +196,8 @@ const PurgeKind_TO_NUM: Record<string, number> = { 'all': 0, 'ram': 1, 'disk': 2
 const PurgeKind_FROM_NUM: readonly (T.PurgeKind | undefined)[] = ['all', 'ram', 'disk', 'undo', 'images'];
 function enc_PurgeKind(v: T.PurgeKind): number { const n = PurgeKind_TO_NUM[v]; if (n === undefined) throw new RangeError('PurgeKind: invalid value ' + String(v)); return n; }
 function dec_PurgeKind(n: number): T.PurgeKind { const v = PurgeKind_FROM_NUM[n]; if (v === undefined) throw new DecodeError('PurgeKind: unknown value ' + n, 'badEnum'); return v; }
-const OverlayKind_TO_NUM: Record<string, number> = { 'transform': 0, 'bounds': 1, 'motionPath': 2, 'rig': 3, 'textBox': 4, 'scene3d': 8 };
-const OverlayKind_FROM_NUM: readonly (T.OverlayKind | undefined)[] = ['transform', 'bounds', 'motionPath', 'rig', 'textBox', undefined, undefined, undefined, 'scene3d'];
+const OverlayKind_TO_NUM: Record<string, number> = { 'transform': 0, 'bounds': 1, 'motionPath': 2, 'rig': 3, 'textBox': 4, 'scene3d': 8, 'plugin': 9 };
+const OverlayKind_FROM_NUM: readonly (T.OverlayKind | undefined)[] = ['transform', 'bounds', 'motionPath', 'rig', 'textBox', undefined, undefined, undefined, 'scene3d', 'plugin'];
 function enc_OverlayKind(v: T.OverlayKind): number { const n = OverlayKind_TO_NUM[v]; if (n === undefined) throw new RangeError('OverlayKind: invalid value ' + String(v)); return n; }
 function dec_OverlayKind(n: number): T.OverlayKind { const v = OverlayKind_FROM_NUM[n]; if (v === undefined) throw new DecodeError('OverlayKind: unknown value ' + n, 'badEnum'); return v; }
 const TrackKind_TO_NUM: Record<string, number> = { 'position': 0, 'positionRotation': 1, 'positionRotationScale': 2, 'perspectiveCorner': 3, 'mask': 4, 'planar': 5, 'planarRegion': 6 };
@@ -6554,6 +6554,60 @@ function decS_InvokeEffectAction(r: Reader, end: number, o: any): T.InvokeEffect
   o.group = v_group;
   o.action = v_action;
   if (v_payload !== undefined) o.payload = v_payload;
+  return o;
+}
+function encS_DragEffectOverlay(w: Writer, v: T.DragEffectOverlay): void {
+  w.byte(10); { const s = w.beginLd(); encS_PropRef(w, v.group); w.endLd(s); }
+  w.byte(16); w.u32(v.handle);
+  w.byte(25); w.f64(v.x);
+  w.byte(33); w.f64(v.y);
+  w.byte(41); w.f64(v.startX);
+  w.byte(49); w.f64(v.startY);
+  w.byte(56); w.u32(v.phase);
+}
+function decS_DragEffectOverlay(r: Reader, end: number, o: any): T.DragEffectOverlay {
+  let h_group = false;
+  let h_handle = false;
+  let h_x = false;
+  let h_y = false;
+  let h_startX = false;
+  let h_startY = false;
+  let h_phase = false;
+  let v_group: T.PropRef | undefined;
+  let v_handle: number | undefined;
+  let v_x: number | undefined;
+  let v_y: number | undefined;
+  let v_startX: number | undefined;
+  let v_startY: number | undefined;
+  let v_phase: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_group = decS_PropRef(r, r.ldEnd(), {}); h_group = true; break;
+      case 16: v_handle = r.u32(); h_handle = true; break;
+      case 25: v_x = r.f64(); h_x = true; break;
+      case 33: v_y = r.f64(); h_y = true; break;
+      case 41: v_startX = r.f64(); h_startX = true; break;
+      case 49: v_startY = r.f64(); h_startY = true; break;
+      case 56: v_phase = r.u32(); h_phase = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_group) throw new DecodeError('DragEffectOverlay.group: missing', 'missingField');
+  if (!h_handle) throw new DecodeError('DragEffectOverlay.handle: missing', 'missingField');
+  if (!h_x) throw new DecodeError('DragEffectOverlay.x: missing', 'missingField');
+  if (!h_y) throw new DecodeError('DragEffectOverlay.y: missing', 'missingField');
+  if (!h_startX) throw new DecodeError('DragEffectOverlay.startX: missing', 'missingField');
+  if (!h_startY) throw new DecodeError('DragEffectOverlay.startY: missing', 'missingField');
+  if (!h_phase) throw new DecodeError('DragEffectOverlay.phase: missing', 'missingField');
+  o.group = v_group;
+  o.handle = v_handle;
+  o.x = v_x;
+  o.y = v_y;
+  o.startX = v_startX;
+  o.startY = v_startY;
+  o.phase = v_phase;
   return o;
 }
 function encS_AddProperties(w: Writer, v: T.AddProperties): void {
@@ -14702,6 +14756,7 @@ function encS_OverlayLayerGeometry(w: Writer, v: T.OverlayLayerGeometry): void {
   { const a = v.local; if (a.length) { w.byte(98); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
   if (v.scene !== undefined) { w.varint(322); { const s = w.beginLd(); encS_OverlayScene3D(w, v.scene); w.endLd(s); } }
   if (v.rig !== undefined) { w.varint(402); { const s = w.beginLd(); encS_OverlayRig(w, v.rig); w.endLd(s); } }
+  { const a = v.plugin; for (let i = 0; i < a.length; i++) { w.varint(482); { const s = w.beginLd(); encS_OverlayPluginItem(w, a[i]!); w.endLd(s); } } }
 }
 function decS_OverlayLayerGeometry(r: Reader, end: number, o: any): T.OverlayLayerGeometry {
   const l_matrix: number[] = [];
@@ -14715,6 +14770,7 @@ function decS_OverlayLayerGeometry(r: Reader, end: number, o: any): T.OverlayLay
   const l_pathFrames: number[] = [];
   const l_pathNow: number[] = [];
   const l_local: number[] = [];
+  const l_plugin: T.OverlayPluginItem[] = [];
   let h_layer = false;
   let v_layer: string | undefined;
   let v_scene: T.OverlayScene3D | undefined;
@@ -14736,6 +14792,7 @@ function decS_OverlayLayerGeometry(r: Reader, end: number, o: any): T.OverlayLay
       case 98: { const e = r.ldEnd(); while (r.pos < e) l_local.push(r.f64()); r.expectAt(e); break; }
       case 322: v_scene = decS_OverlayScene3D(r, r.ldEnd(), {}); break;
       case 402: v_rig = decS_OverlayRig(r, r.ldEnd(), {}); break;
+      case 482: l_plugin.push(decS_OverlayPluginItem(r, r.ldEnd(), {})); break;
       default: r.skip(key);
     }
   }
@@ -14755,6 +14812,57 @@ function decS_OverlayLayerGeometry(r: Reader, end: number, o: any): T.OverlayLay
   o.local = l_local;
   if (v_scene !== undefined) o.scene = v_scene;
   if (v_rig !== undefined) o.rig = v_rig;
+  o.plugin = l_plugin;
+  return o;
+}
+function encS_OverlayPluginItem(w: Writer, v: T.OverlayPluginItem): void {
+  w.byte(10); w.str(v.effect);
+  w.byte(18); w.str(v.kind);
+  { const a = v.points; if (a.length) { w.byte(26); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  w.byte(32); w.bool(v.closed);
+  { const a = v.color; if (a.length) { w.byte(42); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  w.byte(48); w.u32(v.handle);
+  w.byte(56); w.u32(v.shape);
+}
+function decS_OverlayPluginItem(r: Reader, end: number, o: any): T.OverlayPluginItem {
+  const l_points: number[] = [];
+  const l_color: number[] = [];
+  let h_effect = false;
+  let h_kind = false;
+  let h_closed = false;
+  let h_handle = false;
+  let h_shape = false;
+  let v_effect: string | undefined;
+  let v_kind: string | undefined;
+  let v_closed: boolean | undefined;
+  let v_handle: number | undefined;
+  let v_shape: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_effect = r.str(); h_effect = true; break;
+      case 18: v_kind = r.str(); h_kind = true; break;
+      case 26: { const e = r.ldEnd(); while (r.pos < e) l_points.push(r.f64()); r.expectAt(e); break; }
+      case 32: v_closed = r.bool(); h_closed = true; break;
+      case 42: { const e = r.ldEnd(); while (r.pos < e) l_color.push(r.f64()); r.expectAt(e); break; }
+      case 48: v_handle = r.u32(); h_handle = true; break;
+      case 56: v_shape = r.u32(); h_shape = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_effect) throw new DecodeError('OverlayPluginItem.effect: missing', 'missingField');
+  if (!h_kind) throw new DecodeError('OverlayPluginItem.kind: missing', 'missingField');
+  if (!h_closed) throw new DecodeError('OverlayPluginItem.closed: missing', 'missingField');
+  if (!h_handle) throw new DecodeError('OverlayPluginItem.handle: missing', 'missingField');
+  if (!h_shape) throw new DecodeError('OverlayPluginItem.shape: missing', 'missingField');
+  o.effect = v_effect;
+  o.kind = v_kind;
+  o.points = l_points;
+  o.closed = v_closed;
+  o.color = l_color;
+  o.handle = v_handle;
+  o.shape = v_shape;
   return o;
 }
 function encS_RigPinPose(w: Writer, v: T.RigPinPose): void {
@@ -17533,6 +17641,7 @@ function encU_Command(w: Writer, v: T.Command): void {
     case 'setPaintPathAnimated': w.varint(4962); { const s = w.beginLd(); encS_SetPaintPathAnimated(w, v); w.endLd(s); } return;
     case 'editPathTopology': w.varint(5042); { const s = w.beginLd(); encS_EditPathTopology(w, v); w.endLd(s); } return;
     case 'setShapeOutline': w.varint(5050); { const s = w.beginLd(); encS_SetShapeOutline(w, v); w.endLd(s); } return;
+    case 'dragEffectOverlay': w.varint(5058); { const s = w.beginLd(); encS_DragEffectOverlay(w, v); w.endLd(s); } return;
     case 'addMarkers': w.varint(5602); { const s = w.beginLd(); encS_AddMarkers(w, v); w.endLd(s); } return;
     case 'updateMarkers': w.varint(5610); { const s = w.beginLd(); encS_UpdateMarkers(w, v); w.endLd(s); } return;
     case 'deleteMarkers': w.varint(5618); { const s = w.beginLd(); encS_DeleteMarkers(w, v); w.endLd(s); } return;
@@ -17710,6 +17819,7 @@ function decU_Command(r: Reader, end: number): T.Command {
       case 4962: out = decS_SetPaintPathAnimated(r, r.ldEnd(), { type: 'setPaintPathAnimated' }) as T.Command; break;
       case 5042: out = decS_EditPathTopology(r, r.ldEnd(), { type: 'editPathTopology' }) as T.Command; break;
       case 5050: out = decS_SetShapeOutline(r, r.ldEnd(), { type: 'setShapeOutline' }) as T.Command; break;
+      case 5058: out = decS_DragEffectOverlay(r, r.ldEnd(), { type: 'dragEffectOverlay' }) as T.Command; break;
       case 5602: out = decS_AddMarkers(r, r.ldEnd(), { type: 'addMarkers' }) as T.Command; break;
       case 5610: out = decS_UpdateMarkers(r, r.ldEnd(), { type: 'updateMarkers' }) as T.Command; break;
       case 5618: out = decS_DeleteMarkers(r, r.ldEnd(), { type: 'deleteMarkers' }) as T.Command; break;
@@ -17887,6 +17997,7 @@ function encU_CommandResult(w: Writer, v: T.CommandResult): void {
     case 'setPaintPathAnimated': w.varint(4962); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'editPathTopology': w.varint(5042); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'setShapeOutline': w.varint(5050); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
+    case 'dragEffectOverlay': w.varint(5058); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'addMarkers': w.varint(5602); { const s = w.beginLd(); encS_MarkerIds(w, v); w.endLd(s); } return;
     case 'updateMarkers': w.varint(5610); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'deleteMarkers': w.varint(5618); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
@@ -18064,6 +18175,7 @@ function decU_CommandResult(r: Reader, end: number): T.CommandResult {
       case 4962: out = decS_Empty(r, r.ldEnd(), { type: 'setPaintPathAnimated' }) as T.CommandResult; break;
       case 5042: out = decS_Empty(r, r.ldEnd(), { type: 'editPathTopology' }) as T.CommandResult; break;
       case 5050: out = decS_Empty(r, r.ldEnd(), { type: 'setShapeOutline' }) as T.CommandResult; break;
+      case 5058: out = decS_Empty(r, r.ldEnd(), { type: 'dragEffectOverlay' }) as T.CommandResult; break;
       case 5602: out = decS_MarkerIds(r, r.ldEnd(), { type: 'addMarkers' }) as T.CommandResult; break;
       case 5610: out = decS_Empty(r, r.ldEnd(), { type: 'updateMarkers' }) as T.CommandResult; break;
       case 5618: out = decS_Empty(r, r.ldEnd(), { type: 'deleteMarkers' }) as T.CommandResult; break;
@@ -18671,6 +18783,7 @@ export const codecs = {
   CopyPropertyGroups: mk<T.CopyPropertyGroups>(encS_CopyPropertyGroups, (r, e) => decS_CopyPropertyGroups(r, e, {})),
   ApplyPreset: mk<T.ApplyPreset>(encS_ApplyPreset, (r, e) => decS_ApplyPreset(r, e, {})),
   InvokeEffectAction: mk<T.InvokeEffectAction>(encS_InvokeEffectAction, (r, e) => decS_InvokeEffectAction(r, e, {})),
+  DragEffectOverlay: mk<T.DragEffectOverlay>(encS_DragEffectOverlay, (r, e) => decS_DragEffectOverlay(r, e, {})),
   AddProperties: mk<T.AddProperties>(encS_AddProperties, (r, e) => decS_AddProperties(r, e, {})),
   RemoveProperties: mk<T.RemoveProperties>(encS_RemoveProperties, (r, e) => decS_RemoveProperties(r, e, {})),
   PasteEffects: mk<T.PasteEffects>(encS_PasteEffects, (r, e) => decS_PasteEffects(r, e, {})),
@@ -18938,6 +19051,7 @@ export const codecs = {
   FrameSlots: mk<T.FrameSlots>(encS_FrameSlots, (r, e) => decS_FrameSlots(r, e, {})),
   FrameReady: mk<T.FrameReady>(encS_FrameReady, (r, e) => decS_FrameReady(r, e, {})),
   OverlayLayerGeometry: mk<T.OverlayLayerGeometry>(encS_OverlayLayerGeometry, (r, e) => decS_OverlayLayerGeometry(r, e, {})),
+  OverlayPluginItem: mk<T.OverlayPluginItem>(encS_OverlayPluginItem, (r, e) => decS_OverlayPluginItem(r, e, {})),
   RigPinPose: mk<T.RigPinPose>(encS_RigPinPose, (r, e) => decS_RigPinPose(r, e, {})),
   RigBonePose: mk<T.RigBonePose>(encS_RigBonePose, (r, e) => decS_RigBonePose(r, e, {})),
   RigIkGoal: mk<T.RigIkGoal>(encS_RigIkGoal, (r, e) => decS_RigIkGoal(r, e, {})),

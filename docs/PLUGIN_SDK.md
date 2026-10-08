@@ -68,6 +68,7 @@ The plugin id and the match names must match the manifest.
 | `USER_CHANGED_PARAM` | same | a button, or a param flagged `SUPERVISE`; may `set_param_value` / `set_arb_data` and change sequence data |
 | `UPDATE_PARAMS_UI` | same | `set_param_ui` (enable / hide / rename) |
 | `GPU_DEVICE_SETUP` / `_SETDOWN`, `SMART_RENDER_GPU` | `PF_Cmd_GPU_DEVICE_SETUP`, `PF_Cmd_SMART_RENDER_GPU` | Dawn/WebGPU on the engine's own device (see GPU) |
+| `DRAW_OVERLAY` / `OVERLAY_DRAG` (1.1) | `PF_Cmd_EVENT` (draw / drag) | the viewer overlay (see Viewer overlays) |
 
 Out flags: `DEEP_COLOR_AWARE` (16-bit), `FLOAT_COLOR_AWARE` (32-bit float),
 `SMART_RENDER`, `GPU_RENDER`, `SEQUENCE_DATA`, `GENERATOR`, `WIDE_TIME_INPUT`,
@@ -153,6 +154,27 @@ callbacks to `PrHostSuite` (an SDK 1.0 plugin never reads past the old end; a
   viewer, matrices column-major.
 - The manifest says `"sdk": { "major": 1, "minor": 1 }`; an engine with SDK
   1.0 lists such a plugin as failed ("needs SDK 1.1") instead of loading it.
+
+## Viewer overlays (SDK 1.1)
+
+AE's `PF_Cmd_EVENT` draw / click / drag, without plugin code in the UI
+process. Declare `PR_OUT_FLAG_CUSTOM_OVERLAY` in `GLOBAL_SETUP`, then:
+
+- `PR_CMD_DRAW_OVERLAY` (`PrOverlayExtra`: the layer size): call
+  `overlay_line`, `overlay_path` and `overlay_handle` with layer-pixel
+  coordinates. The params are the effect's values at the viewer's time. The
+  engine runs this when it builds overlay geometry (`overlay_geometry.cpp`);
+  the editor maps the list with the layer, as it maps a mask. Limits: 256
+  items, 2048 points per call, 192 per path; extra items are dropped.
+- `PR_CMD_OVERLAY_DRAG` (`PrOverlayDragExtra`: handle id, phase
+  `BEGIN`/`MOVE`/`END`, pointer and start in layer px): write params with
+  `set_param_value` (an animated param keys at the current time) or
+  `set_arb_data`. The editor sends `dragEffectOverlay`; begin → end is **one**
+  undo entry.
+- A plugin that crashes while drawing draws nothing; the frame still renders.
+
+The `rings` sample draws its three rings and a crosshair at its centre; dragging
+the crosshair moves `Center`.
 
 ## Sequence data
 

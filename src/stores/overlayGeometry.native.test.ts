@@ -102,7 +102,7 @@ test('overlayScreenPlacement reads origin, angle and axis scales off the pushed 
   const s = Math.sin(Math.PI / 6);
   // Column-major 4×4: rotation 30°, scale (2, 3), origin (10, 20).
   const matrix = [2 * c, 2 * s, 0, 0, -3 * s, 3 * c, 0, 0, 0, 0, 1, 0, 10, 20, 0, 1];
-  const p = overlayScreenPlacement({ layer: 'x', matrix, box: [], corners: [], path: [], pathKeys: [], pins: [], bones: [], textBox: [], pathFrames: [], pathNow: [], local: [] }, (q) => ({ x: q.x * 2, y: q.y * 2 }));
+  const p = overlayScreenPlacement({ layer: 'x', matrix, box: [], corners: [], path: [], pathKeys: [], pins: [], bones: [], textBox: [], pathFrames: [], pathNow: [], local: [], plugin: [] }, (q) => ({ x: q.x * 2, y: q.y * 2 }));
   expect(p).not.toBeNull();
   expect(p!.x).toBeCloseTo(20);
   expect(p!.y).toBeCloseTo(40);

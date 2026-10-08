@@ -102,7 +102,7 @@ function merge(records: ReadonlyArray<OverlayLayerGeometry>): Map<string, Overla
   for (const r of records) {
     const cur = out.get(r.layer);
     if (!cur) {
-      out.set(r.layer, { ...r, matrix: [...r.matrix], box: [...r.box], corners: [...r.corners], path: [...r.path], pathKeys: [...r.pathKeys], pins: [...r.pins], bones: [...r.bones], textBox: [...r.textBox], pathFrames: [...r.pathFrames], pathNow: [...r.pathNow], local: [...(r.local ?? [])], ...(r.rig ? { rig: copyRig(r.rig) } : {}) });
+      out.set(r.layer, { ...r, matrix: [...r.matrix], box: [...r.box], corners: [...r.corners], path: [...r.path], pathKeys: [...r.pathKeys], pins: [...r.pins], bones: [...r.bones], textBox: [...r.textBox], pathFrames: [...r.pathFrames], pathNow: [...r.pathNow], local: [...(r.local ?? [])], plugin: [...(r.plugin ?? [])], ...(r.rig ? { rig: copyRig(r.rig) } : {}) });
       continue;
     }
     cur.matrix.push(...r.matrix);
@@ -116,6 +116,8 @@ function merge(records: ReadonlyArray<OverlayLayerGeometry>): Map<string, Overla
     cur.pathFrames.push(...r.pathFrames);
     cur.pathNow.push(...r.pathNow);
     cur.local.push(...(r.local ?? []));
+    // Plugin SDK 1.1: overlay items travel whole in plugin-only records.
+    cur.plugin.push(...(r.plugin ?? []));
     // B4 round 5: the scene3d record rides one of the layer's records (the first).
     if (r.scene && !cur.scene) cur.scene = r.scene;
     // B4 round 5: a long rig spans records — its arrays concatenate.

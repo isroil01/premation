@@ -94,6 +94,25 @@ export interface OverlayLayerGeometry {
   scene?: OverlayScene3D;
   /** rig (B4 round 5): the layer's puppet pins / skeleton at the frame (OverlayRig); absent without a rig to show. A long rig spans several records: the `rig` arrays of a layer's records concatenate in arrival order. */
   rig?: OverlayRig;
+  /** plugin (SDK 1.1): what the layer's native plugin effects draw over the viewer (PR_CMD_DRAW_OVERLAY), evaluated at the frame's time, LAYER space. Items travel whole in plugin-only records (concatenate in arrival order). */
+  plugin: OverlayPluginItem[];
+}
+
+/** Plugin SDK 1.1 — one item of a plugin effect's viewer overlay, LAYER px (the layer's local space, as `box`). */
+export interface OverlayPluginItem {
+  /** The effect's path under the layer (`effects/<id>`), for dragEffectOverlay. */
+  effect: string;
+  /** `line` | `path` | `handle`. */
+  kind: string;
+  /** x, y pairs: a line's two ends, a path's points, a handle's position. */
+  points: number[];
+  closed: boolean;
+  /** Straight rgba 0..1; empty = the viewer's handle colour. */
+  color: number[];
+  /** A handle's id (dragEffectOverlay `handle`). */
+  handle: number;
+  /** A handle's shape: 0 square, 1 circle, 2 crosshair. */
+  shape: number;
 }
 
 /** B4 round 5 — one puppet pin as the rig resolves it at a time (OverlayRig, getRigPose). Layer space: the layer's local px, the space readGeometry's box is in. */
@@ -423,6 +442,7 @@ function encS_OverlayLayerGeometry(w: Writer, v: OverlayLayerGeometry): void {
   { const a = v.local; if (a.length) { w.byte(98); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
   if (v.scene !== undefined) { w.varint(322); { const s = w.beginLd(); encS_OverlayScene3D(w, v.scene); w.endLd(s); } }
   if (v.rig !== undefined) { w.varint(402); { const s = w.beginLd(); encS_OverlayRig(w, v.rig); w.endLd(s); } }
+  { const a = v.plugin; for (let i = 0; i < a.length; i++) { w.varint(482); { const s = w.beginLd(); encS_OverlayPluginItem(w, a[i]!); w.endLd(s); } } }
 }
 function decS_OverlayLayerGeometry(r: Reader, end: number, o: any): OverlayLayerGeometry {
   const l_matrix: number[] = [];
@@ -436,6 +456,7 @@ function decS_OverlayLayerGeometry(r: Reader, end: number, o: any): OverlayLayer
   const l_pathFrames: number[] = [];
   const l_pathNow: number[] = [];
   const l_local: number[] = [];
+  const l_plugin: OverlayPluginItem[] = [];
   let h_layer = false;
   let v_layer: string | undefined;
   let v_scene: OverlayScene3D | undefined;
@@ -457,6 +478,7 @@ function decS_OverlayLayerGeometry(r: Reader, end: number, o: any): OverlayLayer
       case 98: { const e = r.ldEnd(); while (r.pos < e) l_local.push(r.f64()); r.expectAt(e); break; }
       case 322: v_scene = decS_OverlayScene3D(r, r.ldEnd(), {}); break;
       case 402: v_rig = decS_OverlayRig(r, r.ldEnd(), {}); break;
+      case 482: l_plugin.push(decS_OverlayPluginItem(r, r.ldEnd(), {})); break;
       default: r.skip(key);
     }
   }
@@ -476,6 +498,57 @@ function decS_OverlayLayerGeometry(r: Reader, end: number, o: any): OverlayLayer
   o.local = l_local;
   if (v_scene !== undefined) o.scene = v_scene;
   if (v_rig !== undefined) o.rig = v_rig;
+  o.plugin = l_plugin;
+  return o;
+}
+function encS_OverlayPluginItem(w: Writer, v: OverlayPluginItem): void {
+  w.byte(10); w.str(v.effect);
+  w.byte(18); w.str(v.kind);
+  { const a = v.points; if (a.length) { w.byte(26); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  w.byte(32); w.bool(v.closed);
+  { const a = v.color; if (a.length) { w.byte(42); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  w.byte(48); w.u32(v.handle);
+  w.byte(56); w.u32(v.shape);
+}
+function decS_OverlayPluginItem(r: Reader, end: number, o: any): OverlayPluginItem {
+  const l_points: number[] = [];
+  const l_color: number[] = [];
+  let h_effect = false;
+  let h_kind = false;
+  let h_closed = false;
+  let h_handle = false;
+  let h_shape = false;
+  let v_effect: string | undefined;
+  let v_kind: string | undefined;
+  let v_closed: boolean | undefined;
+  let v_handle: number | undefined;
+  let v_shape: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_effect = r.str(); h_effect = true; break;
+      case 18: v_kind = r.str(); h_kind = true; break;
+      case 26: { const e = r.ldEnd(); while (r.pos < e) l_points.push(r.f64()); r.expectAt(e); break; }
+      case 32: v_closed = r.bool(); h_closed = true; break;
+      case 42: { const e = r.ldEnd(); while (r.pos < e) l_color.push(r.f64()); r.expectAt(e); break; }
+      case 48: v_handle = r.u32(); h_handle = true; break;
+      case 56: v_shape = r.u32(); h_shape = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_effect) throw new DecodeError('OverlayPluginItem.effect: missing', 'missingField');
+  if (!h_kind) throw new DecodeError('OverlayPluginItem.kind: missing', 'missingField');
+  if (!h_closed) throw new DecodeError('OverlayPluginItem.closed: missing', 'missingField');
+  if (!h_handle) throw new DecodeError('OverlayPluginItem.handle: missing', 'missingField');
+  if (!h_shape) throw new DecodeError('OverlayPluginItem.shape: missing', 'missingField');
+  o.effect = v_effect;
+  o.kind = v_kind;
+  o.points = l_points;
+  o.closed = v_closed;
+  o.color = l_color;
+  o.handle = v_handle;
+  o.shape = v_shape;
   return o;
 }
 function encS_RigPinPose(w: Writer, v: RigPinPose): void {
@@ -1000,6 +1073,7 @@ export const codecs = {
   FrameSlots: mk<FrameSlots>(encS_FrameSlots, (r, e) => decS_FrameSlots(r, e, {})),
   FrameReady: mk<FrameReady>(encS_FrameReady, (r, e) => decS_FrameReady(r, e, {})),
   OverlayLayerGeometry: mk<OverlayLayerGeometry>(encS_OverlayLayerGeometry, (r, e) => decS_OverlayLayerGeometry(r, e, {})),
+  OverlayPluginItem: mk<OverlayPluginItem>(encS_OverlayPluginItem, (r, e) => decS_OverlayPluginItem(r, e, {})),
   RigPinPose: mk<RigPinPose>(encS_RigPinPose, (r, e) => decS_RigPinPose(r, e, {})),
   RigBonePose: mk<RigBonePose>(encS_RigBonePose, (r, e) => decS_RigBonePose(r, e, {})),
   RigIkGoal: mk<RigIkGoal>(encS_RigIkGoal, (r, e) => decS_RigIkGoal(r, e, {})),

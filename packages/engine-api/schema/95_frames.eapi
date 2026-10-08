@@ -86,6 +86,25 @@ struct OverlayLayerGeometry {
   scene?: OverlayScene3D = 40;
   /// rig (B4 round 5): the layer's puppet pins / skeleton at the frame (OverlayRig); absent without a rig to show. A long rig spans several records: the `rig` arrays of a layer's records concatenate in arrival order.
   rig?: OverlayRig = 50;
+  /// plugin (SDK 1.1): what the layer's native plugin effects draw over the viewer (PR_CMD_DRAW_OVERLAY), evaluated at the frame's time, LAYER space. Items travel whole in plugin-only records (concatenate in arrival order).
+  plugin: OverlayPluginItem[] = 60;
+}
+
+/// Plugin SDK 1.1 — one item of a plugin effect's viewer overlay, LAYER px (the layer's local space, as `box`).
+struct OverlayPluginItem {
+  /// The effect's path under the layer (`effects/<id>`), for dragEffectOverlay.
+  effect: string = 1;
+  /// `line` | `path` | `handle`.
+  kind: string = 2;
+  /// x, y pairs: a line's two ends, a path's points, a handle's position.
+  points: f64[] = 3;
+  closed: bool = 4;
+  /// Straight rgba 0..1; empty = the viewer's handle colour.
+  color: f64[] = 5;
+  /// A handle's id (dragEffectOverlay `handle`).
+  handle: u32 = 6;
+  /// A handle's shape: 0 square, 1 circle, 2 crosshair.
+  shape: u32 = 7;
 }
 
 /// B4 round 5 — one puppet pin as the rig resolves it at a time (OverlayRig, getRigPose). Layer space: the layer's local px, the space readGeometry's box is in.

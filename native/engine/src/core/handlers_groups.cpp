@@ -1939,6 +1939,12 @@ ResultOf<api::ApplyPreset> handle(const api::ApplyPreset& c, HCtx& x) {
   return out;
 }
 
+ResultOf<api::DragEffectOverlay> handle(const api::DragEffectOverlay& c, HCtx& x) {
+  (void)resolve_group(x.d, c.group);
+  native_overlay_drag(x, c);  // plugin SDK 1.1 — handlers_native.cpp
+  return {};
+}
+
 ResultOf<api::InvokeEffectAction> handle(const api::InvokeEffectAction& c, HCtx& x) {
   (void)resolve_group(x.d, c.group);
   // G1: native SDK plugin effects (buttons, supervised params) — handlers_native.cpp.

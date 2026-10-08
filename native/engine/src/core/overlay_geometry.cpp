@@ -18,6 +18,9 @@
 #include "anim.hpp"
 #include "readmodel.hpp"
 #include "fail.hpp"
+#include "fxstate.hpp"
+#include "handlers_native.hpp"
+#include "native_effects.hpp"
 #include "layer_geometry.hpp"
 #include "overlay_rig_pack.hpp"
 #include "scene.hpp"
@@ -383,6 +386,41 @@ const Node* view_camera_node(const std::vector<const Node*>& nodes, const std::s
   return nullptr;
 }
 
+/// Plugin SDK 1.1: what the layer's native plugin effects draw over the viewer (DRAW_OVERLAY), at
+/// `seconds`. The effect's params are its static values with its animated tracks (`effect.<id>.<key>`)
+/// evaluated at the frame, so a keyed handle draws where the frame shows it. A plugin that fails
+/// to draw contributes nothing: an overlay never breaks a frame.
+void plugin_overlay_of(const PCtx& pc, const Node& n, const std::string& layer, double seconds, api::OverlayLayerGeometry& g) {
+  std::optional<Values> av;
+  for (const Json& e : read_node_effects(n)) {
+    const std::string type = e.at("type").is_string() ? e.at("type").str() : "";
+    const NativeEffect* ne = NativeEffects::find(type);
+    if (ne == nullptr || !ne->overlay || !NativeEffects::available(type)) continue;
+    if (e.at("enabled").is_bool() && !e.at("enabled").b()) continue;
+    const std::string effectId = e.at("id").is_string() ? e.at("id").str() : "";
+    NativeActionRequest req = native_request(n, layer, effectId, e, *ne, seconds_to_flicks(seconds));
+    if (!av) av = values_at(pc, layer, seconds);
+    const std::string prefix = "effect." + effectId + ".";
+    for (const auto& [k, v] : *av) {
+      if (k.starts_with(prefix)) req.params.set(k.substr(prefix.size()), Json::number(v));
+    }
+    auto items = NativeEffects::draw_overlay(req);
+    if (auto* list = std::get_if<std::vector<NativeOverlayItem>>(&items)) {
+      for (NativeOverlayItem& i : *list) {
+        api::OverlayPluginItem o;
+        o.effect = "effects/" + effectId;
+        o.kind = std::move(i.kind);
+        o.points = std::move(i.points);
+        o.closed = i.closed;
+        o.color = std::move(i.color);
+        o.handle = i.handle;
+        o.shape = i.shape;
+        g.plugin.push_back(std::move(o));
+      }
+    }
+  }
+}
+
 // ── packing ───────────────────────────────────────────────────────────────
 
 /// A conservative payload estimate for one record (field tags, lengths, the id, 8 bytes per f64).
@@ -396,6 +434,7 @@ std::size_t estimate(const api::OverlayLayerGeometry& g) {
     extra += 48 + s.light_type.size();
   }
   if (g.rig) extra += estimate_overlay_rig(*g.rig);  // B4 round 5 (overlay_rig_pack.cpp)
+  for (const api::OverlayPluginItem& i : g.plugin) extra += 48 + i.effect.size() + i.kind.size() + 8 * (i.points.size() + i.color.size());
   return 48 + g.layer.size() + 8 * doubles + extra;
 }
 
@@ -431,6 +470,27 @@ std::vector<api::OverlayLayerGeometry> split(api::OverlayLayerGeometry g) {
   chunk(&api::OverlayLayerGeometry::path, g.path, 4);
   chunk(&api::OverlayLayerGeometry::path_keys, g.path_keys, 8);
   chunk(&api::OverlayLayerGeometry::path_frames, g.path_frames, 4);
+  // Plugin SDK 1.1: overlay items travel in plugin-only records, each item whole (the host caps a path
+  // at 192 points, so one always fits a record).
+  {
+    api::OverlayLayerGeometry piece;
+    std::size_t used = 0;
+    for (api::OverlayPluginItem& i : g.plugin) {
+      const std::size_t size = 48 + i.effect.size() + i.kind.size() + 8 * (i.points.size() + i.color.size());
+      if (!piece.plugin.empty() && 48 + g.layer.size() + used + size > kRecordBudget) {
+        piece.layer = g.layer;
+        out.push_back(std::move(piece));
+        piece = {};
+        used = 0;
+      }
+      used += size;
+      piece.plugin.push_back(std::move(i));
+    }
+    if (!piece.plugin.empty()) {
+      piece.layer = g.layer;
+      out.push_back(std::move(piece));
+    }
+  }
   // B4 round 5: the rig travels in rig-only records, its arrays cut in whole groups (overlay_rig_pack.cpp).
   if (g.rig) split_overlay_rig(g.layer, std::move(*g.rig), kRecordBudget, out);
   return out;
@@ -593,6 +653,7 @@ std::vector<api::OverlayLayerGeometry> overlay_geometry(const PCtx& pc, TextQuer
     if (wants(api::OverlayKind::text_box)) text_box_of(pc, text, layer, seconds, g);
     // rig (pins / bones): not produced yet — the rig sampler is scene-side (ENGINE_API.md §15.12).
     if (wants(api::OverlayKind::scene3d)) g.scene = scene3d_of(pc, layer, seconds);
+    if (wants(api::OverlayKind::plugin)) plugin_overlay_of(pc, *n, layer, seconds, g);
     out.push_back(std::move(g));
   }
   return out;
