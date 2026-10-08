@@ -12,7 +12,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import type { EffectParamUi } from '@motion/engine-api';
+import type { EffectParamUi, EffectUi } from '@motion/engine-api';
 import { secondsToFlicks } from '@motion/engine-api';
 import { Button } from '@components/Button';
 import { engine } from '@core/engine/engineInstance';
@@ -24,9 +24,13 @@ import { pluginOfType } from '@core/project/missingPluginContent';
 import panel from './EffectsPanel.module.css';
 import row from '@layout/Inspector/TextAnimatorControls.module.css';
 
-/** key → the plugin's UI state for that param; null until the engine answers (or when it cannot). */
-export function usePluginEffectUi(nodeId: string, effect: Effect, time: number): Map<string, EffectParamUi> | null {
-  const [ui, setUi] = useState<Map<string, EffectParamUi> | null>(null);
+/** The plugin's UI state: `byKey` (key → that param's state) and the whole answer (panel, plugin). Null until the engine answers (or when it cannot). */
+export function usePluginEffectUi(
+  nodeId: string,
+  effect: Effect,
+  time: number,
+): { byKey: Map<string, EffectParamUi>; ui: EffectUi } | null {
+  const [ui, setUi] = useState<{ byKey: Map<string, EffectParamUi>; ui: EffectUi } | null>(null);
   const valuesKey = JSON.stringify(effect.params ?? {});
   useEffect(() => {
     let alive = true;
@@ -34,7 +38,7 @@ export function usePluginEffectUi(nodeId: string, effect: Effect, time: number):
       .query({ type: 'getEffectUi', layer: nodeId, effect: paths.effectGroup(effect.id), time: secondsToFlicks(time) })
       .then((res) => {
         if (!alive) return;
-        setUi(res.ok ? new Map(res.value.params.map((p) => [p.key, p])) : null);
+        setUi(res.ok ? { byKey: new Map(res.value.params.map((p) => [p.key, p])), ui: res.value } : null);
       })
       .catch(() => { if (alive) setUi(null); });
     return () => { alive = false; };
@@ -42,13 +46,24 @@ export function usePluginEffectUi(nodeId: string, effect: Effect, time: number):
   return ui;
 }
 
-/** The plugin's buttons, under its params. */
-export function PluginEffectActions({ nodeId, effect, def }: { nodeId: string; effect: Effect; def: PluginEffectDef }): JSX.Element | null {
+/** The plugin's buttons, under its params (a button the plugin hides — one only its panel presses — is not drawn). */
+export function PluginEffectActions({
+  nodeId,
+  effect,
+  def,
+  ui,
+}: {
+  nodeId: string;
+  effect: Effect;
+  def: PluginEffectDef;
+  ui?: Map<string, EffectParamUi> | null;
+}): JSX.Element | null {
   const [error, setError] = useState<string | null>(null);
-  if (def.actions.length === 0) return null;
+  const actions = def.actions.filter((a) => !ui?.get(a.key)?.hidden);
+  if (actions.length === 0) return null;
   return (
     <div className={row.paramRow} style={{ flexWrap: 'wrap', gap: 6, paddingLeft: 22 }}>
-      {def.actions.map((a) => (
+      {actions.map((a) => (
         <Button
           key={a.key}
           size="sm"

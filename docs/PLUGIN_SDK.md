@@ -176,6 +176,41 @@ process. Declare `PR_OUT_FLAG_CUSTOM_OVERLAY` in `GLOBAL_SETUP`, then:
 The `rings` sample draws its three rings and a crosshair at its centre; dragging
 the crosshair moves `Center`.
 
+## Plugin panels (SDK 1.1)
+
+Optical Flares' editor or Element 3D's scene setup, without plugin code in the
+editor: a bundle may ship `ui/index.html` (and its scripts, styles, images and
+fonts beside it in `ui/`). The effect card then shows **Open Panel**, and the
+editor shows the page in a frame:
+
+- served by the app as `plugin-ui://<plugin id>/…` from the bundle's `ui/`
+  folder only (no `..`, hidden files or symlinks out);
+- `sandbox="allow-scripts"`: an opaque origin, no Node, no storage, no popups,
+  no navigation out of the bundle;
+- under its own policy: `default-src 'none'`, scripts/styles/images/fonts from
+  the bundle, `connect-src 'none'` — no network at all.
+
+The panel talks to the editor with `window.parent.postMessage({ premation: 1, … }, '*')`:
+
+| Panel sends | What happens |
+|---|---|
+| `{ type: 'ready' }` | the editor answers with `state` |
+| `{ id, type: 'setParam', key: 'p2', value }` | `setProperty` on the param (a number, a checkbox, `{ r, g, b, a }`; a point is `p<id>X` / `p<id>Y`); an animated param keys at the current time |
+| `{ id, type: 'setArbitraryData', key: 'p3', data: '<base64>' }` | `setPluginData`: an ARBITRARY_DATA param's bytes (≤ 256 KiB) |
+| `{ id, type: 'invokeButton', key: 'p9', payload? }` | `invokeEffectAction`: `USER_CHANGED_PARAM` with `PrUserChangedParamExtra.payload` (UTF-8, ≤ 64 KiB) — a hidden button (`PR_PARAM_FLAG_HIDDEN`) is how a panel hands the plugin data for its sequence data |
+| `{ id, type: 'requestPreview', maxSize? }` | the engine renders the layer at the current time; the reply carries `image` (a PNG data URL). The panel never renders. |
+
+The editor sends `{ type: 'state', effect, plugin, time, params, values, data }`
+on `ready` and after every document change (undo and redo too): `params` as
+the plugin shows them, `values` the effect's stored values, `data` the
+sequence data (`sequence`) and arbitrary-data params, base64. Each request gets
+`{ type: 'reply', id, ok, error?, image? }`. Every edit is an ordinary engine
+command: one undo entry, saved with the project, in the command log.
+
+The `rings` panel reads its palette from the sequence data and applies an
+edited one through the hidden **Set Palette** button (`#rrggbb` colours as the
+payload).
+
 ## Sequence data
 
 Per-instance state lives **in the document**, not only in the process:

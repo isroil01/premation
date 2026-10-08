@@ -437,6 +437,8 @@ struct PluginInfo {
   effects: string[] = 8;
   /// Any of its effects renders on the GPU (SMART_RENDER_GPU).
   gpu: bool = 9;
+  /// Plugin SDK 1.1 — the bundle ships a panel (`ui/index.html`), shown in a sandboxed frame (`plugin-ui://<id>/index.html`).
+  panel: bool = 10;
 }
 struct PluginList { plugins: PluginInfo[] = 1; }
 
@@ -447,7 +449,17 @@ struct EffectParamUi {
   enabled: bool = 3;
   hidden: bool = 4;
 }
-struct EffectUi { params: EffectParamUi[] = 1; }
+/// Plugin SDK 1.1 — one entry of a native effect's plugin data: `sequence` (the flat sequence data) or an ARBITRARY_DATA param's key.
+struct PluginDataEntry { key: string = 1; data: bytes = 2; }
+struct EffectUi {
+  params: EffectParamUi[] = 1;
+  /// The plugin id that provides the effect ('' for a builtin).
+  plugin: string = 2;
+  /// Plugin SDK 1.1 — the plugin ships a panel (PluginInfo.panel).
+  panel: bool = 3;
+  /// Plugin SDK 1.1 — what the plugin's panel reads besides the params: the sequence data and arbitrary-data params.
+  data: PluginDataEntry[] = 4;
+}
 
 struct EffectCatalog { effects: EffectInfo[] = 1; }
 struct GroupTypeInfo { matchName: string = 1; displayName: string = 2; category: string = 3; }

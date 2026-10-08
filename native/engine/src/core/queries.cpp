@@ -794,9 +794,7 @@ struct Q {
     return query_result_for<api::ListPlugins>(std::move(out));
   }
   api::QueryResult operator()(const api::GetEffectUi& q) const {
-    api::EffectUi out;
-    out.params = native_effect_ui(d, q.layer, q.effect, q.time.value_or(0));
-    return query_result_for<api::GetEffectUi>(std::move(out));
+    return query_result_for<api::GetEffectUi>(native_effect_ui(d, q.layer, q.effect, q.time.value_or(0)));
   }
   api::QueryResult operator()(const api::HitTest& q) const {
     require_comp(d, q.comp);

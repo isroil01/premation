@@ -9,8 +9,13 @@
 // first three rings' outlines and a crosshair handle at Center; dragging it
 // (OVERLAY_DRAG) writes Center — the whole drag is one undo step.
 //
+// SDK 1.1 panel (ui/index.html): the panel reads the palette from the sequence
+// data (getEffectUi's `data`) and sends the edited one to the hidden "Set
+// Palette" button as its payload — `#rrggbb` colours separated by spaces, 1 to
+// 8 of them. Like Shuffle, one undoable edit.
+//
 //   Center (point) · Spacing · Rotation (angle) · Palette Mix · Color A · Color B
-//   Opacity · Shuffle Palette (button) ▸ Debug: Fault
+//   Opacity · Shuffle Palette (button) · Set Palette (hidden button) ▸ Debug: Fault
 #include <premation_sdk/premation_sdk.h>
 
 #include <array>
@@ -23,7 +28,7 @@
 
 namespace {
 
-enum : uint32_t { kCenter = 1, kSpacing = 2, kRotation = 3, kMix = 4, kColorA = 5, kColorB = 6, kOpacity = 7, kShuffle = 8 };
+enum : uint32_t { kCenter = 1, kSpacing = 2, kRotation = 3, kMix = 4, kColorA = 5, kColorB = 6, kOpacity = 7, kShuffle = 8, kSetPalette = 9 };
 
 constexpr uint32_t kMagic = 0x52494E47;  // 'RING'
 constexpr uint32_t kFormat = 1;
@@ -69,6 +74,37 @@ bool read_palette(const PrInData* in, PrHandle h, Palette& p) {
   return p.magic == kMagic && p.format == kFormat && p.count <= p.colors.size();
 }
 
+int hex_digit(uint8_t c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  return -1;
+}
+
+/// The panel's payload: `#rrggbb` colours separated by spaces (1..8). False for anything else.
+bool parse_palette(const uint8_t* s, uint32_t n, Palette& p) {
+  uint32_t count = 0;
+  uint32_t i = 0;
+  while (i < n) {
+    if (s[i] == ' ') {  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+      ++i;
+      continue;
+    }
+    if (count == p.colors.size() || n - i < 7 || s[i] != '#') return false;  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+    for (uint32_t ch = 0; ch < 3; ++ch) {
+      const int hi = hex_digit(s[i + 1 + 2 * ch]);  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+      const int lo = hex_digit(s[i + 2 + 2 * ch]);  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+      if (hi < 0 || lo < 0) return false;
+      p.colors.at(count).at(ch) = static_cast<float>(hi * 16 + lo) / 255.0F;
+    }
+    ++count;
+    i += 7;
+  }
+  if (count == 0) return false;
+  p.count = count;
+  return true;
+}
+
 PrErr params_setup(const PrInData* in) {
   PrErr e = prs::add_simple(in, PR_PARAM_POINT, kCenter, "Center", {0, 0, 0, 0});
   if (e == PR_ERR_NONE) e = prs::add_float(in, kSpacing, "Spacing", 24, 1, 2000, 2, 200, 1);
@@ -78,6 +114,9 @@ PrErr params_setup(const PrInData* in) {
   if (e == PR_ERR_NONE) e = prs::add_simple(in, PR_PARAM_COLOR, kColorB, "Color B", {0, 0, 0, 1});
   if (e == PR_ERR_NONE) e = prs::add_float(in, kOpacity, "Opacity", 100, 0, 100, 0, 100, 1);
   if (e == PR_ERR_NONE) e = prs::add_simple(in, PR_PARAM_BUTTON, kShuffle, "Shuffle Palette", {}, PR_PARAM_FLAG_SUPERVISE);
+  if (e == PR_ERR_NONE) {
+    e = prs::add_simple(in, PR_PARAM_BUTTON, kSetPalette, "Set Palette", {}, PR_PARAM_FLAG_SUPERVISE | PR_PARAM_FLAG_HIDDEN);
+  }
   if (e == PR_ERR_NONE) e = prs::add_fault_params(in);
   return e;
 }
@@ -169,7 +208,7 @@ PrErr overlay_drag(const PrInData* in, PrParamDef* const* params, const PrOverla
 PrErr PR_CALL rings_main(PrCmd cmd, const PrInData* in, PrOutData* out, PrParamDef* const* params, PrWorld* /*output*/,
                          void* extra) {
   switch (cmd) {
-    case PR_CMD_ABOUT: prs::message(out, "Rings 1.1 — Premation SDK sample (generator with sequence data and a viewer overlay)."); return PR_ERR_NONE;
+    case PR_CMD_ABOUT: prs::message(out, "Rings 1.1 — Premation SDK sample (generator with sequence data, a viewer overlay and a panel)."); return PR_ERR_NONE;
     case PR_CMD_GLOBAL_SETUP:
       out->my_version = PR_VERSION(1, 0, 0);
       out->out_flags = PR_OUT_FLAG_DEEP_COLOR_AWARE | PR_OUT_FLAG_FLOAT_COLOR_AWARE | PR_OUT_FLAG_SMART_RENDER |
@@ -194,14 +233,23 @@ PrErr PR_CALL rings_main(PrCmd cmd, const PrInData* in, PrOutData* out, PrParamD
       return PR_ERR_NONE;
     case PR_CMD_USER_CHANGED_PARAM: {
       const auto* x = static_cast<const PrUserChangedParamExtra*>(extra);
-      if (x == nullptr || params == nullptr || params[x->param_index] == nullptr ||  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
-          params[x->param_index]->id != kShuffle) {                                // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
-        return PR_ERR_NONE;
-      }
+      if (x == nullptr || params == nullptr || params[x->param_index] == nullptr) return PR_ERR_NONE;  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+      const uint32_t id = params[x->param_index]->id;  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+      if (id != kShuffle && id != kSetPalette) return PR_ERR_NONE;
       Palette p;
       if (!read_palette(in, in->sequence_data, p)) roll(p);
-      p.seed = xorshift(p.seed + 0x6D2B79F5U);
-      roll(p);
+      if (id == kSetPalette) {
+        // SDK 1.1 payload: only a 1.1 host's struct has it.
+        const bool has = x->struct_size >= offsetof(PrUserChangedParamExtra, payload_size) + sizeof(uint32_t);
+        if (!has || x->payload == nullptr || !parse_palette(x->payload, x->payload_size, p)) {
+          prs::message(out, "Set Palette takes 1 to 8 #rrggbb colours.");
+          return PR_ERR_INVALID_PARAM;
+        }
+      } else {
+        p.seed = xorshift(p.seed + 0x6D2B79F5U);
+        p.count = 6;
+        roll(p);
+      }
       std::memcpy(in->host->handle_lock(in->host_ref, in->sequence_data), &p, sizeof(p));
       out->sequence_data = in->sequence_data;
       return PR_ERR_NONE;

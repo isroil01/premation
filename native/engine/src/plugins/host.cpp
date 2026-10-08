@@ -1179,6 +1179,12 @@ std::string hex2(double v) {
   return {b.data(), 2};
 }
 
+/// SDK 1.1: a bundle's panel is `ui/index.html` (the editor serves `ui/` as `plugin-ui://<id>/`).
+bool has_panel(const fs::path& dir) {
+  std::error_code ec;
+  return fs::is_regular_file(dir / "ui" / "index.html", ec);
+}
+
 std::string hex_color(const std::array<double, 4>& c) {
   std::string s = "#" + hex2(c[0]) + hex2(c[1]) + hex2(c[2]);
   if (c[3] < 1) s += hex2(c[3]);
@@ -1198,6 +1204,7 @@ void PluginHost::Impl::register_document(const Plugin& p) {
     ne.supportsFloat = e->has(PR_OUT_FLAG_FLOAT_COLOR_AWARE);
     ne.generator = e->has(PR_OUT_FLAG_GENERATOR);
     ne.overlay = e->has(PR_OUT_FLAG_CUSTOM_OVERLAY);
+    ne.panel = has_panel(p.dir);
     for (const ParamSpec& s : e->params) {
       doc::EffectParamDef d;
       d.key = s.key;
@@ -1290,6 +1297,7 @@ std::vector<PluginRecord> PluginHost::plugins() const {
       for (const ManifestEffect& me : p->manifest.effects) r.effects.push_back(me.matchName);
     }
     r.gpu = p->gpu;
+    r.panel = has_panel(p->dir);
     out.push_back(std::move(r));
   }
   return out;
@@ -1957,6 +1965,10 @@ std::variant<doc::NativeEdit, doc::NativeFailure> PluginHost::user_changed(const
   PrUserChangedParamExtra x{};
   x.struct_size = sizeof(PrUserChangedParamExtra);
   x.param_index = index;
+  if (!req.payload.empty()) {  // SDK 1.1: a panel's data for the button
+    x.payload = reinterpret_cast<const std::uint8_t*>(req.payload.data());  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast): bytes of the string
+    x.payload_size = static_cast<std::uint32_t>(req.payload.size());
+  }
   return instance_call(req, PR_CMD_USER_CHANGED_PARAM, index, &x, nullptr);
 }
 
@@ -2141,6 +2153,7 @@ std::vector<api::PluginInfo> PluginHost::plugin_infos() const {
     i.error = std::move(r.error);
     i.effects = std::move(r.effects);
     i.gpu = r.gpu;
+    i.panel = r.panel;
     out.push_back(std::move(i));
   }
   return out;

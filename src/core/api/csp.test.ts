@@ -24,6 +24,7 @@ describe('app CSP', () => {
     expect(d('connect-src')).toContain('ws://localhost:*');
     expect(d('script-src')).toEqual(["'self'"]);
     expect(d('default-src')).toEqual(["'self'"]);
+    expect(d('frame-src')).toEqual(["'self'", 'plugin-ui:']);
   });
 
   it('lets a packaged build reach the deployed backend it was built for', () => {

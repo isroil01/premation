@@ -21,7 +21,7 @@ void native_effect_added(Document& d, std::string_view layer, std::string_view e
 /// invokeEffectAction on a native effect: USER_CHANGED_PARAM through the host;
 /// the plugin's param writes, sequence data and arbitrary data become ONE
 /// history entry. Fails (EngineFail) when `group` is not a native effect.
-void native_invoke_action(HCtx& x, const api::PropRef& group, const std::string& action);
+void native_invoke_action(HCtx& x, const api::PropRef& group, const std::string& action, const std::string& payload = {});
 /// dragEffectOverlay (plugin SDK 1.1): OVERLAY_DRAG on the effect, its writes applied like an action's.
 void native_overlay_drag(HCtx& x, const api::DragEffectOverlay& c);
 /// Write what a plugin changed (params — keyed at the playhead when animated —, sequence, arbitrary data).
@@ -30,10 +30,10 @@ void apply_native_edit(HCtx& x, const api::PropRef& group, const std::string& ef
 [[nodiscard]] NativeActionRequest native_request(const Node& node, const std::string& layer, const std::string& effectId,
                                                  const Json& e, const NativeEffect& ne, api::Time time);
 
-/// getEffectUi: a native effect's params through UPDATE_PARAMS_UI; a builtin
-/// effect's params all enabled and visible. notFound for no such effect.
-[[nodiscard]] std::vector<api::EffectParamUi> native_effect_ui(const Document& d, const std::string& layer, const std::string& path,
-                                                               api::Time time);
+/// getEffectUi: a native effect's params through UPDATE_PARAMS_UI, its plugin,
+/// panel and plugin data (SDK 1.1 panels); a builtin effect's params all enabled
+/// and visible. notFound for no such effect.
+[[nodiscard]] api::EffectUi native_effect_ui(const Document& d, const std::string& layer, const std::string& path, api::Time time);
 
 /// Write one entry of fx.pluginData (setPluginData's storage; empty bytes = delete).
 void native_write_plugin_data(Document& d, std::string_view layer, std::string_view group, std::string_view key,

@@ -162,6 +162,32 @@ the WGSL compiled with naga. Everything below did not run.
       one "Missing plugin …" notice, renders the layer unaffected, keeps the
       effect after a save and reopen.
 
+## Plugin platform P5 — viewer overlays and plugin panels (2026-10-08, docs/PLUGIN_SDK.md)
+
+Run in the cloud session: `engine_plugins_tests`; on premation-engine-headless
+`pluginOverlay.native.test` (the rings overlay arrives under the `plugin` kind,
+a gesture drag is one entry, undo) and `pluginPanel.native.test` (listPlugins
+`panel`, getEffectUi plugin data, a panel palette edit and a drag each one
+entry; undo / redo restore both); the protocol, CSP and message-parsing unit
+tests. Not run (needs the app window and the GPU build):
+
+- [ ] Real app, `rings` on a solid: the three ring outlines and the crosshair
+      draw over the layer in the viewer and follow the layer's transform (a
+      rotated, scaled, parented layer); dragging the crosshair moves the rings
+      live; Ctrl+Z after the drag is one step.
+- [ ] A plugin that draws many items (or crashes in DRAW_OVERLAY, rings' Debug
+      ▸ Fault): the viewer still draws the frame and the other overlays.
+- [ ] Effect card ▸ Open Panel on `rings`: the panel loads (`plugin-ui://`),
+      shows the palette, Apply palette re-colours the render, Undo / Redo
+      restore the palette and the panel's swatches follow; Preview frame shows
+      the engine's render; the Spacing slider writes Spacing.
+- [ ] The panel cannot reach the network or the editor: in the panel's
+      DevTools console, `fetch('https://example.com')` is refused by CSP,
+      `parent.document` throws, `location = 'https://example.com'` does not
+      navigate (main's will-frame-navigate guard), `require` is undefined.
+- [ ] Packaged build: `plugin-ui://` is registered before `app.ready` and the
+      app's CSP `frame-src` lets the frame load (no blank panel).
+
 ## Plugin platform P4 — SDK 1.1 camera / lights / layer transforms (2026-10-08, docs/PLUGIN_SDK.md)
 
 Run in the cloud session: `engine_plugins_tests` `[scene]` on the headless

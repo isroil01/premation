@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Rings</title>
+<link rel="stylesheet" href="panel.css">
+</head>
+<body>
+  <h1>Rings palette</h1>
+  <p class="hint">The palette lives in the effect's sequence data. Apply is one undo step.</p>
+  <div id="swatches" class="swatches"></div>
+  <div class="row">
+    <button id="add" type="button">Add colour</button>
+    <button id="remove" type="button">Remove</button>
+    <button id="apply" type="button" class="primary">Apply palette</button>
+  </div>
+  <label class="row">Spacing <input id="spacing" type="range" min="2" max="200" step="1"> <span id="spacingValue"></span></label>
+  <div class="row"><button id="preview" type="button">Preview frame</button></div>
+  <img id="frame" alt="" hidden>
+  <p id="status" class="hint" role="status"></p>
+  <script src="panel.js"></script>
+</body>
+</html>

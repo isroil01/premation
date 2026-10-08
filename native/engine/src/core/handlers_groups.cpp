@@ -1948,7 +1948,7 @@ ResultOf<api::DragEffectOverlay> handle(const api::DragEffectOverlay& c, HCtx& x
 ResultOf<api::InvokeEffectAction> handle(const api::InvokeEffectAction& c, HCtx& x) {
   (void)resolve_group(x.d, c.group);
   // G1: native SDK plugin effects (buttons, supervised params) — handlers_native.cpp.
-  native_invoke_action(x, c.group, c.action);
+  native_invoke_action(x, c.group, c.action, c.payload.value_or(std::string()));
   return {};
 }
 

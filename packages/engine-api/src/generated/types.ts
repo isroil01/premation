@@ -2533,7 +2533,7 @@ export interface ApplyPreset {
   body?: string;
 }
 
-/** A plugin effect's action button (param supervision / PF_Cmd_DO_DIALOG equivalents). The plugin's writes are one undo entry. */
+/** A plugin effect's action button (param supervision / PF_Cmd_DO_DIALOG equivalents). The plugin's writes are one undo entry. Plugin SDK 1.1: `payload` reaches a native plugin as PrUserChangedParamExtra.payload (UTF-8 bytes) — how a plugin panel hands a button its data. */
 export interface InvokeEffectAction {
   group: PropRef;
   action: string;
@@ -4073,6 +4073,8 @@ export interface PluginInfo {
   effects: string[];
   /** Any of its effects renders on the GPU (SMART_RENDER_GPU). */
   gpu: boolean;
+  /** Plugin SDK 1.1 — the bundle ships a panel (`ui/index.html`), shown in a sandboxed frame (`plugin-ui://<id>/index.html`). */
+  panel: boolean;
 }
 
 export interface PluginList {
@@ -4087,8 +4089,20 @@ export interface EffectParamUi {
   hidden: boolean;
 }
 
+/** Plugin SDK 1.1 — one entry of a native effect's plugin data: `sequence` (the flat sequence data) or an ARBITRARY_DATA param's key. */
+export interface PluginDataEntry {
+  key: string;
+  data: Uint8Array;
+}
+
 export interface EffectUi {
   params: EffectParamUi[];
+  /** The plugin id that provides the effect ('' for a builtin). */
+  plugin: string;
+  /** Plugin SDK 1.1 — the plugin ships a panel (PluginInfo.panel). */
+  panel: boolean;
+  /** Plugin SDK 1.1 — what the plugin's panel reads besides the params: the sequence data and arbitrary-data params. */
+  data: PluginDataEntry[];
 }
 
 export interface EffectCatalog {

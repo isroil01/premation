@@ -163,6 +163,17 @@ The biggest unlock for deep plugins. Callbacks are **appended** to
 
 ### P5 — Viewer interaction and plugin UI
 
+**Status (2026-10-08):** built — `PR_CMD_DRAW_OVERLAY` / `PR_CMD_OVERLAY_DRAG`,
+`PR_OUT_FLAG_CUSTOM_OVERLAY`, the `overlay_line / _path / _handle` callbacks,
+the `plugin` overlay kind (`overlay_geometry.cpp`), `dragEffectOverlay` (a
+gesture = one entry) and the editor's `PluginOverlay`; panels as
+`plugin-ui://<id>/` (electron/pluginPanelProtocol.ts: `ui/` only, strict CSP,
+no navigation out) in a `sandbox="allow-scripts"` frame on the effect card,
+the message API in `src/core/nativePlugins/pluginPanel.ts`, and
+`PrUserChangedParamExtra.payload` for a panel's button data. Gate met on the
+headless engine (`pluginPanel.native.test`); the in-app checks are in
+docs/VERIFY_ON_TEST_MACHINE.md.
+
 - **Viewer overlays** (AE's `PF_Cmd_EVENT` draw / click / drag):
   - A new `PR_CMD_DRAW_OVERLAY` selector returns a draw list: lines, handles,
     paths, in layer space.

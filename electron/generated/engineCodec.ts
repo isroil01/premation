@@ -12314,6 +12314,7 @@ function encS_PluginInfo(w: Writer, v: T.PluginInfo): void {
   w.byte(58); w.str(v.error);
   { const a = v.effects; for (let i = 0; i < a.length; i++) { w.byte(66); w.str(a[i]!); } }
   w.byte(72); w.bool(v.gpu);
+  w.byte(80); w.bool(v.panel);
 }
 function decS_PluginInfo(r: Reader, end: number, o: any): T.PluginInfo {
   const l_effects: string[] = [];
@@ -12325,6 +12326,7 @@ function decS_PluginInfo(r: Reader, end: number, o: any): T.PluginInfo {
   let h_status = false;
   let h_error = false;
   let h_gpu = false;
+  let h_panel = false;
   let v_id: string | undefined;
   let v_name: string | undefined;
   let v_version: string | undefined;
@@ -12333,6 +12335,7 @@ function decS_PluginInfo(r: Reader, end: number, o: any): T.PluginInfo {
   let v_status: T.PluginStatus | undefined;
   let v_error: string | undefined;
   let v_gpu: boolean | undefined;
+  let v_panel: boolean | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -12345,6 +12348,7 @@ function decS_PluginInfo(r: Reader, end: number, o: any): T.PluginInfo {
       case 58: v_error = r.str(); h_error = true; break;
       case 66: l_effects.push(r.str()); break;
       case 72: v_gpu = r.bool(); h_gpu = true; break;
+      case 80: v_panel = r.bool(); h_panel = true; break;
       default: r.skip(key);
     }
   }
@@ -12357,6 +12361,7 @@ function decS_PluginInfo(r: Reader, end: number, o: any): T.PluginInfo {
   if (!h_status) throw new DecodeError('PluginInfo.status: missing', 'missingField');
   if (!h_error) throw new DecodeError('PluginInfo.error: missing', 'missingField');
   if (!h_gpu) throw new DecodeError('PluginInfo.gpu: missing', 'missingField');
+  if (!h_panel) throw new DecodeError('PluginInfo.panel: missing', 'missingField');
   o.id = v_id;
   o.name = v_name;
   o.version = v_version;
@@ -12366,6 +12371,7 @@ function decS_PluginInfo(r: Reader, end: number, o: any): T.PluginInfo {
   o.error = v_error;
   o.effects = l_effects;
   o.gpu = v_gpu;
+  o.panel = v_panel;
   return o;
 }
 function encS_PluginList(w: Writer, v: T.PluginList): void {
@@ -12420,20 +12426,60 @@ function decS_EffectParamUi(r: Reader, end: number, o: any): T.EffectParamUi {
   o.hidden = v_hidden;
   return o;
 }
-function encS_EffectUi(w: Writer, v: T.EffectUi): void {
-  { const a = v.params; for (let i = 0; i < a.length; i++) { w.byte(10); { const s = w.beginLd(); encS_EffectParamUi(w, a[i]!); w.endLd(s); } } }
+function encS_PluginDataEntry(w: Writer, v: T.PluginDataEntry): void {
+  w.byte(10); w.str(v.key);
+  w.byte(18); w.bytes(v.data);
 }
-function decS_EffectUi(r: Reader, end: number, o: any): T.EffectUi {
-  const l_params: T.EffectParamUi[] = [];
+function decS_PluginDataEntry(r: Reader, end: number, o: any): T.PluginDataEntry {
+  let h_key = false;
+  let h_data = false;
+  let v_key: string | undefined;
+  let v_data: Uint8Array | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
-      case 10: l_params.push(decS_EffectParamUi(r, r.ldEnd(), {})); break;
+      case 10: v_key = r.str(); h_key = true; break;
+      case 18: v_data = r.bytes(); h_data = true; break;
       default: r.skip(key);
     }
   }
   r.expectAt(end);
+  if (!h_key) throw new DecodeError('PluginDataEntry.key: missing', 'missingField');
+  if (!h_data) throw new DecodeError('PluginDataEntry.data: missing', 'missingField');
+  o.key = v_key;
+  o.data = v_data;
+  return o;
+}
+function encS_EffectUi(w: Writer, v: T.EffectUi): void {
+  { const a = v.params; for (let i = 0; i < a.length; i++) { w.byte(10); { const s = w.beginLd(); encS_EffectParamUi(w, a[i]!); w.endLd(s); } } }
+  w.byte(18); w.str(v.plugin);
+  w.byte(24); w.bool(v.panel);
+  { const a = v.data; for (let i = 0; i < a.length; i++) { w.byte(34); { const s = w.beginLd(); encS_PluginDataEntry(w, a[i]!); w.endLd(s); } } }
+}
+function decS_EffectUi(r: Reader, end: number, o: any): T.EffectUi {
+  const l_params: T.EffectParamUi[] = [];
+  const l_data: T.PluginDataEntry[] = [];
+  let h_plugin = false;
+  let h_panel = false;
+  let v_plugin: string | undefined;
+  let v_panel: boolean | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_params.push(decS_EffectParamUi(r, r.ldEnd(), {})); break;
+      case 18: v_plugin = r.str(); h_plugin = true; break;
+      case 24: v_panel = r.bool(); h_panel = true; break;
+      case 34: l_data.push(decS_PluginDataEntry(r, r.ldEnd(), {})); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_plugin) throw new DecodeError('EffectUi.plugin: missing', 'missingField');
+  if (!h_panel) throw new DecodeError('EffectUi.panel: missing', 'missingField');
   o.params = l_params;
+  o.plugin = v_plugin;
+  o.panel = v_panel;
+  o.data = l_data;
   return o;
 }
 function encS_EffectCatalog(w: Writer, v: T.EffectCatalog): void {
@@ -18965,6 +19011,7 @@ export const codecs = {
   PluginInfo: mk<T.PluginInfo>(encS_PluginInfo, (r, e) => decS_PluginInfo(r, e, {})),
   PluginList: mk<T.PluginList>(encS_PluginList, (r, e) => decS_PluginList(r, e, {})),
   EffectParamUi: mk<T.EffectParamUi>(encS_EffectParamUi, (r, e) => decS_EffectParamUi(r, e, {})),
+  PluginDataEntry: mk<T.PluginDataEntry>(encS_PluginDataEntry, (r, e) => decS_PluginDataEntry(r, e, {})),
   EffectUi: mk<T.EffectUi>(encS_EffectUi, (r, e) => decS_EffectUi(r, e, {})),
   EffectCatalog: mk<T.EffectCatalog>(encS_EffectCatalog, (r, e) => decS_EffectCatalog(r, e, {})),
   GroupTypeInfo: mk<T.GroupTypeInfo>(encS_GroupTypeInfo, (r, e) => decS_GroupTypeInfo(r, e, {})),

@@ -162,6 +162,10 @@ typedef struct PrSmartRenderExtra {
 typedef struct PrUserChangedParamExtra {
   uint32_t struct_size;
   uint32_t param_index; /* the param the user changed / the button pressed */
+  /* SDK 1.1 (check struct_size): data a plugin panel sent with the button
+   * (invokeEffectAction's payload, UTF-8, not NUL-terminated); NULL / 0 for none. */
+  const uint8_t* payload;
+  uint32_t payload_size;
 } PrUserChangedParamExtra;
 
 /* SDK 1.1 — DRAW_OVERLAY. The params are the effect's values at the viewer's time. */

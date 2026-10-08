@@ -119,5 +119,8 @@ export function buildAppCsp(options: CspOptions = {}): string {
     // No 'wasm-unsafe-eval': the page compiles no WebAssembly. The Object
     // Matte segmenter that needed it (onnxruntime-web) now runs in the engine.
     "script-src 'self'",
+    // Native plugin panels (plan P5): sandboxed frames served by main from the
+    // bundle's ui/ folder, each response under its own strict policy.
+    "frame-src 'self' plugin-ui:",
   ].join('; ');
 }

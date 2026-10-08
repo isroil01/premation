@@ -95,6 +95,8 @@ struct PluginRecord {
   std::string error;
   std::vector<std::string> effects;
   bool gpu = false;
+  /// SDK 1.1: the bundle ships a panel (`ui/index.html`).
+  bool panel = false;
 };
 
 /// One parameter's value at the frame (decoded from the FrameScene entry).

@@ -54,6 +54,8 @@ struct NativeEffect {
   std::vector<std::string> arbitrary;
   /// SDK 1.1 PR_OUT_FLAG_CUSTOM_OVERLAY: draws a viewer overlay (DRAW_OVERLAY) with draggable handles.
   bool overlay = false;
+  /// SDK 1.1: the plugin's bundle ships a panel (`ui/index.html`, PluginInfo.panel).
+  bool panel = false;
 };
 
 /// SDK 1.1 — one item of a plugin's viewer overlay (DRAW_OVERLAY), layer px.
@@ -79,6 +81,8 @@ struct NativeActionRequest {
   std::string effectId;
   std::string type;
   std::string action;  ///< a button's `p<id>`, or `changed:p<id>` after a supervised edit
+  /// SDK 1.1: invokeEffectAction's payload (a plugin panel's data for the button), UTF-8.
+  std::string payload;
   /// The effect's migrated params (static values).
   Json params;
   /// The instance's flat sequence data from the document (empty = none yet).

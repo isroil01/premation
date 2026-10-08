@@ -36,6 +36,7 @@ import {
   registerPluginStoreIpc,
 } from './ipc/nativePlugins';
 import { machinePluginDir } from './nativePluginStore';
+import { PANEL_SCHEME, panelNavigationAllowed, readPanelFile } from './pluginPanelProtocol';
 import { packagePathsIn } from './pluginFileInstall';
 import { getKeyForProvider, registerAiKeyIpc, VAULT_PROVIDERS, type VaultProvider } from './aiKeyVault';
 import { registerAiProxyIpc, abortAllStreams } from './aiProxy';
@@ -248,7 +249,10 @@ if (process.platform === 'linux') {
 // the page is another origin (the dev server, or `null` from file://) — without
 // it Chromium refuses the request outright, while <video>/<audio> still play.
 protocol.registerSchemesAsPrivileged([
-  { scheme: 'local-file', privileges: { bypassCSP: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true } }
+  { scheme: 'local-file', privileges: { bypassCSP: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true } },
+  // A native plugin's panel (plan P5): a standard scheme so each plugin is its
+  // own host. Not bypassCSP: every response carries the panel's strict policy.
+  { scheme: PANEL_SCHEME, privileges: { standard: true, secure: true } },
 ]);
 
 const PROJECT_FILTERS = [
@@ -996,7 +1000,13 @@ function hardenWebContents(contents: WebContents): void {
   contents.on('devtools-opened', () => contents.closeDevTools());
 }
 
-app.on('web-contents-created', (_event, contents) => hardenWebContents(contents));
+app.on('web-contents-created', (_event, contents) => {
+  hardenWebContents(contents);
+  // A plugin panel frame (plan P5) never leaves its bundle — in dev too.
+  contents.on('will-frame-navigate', (details) => {
+    if (!details.isMainFrame && details.frame && !panelNavigationAllowed(details.frame.url, details.url)) details.preventDefault();
+  });
+});
 
 // The renderer's ground-truth WebGPU probe result (adapter/device/configure +
 // any error), appended to the same log the main process writes. This is what
@@ -1070,6 +1080,29 @@ function registerLocalFileProtocol(): void {
     const headers = new Headers(res.headers);
     headers.set('Access-Control-Allow-Origin', allow);
     return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+  });
+}
+
+/**
+ * `plugin-ui://<id>/…` — a plugin panel's files from its bundle's `ui/`
+ * folder (electron/pluginPanelProtocol.ts), in the folders the engine loads
+ * plugins from. Read-only; nothing of the plugin runs in main.
+ */
+function registerPluginPanelProtocol(): void {
+  protocol.handle(PANEL_SCHEME, async (request) => {
+    const extra = (process.env.PREMATION_PLUGIN_PATH ?? '').split(path.delimiter).filter(Boolean);
+    const roots = [nativePluginDirPath(), machinePluginDir(process.platform), ...extra];
+    const file = await readPanelFile(roots, request.url);
+    if (!file) return new Response(null, { status: 404 });
+    return new Response(new Uint8Array(file.body), {
+      status: 200,
+      headers: {
+        'Content-Type': file.contentType,
+        'Content-Security-Policy': file.csp,
+        'X-Content-Type-Options': 'nosniff',
+        'Cache-Control': 'no-store',
+      },
+    });
   });
 }
 
@@ -1173,6 +1206,7 @@ app.whenReady().then(() => {
   initDialogDirs(path.join(app.getPath('userData'), 'dialog-dirs.json'));
 
   registerLocalFileProtocol();
+  registerPluginPanelProtocol();
 
   registerFileIpc();
   registerBundleIpc();

@@ -47,7 +47,7 @@ NativeActionRequest native_request(const Node& node, const std::string& layer, c
   return request_for(node, layer, effectId, e, ne, time);
 }
 
-std::vector<api::EffectParamUi> native_effect_ui(const Document& d, const std::string& layer, const std::string& path, api::Time time) {
+api::EffectUi native_effect_ui(const Document& d, const std::string& layer, const std::string& path, api::Time time) {
   const Node& node = require_layer(d, layer);
   const std::vector<std::string> seg = split(path, '/');
   const std::vector<Json> effects = read_node_effects(node);
@@ -57,20 +57,28 @@ std::vector<api::EffectParamUi> native_effect_ui(const Document& d, const std::s
   const NativeEffect* ne = NativeEffects::find(type);
   if (ne == nullptr) {
     // A builtin effect: every param enabled and visible under its catalog name (the TypeScript engine's answer).
-    std::vector<api::EffectParamUi> out;
+    api::EffectUi out;
     if (const EffectDef* def = registry().effect(type)) {
       for (const auto& p : def->params) {
         if (p.type == "resolved") continue;
-        out.push_back(api::EffectParamUi{p.key, p.label, true, false});
+        out.params.push_back(api::EffectParamUi{p.key, p.label, true, false});
       }
     }
     return out;
   }
-  const auto r = NativeEffects::params_ui(request_for(node, layer, seg[1], *e, *ne, time));
+  NativeActionRequest req = request_for(node, layer, seg[1], *e, *ne, time);
+  const auto r = NativeEffects::params_ui(req);
   if (const auto* f = std::get_if<NativeFailure>(&r)) {
     fail(ErrorCode::internal, "plugin '" + ne->provider + "': " + f->message, {.layer = layer, .path = path});
   }
-  return std::get<std::vector<api::EffectParamUi>>(r);
+  api::EffectUi out;
+  out.params = std::get<std::vector<api::EffectParamUi>>(r);
+  out.plugin = ne->provider;
+  out.panel = ne->panel;
+  // What a panel reads besides the params (SDK 1.1): the document's plugin data, as the plugin sees it.
+  if (!req.sequence.empty()) out.data.push_back(api::PluginDataEntry{std::string(kNativeSequenceKey), std::move(req.sequence)});
+  for (auto& [key, bytes] : req.arb) out.data.push_back(api::PluginDataEntry{key, std::move(bytes)});
+  return out;
 }
 
 void native_check_addable(std::string_view type) {
@@ -106,7 +114,7 @@ void native_effect_added(Document& d, std::string_view layer, std::string_view e
   if (seq && !seq->empty()) native_write_plugin_data(d, layer, native_data_group(effectId), kNativeSequenceKey, *seq);
 }
 
-void native_invoke_action(HCtx& x, const api::PropRef& group, const std::string& action) {
+void native_invoke_action(HCtx& x, const api::PropRef& group, const std::string& action, const std::string& payload) {
   Document& d = x.d;
   const Node& node = require_layer(d, group.layer);
   const std::vector<std::string> seg = split(group.path, '/');
@@ -125,8 +133,14 @@ void native_invoke_action(HCtx& x, const api::PropRef& group, const std::string&
     fail(ErrorCode::not_found, "effect '" + type + "' has no action '" + action + "'", {.layer = group.layer, .path = group.path});
   }
 
+  // A panel's payload is data for one button press, not a document: bounded like setPluginData's bytes.
+  constexpr std::size_t kMaxPayload = 64 * 1024;
+  if (payload.size() > kMaxPayload) {
+    fail(ErrorCode::invalid_argument, "the action payload is over 64 KiB", {.layer = group.layer, .path = group.path});
+  }
   NativeActionRequest req = request_for(node, group.layer, effectId, *e, *ne, x.time);
   req.action = action;
+  req.payload = payload;
 
   const std::variant<NativeEdit, NativeFailure> result = NativeEffects::action(req);
   if (const auto* f = std::get_if<NativeFailure>(&result)) {

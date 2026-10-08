@@ -1350,6 +1350,7 @@ struct PresetList;
 struct CapturedPreset;
 struct Capabilities;
 struct EffectParamUi;
+struct PluginDataEntry;
 struct EffectUi;
 struct LayerFace;
 struct LayerFaces;
@@ -4231,6 +4232,7 @@ struct PluginInfo {
   std::string error;
   std::vector<std::string> effects;
   bool gpu = false;
+  bool panel = false;
   bool operator==(const PluginInfo&) const = default;
 };
 
@@ -5072,8 +5074,17 @@ struct EffectParamUi {
   bool operator==(const EffectParamUi&) const = default;
 };
 
+struct PluginDataEntry {
+  std::string key;
+  std::vector<std::uint8_t> data;
+  bool operator==(const PluginDataEntry&) const = default;
+};
+
 struct EffectUi {
   std::vector<EffectParamUi> params;
+  std::string plugin;
+  bool panel = false;
+  std::vector<PluginDataEntry> data;
   bool operator==(const EffectUi&) const = default;
 };
 
@@ -7060,6 +7071,8 @@ void encode(wire::Writer& w, const Capabilities& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, Capabilities& out);
 void encode(wire::Writer& w, const EffectParamUi& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, EffectParamUi& out);
+void encode(wire::Writer& w, const PluginDataEntry& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, PluginDataEntry& out);
 void encode(wire::Writer& w, const EffectUi& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, EffectUi& out);
 void encode(wire::Writer& w, const LayerFace& v);

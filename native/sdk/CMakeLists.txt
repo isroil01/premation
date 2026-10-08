@@ -8,7 +8,7 @@
 #                     (PREMATION_PLUGIN_PATH / --plugins), and what the host tests use.
 #
 #     ripple    CPU effect, smart render, 8/16/32 bpc, threaded rows
-#     rings     generator with sequence data and a button (USER_CHANGED_PARAM)
+#     rings     generator with sequence data and a button (USER_CHANGED_PARAM); SDK 1.1 overlay + panel (ui/)
 #     checkout  layer checkouts: another layer (Layer Displace — on the GPU too
 #               where Dawn's headers are), own layer at other times (Time Echo)
 #     grade     GPU effect (SMART_RENDER_GPU on the engine's Dawn device) + CPU
@@ -75,6 +75,11 @@ function(premation_sample_plugin name)
     set_target_properties(${name} PROPERTIES PREFIX "lib" SUFFIX ".so")
   endif()
   configure_file(${CMAKE_CURRENT_SOURCE_DIR}/samples/${name}/premation-plugin.json ${_dir}/premation-plugin.json COPYONLY)
+  # SDK 1.1: a sample with a panel ships samples/<name>/ui/ as the bundle's ui/.
+  file(GLOB _ui RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}/samples/${name}/ui ${CMAKE_CURRENT_SOURCE_DIR}/samples/${name}/ui/*)
+  foreach(_f IN LISTS _ui)
+    configure_file(${CMAKE_CURRENT_SOURCE_DIR}/samples/${name}/ui/${_f} ${_dir}/ui/${_f} COPYONLY)
+  endforeach()
 endfunction()
 
 premation_sample_plugin(ripple samples/ripple/ripple.cpp)

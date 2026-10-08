@@ -1,0 +1,9 @@
+body { font: 12px system-ui, sans-serif; color: #ddd; background: #1e1e1e; margin: 8px; }
+h1 { font-size: 13px; margin: 0 0 4px; }
+.hint { color: #999; margin: 4px 0; }
+.row { display: flex; gap: 6px; align-items: center; margin: 6px 0; }
+.swatches { display: flex; flex-wrap: wrap; gap: 4px; }
+.swatches input { width: 32px; height: 24px; padding: 0; border: 1px solid #444; background: none; }
+button { background: #333; color: #ddd; border: 1px solid #555; border-radius: 3px; padding: 3px 8px; }
+button.primary { background: #2d5d9f; border-color: #3a70bb; }
+img { max-width: 100%; border: 1px solid #333; margin-top: 4px; }

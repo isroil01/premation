@@ -96,6 +96,7 @@ import {
 } from './effectEdits';
 import panel from './EffectsPanel.module.css';
 import { MissingPluginCard, PluginEffectActions, usePluginEffectUi } from './PluginEffectParts';
+import { PluginPanel } from './PluginPanel';
 import { isPluginEffectDef, type PluginEffectDef } from '@core/inspector/pluginEffectDefs';
 import row from '@layout/Inspector/TextAnimatorControls.module.css';
 
@@ -319,7 +320,8 @@ function CompositingOptions({ nodeId, effect }: { nodeId: string; effect: Effect
  */
 function PluginEffectBody({ nodeId, effect, def }: { nodeId: string; effect: Effect; def: PluginEffectDef }): JSX.Element {
   const time = useActiveWorkspace()?.time ?? 0;
-  const ui = usePluginEffectUi(nodeId, effect, time);
+  const answer = usePluginEffectUi(nodeId, effect, time);
+  const ui = answer?.byKey ?? null;
   const shown = def.params
     .filter((p) => !ui?.get(p.key)?.hidden)
     .map((p) => {
@@ -340,7 +342,8 @@ function PluginEffectBody({ nodeId, effect, def }: { nodeId: string; effect: Eff
           ? <ParamGroup key={`g:${section.group}:${si}`} name={section.group}>{rows}</ParamGroup>
           : <Fragment key={`u:${si}`}>{rows}</Fragment>;
       })}
-      <PluginEffectActions nodeId={nodeId} effect={effect} def={def} />
+      <PluginEffectActions nodeId={nodeId} effect={effect} def={def} ui={ui} />
+      <PluginPanel nodeId={nodeId} effect={effect} def={def} time={time} ui={answer?.ui ?? null} />
     </>
   );
 }
