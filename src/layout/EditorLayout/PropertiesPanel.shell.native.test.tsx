@@ -84,24 +84,25 @@ describe('one list, no sub-tabs', () => {
     expect(screen.queryAllByRole('tab')).toHaveLength(0);
   });
 
-  it('orders a plain shape’s sections in editing order', async () => {
+  it('orders a plain shape’s sections in AE’s layer property order', async () => {
     const ids = inspectorSectionsForSelection([A]).map((s) => s.id);
-    // Relative order of what a plain shape has; sections gated on state this
+    // Relative order of what a plain shape has (Contents before Transform, as
+    // AE lists a shape layer's properties); sections gated on state this
     // fixture does not carry (pins, a material, morph targets) are absent.
-    const want = ['transform', 'appearance', 'layerStyles', 'geometry', 'compositing', 'motionTools'];
+    const want = ['appearance', 'transform', 'layerStyles', 'geometry', 'compositing', 'motionTools'];
     expect(ids.filter((id) => want.includes(id))).toEqual(want);
     expect(ids).not.toContain('pathOps');
   });
 
-  it('renders sentence-case section names in that order', async () => {
+  it('renders AE’s section names in that order', async () => {
     select([A]);
     renderPanel();
     const titles = [...document.querySelectorAll('button[aria-controls]')].map((b) => b.textContent ?? '');
     const at = (t: string): number => titles.findIndex((x) => x.startsWith(t));
-    expect(at('Transform')).toBeGreaterThanOrEqual(0);
-    expect(at('Transform')).toBeLessThan(at('Appearance'));
-    expect(at('Appearance')).toBeLessThan(at('Layer styles'));
-    expect(at('Layer styles')).toBeLessThan(at('Blending and switches'));
+    expect(at('Contents')).toBeGreaterThanOrEqual(0);
+    expect(at('Contents')).toBeLessThan(at('Transform'));
+    expect(at('Transform')).toBeLessThan(at('Layer Styles'));
+    expect(at('Layer Styles')).toBeLessThan(at('Blending and switches'));
     expect(at('Blending and switches')).toBeLessThan(at('Motion tools'));
   });
 

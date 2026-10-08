@@ -216,7 +216,7 @@ new object.
 
 ## The AI assistant
 
-The editor contains a complete AI layer: **65 AI tools** it can call, an agent loop,
+The editor contains a complete AI layer: **66 AI tools** it can call, an agent loop,
 a deterministic "caster" pipeline that assembles motion from a hand-authored
 technique library, and a self-critique pass.
 

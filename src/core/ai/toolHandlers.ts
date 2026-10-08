@@ -209,7 +209,7 @@ const listCapabilities: AiTool['handler'] = async (input, ctx) => {
     payload.animatableProps = {
       transform: TRANSFORM_PROPS,
       threeD: { props: THREE_D_PROPS, note: "Requires the layer's 3D switch — set it via update_layer { threeD: true }." },
-      layer: { props: SAMPLED_LAYER_PROPS, note: 'Anchor, skew, fill/stroke opacity, stroke width and dash offset, text tracking.' },
+      layer: { props: SAMPLED_LAYER_PROPS, note: 'Anchor, skew, fill/stroke opacity, stroke width, text tracking.' },
       effects: 'effect.<effectId> — the id returned by add_effect',
       textAnimators: 'ta.<index>.<param> — index from text_animator',
       special: SPECIAL_PROPS,
@@ -1113,11 +1113,17 @@ const generateVideo: AiTool['handler'] = async (input, ctx) => {
     }
   }
   const start = i.startSec ?? 0;
-  await applyLayerTiming(ctx.engine, [{ nodeId, startSec: start, inSec: start, outSec: start + durationSec }]);
+  // The bar ends with the clip that actually arrived: a model may return a few
+  // frames under the length it was asked for, and a bar past the footage's end
+  // is refused by the engine.
+  const clipSec = asset.metadata?.duration;
+  const lengthSec = clipSec !== undefined && clipSec > 0 && clipSec < durationSec ? clipSec : durationSec;
+  if (lengthSec < durationSec) notes.push(`the clip is ${Number(lengthSec.toFixed(2))}s long, so the layer ends there`);
+  await applyLayerTiming(ctx.engine, [{ nodeId, startSec: start, inSec: start, outSec: start + lengthSec }]);
 
   return ok(
     `${reusedId ? 'Reused' : 'Generated'} a ${durationSec}s ${aspect} clip with ${model.label} and placed it as layer '${nodeId}', ` +
-      `playing ${start}s → ${start + durationSec}s${i.fit === 'cover' ? ', covering the frame' : ''}. Asset "${name}" is in the library.` +
+      `playing ${start}s → ${start + lengthSec}s${i.fit === 'cover' ? ', covering the frame' : ''}. Asset "${name}" is in the library.` +
       (notes.length ? ` Note: ${notes.join('; ')}.` : '') +
       (model.paid ? '' : ' This is the free PREVIEW clip — a stand-in for layout and timing; pick a paid video model in Settings for real footage.'),
     { id: nodeId, assetId: asset.id, model: model.id, durationSec, reused: !!reusedId },

@@ -190,10 +190,10 @@ describe('Unified Text Panel (Character + Paragraph)', () => {
   });
 
   describe('Panel Registry Consolidation', () => {
-    it('character panel is titled "Text" with icon "type"', async () => {
+    it('character panel is titled "Character" (AE) with icon "type"', async () => {
       const def = panelDef('character');
       expect(def).toBeDefined();
-      expect(def?.title).toBe('Text');
+      expect(def?.title).toBe('Character');
       expect(def?.icon).toBe('type');
       expect(def?.region).toBe('rightInspector');
     });

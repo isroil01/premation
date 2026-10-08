@@ -151,7 +151,9 @@ export const SAMPLED_LAYER_PROPS = [
   'anchorX', 'anchorY',
   'skew', 'skewAxis',
   'fillOpacity',
-  'strokeWidth', 'strokeOpacity', 'strokeDashOffset',
+  // Not 'strokeDashOffset': Dash Offset exists only on a dashed stroke (AE, and
+  // the engine's property tree), and no AI tool sets a dash pattern.
+  'strokeWidth', 'strokeOpacity',
   'letterSpacing',
 ] as const;
 

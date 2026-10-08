@@ -80,8 +80,9 @@ latency, export fps against 0.8.5.
 
 Built and run there (vcpkg gained `draco` and `ktx`): `windows-clang-cl-engine`
 builds with the full engine feature (three Windows-only build breaks fixed in
-6fbdfffc); ctest 14/16; `[ae5]` of `test_gpu_effect_route.cpp` 118/118; the
-golden gate 334/345 gated, 420/420 ported; `*.native.test` 176/182; tsc.
+6fbdfffc); after this round: ctest 16/16; `[ae5]` of `test_gpu_effect_route.cpp`
+118/118; the golden gate green (335/345 gated, the rest baseline debts; 420/420
+ported); `*.native.test` 181/181; the full jest run 1112 suites; tsc; lint.
 
 The golden gate found four render bugs, fixed in the same round:
 - `pack_shade` placed the environment / reflection / AO / shadow uniforms
@@ -101,19 +102,22 @@ The golden gate found four render bugs, fixed in the same round:
 
 Re-blessed after looking: `shadow-catcher`, `shadow-map-spot-off` (mapped,
 hard at diffusion 0, where the projected copy blurred anyway) and
-`env-reflect-metal` (SH diffuse instead of the derived rig). Still open:
+`env-reflect-metal` (SH diffuse instead of the derived rig). Closed the same
+day:
 
-- [ ] `env-reflect-metal-off`: Metal 100 lit only by an environment with
-      Reflections 0 is now black (no diffuse on a metal, no reflection). The
-      old rig's ambient light ignored Metal. Owner decision: black (PBR) or a
-      floor of ambient on metals; then re-bless.
-- [ ] D1 / undo parity: 9 / 227 before 2026-10-08's merges, 1060 / 19955
-      after them (every session's getDocument, one getComposition — a new
-      comp-level field). Re-bless from C++ after checking the diffs.
-- [ ] `*.native.test`: animatableCatalog (strokeDashOffset), videoPlacement
-      (generate_video), PropertiesPanel.shell (section order) and TextPanel
-      (panel title) fail with or without this round's engine changes —
-      from the 2026-10-08 merges.
+- [x] `env-reflect-metal-off`: Metal 100 lit only by an environment with
+      Reflections 0 is black — kept (PBR: a metal has no diffuse; the old
+      rig's ambient light ignored Metal). Re-blessed.
+- [x] D1 / undo parity: 9 / 227, then 1060 / 19955 after the 2026-10-08
+      merges — schema drift (the comp struct's required `frameBlending` makes
+      every stored getDocument / getComposition undecodable; getPropertyTree /
+      listGroupTypes unchanged). Re-blessed from C++: 0 / 0.
+- [x] `*.native.test` 181/181: Dash Offset left the AI's animatable list (no
+      tool sets a dash, so it could never key); jsdom 20 got a
+      Blob.arrayBuffer polyfill; generate_video ends the layer with the clip
+      that arrived; PropertiesPanel / TextPanel follow the AE section order and
+      "Character" title; graphEditorTools picks diamonds by their titled hit
+      circles (a selection draws an untitled circle before them).
 
 ## AE parity step 1 (2026-10-06, docs/AE_PARITY_PLAN.md) — needs the GPU box
 

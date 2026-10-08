@@ -44,6 +44,7 @@ describe('generate_video with the preview model', () => {
     const r = await runToolTurn('AI: cover', [
       { name: 'generate_video', args: { prompt: 'mist drifting over a pine forest at dawn', model: PREVIEW_VIDEO_MODEL, fit: 'cover' } },
     ]);
+    expect(r.results.map((x) => (x.ok ? 'ok' : x.content))).toEqual(['ok']);
     const id = (r.results[0]!.data as { id: string }).id;
     await documentMirror().loadTree(id);
     // The 128×72 preview clip is 16:9 like the comp, so contain already fills it; cover leaves it at 1.
@@ -57,6 +58,7 @@ describe('generate_video with the preview model', () => {
     const a = await runToolTurn('AI: one', [{ name: 'generate_video', args }]);
     const before = useAssetStore.getState().assets.length;
     const b = await runToolTurn('AI: two', [{ name: 'generate_video', args }]);
+    expect([a, b].map((t) => (t.results[0]!.ok ? 'ok' : t.results[0]!.content))).toEqual(['ok', 'ok']);
     expect((b.results[0]!.data as { reused: boolean }).reused).toBe(true);
     expect((b.results[0]!.data as { assetId: string }).assetId).toBe((a.results[0]!.data as { assetId: string }).assetId);
     expect(useAssetStore.getState().assets.length).toBe(before);

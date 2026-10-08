@@ -17,6 +17,20 @@ if (typeof globalThis.TextDecoder === 'undefined') {
   globalThis.TextDecoder = NodeTextDecoder as unknown as typeof globalThis.TextDecoder;
 }
 
+// jsdom 20's Blob / File have no arrayBuffer() (Chromium's do): generated media
+// is imported with `file.arrayBuffer()`. Read through jsdom's FileReader; only
+// defined when absent, so a jsdom that gains it wins.
+if (typeof Blob !== 'undefined' && typeof Blob.prototype.arrayBuffer !== 'function') {
+  Blob.prototype.arrayBuffer = function arrayBuffer(this: Blob): Promise<ArrayBuffer> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as ArrayBuffer);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsArrayBuffer(this);
+    });
+  };
+}
+
 // ── PointerEvent ──────────────────────────────────────────────────────
 //
 // jsdom ships NO PointerEvent class. testing-library's `fireEvent.pointerDown`

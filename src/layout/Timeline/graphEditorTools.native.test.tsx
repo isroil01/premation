@@ -92,11 +92,13 @@ const renderGraph = async (): Promise<ReturnType<typeof render>> => {
  *
  * By index rather than by its <title>: testing-library's `getByTitle` only
  * looks at `[title]` attributes and `svg > title` DIRECT children, and these
- * titles hang off the <circle> they describe. In value mode the diamonds' hit
- * circles are the only <circle>s on the canvas until one is selected, and the
- * bezier handles then render after them — so these indices are stable.
+ * titles hang off the <circle> they describe. Those titled hit circles are
+ * counted alone, in track order — a selection adds untitled circles too.
  */
-const diamond = (index: number): Element => view.container.querySelectorAll('circle')[index]!;
+const diamond = (index: number): Element =>
+  // Only the diamonds' hit circles carry a <title>: a selection also draws
+  // untitled circles (markers, handles), some of them BEFORE the diamonds.
+  [...view.container.querySelectorAll('circle')].filter((c) => c.querySelector('title') !== null)[index]!;
 
 /** Click a diamond (shift to add it to the selection) and end the press. */
 function pick(index: number, shiftKey = false): void {

@@ -68,10 +68,10 @@ rediscovered in git history and believed a second time.
 | Mask modes | 7 | `src/core/effects/mask.ts` → `MaskMode` |
 | Light types | 5 | `src/core/scene/light.ts` → `LightType` |
 | Canvas tools | 23 | `packages/workspace/src/tools/builtin.ts` |
-| AI tools | 65 | `packages/ai-tools/src/tools/{read,write,craft,compose}.ts` |
+| AI tools | 66 | `packages/ai-tools/src/tools/{read,write,craft,compose}.ts` |
 | Export formats | 18 | `renderSpec.ts` → `VideoFormat` + `exportManager.ts` → `ExportFormat` / `DataExportFormat` |
-| Stores | 83 | `src/stores/*.ts` |
-| Packages | 13 | `packages/*` |
+| Stores | 84 | `src/stores/*.ts` |
+| Packages | 14 | `packages/*` |
 
 <!-- /FEATURE-COUNTS -->
 
@@ -91,7 +91,7 @@ style would have left this table wrong with every test still green.
 ```
 Electron main ── IPC ──▶ renderer (React 19 + Vite)
                           │
-                          ├── src/stores/*        83 Zustand stores
+                          ├── src/stores/*        84 Zustand stores
                           ├── src/core/*          41 subsystems (effects, scene, rig, text…)
                           └── packages/*          13 workspace packages
                                 ├── scene       scene graph + components

@@ -89,7 +89,7 @@ export const ANIMATABLE_PROPS: readonly string[] = [
   'poiX', 'poiY', 'poiZ', 'dofStrength', 'focusDistance', 'dofAperture',
   // layer extras (SAMPLED_LAYER_PROPS)
   'anchorX', 'anchorY', 'skew', 'skewAxis', 'fillOpacity',
-  'strokeWidth', 'strokeOpacity', 'strokeDashOffset', 'letterSpacing',
+  'strokeWidth', 'strokeOpacity', 'letterSpacing',
   // gradient fill geometry (fractions of the layer box)
   'fillAngle', 'fillCenterX', 'fillCenterY', 'fillRadius',
   // parametric polygon / star
