@@ -26,6 +26,14 @@ import * as path from 'node:path';
 import { unzipSync } from 'fflate';
 
 export const MANIFEST = 'premation-plugin.json';
+/**
+ * The signature a single-file package carries inside itself (pack-plugin
+ * `--key`): `{ signature, publicKey }`, ECDSA over the exact bytes of
+ * `premation-plugin.json`. The manifest's `integrity` names the SHA-256 of
+ * every other file, so signing the manifest signs the whole bundle. It is
+ * packaging metadata: never in `integrity`, never installed.
+ */
+export const EMBEDDED_SIGNATURE = 'premation-plugin.sig';
 export const MAX_PACKAGE_BYTES = 256 * 1024 * 1024;
 const MAX_FILES = 2000;
 
@@ -50,6 +58,13 @@ export interface DownloadRecord {
   size: number;
   /** The binary keys of the package served (the registry picks it for `?platform=`). */
   platforms?: string[];
+}
+
+/** Binary keys a machine loads, most specific first (docs/PLUGIN_STORE.md §1; the engine's own order). */
+export function platformKeysFor(platform: NodeJS.Platform, arch: string): string[] {
+  if (platform === 'win32') return ['windows-x64', 'windows'];
+  if (platform === 'darwin') return arch === 'arm64' ? ['macos-arm64', 'macos-universal', 'macos'] : ['macos-x64', 'macos-universal', 'macos'];
+  return arch === 'arm64' ? ['linux-arm64', 'linux'] : ['linux-x64', 'linux'];
 }
 
 /**
@@ -80,7 +95,11 @@ export interface PluginStoreState {
 
 export type InstallOutcome =
   | { ok: true; id: string; version: string; restartNeeded: boolean }
-  | { ok: false; reason: string; code: 'size' | 'hash' | 'signature' | 'key-changed' | 'package' | 'io' | 'revoked' };
+  | {
+      ok: false;
+      reason: string;
+      code: 'size' | 'hash' | 'signature' | 'key-changed' | 'package' | 'io' | 'revoked' | 'unknown-publisher' | 'platform';
+    };
 
 const STATE_FILE = 'state.json';
 const ID_RE = /^[A-Za-z][A-Za-z0-9._-]{0,99}$/;
@@ -139,13 +158,34 @@ export function safeEntryPath(name: string): string | null {
   return name;
 }
 
-interface UnpackedPlugin {
-  manifest: { id: string; version: string; binary: Record<string, string>; integrity?: { files?: Record<string, string> } };
-  files: Map<string, Uint8Array>;
+export interface PluginManifest {
+  id: string;
+  version: string;
+  name?: string;
+  vendor?: string;
+  description?: string;
+  sdk?: { major?: number; minor?: number };
+  binary: Record<string, string>;
+  effects?: Array<{ matchName?: string; name?: string; category?: string }>;
+  entitlement?: string;
+  integrity?: { files?: Record<string, string> };
 }
 
-/** Unzip and check a `.pplugin` against its own manifest (§2). Throws a sentence. */
-export function unpackPlugin(bytes: Uint8Array, expect: { id: string; version: string }): UnpackedPlugin {
+export interface UnpackedPlugin {
+  manifest: PluginManifest;
+  /** The bundle's files (the embedded signature is not one of them). */
+  files: Map<string, Uint8Array>;
+  /** The exact manifest bytes, which an embedded signature covers. */
+  manifestBytes: Uint8Array;
+  /** `premation-plugin.sig`'s bytes, when the package carries one. */
+  embeddedSignature?: Uint8Array;
+}
+
+/**
+ * Unzip and check a `.pplugin` against its own manifest (§2). Throws a sentence.
+ * `expect` (a store install) also requires the id and version the store named.
+ */
+export function unpackPlugin(bytes: Uint8Array, expect?: { id: string; version: string }): UnpackedPlugin {
   let entries: Record<string, Uint8Array>;
   try {
     entries = unzipSync(bytes);
@@ -168,8 +208,15 @@ export function unpackPlugin(bytes: Uint8Array, expect: { id: string; version: s
   } catch {
     throw new Error(`${MANIFEST} is not valid JSON.`);
   }
-  if (manifest.id !== expect.id) throw new Error(`The package is "${manifest.id}", not "${expect.id}".`);
-  if (manifest.version !== expect.version) throw new Error(`The package is version ${manifest.version}, not ${expect.version}.`);
+  if (!manifest || typeof manifest !== 'object' || typeof manifest.id !== 'string' || !ID_RE.test(manifest.id)) {
+    throw new Error(`${MANIFEST} has no valid plugin id.`);
+  }
+  if (typeof manifest.version !== 'string' || manifest.version === '') throw new Error(`${MANIFEST} has no version.`);
+  if (!manifest.binary || typeof manifest.binary !== 'object') throw new Error(`${MANIFEST} names no binary.`);
+  if (expect && manifest.id !== expect.id) throw new Error(`The package is "${manifest.id}", not "${expect.id}".`);
+  if (expect && manifest.version !== expect.version) throw new Error(`The package is version ${manifest.version}, not ${expect.version}.`);
+  const embeddedSignature = files.get(EMBEDDED_SIGNATURE);
+  files.delete(EMBEDDED_SIGNATURE);
   const integrity = manifest.integrity?.files;
   if (!integrity || typeof integrity !== 'object') throw new Error('The package has no integrity list.');
   const listed = new Set(Object.keys(integrity));
@@ -181,7 +228,7 @@ export function unpackPlugin(bytes: Uint8Array, expect: { id: string; version: s
     listed.delete(p);
   }
   if (listed.size > 0) throw new Error(`The package is missing files its manifest lists: ${[...listed].join(', ')}`);
-  return { manifest, files };
+  return { manifest, files, manifestBytes: mbytes, ...(embeddedSignature ? { embeddedSignature } : {}) };
 }
 
 export interface InstallInput {
@@ -228,7 +275,23 @@ export async function installPackage(input: InstallInput): Promise<InstallOutcom
   } catch (e) {
     return { ok: false, code: 'package', reason: (e as Error).message };
   }
+  return stageAndSwap(input, unpacked, record.publisherKey, state);
+}
 
+/**
+ * Put a VERIFIED package in place: stage, then swap (or queue the swap on
+ * Windows over a loaded copy), and record it with the key to pin. Shared by
+ * store installs and file installs (pluginFileInstall.ts). Never throws.
+ */
+export async function stageAndSwap(
+  input: Pick<InstallInput, 'dir' | 'platform' | 'clearQuarantine' | 'now'>,
+  unpacked: UnpackedPlugin,
+  publisherKey: string,
+  state: PluginStoreState,
+): Promise<InstallOutcome> {
+  const { dir } = input;
+  const { id, version } = unpacked.manifest;
+  const prior = state.plugins[id];
   const staging = path.join(dir, '.staging', `${id}-${randomBytes(6).toString('hex')}`);
   try {
     for (const [p, data] of unpacked.files) {
@@ -250,8 +313,9 @@ export async function installPackage(input: InstallInput): Promise<InstallOutcom
       await swapInto(live, staging);
     }
     state.plugins[id] = {
-      version: record.version,
-      publisherKey: record.publisherKey,
+      version,
+      // An unsigned file install pins nothing; the first signed copy pins its key.
+      publisherKey: publisherKey || prior?.publisherKey || '',
       enabled: prior?.enabled ?? true,
       installedAt: (input.now ?? Date.now)(),
       ...(restartNeeded ? { pending: true } : {}),
@@ -260,7 +324,7 @@ export async function installPackage(input: InstallInput): Promise<InstallOutcom
     await writeState(dir, state);
     // A copy already loaded keeps running until the engine restarts (a rescan
     // does not swap a loaded module); a first install loads on rescan.
-    return { ok: true, id, version: record.version, restartNeeded: restartNeeded || !!prior };
+    return { ok: true, id, version, restartNeeded: restartNeeded || !!prior };
   } catch (e) {
     await rm(staging, { recursive: true, force: true }).catch(() => undefined);
     return { ok: false, code: 'io', reason: `Could not install: ${(e as Error).message}` };
@@ -334,6 +398,42 @@ export async function applyPendingAtStart(dir: string): Promise<PluginStoreState
   return state;
 }
 
+/**
+ * The machine-wide plug-ins folder vendors' own installers drop bundles into
+ * (AE's MediaCore equivalent; plan P2). The engine scans it beside
+ * `<userData>/native-plugins`; a folder that does not exist is skipped.
+ */
+export function machinePluginDir(platform: NodeJS.Platform, env: NodeJS.ProcessEnv = process.env): string {
+  if (platform === 'win32') return path.win32.join(env.ProgramData || 'C:\\ProgramData', 'Premation', 'Plug-ins');
+  if (platform === 'darwin') return '/Library/Application Support/Premation/Plug-ins';
+  return '/usr/share/premation/plug-ins';
+}
+
+/**
+ * `{ id, version }` of every bundle directly in a plugins folder (one level,
+ * as the engine scans). For the revocation list: a machine-folder plugin has
+ * no state entry, but a revoked one must still be refused. Never throws.
+ */
+export async function bundlesIn(root: string): Promise<Array<{ id: string; version: string }>> {
+  const out: Array<{ id: string; version: string }> = [];
+  let names: string[];
+  try {
+    names = await readdir(root);
+  } catch {
+    return out;
+  }
+  for (const name of names) {
+    if (name.startsWith('.')) continue;
+    try {
+      const m = JSON.parse(await readFile(path.join(root, name, MANIFEST), 'utf8')) as { id?: unknown; version?: unknown };
+      if (typeof m.id === 'string' && ID_RE.test(m.id) && typeof m.version === 'string') out.push({ id: m.id, version: m.version });
+    } catch {
+      // Not a bundle, or unreadable: the engine reports it; nothing to revoke.
+    }
+  }
+  return out;
+}
+
 /** One revocation entry (the registry's signed list). */
 export interface RevocationEntry {
   id: string;
@@ -357,12 +457,23 @@ export function verifyRevocationList(signed: unknown, operatorKey = OPERATOR_PUB
   }
 }
 
-/** The entries that hit what is installed (a versioned entry only hits that version). */
-export function revokedInstalled(state: PluginStoreState, entries: readonly RevocationEntry[]): RevocationEntry[] {
+/**
+ * The entries that hit what is installed (a versioned entry only hits that
+ * version). `others`: bundles from folders main does not manage (the
+ * machine-wide folder), matched the same way.
+ */
+export function revokedInstalled(
+  state: PluginStoreState,
+  entries: readonly RevocationEntry[],
+  others: ReadonlyArray<{ id: string; version: string }> = [],
+): RevocationEntry[] {
   return entries.filter((e) => {
-    const p = state.plugins[e.id];
-    if (!p) return false;
-    return !e.versions || e.versions.length === 0 || e.versions.includes(p.version);
+    const versions = [
+      ...(state.plugins[e.id] ? [state.plugins[e.id]!.version] : []),
+      ...others.filter((o) => o.id === e.id).map((o) => o.version),
+    ];
+    if (versions.length === 0) return false;
+    return !e.versions || e.versions.length === 0 || versions.some((v) => e.versions!.includes(v));
   });
 }
 

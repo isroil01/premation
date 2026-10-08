@@ -116,6 +116,17 @@ publish:
   repo: premation
   releaseType: draft
 
+# ── .pplugin: double-click installs a plugin (docs/PLUGIN_PLATFORM_PLAN.md P2) ──
+# Windows (NSIS writes the registry keys) passes the path in argv; macOS sends
+# `open-file`. Both reach electron/main.ts `routePackageFile`, which shows the
+# install dialog — the same verify → stage → swap path as a store install.
+fileAssociations:
+  - ext: pplugin
+    name: Premation Plugin
+    description: Premation plugin package
+    role: Viewer
+    rank: Owner
+
 win:
   target: nsis
   # One obvious file per platform, stable across versions — the version lives in

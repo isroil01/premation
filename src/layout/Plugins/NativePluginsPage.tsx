@@ -13,9 +13,11 @@ import { Button } from '@components/Button';
 import { Icon } from '@components/Icon';
 import { Segmented } from '@components/Segmented';
 import { engine } from '@core/engine/engineInstance';
+import { canInstallFromFile } from '@core/nativePlugins/pluginFiles';
 import { canInstallFromStore, rescanPlugins } from '@core/nativePlugins/pluginStore';
 import { useNativePlugins } from '@hooks/useNativePlugins';
 import { useInstalledPlugins } from '@hooks/usePluginStore';
+import { installFromFilePicker } from './InstallPackageDialog';
 import { NativePluginsList, OpenPluginsFolderButton } from './NativePluginsList';
 import { PluginStoreBrowser } from './PluginStore';
 import { PublishPlugins } from './PublishPlugins';
@@ -54,10 +56,27 @@ export function NativePluginsPage(): JSX.Element {
           <section className={styles.card} aria-labelledby="plugins-folder">
             <h3 id="plugins-folder" className={styles.cardTitle}>Plugins folder</h3>
             <p className={styles.text}>
-              Plugins from the store are installed here. A plugin you got elsewhere can be copied into this folder
-              (its whole bundle folder); Rescan loads it without a restart.
+              Plugins from the store are installed here. A plugin you got as a <code>.pplugin</code> file installs with
+              Install from file (or a double-click on the file). A bundle folder copied into this folder, or into the
+              machine-wide plug-ins folder a vendor&apos;s installer uses, loads on Rescan without a restart.
             </p>
             <div className={styles.toolbar}>
+              {canInstallFromFile() ? (
+                <Button
+                  variant="primary"
+                  size="md"
+                  leftIcon={<Icon name="upload" size="sm" />}
+                  onClick={() => {
+                    void installFromFilePicker().then((out) => {
+                      if (out) setRescanNote(out.message);
+                      native.refresh();
+                      store.refresh();
+                    });
+                  }}
+                >
+                  Install from file…
+                </Button>
+              ) : null}
               <OpenPluginsFolderButton size="md" />
               <Button
                 variant="secondary"

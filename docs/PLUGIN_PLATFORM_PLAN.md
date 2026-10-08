@@ -84,6 +84,12 @@ on the test machine (docs/VERIFY_ON_TEST_MACHINE.md).
 
 ### P2 — Install like After Effects: file, double-click, vendor installers
 
+**Status (2026-10-08):** built — `electron/pluginFileInstall.ts`, the
+`.pplugin` file association, `InstallPackageDialog.tsx`, the machine-wide
+folder in the engine and export arguments, and a signature embedded by
+`pack-plugin --key` so a single file proves its publisher
+(docs/PLUGIN_STORE.md §2, §4a). The gate runs on the test machine.
+
 - **`.pplugin` file association** (`electron-builder.yml` `fileAssociations`):
   - Double-clicking opens Premation, or reaches the running copy through
     `second-instance` / `open-file`.

@@ -17,8 +17,13 @@
  *   3. writes `integrity.files` — the SHA-256 of every file — into the manifest,
  *   4. zips the bundle deterministically (sorted, fixed timestamps), so the same
  *      folder always packs to the same bytes and a signature is reproducible,
- *   5. with `--key`, signs the package (sign-plugin.mjs's scheme) and writes
- *      `<out>.sig` next to it.
+ *   5. with `--key`, signs it twice (sign-plugin.mjs's scheme):
+ *      - inside: `premation-plugin.sig` = `{ signature, publicKey }` over the
+ *        exact manifest bytes. The manifest's `integrity` hashes every other
+ *        file, so this signs the bundle, and the single `.pplugin` is a
+ *        signed file a user can double-click (plan P2);
+ *      - beside it: `<out>.sig` over the whole package — what the store's
+ *        `publish` uploads.
  *
  * Everything here is checked again by the registry on upload and by the
  * editor before install; failing here is just the earliest, cheapest moment.
@@ -31,6 +36,8 @@ import { zipSync } from 'fflate';
 import { loadKey, signBytes } from './sign-plugin.mjs';
 
 export const MANIFEST = 'premation-plugin.json';
+/** The embedded signature member (electron/nativePluginStore.ts EMBEDDED_SIGNATURE). */
+export const EMBEDDED_SIGNATURE = 'premation-plugin.sig';
 export const BINARY_KEYS = ['windows', 'windows-x64', 'macos', 'macos-arm64', 'macos-x64', 'macos-universal', 'linux', 'linux-x64', 'linux-arm64'];
 export const MAX_FILES = 2000;
 export const MAX_FILE_BYTES = 128 * 1024 * 1024;
@@ -76,6 +83,7 @@ export function collectBundle(root) {
       const st = lstatSync(full);
       if (st.isSymbolicLink()) { problems.push(`${relPath}: symlinks are not packed`); continue; }
       if (name.startsWith('.')) continue; // .DS_Store, .git — never part of a plugin
+      if (!rel && name === EMBEDDED_SIGNATURE) continue; // a previous pack's signature, re-made below
       if (st.isDirectory()) { walk(full, relPath); continue; }
       if (!st.isFile()) continue;
       if (st.size > MAX_FILE_BYTES) problems.push(`${relPath}: ${st.size} bytes is over the ${MAX_FILE_BYTES}-byte file limit`);
@@ -119,7 +127,12 @@ export function packBundle(root, opts = {}) {
   const entries = {};
   // Fixed mtime and sorted order: the same bundle always packs to the same bytes.
   const mtime = new Date('2000-01-01T00:00:00Z');
-  entries[MANIFEST] = [new TextEncoder().encode(`${JSON.stringify(out, null, 2)}\n`), { mtime }];
+  const manifestOut = new TextEncoder().encode(`${JSON.stringify(out, null, 2)}\n`);
+  entries[MANIFEST] = [manifestOut, { mtime }];
+  if (opts.key) {
+    const embedded = { signature: signBytes(Buffer.from(manifestOut), opts.key), publicKey: opts.key.publicKey };
+    entries[EMBEDDED_SIGNATURE] = [new TextEncoder().encode(`${JSON.stringify(embedded, null, 2)}\n`), { mtime }];
+  }
   for (const [path, bytes] of files) if (path !== MANIFEST) entries[path] = [new Uint8Array(bytes), { mtime }];
   return { manifest: out, dropped, bytes: Buffer.from(zipSync(entries, { level: 9 })) };
 }
@@ -138,18 +151,18 @@ function main(argv) {
     process.exit(2);
   }
   try {
-    const { manifest, bytes, dropped } = packBundle(resolve(root), { onlyPresent });
+    const key = args.key ? loadKey(args.key) : null;
+    const { manifest, bytes, dropped } = packBundle(resolve(root), { onlyPresent, key });
     if (dropped.length > 0) console.warn(`\n  warning: no binary for ${dropped.join(', ')} — packed without those platforms`);
     const out = args.out || `${manifest.id}-${manifest.version}.pplugin`;
     writeFileSync(out, bytes);
     console.log(`\n  ${basename(out)}  ${manifest.id}@${manifest.version}  (${bytes.length} bytes)`);
     console.log(`  platforms  ${Object.keys(manifest.binary).join(', ')}`);
     console.log(`  sha256     ${sha256(bytes)}`);
-    if (args.key) {
-      const key = loadKey(args.key);
+    if (key) {
       const signature = signBytes(bytes, key);
       writeFileSync(`${out}.sig`, `${JSON.stringify({ signature, publicKey: key.publicKey }, null, 2)}\n`);
-      console.log(`  signature  ${out}.sig`);
+      console.log(`  signature  inside (${EMBEDDED_SIGNATURE}) and ${out}.sig`);
     }
     console.log('');
   } catch (e) {

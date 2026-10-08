@@ -162,6 +162,31 @@ the WGSL compiled with naga. Everything below did not run.
       one "Missing plugin …" notice, renders the layer unaffected, keeps the
       effect after a save and reopen.
 
+## Plugin platform P2 — install from a file (2026-10-08, docs/PLUGIN_STORE.md §4a)
+
+Run in the cloud session: `electron/pluginFileInstall.test.ts` (trust
+classes, tampering, "Install anyway", token install, machine folder +
+revocation, and `pack-plugin --key` → installer round trip), the store page
+and IPC tests, typecheck and lint. Not run (needs a packaged app on
+Windows / macOS):
+
+- [ ] Build an installer (`npm run electron:build` + electron-builder) and
+      double-click a `.pplugin` (packed with `--key`) with Premation
+      closed: the app opens, then the install dialog names the plugin,
+      version and publisher; Install puts it in Effects with no restart.
+- [ ] The same with Premation already open (Windows: `second-instance`;
+      macOS: `open-file`): the window comes forward and shows the dialog
+      over the editor.
+- [ ] A package whose key is not the store's: the dialog says Unknown
+      publisher and offers only "Install anyway" (Enter does nothing); after
+      it, a later version signed with a different key is refused.
+- [ ] A tampered package (edit a byte of the binary inside the zip, or the
+      manifest) is refused with a message, nothing installed.
+- [ ] Copy a bundle folder into the machine-wide folder
+      (`%ProgramData%\Premation\Plug-ins`, `/Library/Application
+      Support/Premation/Plug-ins`): Plugins ▸ Rescan lists it and its effect
+      renders, in the viewer and in an export.
+
 ## Plugin platform P1 — store end to end (2026-10-08, docs/PLUGIN_PLATFORM_PLAN.md)
 
 Built in a cloud session with no GPU. Run there: the motion-back suite

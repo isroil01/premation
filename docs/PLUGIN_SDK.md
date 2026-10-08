@@ -220,7 +220,8 @@ the editor with a signature check and no restart.
    `linux-x64` (the plain `windows` / `macos` / `linux` keys still work).
 3. `node pack-plugin.mjs <bundle> --key plugin-key.json` (keygen once with
    `sign-plugin.mjs keygen`, and keep the key: it is the only thing that can
-   ship an update) → `<id>-<version>.pplugin` and its `.sig`.
+   ship an update) → `<id>-<version>.pplugin` (signed inside, so users can
+   double-click it to install) and its detached `.sig` (for the store).
 4. Publish from the editor (Dashboard ▸ Plugins ▸ Publish) or with
    `sign-plugin.mjs publish`. Public needs a verified publisher.
 

@@ -24,7 +24,36 @@ export type CliTaskRequest =
 /** electron/nativePluginStore.ts InstallOutcome. */
 export type NativePluginInstallOutcome =
   | { ok: true; id: string; version: string; restartNeeded: boolean }
-  | { ok: false; reason: string; code: 'size' | 'hash' | 'signature' | 'key-changed' | 'package' | 'io' | 'revoked' };
+  | {
+      ok: false;
+      reason: string;
+      code: 'size' | 'hash' | 'signature' | 'key-changed' | 'package' | 'io' | 'revoked' | 'unknown-publisher' | 'platform';
+    };
+
+/** electron/pluginFileInstall.ts PackagePreview: what the install-from-file dialog shows. */
+export interface NativePluginPackagePreview {
+  token: string;
+  fileName: string;
+  id: string;
+  name: string;
+  version: string;
+  vendor: string;
+  sdk: string;
+  effects: Array<{ matchName: string; name: string; category: string }>;
+  platforms: string[];
+  runsHere: boolean;
+  trust: 'store-verified' | 'store' | 'pinned' | 'unknown' | 'unsigned';
+  publisher: string;
+  entitlement: string | null;
+  installedVersion: string | null;
+  problem: string | null;
+  storeUnreachable: boolean;
+}
+
+/** electron/pluginFileInstall.ts InspectResult. */
+export type NativePluginPackageInspect =
+  | { ok: true; preview: NativePluginPackagePreview }
+  | { ok: false; fileName: string; reason: string };
 
 /** electron/nativePluginStore.ts PluginStoreState. */
 export interface NativePluginStoreState {
@@ -559,6 +588,14 @@ export interface MotionEditorApi {
     /** Persist enabled / disabled across launches. */
     setEnabled?(req: { id: string; enabled: boolean }): Promise<NativePluginStoreState | null>;
     installed?(): Promise<NativePluginStoreState>;
+    /** Pick a `.pplugin` and have main inspect it; null when cancelled. */
+    pickPackageFile?(): Promise<NativePluginPackageInspect | null>;
+    /** Install an inspected package; `allowUnknown` is the user's "Install anyway". */
+    installPackageFile?(req: { token: string; allowUnknown?: boolean }): Promise<NativePluginInstallOutcome>;
+    /** Packages opened by double-click since the last call. */
+    takeOpenedPackages?(): Promise<NativePluginPackageInspect[]>;
+    /** Main opened a package (call `takeOpenedPackages`). Returns the unsubscribe. */
+    onPackageOpened?(handler: () => void): () => void;
     host?: { platform: string; arch: string };
   };
   window?: {

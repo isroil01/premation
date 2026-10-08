@@ -25,7 +25,15 @@ import { shouldStartBackend, startBackend, stopBackend } from './backend';
 import { registerIndexIpc } from './localIndexDb';
 import { registerThumbIpc } from './thumbCache';
 import { registerRevealIpc } from './ipc/reveal';
-import { pluginLaunchArgs, refreshRevocations, registerNativePluginIpc, registerPluginStoreIpc } from './ipc/nativePlugins';
+import {
+  pluginLaunchArgs,
+  refreshRevocations,
+  registerNativePluginIpc,
+  registerPluginFileIpc,
+  registerPluginStoreIpc,
+} from './ipc/nativePlugins';
+import { machinePluginDir } from './nativePluginStore';
+import { packagePathsIn } from './pluginFileInstall';
 import { getKeyForProvider, registerAiKeyIpc, VAULT_PROVIDERS, type VaultProvider } from './aiKeyVault';
 import { registerAiProxyIpc, abortAllStreams } from './aiProxy';
 import { registerModelDownloadIpc, abortAllModelDownloads } from './modelDownload';
@@ -166,12 +174,44 @@ const hasSingleInstanceLock = isHeadlessRun || app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) {
   app.quit();
 } else {
-  app.on('second-instance', (_event, argv) => handleDeepLink(findDeepLink(argv)));
+  app.on('second-instance', (_event, argv) => {
+    handleDeepLink(findDeepLink(argv));
+    // A double-clicked `.pplugin` while the app runs (Windows / Linux).
+    for (const p of packagePathsIn(argv)) routePackageFile(p);
+  });
   // macOS delivers the deep link to the running app through this event.
   app.on('open-url', (event, url) => {
     event.preventDefault();
     handleDeepLink(url);
   });
+  // macOS: a double-clicked `.pplugin`, at launch or later. Registered before
+  // `ready` so the launch file is not missed.
+  app.on('open-file', (event, filePath) => {
+    if (!/\.pplugin$/i.test(filePath)) return;
+    event.preventDefault();
+    routePackageFile(filePath);
+  });
+}
+
+// ── `.pplugin` files (plan P2: double-click to install) ─────────────────
+//
+// A path arrives before the IPC exists (a launch by double-click) or after
+// (a second launch, macOS `open-file`). Before, it waits here; after, it is
+// inspected at once. Either way the page is told and shows the install dialog.
+let openPackageFile: ((filePath: string) => Promise<unknown>) | null = null;
+const waitingPackageFiles: string[] = isHeadlessRun ? [] : packagePathsIn(process.argv.slice(1));
+
+function routePackageFile(filePath: string): void {
+  if (!openPackageFile) {
+    waitingPackageFiles.push(filePath);
+    return;
+  }
+  void openPackageFile(filePath);
+  const win = mainWindow;
+  if (win && !win.isDestroyed()) {
+    if (win.isMinimized()) win.restore();
+    win.focus();
+  }
 }
 
 // ── GPU acceleration & WebGPU ────────────────────────────────────────
@@ -1141,6 +1181,21 @@ app.whenReady().then(() => {
   registerNativePluginIpc({ dir: nativePluginDirPath });
   // The plugin store: install / uninstall / enable, verified in main (docs/PLUGIN_STORE.md §4).
   registerPluginStoreIpc({ dir: nativePluginDirPath, apiBase: apiBaseUrl, authedFetch: sendWithAuth });
+  // Install from a `.pplugin` file: the picker and double-click (plan P2).
+  openPackageFile = registerPluginFileIpc({
+    dir: nativePluginDirPath,
+    apiBase: apiBaseUrl,
+    authedFetch: sendWithAuth,
+    pickFile: async () => {
+      const opts = { properties: ['openFile' as const], filters: [{ name: 'Premation plugin', extensions: ['pplugin'] }] };
+      const r = mainWindow ? await dialog.showOpenDialog(mainWindow, opts) : await dialog.showOpenDialog(opts);
+      return r.canceled ? null : (r.filePaths[0] ?? null);
+    },
+    notify: () => {
+      for (const w of [mainWindow].filter((x): x is BrowserWindow => x !== null && !x.isDestroyed())) w.webContents.send('plugins:packageOpened');
+    },
+  });
+  for (const p of waitingPackageFiles.splice(0)) routePackageFile(p);
   // The signed revocation list, refreshed at start (public, no session); the
   // engine reads the kept copy at every launch (pluginLaunchArgs).
   void refreshRevocations({ dir: nativePluginDirPath, apiBase: apiBaseUrl, authedFetch: sendWithAuth });
@@ -1218,7 +1273,7 @@ app.whenReady().then(() => {
     sharedTexture: sharedTexture as unknown as SharedTextureApi,
     // G1: native SDK plugins load in the engine process from this folder.
     nativePluginDir: ensureDir(nativePluginDirPath()),
-    nativePluginLaunchArgs: () => pluginLaunchArgs({ dir: nativePluginDirPath }),
+    nativePluginLaunchArgs: () => pluginLaunchArgs({ dir: nativePluginDirPath, machineDir: () => machinePluginDir(process.platform) }),
     nativePluginJournal: path.join(app.getPath('userData'), 'native-plugin-journal.bin'),
     // F2 / D5: where the engine-owned document's autosave writes its recovery copy.
     recoveryPath,

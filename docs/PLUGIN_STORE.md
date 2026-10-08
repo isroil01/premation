@@ -61,6 +61,14 @@ is SPKI DER, base64. This is the registry's existing scheme
 manifest — with its per-file and so per-platform SHA-256s — is inside the
 signed bytes, the signature covers the manifest and every binary.
 
+**Embedded signature (a double-clickable file).** `pack-plugin --key` also
+puts `premation-plugin.sig` in the zip: `{ signature, publicKey }`, the same
+scheme over the **exact bytes of `premation-plugin.json`**. The manifest's
+`integrity` hashes every other file, so this signs the bundle, and a single
+`.pplugin` carries its own proof of who made it (§4a). The member is never
+in `integrity` and is not installed; the registry accepts and ignores it
+(the detached signature over the whole file is what `publish` sends).
+
 ## 3. Registry (motion-back)
 
 Existing routes keep their meaning; native packages are a second `kind` of
@@ -147,6 +155,39 @@ version, publisherKey, installedAt } }, uninstall: [ids] }`. Uninstall adds
 the id to `uninstall` and disables it now; the folder is deleted at the next
 start (Windows locks loaded DLLs). Enabled/disabled is applied at engine start
 through `setPluginEnabled`.
+
+## 4a. Install from a file (plan P2, `electron/pluginFileInstall.ts`)
+
+Plugins ▸ Installed ▸ **Install from file…**, or a double-click on a
+`.pplugin` (`electron-builder.yml` `fileAssociations`; Windows passes the
+path in argv / `second-instance`, macOS sends `open-file`; with the app
+closed it opens and then shows the dialog).
+
+1. Main reads the file and checks it like a store download: zip, safe paths,
+   `integrity` exact. Then who signed it: the embedded signature (§2), else
+   a `<file>.sig` beside it, else unsigned. A signature that does not verify
+   refuses the file.
+2. Trust, from the store's public listing for the id (`GET /plugins/:id`):
+   signed with the store's key (or its authorised next key) is a **store
+   publisher** (verified or not); else signed with the key this machine
+   already pinned for the id is **the same publisher as your installed
+   copy**; else **unknown** (or **unsigned**).
+3. The page's dialog names the plugin, version, publisher and trust, the
+   effects, and what it can access (native code with the app's access). An
+   unknown or unsigned package installs only through **Install anyway**
+   (never on Enter); its key is pinned then, as a store install pins it.
+   Refused outright: a key different from the pinned one, no build for this
+   machine, a revoked plugin.
+4. Install goes through the same stage → swap as §4 (`stageAndSwap`), then
+   the engine rescans. The page never names a path: main holds the checked
+   package behind a single-use token for ten minutes.
+
+**Machine-wide plug-ins folder.** Vendors' own installers drop bundle
+folders into `%ProgramData%\Premation\Plug-ins` (Windows),
+`/Library/Application Support/Premation/Plug-ins` (macOS) or
+`/usr/share/premation/plug-ins` (Linux). The engine scans it as a second
+`--plugins` (and the export job too); main never writes it. The revocation
+list covers its bundles by id and version like installed ones.
 
 ## 5. Engine
 

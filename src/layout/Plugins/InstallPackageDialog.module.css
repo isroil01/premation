@@ -1,0 +1,81 @@
+/* The install-from-file dialog (InstallPackageDialog.tsx). Theme tokens only. */
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.headline {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.name {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+}
+
+.version {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.id {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  word-break: break-all;
+}
+
+.trustOk,
+.trustWarn {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: var(--radius-surface);
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+}
+
+.trustOk {
+  border: 1px solid var(--color-border-subtle);
+  background: var(--color-surface-1);
+  color: var(--color-text-secondary);
+}
+
+.trustWarn {
+  border: 1px solid var(--color-warning);
+  background: var(--color-surface-1);
+  color: var(--color-text-primary);
+}
+
+.text {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
+
+.effects {
+  margin: 0;
+  padding-left: 18px;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-primary);
+}
+
+.muted {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.problem {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-danger);
+}

@@ -15,6 +15,7 @@
  */
 
 import { exportPluginJob } from './ipc/nativePlugins';
+import { machinePluginDir } from './nativePluginStore';
 import { app } from 'electron';
 import path from 'node:path';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
@@ -280,7 +281,7 @@ export async function runCliTask(task: CliTask): Promise<number> {
     workDirFor,
     log: (m: string) => print.event({ event: 'engine', message: `engine: ${m}` }),
     // The CLI renders with the same installed plugins as the app.
-    plugins: () => exportPluginJob({ dir: () => path.join(app.getPath('userData'), 'native-plugins') }),
+    plugins: () => exportPluginJob({ dir: () => path.join(app.getPath('userData'), 'native-plugins'), machineDir: () => machinePluginDir(process.platform) }),
   };
   const progress = (f: number): void => {
     const pct = Math.round(Math.max(0, Math.min(1, f)) * 100);

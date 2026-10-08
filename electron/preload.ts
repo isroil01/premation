@@ -269,6 +269,15 @@ const bridge = {
     uninstall: (id: string) => ipcRenderer.invoke('plugins:uninstall', id),
     setEnabled: (req: { id: string; enabled: boolean }) => ipcRenderer.invoke('plugins:setEnabled', req),
     installed: () => ipcRenderer.invoke('plugins:installed'),
+    // Install from a `.pplugin` file (electron/pluginFileInstall.ts): main reads and checks it, the page confirms.
+    pickPackageFile: () => ipcRenderer.invoke('plugins:pickPackageFile'),
+    installPackageFile: (req: { token: string; allowUnknown?: boolean }) => ipcRenderer.invoke('plugins:installPackageFile', req),
+    takeOpenedPackages: () => ipcRenderer.invoke('plugins:takeOpenedPackages'),
+    onPackageOpened: (handler: () => void) => {
+      const listener = (): void => handler();
+      ipcRenderer.on('plugins:packageOpened', listener);
+      return () => ipcRenderer.removeListener('plugins:packageOpened', listener);
+    },
     /** Which binaries this machine loads (docs/PLUGIN_STORE.md §1): the store greys out the rest. */
     host: { platform: process.platform, arch: process.arch },
   },

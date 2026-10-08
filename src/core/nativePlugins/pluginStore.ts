@@ -54,6 +54,17 @@ export async function installFromStore(
   } catch (e) {
     return { ok: false, message: e instanceof Error ? e.message : 'The install failed.' };
   }
+  return finishInstall(client, out);
+}
+
+/**
+ * After main installed a package (store or file): rescan so its effects are
+ * usable now, or say a restart is needed (an update over a loaded copy).
+ */
+export async function finishInstall(
+  client: Pick<EngineClient, 'execute'>,
+  out: NativePluginInstallOutcome,
+): Promise<StoreInstallResult> {
   if (!out.ok) return { ok: false, message: out.reason };
   if (out.restartNeeded) {
     return {

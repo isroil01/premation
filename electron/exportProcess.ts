@@ -28,6 +28,7 @@
  */
 
 import { exportPluginJob } from './ipc/nativePlugins';
+import { machinePluginDir } from './nativePluginStore';
 import { app, BrowserWindow, dialog, type IpcMainInvokeEvent, type WebContents } from 'electron';
 import path from 'node:path';
 import { existsSync } from 'node:fs';
@@ -828,7 +829,7 @@ function createEngineLauncher(root: string): EngineLauncher {
     workDirFor: (id: string) => path.join(root, id, 'engine'),
     log: (m: string) => console.log(`[export/engine] ${m}`),
     // Plugin effects render in exports with the editor's installed plugins.
-    plugins: () => exportPluginJob({ dir: () => path.join(app.getPath('userData'), 'native-plugins') }),
+    plugins: () => exportPluginJob({ dir: () => path.join(app.getPath('userData'), 'native-plugins'), machineDir: () => machinePluginDir(process.platform) }),
   };
   const probe = new EncoderProbe({ bin: deps.ffmpegPath });
   return {

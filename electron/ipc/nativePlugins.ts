@@ -10,6 +10,11 @@
  * to nativePluginStore.ts, which verifies and installs. The renderer never
  * names a path or a URL, and never holds the package.
  *
+ * A third way is a `.pplugin` file (plan P2): "Install from file…" or a
+ * double-click, handled by `registerPluginFileIpc` and electron/pluginFileInstall.ts.
+ * A fourth is the machine-wide plug-ins folder vendors' installers write
+ * (`machinePluginDir`): the engine scans it too, and main never writes it.
+ *
  * Every channel goes through `ipcGuard`'s `handle`, so the sender-frame check
  * applies.
  */
@@ -20,9 +25,11 @@ import * as path from 'node:path';
 import { shell } from 'electron';
 import { handle } from '../ipcGuard';
 import {
+  bundlesIn,
   engineArgsFor,
   installPackage,
   machinePlatformKey,
+  platformKeysFor,
   queueUninstall,
   readState,
   revokedInstalled,
@@ -34,6 +41,13 @@ import {
   type RevocationEntry,
   applyPendingAtStart,
 } from '../nativePluginStore';
+import {
+  inspectPackageFile,
+  installInspected,
+  PendingPackages,
+  type InspectResult,
+  type StoreIdentity,
+} from '../pluginFileInstall';
 
 export interface OpenNativePluginFolderResult {
   ok: boolean;
@@ -96,6 +110,8 @@ export interface StoreDeps {
   publicFetch?: (url: string, init?: RequestInit) => Promise<Response>;
   platform?: NodeJS.Platform;
   arch?: string;
+  /** The machine-wide plug-ins folder (`machinePluginDir`); scanned, never written. */
+  machineDir?: () => string;
 }
 
 const REVOCATIONS_FILE = '.revocations.json';
@@ -139,11 +155,13 @@ export async function refreshRevocations(deps: StoreDeps): Promise<RevocationEnt
  * installs and uninstalls applied first, then `--plugin-disabled` for each
  * disabled plugin and `--revoked` for installed plugins on the kept list.
  */
-export async function pluginLaunchArgs(deps: Pick<StoreDeps, 'dir'>): Promise<string[]> {
+export async function pluginLaunchArgs(deps: Pick<StoreDeps, 'dir' | 'machineDir'>): Promise<string[]> {
   const dir = deps.dir();
+  const machine = deps.machineDir?.();
   const state = await applyPendingAtStart(dir);
-  const revoked = revokedInstalled(state, (await readRevocations(dir)).entries);
-  return engineArgsFor(dir, state, revoked);
+  const revoked = revokedInstalled(state, (await readRevocations(dir)).entries, machine ? await bundlesIn(machine) : []);
+  // The machine folder is a second `--plugins` (repeatable); the engine skips it when it does not exist.
+  return [...(machine ? ['--plugins', machine] : []), ...(await engineArgsFor(dir, state, revoked))];
 }
 
 /**
@@ -151,10 +169,11 @@ export async function pluginLaunchArgs(deps: Pick<StoreDeps, 'dir'>): Promise<st
  * plugins folder, the disabled set, and the revoked installed plugins.
  * Pending installs are NOT applied here — the editor's engine is running.
  */
-export async function exportPluginJob(deps: Pick<StoreDeps, 'dir'>): Promise<{ plugins: string[]; pluginDisabled: string[]; pluginRevoked?: string }> {
+export async function exportPluginJob(deps: Pick<StoreDeps, 'dir' | 'machineDir'>): Promise<{ plugins: string[]; pluginDisabled: string[]; pluginRevoked?: string }> {
   const dir = deps.dir();
+  const machine = deps.machineDir?.();
   const state = await readState(dir);
-  const revoked = revokedInstalled(state, (await readRevocations(dir)).entries);
+  const revoked = revokedInstalled(state, (await readRevocations(dir)).entries, machine ? await bundlesIn(machine) : []);
   const args = await engineArgsFor(dir, state, revoked);
   const disabled: string[] = [];
   let revokedFile: string | undefined;
@@ -162,7 +181,7 @@ export async function exportPluginJob(deps: Pick<StoreDeps, 'dir'>): Promise<{ p
     if (args[i] === '--plugin-disabled' && args[i + 1]) disabled.push(args[i + 1]!);
     if (args[i] === '--revoked' && args[i + 1]) revokedFile = args[i + 1];
   }
-  return { plugins: [dir], pluginDisabled: disabled, ...(revokedFile ? { pluginRevoked: revokedFile } : {}) };
+  return { plugins: machine ? [dir, machine] : [dir], pluginDisabled: disabled, ...(revokedFile ? { pluginRevoked: revokedFile } : {}) };
 }
 
 /** The handler bodies, exported for the test. */
@@ -240,4 +259,96 @@ export function registerPluginStoreIpc(deps: StoreDeps): void {
   handle('plugins:setEnabled', (_e, req: unknown) => h.setEnabled(req));
   /** The installed set (versions, pinned keys, enabled, pending). */
   handle('plugins:installed', () => h.state());
+}
+
+// ── Install from a file (plan P2) ────────────────────────────────────────
+
+export interface FileIpcDeps extends StoreDeps {
+  /** The OS open dialog for one `.pplugin`; null when cancelled. */
+  pickFile: () => Promise<string | null>;
+  /** Tell the page a package was opened (it then calls `plugins:takeOpenedPackages`). */
+  notify: () => void;
+  readFile?: (p: string) => Promise<Uint8Array>;
+}
+
+/** The store's public listing for an id, for the trust line. null: not listed; 'unreachable': could not ask. */
+async function storeIdentity(deps: StoreDeps, id: string): Promise<StoreIdentity | null | 'unreachable'> {
+  try {
+    const res = await (deps.publicFetch ?? fetch)(`${deps.apiBase()}/plugins/${encodeURIComponent(id)}`, { signal: AbortSignal.timeout(8000) });
+    if (res.status === 404) return null;
+    if (!res.ok) return 'unreachable';
+    const j = (await res.json()) as Partial<StoreIdentity> & { publisher?: { displayName?: unknown; verified?: unknown } };
+    if (typeof j.publisherKey !== 'string') return null;
+    return {
+      publisherKey: j.publisherKey,
+      nextPublisherKey: typeof j.nextPublisherKey === 'string' ? j.nextPublisherKey : null,
+      publisher: { displayName: typeof j.publisher?.displayName === 'string' ? j.publisher.displayName : '', verified: j.publisher?.verified === true },
+    };
+  } catch {
+    return 'unreachable';
+  }
+}
+
+/** The handler bodies, exported for the test. `open(path)` is what a double-click calls. */
+export function fileHandlers(deps: FileIpcDeps): {
+  open: (filePath: string) => Promise<InspectResult>;
+  pick: () => Promise<InspectResult | null>;
+  install: (req: unknown) => Promise<InstallOutcome>;
+  takeOpened: () => InspectResult[];
+} {
+  const pending = new PendingPackages();
+  const opened: InspectResult[] = [];
+  const read = deps.readFile ?? (async (p: string) => new Uint8Array(await readFile(p)));
+  const platform = deps.platform ?? process.platform;
+
+  const inspect = async (filePath: string): Promise<InspectResult> => {
+    const fileName = path.basename(filePath);
+    let bytes: Uint8Array;
+    try {
+      bytes = await read(filePath);
+    } catch (e) {
+      return { ok: false, fileName, reason: `Could not read the file: ${(e as Error).message}` };
+    }
+    const sidecar = await read(`${filePath}.sig`).then((b) => new TextDecoder().decode(b)).catch(() => null);
+    const dir = deps.dir();
+    const revocations = (await readRevocations(dir)).entries;
+    const { result, unpacked, key } = await inspectPackageFile({
+      fileName,
+      bytes,
+      sidecar,
+      state: await readState(dir),
+      hereKeys: platformKeysFor(platform, deps.arch ?? process.arch),
+      isRevoked: (id, version) => revocations.some((e) => e.id === id && (!e.versions?.length || e.versions.includes(version))),
+      lookupStore: (id) => storeIdentity(deps, id),
+    });
+    if (!result.ok || !unpacked) return result;
+    return { ok: true, preview: pending.put(result.preview, unpacked, key ?? '') };
+  };
+
+  return {
+    open: async (filePath) => {
+      const r = await inspect(filePath);
+      opened.push(r);
+      deps.notify();
+      return r;
+    },
+    pick: async () => {
+      const p = await deps.pickFile();
+      return p ? inspect(p) : null;
+    },
+    install: (req) => installInspected(pending, req, { dir: deps.dir(), platform }),
+    takeOpened: () => opened.splice(0, opened.length),
+  };
+}
+
+/** Registers the file channels; returns `open` for main's double-click routing. */
+export function registerPluginFileIpc(deps: FileIpcDeps): (filePath: string) => Promise<InspectResult> {
+  const h = fileHandlers(deps);
+  /** Show the open dialog and inspect the chosen `.pplugin` (null when cancelled). */
+  handle('plugins:pickPackageFile', () => h.pick());
+  /** Install an inspected package by its token (`{ token, allowUnknown? }`). */
+  handle('plugins:installPackageFile', (_e, req: unknown) => h.install(req));
+  /** Packages opened by double-click since the page last asked. */
+  handle('plugins:takeOpenedPackages', () => h.takeOpened());
+  return h.open;
 }
