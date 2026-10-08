@@ -61,6 +61,11 @@ struct ParamSpec {
   std::vector<std::string> choices;
   std::string key;    ///< the document key: `p<id>`
   std::string group;  ///< enclosing group names, " / "-joined ("" = top level)
+  // SDK 1.1 defaults.
+  std::string text;               ///< STRING
+  std::vector<double> curve;      ///< CURVE: x, y pairs in 0..1
+  std::vector<double> gradient;   ///< GRADIENT: 5 doubles per stop
+  std::string fileTypes;          ///< FILE: "cube|3dl" ("" = any)
 };
 
 struct EffectSpec {
@@ -106,6 +111,14 @@ struct ParamValue {
   std::vector<double> path;  ///< PATH: 6 doubles per vertex
   bool pathClosed = false;
   std::vector<std::uint8_t> arb;
+  // SDK 1.1.
+  std::string text;              ///< STRING
+  std::vector<double> curve;     ///< CURVE: x, y pairs in 0..1 (empty = the declared default)
+  std::vector<double> gradient;  ///< GRADIENT: 5 doubles per stop (empty = the declared default)
+  std::string fileItem;          ///< FILE: the project item id ("" = none chosen)
+  std::string filePath;          ///< FILE: the file on disk ("" = none / missing)
+  std::string fileName;
+  bool fileMissing = false;
 };
 
 /// SDK 1.1 (pr_scene.h): the comp's camera at the frame, as the engine evaluated it.

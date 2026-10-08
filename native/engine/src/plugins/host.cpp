@@ -7,6 +7,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <map>
+#include <mutex>
 #include <sstream>
 #include <thread>
 
@@ -53,6 +55,9 @@ struct PrHost {
   std::vector<premation::doc::NativeOverlayItem>* overlay = nullptr;
   /// SDK 1.1 — the render selector's inputs and effect (get_comp_camera, …).
   const premation::plugins::RenderInputs* inputs = nullptr;
+  /// SDK 1.1 — get_asset_bytes: each FILE param's bytes, read once per call (iterate workers may ask too).
+  std::mutex assetMutex;
+  std::map<std::uint32_t, std::vector<std::uint8_t>> assetBytes;
   std::uint32_t outFlags = 0;
   /// iterate(): a job crashed on a worker (the instance is disabled like a crash on the caller).
   premation::plugins::Fault iterateFault;
@@ -459,7 +464,33 @@ PrErr PR_CALL cb_add_param(PrHost* h, const PrParamDef* def) {
     if (h->setupError.empty()) h->setupError = std::move(why);
     return PR_ERR_INVALID_PARAM;
   };
-  if (s.type < PR_PARAM_LAYER || s.type > PR_PARAM_BUTTON) return fail_with("param '" + s.name + "': unknown type");
+  if (s.type < PR_PARAM_LAYER || s.type > PR_PARAM_FILE) return fail_with("param '" + s.name + "': unknown type");
+  if (s.type >= PR_PARAM_STRING) {
+    // SDK 1.1 types: their defaults live in the fields a 1.0 struct does not have.
+    if (def->struct_size < offsetof(PrParamDef, file_missing) + sizeof(def->file_missing)) {
+      return fail_with("param '" + s.name + "': a STRING / CURVE / GRADIENT / FILE param needs SDK 1.1");
+    }
+    s.flags |= PR_PARAM_FLAG_CANNOT_ANIMATE;
+    if (def->text != nullptr) s.text = def->text;
+    if (def->file_types != nullptr) s.fileTypes = def->file_types;
+    // Defaults through the document's own reading (clamped, sorted, bounded).
+    if (s.type == PR_PARAM_CURVE) {
+      js::Json::Array pts;
+      for (std::uint32_t i = 0; def->curve != nullptr && i < def->curve_count && i < 256; ++i) {
+        pts.push_back(js::Json::array({js::Json::number(def->curve[2 * i] * 255), js::Json::number(def->curve[2 * i + 1] * 255)}));  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+      }
+      s.curve = doc::native_curve(js::Json::array(std::move(pts)));
+    }
+    if (s.type == PR_PARAM_GRADIENT) {
+      js::Json::Array stops;
+      for (std::uint32_t i = 0; def->gradient != nullptr && i < def->gradient_count && i < 256; ++i) {
+        js::Json::Array st;
+        for (std::uint32_t k = 0; k < 5; ++k) st.push_back(js::Json::number(def->gradient[5 * i + k]));  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+        stops.push_back(js::Json::array(std::move(st)));
+      }
+      s.gradient = doc::native_gradient(js::Json::array(std::move(stops)));
+    }
+  }
   if (s.type == PR_PARAM_GROUP_END) {
     if (h->groups.empty()) return fail_with("GROUP_END without a GROUP_START");
     h->groups.pop_back();
@@ -605,6 +636,56 @@ PrErr PR_CALL cb_get_layer_transform(PrHost* h, std::uint32_t paramIndex, std::i
   const auto& ms = h->inputs->layerMatrices;
   if (paramIndex - 1 >= ms.size() || !ms[paramIndex - 1]) return PR_ERR_NOT_FOUND;
   std::copy(ms[paramIndex - 1]->begin(), ms[paramIndex - 1]->end(), out);
+  return PR_ERR_NONE;
+}
+
+// ── SDK 1.1: a FILE param's asset ───────────────────────────────────────────
+
+constexpr std::uint64_t kMaxAssetBytes = std::uint64_t{512} * 1024 * 1024;
+
+/// The FILE param at `paramIndex` with a file on disk, or the error.
+PrErr asset_param(PrHost* h, std::uint32_t paramIndex, const ParamValue** out) {
+  if (h == nullptr || h->inputs == nullptr || h->params == nullptr) return PR_ERR_INVALID_CALLBACK;
+  if (paramIndex == 0 || paramIndex > h->params->size() || h->params->at(paramIndex - 1).type != PR_PARAM_FILE) {
+    return PR_ERR_INVALID_PARAM;
+  }
+  if (paramIndex > h->inputs->values.size()) return PR_ERR_NOT_FOUND;
+  const ParamValue& v = h->inputs->values[paramIndex - 1];
+  if (v.fileItem.empty() || v.fileMissing || v.filePath.empty()) return PR_ERR_NOT_FOUND;
+  *out = &v;
+  return PR_ERR_NONE;
+}
+
+PrErr PR_CALL cb_get_asset_path(PrHost* h, std::uint32_t paramIndex, char* buf, std::uint32_t capacity, std::uint32_t* outLen) {
+  const ParamValue* v = nullptr;
+  if (const PrErr e = asset_param(h, paramIndex, &v); e != PR_ERR_NONE) return e;
+  const auto n = static_cast<std::uint32_t>(v->filePath.size());
+  if (outLen != nullptr) *outLen = n;
+  if (buf == nullptr || capacity < n + 1) return PR_ERR_OUT_OF_MEMORY;
+  std::memcpy(buf, v->filePath.data(), n);
+  buf[n] = '\0';  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+  return PR_ERR_NONE;
+}
+
+PrErr PR_CALL cb_get_asset_bytes(PrHost* h, std::uint32_t paramIndex, const std::uint8_t** data, std::uint64_t* size) {
+  const ParamValue* v = nullptr;
+  if (const PrErr e = asset_param(h, paramIndex, &v); e != PR_ERR_NONE) return e;
+  if (data == nullptr || size == nullptr) return PR_ERR_INVALID_PARAM;
+  const std::scoped_lock lock(h->assetMutex);
+  auto it = h->assetBytes.find(paramIndex);
+  if (it == h->assetBytes.end()) {
+    std::error_code ec;
+    const fs::path p(std::u8string(v->filePath.begin(), v->filePath.end()));
+    const std::uintmax_t n = fs::file_size(p, ec);
+    if (ec) return PR_ERR_NOT_FOUND;
+    if (n > kMaxAssetBytes) return PR_ERR_OUT_OF_MEMORY;
+    std::vector<std::uint8_t> bytes(static_cast<std::size_t>(n));
+    std::ifstream f(p, std::ios::binary);
+    if (!f || !f.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(n))) return PR_ERR_NOT_FOUND;  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast): bytes
+    it = h->assetBytes.emplace(paramIndex, std::move(bytes)).first;
+  }
+  *data = it->second.data();
+  *size = it->second.size();
   return PR_ERR_NONE;
 }
 
@@ -816,6 +897,8 @@ PluginHost::PluginHost(HostOptions options) : impl_(std::make_unique<Impl>(*this
   s.overlay_line = &cb_overlay_line;
   s.overlay_path = &cb_overlay_path;
   s.overlay_handle = &cb_overlay_handle;
+  s.get_asset_path = &cb_get_asset_path;
+  s.get_asset_bytes = &cb_get_asset_bytes;
 
   int threads = m.options.threads;
   if (threads <= 0) threads = std::clamp(static_cast<int>(std::thread::hardware_concurrency()) - 1, 0, 16);
@@ -1270,6 +1353,28 @@ void PluginHost::Impl::register_document(const Plugin& p) {
           break;
         case PR_PARAM_ARBITRARY_DATA: ne.arbitrary.push_back(s.key); break;
         case PR_PARAM_BUTTON: ne.actions.emplace_back(s.key, s.name); break;
+        // SDK 1.1 — static values: a string, the Curves effect's point list, stops, a project item.
+        case PR_PARAM_STRING:
+          d.type = "text";
+          d.def = js::Json::string(s.text);
+          ne.def.params.push_back(std::move(d));
+          break;
+        case PR_PARAM_CURVE:
+          d.type = "curve";
+          d.def = doc::native_curve_json(s.curve);
+          ne.def.params.push_back(std::move(d));
+          break;
+        case PR_PARAM_GRADIENT:
+          d.type = "gradient";
+          d.def = doc::native_gradient_json(s.gradient);
+          ne.def.params.push_back(std::move(d));
+          break;
+        case PR_PARAM_FILE:
+          d.type = "file";
+          d.def = js::Json::string("");
+          ne.files.emplace_back(s.key, s.fileTypes);
+          ne.def.params.push_back(std::move(d));
+          break;
         default: break;  // group markers are carried by `group`
       }
     }
@@ -1579,6 +1684,30 @@ std::vector<PrParamDef> PluginHost::Impl::param_defs(const EffectSpec& e, const 
         d.arb_data = v->arb.data();
         d.arb_size = static_cast<std::uint32_t>(v->arb.size());
       }
+    }
+    // SDK 1.1: the value, else the declared default (the spec outlives the call).
+    switch (s.type) {
+      case PR_PARAM_STRING: d.text = v != nullptr ? v->text.c_str() : s.text.c_str(); break;
+      case PR_PARAM_CURVE: {
+        const std::vector<double>& c = v != nullptr && v->curve.size() >= 4 ? v->curve : s.curve;
+        d.curve = c.data();
+        d.curve_count = static_cast<std::uint32_t>(c.size() / 2);
+        break;
+      }
+      case PR_PARAM_GRADIENT: {
+        const std::vector<double>& g = v != nullptr && v->gradient.size() >= 5 ? v->gradient : s.gradient;
+        d.gradient = g.data();
+        d.gradient_count = static_cast<std::uint32_t>(g.size() / 5);
+        break;
+      }
+      case PR_PARAM_FILE:
+        d.file_types = s.fileTypes.c_str();
+        if (v != nullptr && !v->fileItem.empty()) {
+          d.file_name = v->fileName.c_str();
+          d.file_missing = v->fileMissing || v->filePath.empty() ? 1 : 0;
+        }
+        break;
+      default: break;
     }
   }
   ptrs.resize(defs.size());
@@ -1932,6 +2061,10 @@ std::vector<ParamValue> values_from_json(const EffectSpec& e, const js::Json& pa
         break;
       }
       case PR_PARAM_LAYER: v.layer = params.at(s.key).is_string() ? params.at(s.key).str() : ""; break;
+      case PR_PARAM_STRING: v.text = params.at(s.key).is_string() ? params.at(s.key).str() : s.text; break;
+      case PR_PARAM_CURVE: v.curve = params.at(s.key).is_array() ? doc::native_curve(params.at(s.key)) : s.curve; break;
+      case PR_PARAM_GRADIENT: v.gradient = params.at(s.key).is_array() ? doc::native_gradient(params.at(s.key)) : s.gradient; break;
+      case PR_PARAM_FILE: break;  // the request's resolved files (instance_call)
       default: v.v[0] = num(s.key, s.def[0]); break;
     }
   }
@@ -2023,6 +2156,15 @@ std::variant<doc::NativeEdit, doc::NativeFailure> PluginHost::instance_call(cons
       if (e->params[i].key == k) in.values[i].arb = bytes;
     }
   }
+  for (const auto& f : req.files) {  // SDK 1.1 FILE params, resolved by the document
+    for (std::size_t i = 0; i < e->params.size(); ++i) {
+      if (e->params[i].key != f.key) continue;
+      in.values[i].fileItem = f.item;
+      in.values[i].filePath = f.path;
+      in.values[i].fileName = f.name;
+      in.values[i].fileMissing = f.missing;
+    }
+  }
   in.compTime = static_cast<std::int64_t>(std::llround(req.timeSeconds * PR_TIME_SCALE));
   in.layerTime = in.compTime;
   {
@@ -2067,6 +2209,7 @@ std::variant<doc::NativeEdit, doc::NativeFailure> PluginHost::instance_call(cons
   ctx.params = &e->params;
   ctx.numParams = d.num_params;
   ctx.overlay = draw;
+  ctx.inputs = &in;  // SDK 1.1 asset callbacks (the scene callbacks stay render-only: renderSelector)
   std::vector<PrParamDef*> ptrs;
   std::vector<PrParamDef> defs = m.param_defs(*e, in, ptrs);
   d.sequence_data = live;

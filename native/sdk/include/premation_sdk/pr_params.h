@@ -40,6 +40,11 @@ typedef int32_t PrParamType;
 #define PR_PARAM_GROUP_END 11
 #define PR_PARAM_ARBITRARY_DATA 12 /* opaque bytes the plugin owns (static, saved with the project) */
 #define PR_PARAM_BUTTON 13        /* a button: pressing it sends PR_CMD_USER_CHANGED_PARAM */
+/* SDK 1.1 (manifest "sdk": 1.1; the fields at the end of PrParamDef) — never keyframed: */
+#define PR_PARAM_STRING 14        /* UTF-8 text, multi-line (`text`) */
+#define PR_PARAM_CURVE 15         /* a Curves-style transfer curve (`curve`: x, y pairs in 0..1, x ascending) */
+#define PR_PARAM_GRADIENT 16      /* colour stops (`gradient`: position 0..1, r, g, b, a per stop) */
+#define PR_PARAM_FILE 17          /* a project asset (a model, a LUT, a texture): `file_*`, get_asset_path / _bytes */
 
 /* PrParamDef.flags */
 #define PR_PARAM_FLAG_CANNOT_ANIMATE (1u << 0)  /* never keyframeable */
@@ -76,6 +81,15 @@ typedef int32_t PrParamType;
  *   POPUP                          value[0] = 1-based choice index
  *   CHECKBOX                       value[0] = 0 or 1
  *   others                         unused
+ *
+ * SDK 1.1 types carry their value in the fields at the end (check struct_size):
+ *   STRING    `text`                     setup: the default; render: the value
+ *   CURVE     `curve` / `curve_count`    setup: the default (≥ 2 points); render: the value
+ *   GRADIENT  `gradient` / `gradient_count`   likewise (≥ 1 stop)
+ *   FILE      setup: `file_types` ("cube|3dl", "" = any); render: `file_name`, `file_missing`;
+ *             the bytes / path through PrHostSuite.get_asset_bytes / get_asset_path.
+ *             The value is a project item, so collect, relink and save carry it; a
+ *             missing file is reported on the layer (file_missing = 1), never a crash.
  */
 typedef struct PrParamDef {
   uint32_t struct_size;
@@ -105,6 +119,22 @@ typedef struct PrParamDef {
   /** ARBITRARY_DATA: the stored bytes (NULL/0 = none stored yet). */
   const uint8_t* arb_data;
   uint32_t arb_size;
+
+  /* ── SDK 1.1 (check struct_size) ── */
+  /** STRING: UTF-8, NUL-terminated (setup: the default). */
+  const char* text;
+  /** CURVE: `curve_count` (x, y) pairs in 0..1, x ascending (setup: the default). */
+  const double* curve;
+  uint32_t curve_count;
+  /** GRADIENT: `gradient_count` stops of 5 doubles: position 0..1, r, g, b, a (straight). */
+  const double* gradient;
+  uint32_t gradient_count;
+  /** FILE (setup): the extensions the picker offers, '|'-separated, no dots ("" / NULL = any). */
+  const char* file_types;
+  /** FILE (render): the chosen asset's file name (NULL = none chosen). */
+  const char* file_name;
+  /** FILE (render): 1 = an asset is chosen but its file is not on disk (the layer reports it). */
+  int32_t file_missing;
 } PrParamDef;
 
 #ifdef __cplusplus

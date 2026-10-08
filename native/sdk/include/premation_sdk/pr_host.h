@@ -117,6 +117,14 @@ typedef struct PrHostSuite {
   PrErr(PR_CALL* overlay_path)(PrHost* host, const double* xy, uint32_t point_count, int32_t closed, const float* rgba);
   /* A draggable handle; `handle_id` comes back in PrOverlayDragExtra. `shape`: PR_OVERLAY_HANDLE_*. */
   PrErr(PR_CALL* overlay_handle)(PrHost* host, uint32_t handle_id, double x, double y, uint32_t shape);
+  /* ── SDK 1.1, any selector with params (render, USER_CHANGED_PARAM, overlays) ──
+   * A FILE param's asset. get_asset_path writes the absolute path (UTF-8, NUL-terminated)
+   * into `buf` (`*out_len` = its length without the NUL; PR_ERR_OUT_OF_MEMORY and the
+   * length needed when `capacity` is too small). get_asset_bytes reads the file once per
+   * call (at most 512 MiB); `*data` stays valid until the selector returns.
+   * PR_ERR_INVALID_PARAM: not a FILE param; PR_ERR_NOT_FOUND: none chosen or missing. */
+  PrErr(PR_CALL* get_asset_path)(PrHost* host, uint32_t param_index, char* buf, uint32_t capacity, uint32_t* out_len);
+  PrErr(PR_CALL* get_asset_bytes)(PrHost* host, uint32_t param_index, const uint8_t** data, uint64_t* size);
 } PrHostSuite;
 
 #define PR_OVERLAY_HANDLE_SQUARE 0

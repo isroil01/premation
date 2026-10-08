@@ -1533,6 +1533,7 @@ std::vector<std::string> relink_missing_footage(Document& d, Ports& ports, std::
     try {
       api::ImportFile f;
       f.path = file;
+      f.as_data = it->at("type").is_string() && it->at("type").str() == "data";  // a plugin FILE param's file
       probed = ports.import_file(f, id);
     } catch (const EngineFail&) {
       // Unreadable (a codec this build cannot open, a locked file): it stays a placeholder.

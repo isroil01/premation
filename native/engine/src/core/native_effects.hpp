@@ -56,6 +56,9 @@ struct NativeEffect {
   bool overlay = false;
   /// SDK 1.1: the plugin's bundle ships a panel (`ui/index.html`, PluginInfo.panel).
   bool panel = false;
+  /// SDK 1.1 FILE params: the document key and the extensions offered ("cube|3dl", "" = any).
+  /// The value is a project item id, so collect / relink / save carry the file.
+  std::vector<std::pair<std::string, std::string>> files;
 };
 
 /// SDK 1.1 — one item of a plugin's viewer overlay (DRAW_OVERLAY), layer px.
@@ -83,6 +86,15 @@ struct NativeActionRequest {
   std::string action;  ///< a button's `p<id>`, or `changed:p<id>` after a supervised edit
   /// SDK 1.1: invokeEffectAction's payload (a plugin panel's data for the button), UTF-8.
   std::string payload;
+  /// SDK 1.1 FILE params, resolved against the document's items: key → the file.
+  struct File {
+    std::string key;
+    std::string item;  ///< the project item id ("" = none chosen)
+    std::string path;  ///< the file on disk ("" when none / not backed by a file)
+    std::string name;  ///< the item's name
+    bool missing = false;  ///< chosen, but the file is not there
+  };
+  std::vector<File> files;
   /// The effect's migrated params (static values).
   Json params;
   /// The instance's flat sequence data from the document (empty = none yet).
@@ -161,6 +173,16 @@ class NativeEffects {
 inline constexpr std::string_view kNativeSequenceKey = "sequence";
 /// `arb:<param key>`.
 [[nodiscard]] std::string native_arb_key(std::string_view paramKey);
+
+/// SDK 1.1 CURVE: the document's `[[x, y], …]` (0..255, the Curves effect's form) → x, y
+/// pairs in 0..1, x ascending, at least two points (identity for anything unreadable).
+[[nodiscard]] std::vector<double> native_curve(const Json& v);
+/// The plugin's 0..1 pairs → the document's form.
+[[nodiscard]] Json native_curve_json(const std::vector<double>& xy);
+/// SDK 1.1 GRADIENT: the document's `[[position, r, g, b, a], …]` (0..1) → 5 doubles per
+/// stop, by position, at least one stop (black → white for anything unreadable).
+[[nodiscard]] std::vector<double> native_gradient(const Json& v);
+[[nodiscard]] Json native_gradient_json(const std::vector<double>& stops);
 
 /// base64 (RFC 4648, padded) — the encoding fx.pluginData stores bytes in.
 [[nodiscard]] std::string native_base64(const std::vector<std::uint8_t>& bytes);

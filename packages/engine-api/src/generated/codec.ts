@@ -2520,6 +2520,7 @@ function encS_ImportFile(w: Writer, v: T.ImportFile): void {
   if (v.folder !== undefined) { w.byte(26); w.str(v.folder); }
   if (v.interpretation !== undefined) { w.byte(34); { const s = w.beginLd(); encS_InterpretationPatch(w, v.interpretation); w.endLd(s); } }
   w.byte(40); w.bool(v.createComposition);
+  if (v.asData !== undefined) { w.byte(48); w.bool(v.asData); }
 }
 function decS_ImportFile(r: Reader, end: number, o: any): T.ImportFile {
   let h_path = false;
@@ -2530,6 +2531,7 @@ function decS_ImportFile(r: Reader, end: number, o: any): T.ImportFile {
   let v_folder: string | undefined;
   let v_interpretation: T.InterpretationPatch | undefined;
   let v_createComposition: boolean | undefined;
+  let v_asData: boolean | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -2538,6 +2540,7 @@ function decS_ImportFile(r: Reader, end: number, o: any): T.ImportFile {
       case 26: v_folder = r.str(); break;
       case 34: v_interpretation = decS_InterpretationPatch(r, r.ldEnd(), {}); break;
       case 40: v_createComposition = r.bool(); h_createComposition = true; break;
+      case 48: v_asData = r.bool(); break;
       default: r.skip(key);
     }
   }
@@ -2550,6 +2553,7 @@ function decS_ImportFile(r: Reader, end: number, o: any): T.ImportFile {
   if (v_folder !== undefined) o.folder = v_folder;
   if (v_interpretation !== undefined) o.interpretation = v_interpretation;
   o.createComposition = v_createComposition;
+  if (v_asData !== undefined) o.asData = v_asData;
   return o;
 }
 function encS_ImportFiles(w: Writer, v: T.ImportFiles): void {
@@ -12024,6 +12028,8 @@ function encS_EffectParamInfo(w: Writer, v: T.EffectParamInfo): void {
   w.byte(90); w.str(v.unit);
   w.byte(98); w.str(v.group);
   if (v.precision !== undefined) { w.byte(104); w.u32(v.precision); }
+  w.byte(114); w.str(v.kind);
+  w.byte(122); w.str(v.fileTypes);
 }
 function decS_EffectParamInfo(r: Reader, end: number, o: any): T.EffectParamInfo {
   const l_choices: string[] = [];
@@ -12033,6 +12039,8 @@ function decS_EffectParamInfo(r: Reader, end: number, o: any): T.EffectParamInfo
   let h_animatable = false;
   let h_unit = false;
   let h_group = false;
+  let h_kind = false;
+  let h_fileTypes = false;
   let v_name: string | undefined;
   let v_matchName: string | undefined;
   let v_valueType: T.ValueType | undefined;
@@ -12045,6 +12053,8 @@ function decS_EffectParamInfo(r: Reader, end: number, o: any): T.EffectParamInfo
   let v_unit: string | undefined;
   let v_group: string | undefined;
   let v_precision: number | undefined;
+  let v_kind: string | undefined;
+  let v_fileTypes: string | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -12061,6 +12071,8 @@ function decS_EffectParamInfo(r: Reader, end: number, o: any): T.EffectParamInfo
       case 90: v_unit = r.str(); h_unit = true; break;
       case 98: v_group = r.str(); h_group = true; break;
       case 104: v_precision = r.u32(); break;
+      case 114: v_kind = r.str(); h_kind = true; break;
+      case 122: v_fileTypes = r.str(); h_fileTypes = true; break;
       default: r.skip(key);
     }
   }
@@ -12071,6 +12083,8 @@ function decS_EffectParamInfo(r: Reader, end: number, o: any): T.EffectParamInfo
   if (!h_animatable) throw new DecodeError('EffectParamInfo.animatable: missing', 'missingField');
   if (!h_unit) throw new DecodeError('EffectParamInfo.unit: missing', 'missingField');
   if (!h_group) throw new DecodeError('EffectParamInfo.group: missing', 'missingField');
+  if (!h_kind) throw new DecodeError('EffectParamInfo.kind: missing', 'missingField');
+  if (!h_fileTypes) throw new DecodeError('EffectParamInfo.fileTypes: missing', 'missingField');
   o.name = v_name;
   o.matchName = v_matchName;
   o.valueType = v_valueType;
@@ -12084,6 +12098,8 @@ function decS_EffectParamInfo(r: Reader, end: number, o: any): T.EffectParamInfo
   o.unit = v_unit;
   o.group = v_group;
   if (v_precision !== undefined) o.precision = v_precision;
+  o.kind = v_kind;
+  o.fileTypes = v_fileTypes;
   return o;
 }
 function encS_EffectInfo(w: Writer, v: T.EffectInfo): void {

@@ -610,13 +610,14 @@ endif()
 if(MOTION_BUILD_TESTS)
   # The host against the SDK's sample bundles (native/sdk): load, render at
   # 8/16/32 bpc, sequence data, checkouts, the journal, crash isolation.
-  add_executable(engine_plugins_tests tests/test_plugin_host.cpp tests/test_plugin_session.cpp tests/test_plugin_entitlement.cpp tests/test_plugin_scene.cpp)
+  add_executable(engine_plugins_tests tests/test_plugin_host.cpp tests/test_plugin_session.cpp tests/test_plugin_entitlement.cpp tests/test_plugin_scene.cpp
+                                      tests/test_plugin_params.cpp)
   target_link_libraries(engine_plugins_tests PRIVATE engine_plugins motion::options Catch2::Catch2WithMain)
   target_include_directories(engine_plugins_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
   target_compile_definitions(engine_plugins_tests PRIVATE
     PREMATION_PLUGIN_BUNDLES="${PREMATION_PLUGIN_BUNDLES}"
     PREMATION_PLUGINS_TOOL="$<TARGET_FILE:premation-plugins>")
-  add_dependencies(engine_plugins_tests premation-plugins ripple rings checkout particles)
+  add_dependencies(engine_plugins_tests premation-plugins ripple rings checkout particles grademap)
   add_test(NAME engine_plugins_tests COMMAND engine_plugins_tests --reporter compact)
 endif()
 

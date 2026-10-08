@@ -194,6 +194,10 @@ export function paramValue(nodeId: string | null, effectId: string, param: Effec
     case 'maskPath': return values.string(typeof raw === 'string' ? raw : '');
     case 'curve': return Array.isArray(raw) ? values.json(raw) : null;
     case 'data': return Array.isArray(raw) ? values.json(raw) : null;
+    // Plugin SDK 1.1 params: static values.
+    case 'text': return typeof raw === 'string' ? values.string(raw) : null;
+    case 'file': return typeof raw === 'string' ? values.string(raw) : null;
+    case 'gradient': return Array.isArray(raw) ? values.json(raw) : null;
     default: return null;
   }
 }

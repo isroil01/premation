@@ -55,7 +55,10 @@ RenderInputs default_inputs(const EffectSpec& spec, std::string instance, std::u
   in.layerId = instance.substr(0, instance.find('/'));
   in.instance = std::move(instance);
   in.values.resize(spec.params.size());
-  for (std::size_t i = 0; i < spec.params.size(); ++i) in.values[i].v = spec.params[i].def;
+  for (std::size_t i = 0; i < spec.params.size(); ++i) {
+    in.values[i].v = spec.params[i].def;
+    in.values[i].text = spec.params[i].text;  // SDK 1.1 defaults (curve / gradient: empty = the declared one)
+  }
   in.fps = 30;
   in.timeStep = PR_TIME_SCALE / 30;
   in.layerW = static_cast<std::int32_t>(w);

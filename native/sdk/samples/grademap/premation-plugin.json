@@ -1,0 +1,12 @@
+{
+  "manifestVersion": 1,
+  "id": "com.premation.samples.grademap",
+  "name": "Grade Map (sample)",
+  "version": "1.0.0",
+  "vendor": "Premation",
+  "sdk": { "major": 1, "minor": 1 },
+  "binary": { "windows": "grademap.dll", "macos": "libgrademap.dylib", "linux": "libgrademap.so" },
+  "effects": [
+    { "matchName": "com.premation.samples.grademap", "name": "Grade Map", "category": "Premation Samples" }
+  ]
+}

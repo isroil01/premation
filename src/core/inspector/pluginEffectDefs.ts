@@ -39,14 +39,24 @@ const TYPE_OF: Record<string, EffectParamDef['type'] | undefined> = {
   string: 'maskPath',
 };
 
+/** Plugin SDK 1.1 `EffectParamInfo.kind` → the editor's control. */
+const KIND_OF: Record<string, EffectParamDef['type'] | undefined> = {
+  text: 'text',
+  curve: 'curve',
+  gradient: 'gradient',
+  file: 'file',
+};
+
 /** One engine `EffectInfo` (a plugin's) → an editor effect definition. */
 export function effectInfoToDef(info: EffectInfo): PluginEffectDef {
   const params: EffectParamDef[] = [];
   for (const p of info.params) {
-    const type = TYPE_OF[p.valueType];
+    // Plugin SDK 1.1: the control the param needs beyond its value type.
+    const kind = KIND_OF[p.kind ?? ''];
+    const type = kind ?? TYPE_OF[p.valueType];
     if (!type) continue; // arbitrary data and the like: not a control
     const dv = p.defaultValue;
-    const def = dv?.kind === 'scalar' || dv?.kind === 'int' ? dv.value : dv?.kind === 'bool' ? dv.value : undefined;
+    const def = dv?.kind === 'scalar' || dv?.kind === 'int' ? dv.value : dv?.kind === 'bool' ? dv.value : dv?.kind === 'string' && type === 'text' ? dv.value : undefined;
     params.push({
       key: p.matchName,
       label: p.name,
@@ -57,6 +67,7 @@ export function effectInfoToDef(info: EffectInfo): PluginEffectDef {
       ...(p.min !== undefined ? { min: p.min } : {}),
       ...(p.max !== undefined ? { max: p.max } : {}),
       ...(p.precision !== undefined ? { precision: p.precision } : {}),
+      ...(type === 'file' ? { fileTypes: p.fileTypes ?? '' } : {}),
       ...(def !== undefined ? { default: def } : type === 'checkbox' ? { default: false } : type === 'enum' ? { default: 1 } : {}),
     });
   }

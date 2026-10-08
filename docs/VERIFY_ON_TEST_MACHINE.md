@@ -162,6 +162,26 @@ the WGSL compiled with naga. Everything below did not run.
       one "Missing plugin …" notice, renders the layer unaffected, keeps the
       effect after a save and reopen.
 
+## Plugin platform P6 — STRING / CURVE / GRADIENT / FILE params (2026-10-08, docs/PLUGIN_SDK.md)
+
+Run in the cloud session: `engine_plugins_tests` `[params]` (the `grademap`
+sample: defaults, values through the host and the chain entry, a `.cube` read
+with get_asset_bytes, a missing file skipped); `pluginParams.native.test` on
+the headless engine (listEffects kinds, values stored, a `data` item kept by
+Remove Unused, relinked, saved). Not run (needs the Dawn build / the app):
+
+- [ ] `plugins/scene_native_fx.cpp` and `plugins/scene_finish.cpp` link into
+      `engine_scene` (they pass `-fsyntax-only` with the engine's flags here).
+- [ ] Real app: Grade Map on footage — edit Channels (text field), the Tone
+      Curve (the Curves editor), the Gradient (stops); each edit is one undo step
+      and re-renders.
+- [ ] LUT ▸ Choose… a 1D `.cube`: the image is graded; the item appears in the
+      Project panel; Remove Unused keeps it; File ▸ Collect Files copies it.
+- [ ] Rename the `.cube` on disk and reopen the project: the layer shows "file
+      'x.cube' is missing", the frame still renders (ungraded); Relink the item
+      → graded again without touching the effect.
+- [ ] Add a golden render test with `grademap` and a checked-in `.cube`.
+
 ## Plugin platform P5 — viewer overlays and plugin panels (2026-10-08, docs/PLUGIN_SDK.md)
 
 Run in the cloud session: `engine_plugins_tests`; on premation-engine-headless

@@ -1,11 +1,14 @@
 #include "handlers_native.hpp"
 
 #include <algorithm>
+#include <filesystem>
+#include <system_error>
 #include <variant>
 
 #include "fail.hpp"
 #include "fxstate.hpp"
 #include "handlers_common.hpp"
+#include "jobs/job_inputs.hpp"
 #include "native_effects.hpp"
 #include "props.hpp"
 #include "scene.hpp"
@@ -25,8 +28,8 @@ namespace {
 }
 /// What the host needs about one native effect instance: its static params,
 /// the document's flat sequence data and arbitrary-data params.
-NativeActionRequest request_for(const Node& node, const std::string& layer, const std::string& effectId, const Json& e,
-                                const NativeEffect& ne, api::Time time) {
+NativeActionRequest request_for(const Document& d, const Node& node, const std::string& layer, const std::string& effectId,
+                                const Json& e, const NativeEffect& ne, api::Time time) {
   NativeActionRequest req;
   req.layer = layer;
   req.effectId = effectId;
@@ -38,13 +41,56 @@ NativeActionRequest request_for(const Node& node, const std::string& layer, cons
   for (const std::string& key : ne.arbitrary) {
     if (auto bytes = native_read_plugin_data(node, dataGroup, native_arb_key(key))) req.arb.emplace_back(key, std::move(*bytes));
   }
+  for (const auto& [key, types] : ne.files) {  // SDK 1.1 FILE params, as files
+    const Json& v = req.params.at(key);
+    req.files.push_back(native_file_of(d, key, v.is_string() ? std::string_view(v.str()) : std::string_view()));
+  }
   return req;
 }
 }  // namespace
 
-NativeActionRequest native_request(const Node& node, const std::string& layer, const std::string& effectId, const Json& e,
-                                   const NativeEffect& ne, api::Time time) {
-  return request_for(node, layer, effectId, e, ne, time);
+NativeActionRequest::File native_file_of(const Document& d, std::string_view key, std::string_view item) {
+  NativeActionRequest::File f;
+  f.key = std::string(key);
+  f.item = std::string(item);
+  if (item.empty()) return f;
+  const Json* a = find_asset(d, item);
+  if (a == nullptr) {
+    f.missing = true;  // the item was removed: what it named is gone
+    return f;
+  }
+  f.name = a->at("name").is_string() ? a->at("name").str() : std::string(item);
+  // The live source first (a local-file URL / path), then the recorded path.
+  for (const char* field : {"src", "path"}) {
+    if (!a->at(field).is_string()) continue;
+    std::string p = jobs::resolve_footage_path(a->at(field).str(), "");
+    if (p.empty()) continue;
+    std::error_code ec;
+    if (std::filesystem::is_regular_file(std::filesystem::path(std::u8string(p.begin(), p.end())), ec)) {
+      f.path = std::move(p);
+      return f;
+    }
+  }
+  f.missing = true;
+  return f;
+}
+
+bool native_effects_use_item(const Node& node, std::string_view item) {
+  if (item.empty()) return false;
+  for (const Json& e : read_node_effects(node)) {
+    const NativeEffect* ne = NativeEffects::find(e.at("type").is_string() ? e.at("type").str() : std::string());
+    if (ne == nullptr || ne->files.empty()) continue;
+    const Json params = params_of(e);
+    for (const auto& [key, types] : ne->files) {
+      if (params.at(key).is_string() && params.at(key).str() == item) return true;
+    }
+  }
+  return false;
+}
+
+NativeActionRequest native_request(const Document& d, const Node& node, const std::string& layer, const std::string& effectId,
+                                   const Json& e, const NativeEffect& ne, api::Time time) {
+  return request_for(d, node, layer, effectId, e, ne, time);
 }
 
 api::EffectUi native_effect_ui(const Document& d, const std::string& layer, const std::string& path, api::Time time) {
@@ -66,7 +112,7 @@ api::EffectUi native_effect_ui(const Document& d, const std::string& layer, cons
     }
     return out;
   }
-  NativeActionRequest req = request_for(node, layer, seg[1], *e, *ne, time);
+  NativeActionRequest req = request_for(d, node, layer, seg[1], *e, *ne, time);
   const auto r = NativeEffects::params_ui(req);
   if (const auto* f = std::get_if<NativeFailure>(&r)) {
     fail(ErrorCode::internal, "plugin '" + ne->provider + "': " + f->message, {.layer = layer, .path = path});
@@ -138,7 +184,7 @@ void native_invoke_action(HCtx& x, const api::PropRef& group, const std::string&
   if (payload.size() > kMaxPayload) {
     fail(ErrorCode::invalid_argument, "the action payload is over 64 KiB", {.layer = group.layer, .path = group.path});
   }
-  NativeActionRequest req = request_for(node, group.layer, effectId, *e, *ne, x.time);
+  NativeActionRequest req = request_for(d, node, group.layer, effectId, *e, *ne, x.time);
   req.action = action;
   req.payload = payload;
 
@@ -167,7 +213,7 @@ void native_overlay_drag(HCtx& x, const api::DragEffectOverlay& c) {
   if (e == nullptr || ne == nullptr || !ne->overlay) {
     fail(ErrorCode::not_found, "no plugin effect with a viewer overlay at '" + group.path + "'", {.layer = group.layer, .path = group.path});
   }
-  NativeActionRequest req = native_request(node, group.layer, seg[1], *e, *ne, x.time);
+  NativeActionRequest req = native_request(d, node, group.layer, seg[1], *e, *ne, x.time);
   NativeOverlayDrag drag;
   drag.handle = c.handle;
   drag.phase = static_cast<std::int32_t>(std::min<std::uint32_t>(c.phase, 2));

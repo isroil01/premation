@@ -4197,6 +4197,7 @@ void encode(wire::Writer& w, const ImportFile& v) {
   if (v.folder.has_value()) { w.varint(26U); w.str(*v.folder); }
   if (v.interpretation.has_value()) { w.varint(34U); { const std::size_t s = w.begin_ld(); encode(w, *v.interpretation); w.end_ld(s); } }
   w.varint(40U); w.boolean(v.create_composition);
+  if (v.as_data.has_value()) { w.varint(48U); w.boolean(*v.as_data); }
 }
 
 Status decode(wire::Reader& r, ImportFile& out) {
@@ -4232,6 +4233,12 @@ Status decode(wire::Reader& r, ImportFile& out) {
       case 40U: {
         if (!r.boolean(out.create_composition)) return Status::truncated;
         has_create_composition = true;
+        break;
+      }
+      case 48U: {
+        bool e = false;
+        if (!r.boolean(e)) return Status::truncated;
+        out.as_data = std::move(e);
         break;
       }
       default:
@@ -22993,6 +23000,8 @@ void encode(wire::Writer& w, const EffectParamInfo& v) {
   w.varint(90U); w.str(v.unit);
   w.varint(98U); w.str(v.group);
   if (v.precision.has_value()) { w.varint(104U); w.varint(*v.precision); }
+  w.varint(114U); w.str(v.kind);
+  w.varint(122U); w.str(v.file_types);
 }
 
 Status decode(wire::Reader& r, EffectParamInfo& out) {
@@ -23002,6 +23011,8 @@ Status decode(wire::Reader& r, EffectParamInfo& out) {
   bool has_animatable = false;
   bool has_unit = false;
   bool has_group = false;
+  bool has_kind = false;
+  bool has_file_types = false;
   while (!r.at_end()) {
     std::uint64_t key = 0;
     if (!r.varint(key)) return Status::truncated;
@@ -23077,6 +23088,16 @@ Status decode(wire::Reader& r, EffectParamInfo& out) {
         out.precision = std::move(e);
         break;
       }
+      case 114U: {
+        if (!r.str(out.kind)) return Status::truncated;
+        has_kind = true;
+        break;
+      }
+      case 122U: {
+        if (!r.str(out.file_types)) return Status::truncated;
+        has_file_types = true;
+        break;
+      }
       default:
         if (!r.skip(key)) return Status::truncated;
         break;
@@ -23088,6 +23109,8 @@ Status decode(wire::Reader& r, EffectParamInfo& out) {
   if (!has_animatable) return Status::missing_field;
   if (!has_unit) return Status::missing_field;
   if (!has_group) return Status::missing_field;
+  if (!has_kind) return Status::missing_field;
+  if (!has_file_types) return Status::missing_field;
   return Status::ok;
 }
 

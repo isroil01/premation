@@ -389,7 +389,7 @@ Catalog catalog_for(const Document& d, std::string_view layerId) {
       b.valueType = p.type == "checkbox" ? ValueType::bool_
                     : p.type == "enum"   ? ValueType::choice
                     : p.type == "layer"  ? ValueType::layer
-                    : p.type == "maskPath" ? ValueType::string
+                    : p.type == "maskPath" || p.type == "text" || p.type == "file" ? ValueType::string
                                            : ValueType::json;
       b.special = Special::effectParam;
       b.effectId = eid;

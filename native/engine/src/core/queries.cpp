@@ -45,7 +45,7 @@ api::ValueType param_value_type(const std::string& t) {
   if (t == "checkbox") return api::ValueType::bool_;
   if (t == "enum") return api::ValueType::choice;
   if (t == "layer") return api::ValueType::layer;
-  if (t == "maskPath") return api::ValueType::string;
+  if (t == "maskPath" || t == "text" || t == "file") return api::ValueType::string;
   return api::ValueType::json;
 }
 
@@ -247,6 +247,16 @@ api::EffectInfo effect_info(const EffectDef& def) {
     pi.unit = p.unit.value_or("");
     pi.group = p.group.value_or("");
     if (p.precision) pi.precision = static_cast<std::uint32_t>(std::max(0.0, *p.precision));
+    // Plugin SDK 1.1 param kinds the editor draws its own control for.
+    if (p.type == "text" || p.type == "curve" || p.type == "gradient" || p.type == "file") pi.kind = p.type;
+    if (p.type == "text" && p.def.is_string()) pi.default_value = v_string(p.def.str());
+    if (p.type == "file") {
+      if (const NativeEffect* ne = NativeEffects::find(def.type)) {
+        for (const auto& [key, types] : ne->files) {
+          if (key == p.key) pi.file_types = types;
+        }
+      }
+    }
     e.params.push_back(std::move(pi));
   }
   e.supports_float = false;

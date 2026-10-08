@@ -9,6 +9,7 @@
 #
 #     ripple    CPU effect, smart render, 8/16/32 bpc, threaded rows
 #     rings     generator with sequence data and a button (USER_CHANGED_PARAM); SDK 1.1 overlay + panel (ui/)
+#     grademap  SDK 1.1 STRING / CURVE / GRADIENT / FILE params (a 1D .cube LUT via get_asset_bytes)
 #     checkout  layer checkouts: another layer (Layer Displace — on the GPU too
 #               where Dawn's headers are), own layer at other times (Time Echo)
 #     grade     GPU effect (SMART_RENDER_GPU on the engine's Dawn device) + CPU
@@ -86,6 +87,7 @@ premation_sample_plugin(ripple samples/ripple/ripple.cpp)
 premation_sample_plugin(rings samples/rings/rings.cpp)
 premation_sample_plugin(checkout samples/checkout/checkout.cpp)
 premation_sample_plugin(particles samples/particles/particles.cpp)  # SDK 1.1: comp camera, lights, layer transforms
+premation_sample_plugin(grademap samples/grademap/grademap.cpp)    # SDK 1.1: STRING / CURVE / GRADIENT / FILE params
 
 # The GPU samples call WebGPU through the proc table the host hands over, so
 # they link no Dawn — they need only the headers (webgpu.h, dawn_proc_table.h).

@@ -390,6 +390,10 @@ struct EffectParamInfo {
   group: string = 12;
   /// Decimal places for a number field (absent = the editor's default).
   precision?: u32 = 13;
+  /// Plugin SDK 1.1 — the control a native plugin param needs beyond its value type: 'text' (multi-line string), 'curve' (`[[x, y]…]`, 0..255), 'gradient' (`[[position, r, g, b, a]…]`, 0..1) or 'file' (a project item id). '' otherwise.
+  kind: string = 14;
+  /// 'file': the extensions the picker offers, '|'-separated without dots ('' = any).
+  fileTypes: string = 15;
 }
 
 struct EffectInfo {

@@ -89,6 +89,38 @@ std::int32_t sdk_light_type(api::RenderLightType t) {
 
 }  // namespace
 
+void encode_native_file(api::RenderEffect& e, const doc::NativeActionRequest::File& f) {
+  const std::string k = "p." + f.key;
+  api::RenderEffectParam* item = nullptr;
+  for (auto& p : e.params) {
+    if (p.name == k) item = &p;
+  }
+  if (item == nullptr) {
+    e.params.emplace_back();
+    item = &e.params.back();
+    item->name = k;
+  }
+  item->kind = api::RenderParamKind::text;
+  item->text = f.item;
+  const auto put_text = [&](const std::string& name, const std::string& v) {
+    for (auto& p : e.params) {
+      if (p.name == name) {
+        p.kind = api::RenderParamKind::text;
+        p.text = v;
+        return;
+      }
+    }
+    api::RenderEffectParam p;
+    p.name = name;
+    p.kind = api::RenderParamKind::text;
+    p.text = v;
+    e.params.push_back(std::move(p));
+  };
+  put_text(k + ".path", f.path);
+  put_text(k + ".name", f.name);
+  put(e, k + ".missing", api::RenderParamKind::flag, f.missing ? 1 : 0);
+}
+
 std::string checkout_renderable_id(std::string_view layerId, std::int64_t time) {
   return std::string(layerId) + "@" + std::to_string(time);
 }
@@ -189,6 +221,24 @@ void decode_native_fx(const api::RenderEffect& e, const EffectSpec& spec, Render
         break;
       case PR_PARAM_ARBITRARY_DATA:
         if (auto bytes = doc::native_unbase64(text(e, "a." + s.key))) v.arb = std::move(*bytes);
+        break;
+      // SDK 1.1.
+      case PR_PARAM_STRING: v.text = find(e, k) != nullptr ? text(e, k) : s.text; break;
+      case PR_PARAM_CURVE: {
+        const auto* p = nums(e, k, 4);
+        v.curve = p != nullptr ? *p : s.curve;
+        break;
+      }
+      case PR_PARAM_GRADIENT: {
+        const auto* p = nums(e, k, 5);
+        v.gradient = p != nullptr ? *p : s.gradient;
+        break;
+      }
+      case PR_PARAM_FILE:
+        v.fileItem = text(e, k);
+        v.filePath = text(e, k + ".path");
+        v.fileName = text(e, k + ".name");
+        v.fileMissing = num(e, k + ".missing", 0) != 0;
         break;
       case PR_PARAM_GROUP_START:
       case PR_PARAM_GROUP_END:

@@ -99,6 +99,15 @@ std::optional<api::RenderEffect> native_effect_entry(const Json& e, const Json& 
           put_flag(out, name + ".closed", path->second);
         }
       }
+    } else if (p.type == "text") {  // SDK 1.1
+      put_text(out, name, v.is_string() ? v.str() : p.def.is_string() ? p.def.str() : "");
+    } else if (p.type == "curve") {
+      put_nums(out, name, doc::native_curve(v.is_array() ? v : p.def), api::RenderParamKind::numbers);
+    } else if (p.type == "gradient") {
+      put_nums(out, name, doc::native_gradient(v.is_array() ? v : p.def), api::RenderParamKind::numbers);
+    } else if (p.type == "file") {
+      // The item id; finish_native_frame resolves it against the document (path / missing).
+      put_text(out, name, v.is_string() ? v.str() : "");
     }
   }
   return out;

@@ -5,6 +5,8 @@
 #include <set>
 #include <utility>
 
+#include "handlers_native.hpp"
+
 namespace premation::doc {
 namespace {
 
@@ -477,12 +479,15 @@ std::vector<std::string> layers_using_item(const Document& d, std::string_view i
       continue;
     }
     // AE parity 4.7: an imported model's root holds its .glb as a project item.
+    bool model = false;
     for (const Component& c : n->components) {
       if (c.type == "Model" && c.props.at("modelAsset").is_string() && c.props.at("modelAsset").str() == item) {
-        out.push_back(id);
+        model = true;
         break;
       }
     }
+    // Plugin SDK 1.1: a native effect's FILE param holds a project item (a LUT, a model).
+    if (model || native_effects_use_item(*n, item)) out.push_back(id);
   }
   return out;
 }

@@ -199,6 +199,17 @@ docs/VERIFY_ON_TEST_MACHINE.md.
 
 ### P6 — More parameter types and assets
 
+**Status (2026-10-08):** built — `PR_PARAM_STRING / CURVE / GRADIENT / FILE`
+(SDK 1.1 fields at the end of `PrParamDef`), `get_asset_path` /
+`get_asset_bytes`, `importFiles` `asData` (a `data` item: relink, collect,
+Remove Unused and save carry it; `layers_using_item` counts FILE params),
+the chain entry's resolved file and the "file is missing" layer error
+(`scene_finish.cpp`), `EffectParamInfo.kind` / `fileTypes`, the editor's text,
+gradient and file controls (curves reuse the Curves editor), and the
+`grademap` sample. Tested on the CPU host (`tests/test_plugin_params.cpp`) and
+the headless engine (`pluginParams.native.test`); the render-side checks are in
+docs/VERIFY_ON_TEST_MACHINE.md.
+
 - New param types:
   - `STRING` (multi-line text);
   - `CURVE` (AE Curves-style points);

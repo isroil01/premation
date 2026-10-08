@@ -398,7 +398,7 @@ void plugin_overlay_of(const PCtx& pc, const Node& n, const std::string& layer, 
     if (ne == nullptr || !ne->overlay || !NativeEffects::available(type)) continue;
     if (e.at("enabled").is_bool() && !e.at("enabled").b()) continue;
     const std::string effectId = e.at("id").is_string() ? e.at("id").str() : "";
-    NativeActionRequest req = native_request(n, layer, effectId, e, *ne, seconds_to_flicks(seconds));
+    NativeActionRequest req = native_request(pc.d, n, layer, effectId, e, *ne, seconds_to_flicks(seconds));
     if (!av) av = values_at(pc, layer, seconds);
     const std::string prefix = "effect." + effectId + ".";
     for (const auto& [k, v] : *av) {

@@ -29,6 +29,7 @@ struct EffectParamDef {
   std::string key;
   std::string label;
   /// 'number' | 'color' | 'checkbox' | 'curve' | 'layer' | 'resolved' | 'enum' | 'maskPath'
+  /// | plugin SDK 1.1: 'text' (string) | 'gradient' ([[t, r, g, b, a]…]) | 'file' (a project item id)
   std::string type;
   std::vector<EffectOption> options;
   std::optional<std::string> group;

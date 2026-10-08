@@ -1404,7 +1404,8 @@ const CATALOG_PARTS = [
   'effects', 'staticMeta', 'layerStyles', 'pathOps', 'pathOpParams', 'polystar', 'animators', 'paint',
   'strokeTracks', 'latent', 'fields', 'maskKeys', 'textPathParams', 'labels', 'blendModes', 'presets', 'factory',
 ];
-const EFFECT_PARAM_TYPES = ['number', 'color', 'checkbox', 'curve', 'layer', 'resolved', 'enum', 'maskPath', 'data'];
+// 'text' / 'gradient' / 'file': native plugin params only (plugin SDK 1.1); no catalog effect uses them.
+const EFFECT_PARAM_TYPES = ['number', 'color', 'checkbox', 'curve', 'layer', 'resolved', 'enum', 'maskPath', 'data', 'text', 'gradient', 'file'];
 
 function readCatalog(dir = CATALOG_DIR) {
   const parts = {};
@@ -1473,6 +1474,8 @@ function genTsCatalog(catalog = readCatalog()) {
   L.push('  readonly max?: number;');
   L.push('  readonly precision?: number;');
   L.push('  readonly noneLabel?: string;');
+  L.push("  /** A `file` param (plugin SDK 1.1): the extensions its picker offers, '|'-separated ('' / absent = any). */");
+  L.push('  readonly fileTypes?: string;');
   L.push('  /** Absent when the param has no default (a stored effect then reads nothing). */');
   L.push('  readonly default?: CatalogJson;');
   L.push('}');

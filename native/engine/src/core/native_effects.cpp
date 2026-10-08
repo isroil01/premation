@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <deque>
 #include <memory>
 #include <mutex>
@@ -232,6 +233,76 @@ std::variant<std::vector<api::EffectParamUi>, NativeFailure> NativeEffects::para
 std::string native_data_group(std::string_view effectId) { return "effects/" + std::string(effectId); }
 
 std::string native_arb_key(std::string_view paramKey) { return "arb:" + std::string(paramKey); }
+
+namespace {
+/// A finite number in [0, 1] (NaN → 0).
+double unit(double v) { return std::isfinite(v) ? std::clamp(v, 0.0, 1.0) : 0.0; }
+constexpr std::size_t kMaxCurvePoints = 256;
+constexpr std::size_t kMaxGradientStops = 256;
+}  // namespace
+
+std::vector<double> native_curve(const Json& v) {
+  std::vector<std::pair<double, double>> pts;
+  if (v.is_array()) {
+    for (const Json& p : v.arr()) {
+      if (pts.size() == kMaxCurvePoints) break;
+      if (p.is_array() && p.arr().size() >= 2 && p.arr()[0].is_number() && p.arr()[1].is_number()) {
+        pts.emplace_back(unit(p.arr()[0].num() / 255.0), unit(p.arr()[1].num() / 255.0));
+      }
+    }
+  }
+  if (pts.size() < 2) pts = {{0.0, 0.0}, {1.0, 1.0}};
+  std::stable_sort(pts.begin(), pts.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+  std::vector<double> out;
+  out.reserve(pts.size() * 2);
+  for (const auto& [x, y] : pts) {
+    out.push_back(x);
+    out.push_back(y);
+  }
+  return out;
+}
+
+Json native_curve_json(const std::vector<double>& xy) {
+  Json::Array out;
+  for (std::size_t i = 0; i + 1 < xy.size(); i += 2) {
+    out.push_back(Json::array({Json::number(std::round(unit(xy[i]) * 255.0 * 1000.0) / 1000.0),
+                               Json::number(std::round(unit(xy[i + 1]) * 255.0 * 1000.0) / 1000.0)}));
+  }
+  return Json::array(std::move(out));
+}
+
+std::vector<double> native_gradient(const Json& v) {
+  std::vector<std::array<double, 5>> stops;
+  if (v.is_array()) {
+    for (const Json& s : v.arr()) {
+      if (stops.size() == kMaxGradientStops) break;
+      if (!s.is_array() || s.arr().size() < 5) continue;
+      std::array<double, 5> st{};
+      bool ok = true;
+      for (std::size_t k = 0; k < 5; ++k) {
+        ok = ok && s.arr()[k].is_number();
+        if (ok) st.at(k) = k == 0 ? unit(s.arr()[k].num()) : std::isfinite(s.arr()[k].num()) ? std::max(0.0, s.arr()[k].num()) : 0.0;
+      }
+      if (ok) stops.push_back(st);
+    }
+  }
+  if (stops.empty()) stops = {{0, 0, 0, 0, 1}, {1, 1, 1, 1, 1}};
+  std::stable_sort(stops.begin(), stops.end(), [](const auto& a, const auto& b) { return a[0] < b[0]; });
+  std::vector<double> out;
+  out.reserve(stops.size() * 5);
+  for (const auto& st : stops) out.insert(out.end(), st.begin(), st.end());
+  return out;
+}
+
+Json native_gradient_json(const std::vector<double>& stops) {
+  Json::Array out;
+  for (std::size_t i = 0; i + 4 < stops.size(); i += 5) {
+    Json::Array st;
+    for (std::size_t k = 0; k < 5; ++k) st.push_back(Json::number(stops[i + k]));
+    out.push_back(Json::array(std::move(st)));
+  }
+  return Json::array(std::move(out));
+}
 
 std::string native_base64(const std::vector<std::uint8_t>& bytes) {
   static constexpr std::string_view kAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

@@ -6,6 +6,7 @@
 #include <set>
 
 #include "fx_wire.hpp"
+#include "handlers_native.hpp"
 #include "host.hpp"
 #include "native_effects.hpp"
 #include "snapshot_build.hpp"
@@ -122,6 +123,15 @@ void finish_native_frame(const scene::BuildContext& c, std::string_view comp, do
           for (const std::string& key : ne->arbitrary) {
             const js::Json& a = group.at(doc::native_arb_key(key));
             if (a.is_string()) set_text(e, "a." + key, a.str());
+          }
+          // SDK 1.1 FILE params: the project item as a file; a missing one is the layer's error, not a crash.
+          for (const auto& [key, types] : ne->files) {
+            const doc::NativeActionRequest::File f = doc::native_file_of(c.d, key, text_of(e, "p." + key));
+            encode_native_file(e, f);
+            if (f.missing && reported.insert(instance + "#" + key).second) {
+              frame.errors.push_back(scene::LayerError{layerId, "", "plugin",
+                                                       "file '" + (f.name.empty() ? f.item : f.name) + "' is missing (" + matchName + ")"});
+            }
           }
         }
       }

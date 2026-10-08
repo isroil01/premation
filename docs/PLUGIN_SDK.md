@@ -94,8 +94,27 @@ copy/paste, save/open and change events all work as they do for a builtin.
 | `ARBITRARY_DATA` | bytes in the document (`fx.pluginData`), written by the plugin or `setPluginData` |
 | `BUTTON` | an action (`invokeEffectAction`, `p<id>`) |
 | `GROUP_START` / `GROUP_END` | a twirl-down section |
+| `STRING` (1.1) | text (`text`; a multi-line field) |
+| `CURVE` (1.1) | the Curves effect's point list `[[x, y]…]` in 0..255; the plugin gets `curve` / `curve_count`, x, y in 0..1 |
+| `GRADIENT` (1.1) | stops `[[position, r, g, b, a]…]` in 0..1; the plugin gets `gradient` / `gradient_count` |
+| `FILE` (1.1) | a project item id (`file_types` filters the picker); the plugin gets `file_name`, `file_missing` and the file through `get_asset_path` / `get_asset_bytes` |
 
 Flags: `CANNOT_ANIMATE`, `SUPERVISE`, `HIDDEN`, `START_COLLAPSED`, `DISABLED`.
+
+The SDK 1.1 types are never keyframed. Their defaults go in the fields at the end
+of `PrParamDef` (`text`, `curve`, `gradient`, `file_types`); an SDK 1.0 struct
+cannot declare them (the plugin fails to load with "needs SDK 1.1").
+
+A `FILE` param's value is a **project item**: the editor's **Choose…** imports
+the file as a `data` item (`importFiles` with `asData`: never probed as
+footage), so Collect Files copies it, Relink re-points it, Remove Unused keeps
+it while an effect uses it, and the project saves it. At render the engine
+resolves the item to a file (`p.<key>.path`, `.missing` in the chain entry), so
+a relink re-renders the effect. A missing file never fails the frame: the
+plugin sees `file_missing = 1` and `get_asset_*` answer `PR_ERR_NOT_FOUND`,
+and the layer reports "file '…' is missing" on `layerErrors`.
+`get_asset_bytes` reads the file once per call (≤ 512 MiB). The `grademap`
+sample uses all four types (a 1D `.cube` LUT as its FILE).
 
 ## Pixels (`pr_world.h`)
 

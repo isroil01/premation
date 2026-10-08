@@ -1435,6 +1435,8 @@ export interface ImportFile {
   interpretation?: InterpretationPatch;
   /** Create a composition from this file after import. */
   createComposition: boolean;
+  /** Plugin SDK 1.1 — a plugin FILE param's file (a LUT, a model, a preset): stored as a `data` item without probing it as footage. Collect, relink and save carry it like any item. */
+  asData?: boolean;
 }
 
 /** Import files as footage items. Undo removes the items (files on disk are never touched). */
@@ -4007,6 +4009,10 @@ export interface EffectParamInfo {
   group: string;
   /** Decimal places for a number field (absent = the editor's default). */
   precision?: number;
+  /** Plugin SDK 1.1 — the control a native plugin param needs beyond its value type: 'text' (multi-line string), 'curve' (`[[x, y]…]`, 0..255), 'gradient' (`[[position, r, g, b, a]…]`, 0..1) or 'file' (a project item id). '' otherwise. */
+  kind: string;
+  /** 'file': the extensions the picker offers, '|'-separated without dots ('' = any). */
+  fileTypes: string;
 }
 
 export interface EffectInfo {

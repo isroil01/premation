@@ -538,6 +538,19 @@ Json FilePorts::import_file(const api::ImportFile& file, const std::string& id) 
   if (file.path.empty() || is_session_url(file.path) || file.path.starts_with("data:")) {
     fail(api::ErrorCode::invalid_argument, "importFiles takes a file path, not '" + file.path.substr(0, 16) + "…'");
   }
+  if (file.as_data.value_or(false)) {  // plugin SDK 1.1 FILE param: the file as it is, never probed
+    std::error_code ec;
+    const auto size = std::filesystem::file_size(std::filesystem::path(std::u8string(file.path.begin(), file.path.end())), ec);
+    if (ec) fail(api::ErrorCode::io, "the file could not be read");
+    Json a = Json::object();
+    a.set("id", Json::string(id));
+    a.set("name", Json::string(base_name(file.path)));
+    a.set("type", Json::string("data"));
+    a.set("src", Json::string(local_file_url(file.path)));
+    a.set("size", Json::number(static_cast<double>(size)));
+    a.set("path", Json::string(file.path));
+    return a;
+  }
   return record_for(file.path, base_name(file.path), id);
 }
 

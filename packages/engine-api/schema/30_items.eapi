@@ -54,6 +54,8 @@ struct ImportFile {
   interpretation?: InterpretationPatch = 4;
   /// Create a composition from this file after import.
   createComposition: bool = 5;
+  /// Plugin SDK 1.1 — a plugin FILE param's file (a LUT, a model, a preset): stored as a `data` item without probing it as footage. Collect, relink and save carry it like any item.
+  asData?: bool = 6;
 }
 
 /// Import files as footage items. Undo removes the items (files on disk are never touched).

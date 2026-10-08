@@ -323,7 +323,8 @@ export type CurvePoints = ReadonlyArray<readonly [number, number]>;
  * from the referenced audio layer and writes here so the drawing kernel stays a
  * pure function of its params. Not something a user types.
  */
-export type EffectParamValue = number | string | boolean | CurvePoints | readonly number[];
+/** `readonly (readonly number[])[]`: a native plugin GRADIENT param's stops (`[[position, r, g, b, a], …]`, SDK 1.1). */
+export type EffectParamValue = number | string | boolean | CurvePoints | readonly number[] | readonly (readonly number[])[];
 export type EffectParams = Readonly<Record<string, EffectParamValue>>;
 
 export interface Effect {

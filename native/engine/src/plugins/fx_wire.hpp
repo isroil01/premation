@@ -12,6 +12,9 @@
 //                                      number (slider / angle / point axis / popup)
 //                                      flag (checkbox) · color [r,g,b,a] · text (layer id)
 //                                      numbers (path: 6 per vertex) + p.<key>.closed flag
+//                                      SDK 1.1: text (STRING) · numbers (CURVE: x,y in 0..1;
+//                                      GRADIENT: 5 per stop) · text (FILE: the item id) with
+//                                      p.<key>.path / .name text and .missing flag (encode_native_file)
 //   a.<key>                          text   an arbitrary-data param's bytes (base64)
 //
 // SDK 1.1 (pr_scene.h), only for an effect that declared the matching
@@ -48,6 +51,10 @@ inline constexpr std::size_t kLightStride = 18;
 /// become part of the entry, so a change to any of them re-renders the effect,
 /// and nothing else does.
 void encode_native_scene(api::RenderEffect& e, const EffectSpec& spec, const api::RenderFrameScene& scene);
+
+/// SDK 1.1: a FILE param resolved against the document (doc::native_file_of) into the
+/// entry — the path is part of the entry, so a relink re-renders the effect.
+void encode_native_file(api::RenderEffect& e, const doc::NativeActionRequest::File& f);
 
 /// The layer id of a checkout at `time` (flicks): `<layer>@<time>` — the hidden
 /// renderable the scene hook adds for checkouts at times other than the frame's.

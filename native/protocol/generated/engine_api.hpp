@@ -1890,6 +1890,7 @@ struct ImportFile {
   std::optional<ItemId> folder;
   std::optional<InterpretationPatch> interpretation;
   bool create_composition = false;
+  std::optional<bool> as_data;
   bool operator==(const ImportFile&) const = default;
 };
 
@@ -4993,6 +4994,8 @@ struct EffectParamInfo {
   std::string unit;
   std::string group;
   std::optional<std::uint32_t> precision;
+  std::string kind;
+  std::string file_types;
   bool operator==(const EffectParamInfo&) const = default;
 };
 

@@ -97,6 +97,7 @@ import {
 import panel from './EffectsPanel.module.css';
 import { MissingPluginCard, PluginEffectActions, usePluginEffectUi } from './PluginEffectParts';
 import { PluginPanel } from './PluginPanel';
+import { PluginFileField, PluginGradientField, PluginTextField } from './PluginParamControls';
 import { isPluginEffectDef, type PluginEffectDef } from '@core/inspector/pluginEffectDefs';
 import row from '@layout/Inspector/TextAnimatorControls.module.css';
 
@@ -530,6 +531,25 @@ function EffectParamRow({
               <option key={o.value} value={o.value}>{o.label}</option>
             ))}
           </select>
+        </div>
+      </ParamLine>
+    );
+  }
+
+  // Plugin SDK 1.1 params (static: no stopwatch).
+  if (param.type === 'text' || param.type === 'gradient' || param.type === 'file') {
+    return (
+      <ParamLine>
+        <div className={row.paramRow} style={{ alignItems: 'flex-start' }}>
+          <div style={{ width: 14 }} />
+          <span className={row.paramLabel}>{param.label}</span>
+          {param.type === 'text' ? (
+            <PluginTextField label={label} value={typeof value === 'string' ? value : typeof param.default === 'string' ? param.default : ''} onCommit={send} />
+          ) : param.type === 'gradient' ? (
+            <PluginGradientField label={label} value={value ?? param.default} onChange={send} />
+          ) : (
+            <PluginFileField label={label} value={typeof value === 'string' ? value : ''} fileTypes={param.fileTypes} onChange={send} />
+          )}
         </div>
       </ParamLine>
     );

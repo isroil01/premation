@@ -263,7 +263,12 @@ ResultOf<api::RelinkItem> handle(const api::RelinkItem& c, HCtx& x) {
   if (ref.kind != ItemRefKind::footage) fail(ErrorCode::invalid_argument, "only footage can be relinked", {.item = c.item});
   if (js_trim(c.path).empty()) fail(ErrorCode::invalid_argument, "path is empty");
   x.label = "Relink Footage";
-  const Json probed = x.ports.has_probe() ? x.ports.probe_file(c.path) : Json::object();
+  // A plugin FILE param's `data` item (a LUT, a model) is no footage: nothing to probe, the file as it is.
+  const Json* cur = find_asset(d, c.item);
+  const bool data = cur != nullptr && cur->at("type").is_string() && cur->at("type").str() == "data";
+  Json probed = Json::object();
+  if (data) probed.set("src", Json::string(local_file_url(c.path)));
+  else if (x.ports.has_probe()) probed = x.ports.probe_file(c.path);
   patch_asset(d, c.item, [&](const Json& a) {
     Json next = spread(a, probed.is_object() ? probed : Json::object());
     next.set("id", a.at("id"));

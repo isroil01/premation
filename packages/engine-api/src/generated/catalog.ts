@@ -9,7 +9,7 @@
 
 export type CatalogJson = null | boolean | number | string | readonly CatalogJson[] | { readonly [key: string]: CatalogJson };
 
-export type CatalogEffectParamType = 'number' | 'color' | 'checkbox' | 'curve' | 'layer' | 'resolved' | 'enum' | 'maskPath' | 'data';
+export type CatalogEffectParamType = 'number' | 'color' | 'checkbox' | 'curve' | 'layer' | 'resolved' | 'enum' | 'maskPath' | 'data' | 'text' | 'gradient' | 'file';
 export interface CatalogEffectOption { readonly value: number; readonly label: string; }
 export interface CatalogEffectParam {
   readonly key: string;
@@ -23,6 +23,8 @@ export interface CatalogEffectParam {
   readonly max?: number;
   readonly precision?: number;
   readonly noneLabel?: string;
+  /** A `file` param (plugin SDK 1.1): the extensions its picker offers, '|'-separated ('' / absent = any). */
+  readonly fileTypes?: string;
   /** Absent when the param has no default (a stored effect then reads nothing). */
   readonly default?: CatalogJson;
 }
