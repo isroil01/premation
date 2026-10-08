@@ -1,12 +1,14 @@
 /*
- * DockPanel — an icon rail on the sidebar's outer edge beside one content pane.
+ * DockPanel — a sidebar as a column of After Effects panel groups.
  *
- * Two columns, one row. The rail keeps a fixed width (`--dock-rail-width`,
- * which is also the sidebar's COLLAPSED width — see layoutStore) so that
- * collapsing the sidebar removes the pane and moves no icon.
+ * The column is the frame (`--color-border-structural`) with groups laid on
+ * it; the 2px between two groups is that frame showing through, and between
+ * two OPEN groups it is the divider that shares their height. Each group is a
+ * tab strip on the darker strip surface, the front tab on the panel's own
+ * surface so it reads as the panel's top edge (the approved design sheet).
  *
- * The default layout puts the rail on the RIGHT (the inspector's outer edge);
- * `.railLeft` flips the order for the left sidebar or a re-docked inspector.
+ * Text uses the panel type roles (tokens/typography.css): the tab is the
+ * panel's only title — regular, the front tab medium.
  */
 .root {
   display: flex;
@@ -20,63 +22,269 @@
   overflow: hidden;
 }
 
-.railLeft {
-  flex-direction: row-reverse;
+/* ── The column ────────────────────────────────────────────────────── */
+.column {
+  flex-direction: column;
+  background: var(--color-border-structural);
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-scrollbar-thumb) var(--color-scrollbar-track);
 }
 
-.collapsed {
-  width: var(--dock-rail-width);
-  min-width: var(--dock-rail-width);
-  max-width: var(--dock-rail-width);
-}
-
-/* ── The content column ────────────────────────────────────────────── */
-.pane {
+/*
+ * A group. Open groups share the height the strips leave, by weight (inline
+ * flex-grow from `DockGroupState.weight`); each keeps room for its strip and
+ * a few rows, and the column scrolls when too many are open to fit.
+ */
+.group {
   display: flex;
   flex-direction: column;
-  flex: 1 1 auto;
+  flex: 1 1 0;
+  min-height: calc(var(--bar-height-panel) + 56px);
   min-width: 0;
+  background: var(--color-panel);
+}
+
+.groupCollapsed {
+  flex: none;
   min-height: 0;
 }
 
 /*
- * The active panel's header. Sized to --bar-height-panel so it lines up with
- * the viewport header across the splitter — the two bands either side of a
- * seam sharing one height is most of what makes the frame read as one grid.
+ * The panel in use. After Effects outlines the panel that has focus; here the
+ * group holding keyboard focus. Inset, so the outline never changes a
+ * group's size or covers a divider.
  */
-.header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  height: var(--bar-height-panel);
-  min-height: var(--bar-height-panel);
-  padding: 0 var(--space-3) 0 var(--space-5);
-  background: var(--color-panel-header);
-  border-bottom: 1px solid var(--color-border);
-  user-select: none;
-  flex: none;
+.group:focus-within {
+  box-shadow: inset 0 0 0 1px var(--color-primary);
 }
 
-.title {
-  flex: 0 1 auto;
+/* ── The gap between groups ────────────────────────────────────────── */
+.seam {
+  flex: none;
+  height: 2px;
+  min-height: 2px;
+}
+
+/* No gap above the first group: the column starts with a strip. */
+.seamFirst {
+  height: 0;
+  min-height: 0;
+}
+
+/* Between two open groups: a divider. The hit area reaches past the 2px gap. */
+.seamResize {
+  position: relative;
+  cursor: row-resize;
+  touch-action: none;
+}
+
+.seamResize::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -3px;
+  bottom: -3px;
+  z-index: 2;
+}
+
+.seamResize:hover {
+  background: var(--color-primary);
+}
+
+/* While a tab is dragged, every gap is a drop target for "a group of its own". */
+.seamDrop {
+  height: 10px;
+  min-height: 10px;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      var(--color-primary) 0 6px,
+      transparent 6px 10px
+    )
+    center / 100% 2px no-repeat;
+  opacity: 0.55;
+}
+
+.seamDropOver {
+  height: var(--control-height-md);
+  min-height: var(--control-height-md);
+  background: color-mix(in srgb, var(--color-primary) 22%, transparent);
+  box-shadow: inset 0 0 0 1px var(--color-primary);
+  opacity: 1;
+}
+
+/* ── The strip ─────────────────────────────────────────────────────── */
+.strip {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  height: var(--bar-height-panel);
+  min-height: var(--bar-height-panel);
+  flex: none;
+  background: var(--color-surface-0);
+  user-select: none;
+}
+
+/* The twirl: the group opens and closes, the way a twirl reads everywhere else. */
+.twirl {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: var(--control-height-sm);
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-micro);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.twirl:hover {
+  color: var(--color-text-primary);
+}
+
+/* The tabs and their two edge fades: the fades sit on the tabs' own edges. */
+.tabsWrap {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.tabs {
+  display: flex;
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.slot {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: none;
+  cursor: grab;
+}
+
+.slot:active {
+  cursor: grabbing;
+}
+
+/* The front tab takes the panel's own surface, so it reads as its top edge. */
+.slotActive {
+  background: var(--color-panel);
+}
+
+.groupCollapsed .slotActive {
+  background: transparent;
+}
+
+.slotDragging {
+  opacity: 0.45;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  max-width: 240px;
+  padding: 0 var(--space-4);
+  border: none;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-tab);
+  line-height: var(--panel-line-height);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.tab:hover {
+  color: var(--color-text-primary);
+}
+
+.tabActive {
+  color: var(--color-text-primary);
+  font-weight: var(--panel-weight-tab-active);
+}
+
+/* The focused group's front tab carries the accent along its top edge. */
+.groupFocused .slotActive::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+  background: var(--color-primary);
+}
+
+.tab:focus-visible,
+.twirl:focus-visible,
+.iconBtn:focus-visible {
+  outline: 1px solid var(--color-focus-ring);
+  outline-offset: -1px;
+}
+
+.tabLabel {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
-  letter-spacing: var(--letter-spacing-uppercase);
-  text-transform: uppercase;
-  color: var(--color-text-secondary);
 }
 
-.headerActions {
+/* The panel's subject after its title ("Properties: Logo") — quieter than the title. */
+.tabDetail {
+  color: var(--color-text-secondary);
+  font-weight: var(--panel-weight-label);
+}
+
+/* The edge with more tabs fades, so a clipped strip says so. */
+.fade {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 20px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.fadeLeft {
+  left: 0;
+  background: linear-gradient(90deg, var(--color-surface-0), transparent);
+}
+
+.fadeRight {
+  right: 0;
+  background: linear-gradient(270deg, var(--color-surface-0), transparent);
+}
+
+.stripMoreLeft .fadeLeft,
+.stripMoreRight .fadeRight {
+  opacity: 1;
+}
+
+.stripEnd {
   display: flex;
   align-items: center;
   gap: var(--space-1);
-  flex: 1 0 auto;
-  justify-content: flex-end;
+  flex: none;
+  padding: 0 var(--space-2) 0 var(--space-1);
 }
 
 .customActions {
@@ -85,10 +293,15 @@
   gap: var(--space-1);
 }
 
-.actionBtn {
+.customActions:empty {
+  display: none;
+}
+
+.iconBtn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex: none;
   width: var(--control-height-sm);
   height: var(--control-height-sm);
   padding: 0;
@@ -102,16 +315,30 @@
     color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
-.actionBtn:hover {
+.iconBtn:hover {
   background: var(--color-hover);
   color: var(--color-text-primary);
 }
 
-.actionBtn:focus-visible {
-  outline: 1px solid var(--color-focus-ring);
-  outline-offset: 1px;
+/* The » reads as text, at the tab size. */
+.overflowBtn {
+  color: var(--color-text-secondary);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-tab-active);
+  letter-spacing: -1px;
 }
 
+/* Where a dragged tab will land: before this tab / at the end of the strip. */
+.dropBefore {
+  box-shadow: inset 2px 0 0 var(--color-primary);
+}
+
+.tabsDropEnd {
+  box-shadow: inset -2px 0 0 var(--color-primary);
+}
+
+/* ── The front panel ───────────────────────────────────────────────── */
 .content {
   flex: 1 1 auto;
   width: 100%;
@@ -120,6 +347,7 @@
   overflow-y: auto;
   overflow-x: hidden;
   position: relative;
+  background: var(--color-panel);
   scrollbar-width: thin;
   scrollbar-color: var(--color-scrollbar-thumb) var(--color-scrollbar-track);
 }
@@ -141,192 +369,18 @@
   background: var(--color-scrollbar-track);
 }
 
-/* ── The rail ──────────────────────────────────────────────────────── */
+/* ── A closed sidebar ──────────────────────────────────────────────── */
 /*
- * The hairline sits on the rail's INNER edge, facing the pane.
+ * The whole pane is one thin button, with a short grip line so it reads as
+ * something you can pull. It lights on hover and focus. Above the splitter
+ * beside it: the splitter's grab area reaches 5px into its neighbours, which
+ * is most of a closed sidebar's 8px — without this every click on the edge
+ * landed on the splitter and did nothing.
  */
-.rail {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-3);
-  flex: none;
+.collapsed {
   width: var(--dock-rail-width);
   min-width: var(--dock-rail-width);
-  height: 100%;
-  padding: var(--space-3) 0;
-  background: var(--color-panel-header);
-  border-left: 1px solid var(--color-border);
-  overflow-y: auto;
-  overflow-x: hidden;
-  scrollbar-width: none;
-  user-select: none;
-}
-
-.rail::-webkit-scrollbar {
-  display: none;
-}
-
-.railLeft .rail {
-  border-left: none;
-  border-right: 1px solid var(--color-border);
-}
-
-.railSlot {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  flex: none;
-  cursor: grab;
-}
-
-.railSlot:active {
-  cursor: grabbing;
-}
-
-/*
- * A rail tab is the glyph over its NAME.
- * Improved optical sizing with comfortable vertical breathing room,
- * clean typography, and interactive scale feedback.
- */
-.railTab {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 3px;
-  width: calc(100% - 12px);
-  min-height: 48px;
-  padding: 6px 2px 5px 2px;
-  border: none;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--color-text-tertiary);
-  cursor: pointer;
-  transition:
-    background-color var(--motion-duration-fast) var(--motion-ease-standard),
-    color var(--motion-duration-fast) var(--motion-ease-standard),
-    transform 160ms ease-out;
-}
-
-.railTab:hover {
-  background: var(--color-hover);
-  color: var(--color-text-primary);
-}
-
-.railTab:active {
-  transform: scale(0.97);
-}
-
-.railTab:focus-visible {
-  outline: 1px solid var(--color-focus-ring);
-  outline-offset: 1px;
-}
-
-.railTabActive {
-  background: var(--color-surface-2);
-  color: var(--color-text-primary);
-}
-
-.railTabActive:hover {
-  background: var(--color-surface-2);
-}
-
-.railLabel {
-  display: block;
-  max-width: 100%;
-  padding: 0 1px;
-  letter-spacing: -0.01em;
-  box-sizing: border-box;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--font-size-micro);
-  line-height: var(--line-height-micro);
-  font-weight: var(--font-weight-medium);
-}
-
-/* ── Rail Add Button & Divider ─────────────────────────────────────── */
-.railAddSlot {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  gap: var(--space-2);
-  flex: none;
-}
-
-.railDivider {
-  width: 32px;
-  height: 1px;
-  background: var(--color-border);
-  opacity: 0.6;
-  margin: 2px auto 4px auto;
-  flex: none;
-}
-
-.railAddWrap {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-}
-
-/* "+ Panel": polished, high-contrast action button directly below tabs */
-.railAdd {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  margin: 0 auto;
-  width: 38px;
-  height: 32px;
-  padding: 0;
-  border: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.12));
-  border-radius: var(--radius-md);
-  background: var(--color-surface-1, rgba(255, 255, 255, 0.04));
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  flex: none;
-  transition:
-    background-color var(--motion-duration-fast) var(--motion-ease-standard),
-    border-color var(--motion-duration-fast) var(--motion-ease-standard),
-    color var(--motion-duration-fast) var(--motion-ease-standard),
-    transform 160ms ease-out;
-}
-
-.railAdd:hover {
-  background: var(--color-hover);
-  border-color: var(--color-border);
-  color: var(--color-text-primary);
-  transform: scale(1.04);
-}
-
-.railAdd:active {
-  transform: scale(0.97);
-}
-
-.railAdd:focus-visible {
-  outline: 1px solid var(--color-focus-ring);
-  outline-offset: 1px;
-}
-
-.railSpacer {
-  flex: 1 1 auto;
-  min-height: var(--space-2);
-}
-
-/*
- * A closed sidebar: the whole pane is one thin button, with a short grip line
- * so it reads as something you can pull. It lights on hover and focus.
- */
-/* Above the splitter beside it: the splitter's grab area reaches 5px into its
-   neighbours, which is most of a closed sidebar's 8px — without this every
-   click on the edge landed on the splitter and did nothing. */
-.collapsed {
+  max-width: var(--dock-rail-width);
   z-index: 21; /* the splitter is 20 */
 }
 
@@ -366,243 +420,10 @@
   background: var(--color-text-primary);
 }
 
-/* ── Open chromes (the After Effects direction) ────────────────────────
- *
- * The rail above is now the COLLAPSED sidebar only. Open, the left sidebar is
- * a tab strip over its active panel and the right inspector is a stack of
- * bars — see DockPanel.tsx. Both follow the approved design sheet: a darker
- * tab bar, the active tab on the panel's own surface with its ≡ beside the
- * name, and a near-black gap between stacked panels instead of a border.
- */
-.tabsRoot,
-.stackRoot {
-  flex-direction: column;
-}
-
-/* Left: tab strip */
-.strip {
-  display: flex;
-  align-items: stretch;
-  height: var(--bar-height-panel);
-  min-height: var(--bar-height-panel);
-  background: var(--color-surface-0);
-  flex: none;
-  user-select: none;
-}
-
-.stripTabs {
-  display: flex;
-  align-items: stretch;
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
-}
-
-.stripTabs::-webkit-scrollbar {
-  display: none;
-}
-
-.stripSlot {
-  display: flex;
-  align-items: center;
-  flex: none;
-}
-
-/* The active tab takes the panel's own surface, so it reads as its top edge. */
-.stripSlotActive {
-  background: var(--color-panel);
-  padding-right: var(--space-2);
-}
-
-.stripTab {
-  display: flex;
-  align-items: center;
-  height: 100%;
-  padding: 0 var(--space-4);
-  border: none;
-  background: transparent;
-  color: var(--color-text-tertiary);
-  font-size: var(--font-size-sm);
-  white-space: nowrap;
-  cursor: pointer;
-  transition: color var(--motion-duration-fast) var(--motion-ease-standard);
-}
-
-.stripTab:hover {
-  color: var(--color-text-primary);
-}
-
-.stripTab:focus-visible,
-.barTab:focus-visible,
-.menuBtn:focus-visible {
-  outline: 1px solid var(--color-focus-ring);
-  outline-offset: -1px;
-}
-
-.stripTabActive {
-  color: var(--color-text-primary);
-  padding-right: var(--space-2);
-}
-
-/* The ≡ panel menu: beside the active tab's name, at the right of every bar. */
-.menuBtn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: var(--control-height-sm);
-  height: var(--control-height-sm);
-  padding: 0;
-  border: none;
-  border-radius: var(--radius-control);
-  background: transparent;
-  color: var(--color-text-tertiary);
-  cursor: pointer;
-  flex: none;
-  transition: color var(--motion-duration-fast) var(--motion-ease-standard);
-}
-
-.menuBtn:hover {
-  color: var(--color-text-primary);
-}
-
-.strip .headerActions {
-  flex: none;
-  padding: 0 var(--space-2);
-}
-
-.stripAdd {
-  display: flex;
-  align-items: center;
-  flex: none;
-  padding-right: var(--space-2);
-}
-
-/* Right: stack of bars. The gap between panels is the frame showing through. */
-.stackRoot {
-  background: var(--color-border-structural);
-  gap: 2px;
-  overflow-y: auto;
-  scrollbar-width: thin;
-}
-
-.bar {
-  display: flex;
-  align-items: center;
-  height: var(--bar-height-panel);
-  min-height: var(--bar-height-panel);
-  flex: none;
-  background: var(--color-panel);
-  user-select: none;
-}
-
-/* An open panel and its bar are one object: no gap between them. */
-.barActive {
-  margin-bottom: -2px;
-}
-
-.barTab {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex: 1 1 auto;
-  min-width: 0;
-  height: 100%;
-  padding: 0 var(--space-3);
-  border: none;
-  background: transparent;
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
-  text-align: left;
-  cursor: pointer;
-  transition: color var(--motion-duration-fast) var(--motion-ease-standard);
-}
-
-.barTab:hover {
-  color: var(--color-text-primary);
-}
-
-.barActive .barTab {
-  color: var(--color-text-primary);
-}
-
-/* The twirl: a small filled triangle, the way a disclosure reads in a pro tool. */
-.barTwirl {
-  width: 10px;
-  flex: none;
-  color: var(--color-text-tertiary);
-  font-size: var(--font-size-micro);
-  line-height: 1;
-  transform: scale(0.8);
-}
-
-.tabLabel {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* The panel's subject after its title ("Properties: Logo") — quieter than the title. */
-.tabDetail {
-  color: var(--color-text-secondary);
-}
-
-.bar .headerActions {
-  flex: none;
-  padding-right: var(--space-2);
-}
-
-/* Open panels share the height the bars leave — Properties weighted three
-   to one, so opening Preview or Align beside it no longer halves the
-   inspector (After Effects keeps Properties tall the same way). Every share
-   stays a definite height, which the panels' own scrolling lists rely on. */
-.stackRoot > .content {
-  flex: 1 1 0;
-  min-height: 96px;
-  background: var(--color-panel);
-}
-
-.stackRoot > .content[data-stack-panel='properties'] {
-  flex-grow: 3;
-}
-
-/* The stack's bars at AE's density: 24px (22 on compact screens). */
-.stackRoot > .bar,
-.stackRoot > .barAdd {
-  height: var(--control-height-md);
-  min-height: var(--control-height-md);
-}
-
-.barAdd {
-  display: flex;
-  align-items: center;
-  flex: none;
-  height: var(--bar-height-panel);
-  padding: 0 var(--space-2);
-  background: var(--color-panel);
-}
-
-/*
- * The panel in use. After Effects outlines the panel that has focus; here it
- * is whichever dock holds keyboard focus. Inset, so the outline never changes
- * a panel's size or covers the splitter beside it.
- */
-.tabsRoot:focus-within,
-.stackRoot:focus-within {
-  box-shadow: inset 0 0 0 1px var(--color-primary);
-}
-
-.tabsRoot:focus-within .stripTabActive {
-  color: var(--color-primary-text);
-}
-
-/* Where a dragged panel will land: before this tab / above this bar. */
-.dropBefore {
-  box-shadow: inset 2px 0 0 var(--color-primary);
-}
-
-.dropAbove {
-  box-shadow: inset 0 2px 0 var(--color-primary);
+@media (prefers-reduced-motion: reduce) {
+  .tab,
+  .fade,
+  .iconBtn {
+    transition: none;
+  }
 }

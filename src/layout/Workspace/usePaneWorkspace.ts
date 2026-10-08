@@ -33,6 +33,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Workspace, modifiersFrom, type PointerInput, type SceneGraphPort } from '@motion/workspace';
 import type { Camera3dMode } from '@stores/guidesStore';
 import type { RenderView } from '@core/workspace/renderView';
+import type { CustomViewParams } from '@core/workspace/customViews';
 import { createSceneGraphPort, createSelectionPort, createCommandPort } from '@core/workspace/ports';
 import { beginViewportGesture, endViewportGesture } from '@core/workspace/viewportGesture';
 import { paneViewTransform } from './useSceneRefGeometry';
@@ -65,6 +66,13 @@ export interface PaneWorkspaceOptions {
   compHeight: number;
   /** Called when the user interacts, so the host can mark this pane active. */
   onActivate?: () => void;
+  /**
+   * The custom orbit this pane's frame on screen was drawn with
+   * (EnginePaneSurface `PaneDrawnView`); null/absent = the stored one. The
+   * port's nodes — the pane's selection outline and hit-testing — project
+   * through it, as the pane's picture does.
+   */
+  drawnCustomView?: CustomViewParams | null;
 }
 
 export interface PaneWorkspaceApi {
@@ -105,14 +113,17 @@ export function usePaneWorkspace({
   compWidth,
   compHeight,
   onActivate,
+  drawnCustomView,
 }: PaneWorkspaceOptions): PaneWorkspaceApi {
   // The port reads the mode through a ref, so changing the pane's view from its
   // selector re-projects on the next query instead of rebuilding the engine.
   const modeRef = useRef(mode);
   modeRef.current = mode;
+  const drawnRef = useRef(drawnCustomView ?? null);
+  drawnRef.current = drawnCustomView ?? null;
 
   // The port is stateless and disposable-free, so it can be memoised.
-  const scene = useMemo(() => createSceneGraphPort(() => modeRef.current), []);
+  const scene = useMemo(() => createSceneGraphPort(() => modeRef.current, () => drawnRef.current), []);
 
   /**
    * The engine is created INSIDE an effect, not in a `useMemo`.

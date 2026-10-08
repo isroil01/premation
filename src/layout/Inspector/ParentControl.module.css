@@ -8,12 +8,14 @@
   border-bottom: 1px solid var(--color-border-subtle);
 }
 
+/* A control's name ("Parent", "Essential Properties"): the panel `label`
+   role (typography.css). It was uppercase and letter-spaced — a heading
+   voice the panel grammar keeps for nothing. */
 .label {
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
-  letter-spacing: var(--letter-spacing-uppercase);
-  text-transform: uppercase;
-  color: var(--color-text-tertiary);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
+  color: var(--color-text-secondary);
 }
 
 .trigger {
@@ -26,7 +28,10 @@
   background: var(--color-surface-1);
   border: 1px solid var(--color-border);
   color: var(--color-text-primary);
-  font-size: var(--font-size-xs);
+  /* What the trigger shows is the property's value: the `value` role's size and weight. */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-value);
   cursor: pointer;
 }
 
@@ -60,7 +65,9 @@
   background: var(--color-surface-1);
   border: 1px solid var(--color-field-border);
   color: var(--color-text-primary);
-  font-size: var(--font-size-xs);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-value);
   padding: var(--space-1) var(--space-2);
   border-radius: 4px;
   cursor: pointer;

@@ -36,9 +36,9 @@ import { readTrack } from '@core/mirror/selection';
 import { useEffectHandleStore } from '@stores/effectHandleStore';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { useActiveCompSize, useMirrorRevisionFrame } from '@hooks/useMirrorFrame';
-import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { effectPropPath } from '@core/inspector/effectCatalog';
 import { layerScreenMapping } from './layerScreen';
+import { useDisplayedCamera2D } from './useOverlayView';
 import type { TrackPointHost } from './TrackPointOverlay';
 import {
   collectEffectHandles,
@@ -92,7 +92,7 @@ export function EffectHandleOverlay({ host }: { host?: TrackPointHost } = {}): J
   useEffect(() => {
     if (hosted) return undefined;
     // Re-render once the engine has the subscription: the box exists from then.
-    void requestOverlayLayers(MAIN_VIEWPORT, 'effectHandles', nodeId ? [nodeId] : [], HANDLE_KINDS, nodeId ? ['active'] : []).then(() => setGeoTick((t) => t + 1));
+    void requestOverlayLayers(MAIN_VIEWPORT, 'effectHandles', nodeId ? [nodeId] : [], HANDLE_KINDS).then(() => setGeoTick((t) => t + 1));
     return () => { void requestOverlayLayers(MAIN_VIEWPORT, 'effectHandles', [], HANDLE_KINDS); };
   }, [nodeId, hosted]);
   const node = nodeId ? documentMirror().layer(nodeId) ?? null : null;
@@ -128,7 +128,8 @@ export function EffectHandleOverlay({ host }: { host?: TrackPointHost } = {}): J
     // eslint-disable-next-line react-hooks/exhaustive-deps -- scene rev drives this
   }, [effect, geom?.width, geom?.height, nodeId, time, sceneTick]);
 
-  const camera = getWorkspaceController().ws.camera;
+  // The comp ↔ stage mapping of the frame on screen: re-renders on a pan / zoom.
+  const camera = useDisplayedCamera2D();
 
   /**
    * effect-param space ↔ screen px, over the SHARED layer↔screen mapping.
@@ -140,8 +141,8 @@ export function EffectHandleOverlay({ host }: { host?: TrackPointHost } = {}): J
    */
   const pushedMapping = useMemo(
     () => (nodeId && !hosted ? layerScreenMapping(nodeId, time, comp, camera) : null),
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- camera is a live singleton; the geometry tick re-reads the push
-    [nodeId, hosted, time, comp.width, comp.height, sceneTick, geoTick],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- comp by size; the geometry tick re-reads the push
+    [nodeId, hosted, time, comp.width, comp.height, camera, sceneTick, geoTick],
   );
   const mapping = host ? host.mapping : pushedMapping;
 

@@ -54,7 +54,6 @@ import { useActiveWorkspace } from '@stores/projectStore';
 import { useActiveCompSize, useMirrorRevisionFrame } from '@hooks/useMirrorFrame';
 import { useMirrorValueAt } from '@hooks/useMirror';
 import { usePreferenceStore } from '@stores/preferenceStore';
-import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { secondsToFlicks, type Command, type OverlayKind } from '@motion/engine-api';
 import { documentMirror } from '@stores/documentMirror';
 import { MAIN_VIEWPORT, overlayLayer, requestOverlayLayers } from '@stores/overlayGeometry';
@@ -83,6 +82,7 @@ import { useGradientEditStore, type GradientEditTarget } from './gradientEditSto
 import { strokePatchCommands } from '@layout/Inspector/appearance/paintEdits';
 import { gradientGeometryCommands, gradientPaintCommands, gradientStopsCommands } from './viewportEdits';
 import { layerScreenMapping } from './layerScreen';
+import { useDisplayedCamera2D } from './useOverlayView';
 import { beginViewportGesture, endViewportGesture } from '@core/workspace/viewportGesture';
 import {
   addStopAt,
@@ -260,7 +260,7 @@ export function GradientHandleOverlay(): JSX.Element | null {
   const node = nodeId ? m.layer(nodeId) ?? null : null;
   const [geoTick, setGeoTick] = useState(0);
   useEffect(() => {
-    void requestOverlayLayers(MAIN_VIEWPORT, 'gradientHandles', nodeId ? [nodeId] : [], GRADIENT_KINDS, nodeId ? ['active'] : []).then(() => setGeoTick((t) => t + 1));
+    void requestOverlayLayers(MAIN_VIEWPORT, 'gradientHandles', nodeId ? [nodeId] : [], GRADIENT_KINDS).then(() => setGeoTick((t) => t + 1));
     return () => { void requestOverlayLayers(MAIN_VIEWPORT, 'gradientHandles', [], GRADIENT_KINDS); };
   }, [nodeId]);
   const box = nodeId ? overlayLayer(MAIN_VIEWPORT, nodeId, secondsToFlicks(time))?.box : undefined;
@@ -326,11 +326,12 @@ export function GradientHandleOverlay(): JSX.Element | null {
     return gradientValueStops(keyedStops) ?? paint.stops;
   }, [paint, nodeId, stopsAnimated, keyedStops]);
 
-  const camera = getWorkspaceController().ws.camera;
+  // The comp ↔ stage mapping of the frame on screen: re-renders on a pan / zoom.
+  const camera = useDisplayedCamera2D();
   const mapping = useMemo(
     () => (nodeId ? layerScreenMapping(nodeId, time, comp, camera) : null),
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- camera is a live singleton; the geometry tick re-reads the push
-    [nodeId, time, comp.width, comp.height, sceneTick, geoTick],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- comp by size; the geometry tick re-reads the push
+    [nodeId, time, comp.width, comp.height, camera, sceneTick, geoTick],
   );
 
   const width = geom?.width ?? 0;

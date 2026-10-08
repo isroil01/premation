@@ -83,7 +83,9 @@ describe('the store at module load', () => {
       expect(s.activePanelByRegion).toEqual({});
       expect(s.regions.leftSidebar.size).toBe(312);
       expect(s.regions.rightInspector.collapsed).toBe(true);
-      expect(s.leftSidebarSplit).toBe(true);
+      // Its split cannot carry over: the lists it partitioned were dropped, so
+      // the panels form the default groups as they register.
+      expect(s.dockGroups).toEqual({ leftSidebar: [], rightInspector: [] });
       // Reported once, so App re-applies the active builtin workspace once.
       expect(mod.consumeLayoutMigration()).toBe(true);
       expect(mod.consumeLayoutMigration()).toBe(false);

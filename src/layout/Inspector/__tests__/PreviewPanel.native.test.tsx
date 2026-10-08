@@ -1,7 +1,15 @@
+/**
+ * The Preview panel, laid out as After Effects' (2026-10): the transport row
+ * first, then one labelled row per setting this app has — Include, Range,
+ * Step, Resolution, Draft — under group rows. No timecode HUD, no keyboard
+ * cheat-sheet, no second master meter (the Audio panel has it).
+ */
+
 import { act, cleanup, render, screen, fireEvent } from '@testing-library/react';
 import { PreviewPanel } from '../PreviewPanel';
 import { TooltipProvider } from '@components/Tooltip';
 import { useProjectStore } from '@stores/projectStore';
+import { getTime } from '@stores/playbackClockStore';
 import { secondsToFlicks } from '@motion/engine-api';
 import { setupAppEngine } from '@core/engine/__testHelpers__/appEngine';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
@@ -48,82 +56,93 @@ describe('PreviewPanel', () => {
     await h.dispose();
   });
 
-  it('renders timecode HUD, status pill, and composition specs', async () => {
-    renderPanel();
-    expect(screen.getByText(/1920×1080 · 30 fps/)).toBeInTheDocument();
-    expect(screen.getByText('Paused')).toBeInTheDocument();
-    expect(screen.getByText(/300/)).toBeInTheDocument();
+  it('is the transport row, then labelled setting rows under group rows — no HUD, cheat-sheet or meter', async () => {
+    const { container } = renderPanel();
+    const transport = screen.getByRole('toolbar', { name: 'Preview transport controls' });
+    // The transport comes first.
+    expect(container.querySelector('[role="toolbar"]')).toBe(transport);
+    for (const name of ['First frame (Home)', 'Previous frame', 'Play', 'Next frame', 'Last frame (End)', /^(Enable|Disable) loop$/]) {
+      expect(screen.getByRole('button', { name })).toBeInTheDocument();
+    }
+    for (const label of ['Range', 'Step', 'Resolution']) expect(screen.getByLabelText(label)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Include audio' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Draft quality' })).toBeInTheDocument();
+    for (const name of ['Playback', 'Quality']) {
+      expect(screen.getByRole('button', { name })).toHaveAttribute('aria-expanded', 'true');
+    }
+
+    expect(screen.queryByText('Pro Keyboard Shortcuts')).not.toBeInTheDocument();
+    expect(screen.queryByText('Paused')).not.toBeInTheDocument();
+    expect(screen.queryByText('Audio Monitoring')).not.toBeInTheDocument();
+    expect(screen.queryByText(/1920×1080/)).not.toBeInTheDocument();
   });
 
-  it('toggles playback via hero play button', async () => {
+  it('toggles playback via the play button', async () => {
     renderPanel();
-    const playBtn = screen.getByRole('button', { name: 'Play' });
-    expect(playBtn).toBeInTheDocument();
-
-    fireEvent.click(playBtn);
+    fireEvent.click(screen.getByRole('button', { name: 'Play' }));
     expect(screen.getByRole('button', { name: 'Pause' })).toBeInTheDocument();
-    expect(screen.getByText('Playing')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Pause' }));
     expect(screen.getByRole('button', { name: 'Play' })).toBeInTheDocument();
-    expect(screen.getByText('Paused')).toBeInTheDocument();
   });
 
-  it('updates range selection via segmented control', async () => {
+  it('sets the range from its dropdown', async () => {
     renderPanel();
-    const entireCompBtn = screen.getByRole('radio', { name: 'Entire Comp' });
-    const fromTimeBtn = screen.getByRole('radio', { name: 'From Time' });
-    const workAreaBtn = screen.getByRole('radio', { name: 'Work Area' });
+    const range = screen.getByLabelText('Range') as HTMLSelectElement;
+    expect([...range.options].map((o) => o.text)).toEqual(['Work Area', 'Entire Composition', 'From Current Time']);
 
-    expect(workAreaBtn).toBeInTheDocument();
-    fireEvent.click(entireCompBtn);
-    expect(entireCompBtn).toHaveAttribute('aria-checked', 'true');
-
-    fireEvent.click(fromTimeBtn);
-    expect(fromTimeBtn).toHaveAttribute('aria-checked', 'true');
-
-    fireEvent.click(workAreaBtn);
-    expect(workAreaBtn).toHaveAttribute('aria-checked', 'true');
+    fireEvent.change(range, { target: { value: 'entire-comp' } });
+    expect(range.value).toBe('entire-comp');
+    fireEvent.change(range, { target: { value: 'current-forward' } });
+    expect(range.value).toBe('current-forward');
+    fireEvent.change(range, { target: { value: 'work-area' } });
+    expect(range.value).toBe('work-area');
   });
 
-  it('updates step jump multiplier', async () => {
+  it('the Step row sets how far the step buttons move', async () => {
     renderPanel();
-    const step2Btn = screen.getByRole('radio', { name: '2 Frames' });
-    fireEvent.click(step2Btn);
-    expect(step2Btn).toHaveAttribute('aria-checked', 'true');
+    const step = screen.getByLabelText('Step') as HTMLSelectElement;
+    fireEvent.change(step, { target: { value: '1' } });
+    expect(step.value).toBe('1');
 
-    const step6Btn = screen.getByRole('radio', { name: '6 Frames' });
-    fireEvent.click(step6Btn);
-    expect(step6Btn).toHaveAttribute('aria-checked', 'true');
+    const before = getTime();
+    fireEvent.click(screen.getByRole('button', { name: 'Next frame' }));
+    // Two frames at 30 fps.
+    expect(getTime() - before).toBeCloseTo(2 / 30, 5);
+
+    fireEvent.change(step, { target: { value: '5' } });
+    expect(step.value).toBe('5');
   });
 
-  it('updates resolution and draft quality toggles', async () => {
+  it('sets the resolution and the draft quality', async () => {
     renderPanel();
-    const halfBtn = screen.getByRole('radio', { name: 'Half' });
-    fireEvent.click(halfBtn);
+    const resolution = screen.getByLabelText('Resolution') as HTMLSelectElement;
+    fireEvent.change(resolution, { target: { value: '2' } });
     expect(useRenderQualityStore.getState().resolution).toBe(2);
     expect(useRenderQualityStore.getState().adaptive).toBe(false);
 
-    const autoBtn = screen.getByRole('radio', { name: 'Auto' });
-    fireEvent.click(autoBtn);
+    fireEvent.change(resolution, { target: { value: 'auto' } });
     expect(useRenderQualityStore.getState().adaptive).toBe(true);
 
-    const draftBtn = screen.getByRole('button', { name: /Toggle Draft Quality/i });
-    fireEvent.click(draftBtn);
+    const draft = screen.getByRole('button', { name: 'Draft quality' });
+    fireEvent.click(draft);
     expect(useRenderQualityStore.getState().draft).toBe(true);
+    expect(draft).toHaveAttribute('aria-pressed', 'true');
 
-    fireEvent.click(draftBtn);
+    fireEvent.click(draft);
     expect(useRenderQualityStore.getState().draft).toBe(false);
   });
 
-  it('toggles audio mute', async () => {
+  it('Include ▸ audio mutes and unmutes the preview', async () => {
     renderPanel();
-    const muteBtn = screen.getByRole('button', { name: /Mute preview audio/i });
-    fireEvent.click(muteBtn);
-    expect(audioEngine.isMasterMuted()).toBe(true);
+    const audio = screen.getByRole('button', { name: 'Include audio' });
+    expect(audio).toHaveAttribute('aria-pressed', 'true');
 
-    const unmuteBtn = screen.getByRole('button', { name: /Unmute preview audio/i });
-    fireEvent.click(unmuteBtn);
+    fireEvent.click(audio);
+    expect(audioEngine.isMasterMuted()).toBe(true);
+    expect(audio).toHaveAttribute('aria-pressed', 'false');
+
+    fireEvent.click(audio);
     expect(audioEngine.isMasterMuted()).toBe(false);
   });
 });

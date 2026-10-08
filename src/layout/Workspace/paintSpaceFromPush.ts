@@ -17,11 +17,11 @@ import type { Matrix4 } from '@motion/scene';
 import { local2D, local3D, localBrushSizeVia } from '@core/paint/paintLocal';
 import type { PaintSpace } from '@core/paint/paintSpace';
 import { orthoViewOf } from '@core/scene/cameraViewMode';
-import { viewCameraOf } from '@core/mirror/viewGeometry';
+import { mainViewCamera } from '@core/workspace/displayedView';
 import { readTrack } from '@core/mirror/selection';
 import { documentMirror } from '@stores/documentMirror';
 import { useGuidesStore } from '@stores/guidesStore';
-import { MAIN_VIEWPORT, overlayLayer, overlayView } from '@stores/overlayGeometry';
+import { MAIN_VIEWPORT, overlayLayer } from '@stores/overlayGeometry';
 
 export function paintSpaceFromPush(nodeId: string, time: number, comp: { width: number; height: number }): PaintSpace | null {
   const m = documentMirror();
@@ -41,9 +41,9 @@ export function paintSpaceFromPush(nodeId: string, time: number, comp: { width: 
   });
 
   if (layer.switches.threeD) {
-    const g = useGuidesStore.getState();
-    const mode = g.camera3dMode;
-    const camera = viewCameraOf(mode, overlayView(MAIN_VIEWPORT, mode, at), g.customViews, comp.width, comp.height);
+    const mode = useGuidesStore.getState().camera3dMode;
+    // The view on screen — the pointer is over the picture of it.
+    const camera = mainViewCamera(comp.width, comp.height, at, mode);
     const ortho = orthoViewOf(mode);
     const world = [...mat] as unknown as Matrix4;
     return withSize(

@@ -81,8 +81,8 @@ export interface PanelDef {
 /*
  * AFTER EFFECTS' DEFAULT RIGHT COLUMN (2026-10-07, owner decision: "how After
  * Effects does it"): Properties, Info, Audio, Preview, Effects & Presets,
- * Align, Character. Plugins, Assistant and Animation Presets are on demand
- * (Window ▸ Panels, the stack's "+"), as AE keeps its own extras.
+ * Align, Character, Paragraph. Plugins, Assistant and Animation Presets are on
+ * demand (Window ▸ Panels, the stack's "+"), as AE keeps its own extras.
  */
 export const PANEL_DEFS: readonly PanelDef[] = [
   // ── Left sidebar ─────────────────────────────────────────────────
@@ -158,8 +158,19 @@ export const PANEL_DEFS: readonly PanelDef[] = [
    */
   { id: 'plugins',     title: 'Plugins',   icon: 'plugin',      region: 'rightInspector', weight: 4.6,  closable: true, onDemand: true },
   { id: 'align',       title: 'Align',     icon: 'align-center', region: 'rightInspector', weight: 4.55, closable: true },
-  // AE's Character panel (with Paragraph below it), permanent as in AE's Default.
+  // AE's Character panel, permanent as in AE's Default.
   { id: 'character',   title: 'Character', icon: 'type',        region: 'rightInspector', weight: 4.5,  closable: true },
+  /**
+   * AE's Paragraph panel, right under Character as in AE's Default column
+   * (2026-10): alignment, indents, space before / after, direction. Its rows
+   * are the Character panel's own (`TextSettingsBody` variant `paragraph`), so
+   * the two panels can never edit the same property two different ways.
+   *
+   * `text-left` — lines of set text — because it is the one unclaimed glyph
+   * that names a PARAGRAPH: `type` is Character's, and the `align-*` glyphs
+   * name the Align panel's layer edges.
+   */
+  { id: 'paragraph',   title: 'Paragraph', icon: 'text-left',   region: 'rightInspector', weight: 4.48, closable: true },
   // The assistant: on demand (Window ▸ Panels ▸ Assistant), as AE has none.
   // Both editions — see PANEL_AVAILABILITY / `aiEnabled()`: local runs BYOK,
   // server runs through the hosted gateway.

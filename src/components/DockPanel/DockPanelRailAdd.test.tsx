@@ -33,8 +33,7 @@ beforeEach(() => {
       bottomTimeline: [],
     },
     activePanelByRegion: {},
-    leftSidebarSplit: false,
-    rightInspectorSplit: false,
+    dockGroups: { leftSidebar: [], rightInspector: [] },
   });
 });
 
@@ -74,6 +73,7 @@ describe('the rail', () => {
       'Effects & Presets',
       'Align',
       'Character',
+      'Paragraph',
     ]);
 
     fireEvent.click(screen.getByRole('button', { name: 'Open an inspector panel' }));
@@ -82,7 +82,7 @@ describe('the rail', () => {
 
     act(() => { fireEvent.click(screen.getByText('Scopes')); });
     const s = useLayoutStore.getState();
-    expect(s.panelOrder.rightInspector).toEqual(['properties', 'info', 'audio', 'preview', 'effects', 'align', 'character', 'scopes']);
+    expect(s.panelOrder.rightInspector).toEqual(['properties', 'info', 'audio', 'preview', 'effects', 'align', 'character', 'paragraph', 'scopes']);
     expect(s.activePanelByRegion.rightInspector).toBe('scopes');
   });
 });

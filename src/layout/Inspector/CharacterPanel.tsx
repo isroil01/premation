@@ -1,6 +1,7 @@
-import { useState, useMemo, useEffect, useRef } from 'react';
+import { useState, useMemo, useEffect, useRef, useSyncExternalStore } from 'react';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useActiveWorkspace } from '@stores/projectStore';
+import { usePreferenceStore } from '@stores/preferenceStore';
 import { documentMirror } from '@stores/documentMirror';
 import { useMirrorKeys, useMirrorLayer, useMirrorTreeGroups } from '@hooks/useMirror';
 import { uiKindOf } from '@core/mirror/layerKinds';
@@ -17,6 +18,7 @@ import { graphemeCount } from '@core/text/graphemes';
 import { AUTO_LEADING, STROKE_ORDERS, strokeOrderOf, type StrokeOrder, type StrokeLineJoin } from '@core/text/textExtras';
 import { FontPicker } from './FontPicker';
 import { SectionPresetMenu } from './SectionPresetMenu';
+import { SectionMenuRegistry, SectionMenuSlot } from './sectionMenu';
 import { installTextCommands, swapTextFillStroke } from './textCommands';
 import { convertToParagraphText, convertToPointText, setBoxAutoSize } from './paragraphTextCommands';
 import { MIN_BOX_SIZE, TATE_CHU_YOKO_DEFAULT_DIGITS, firstParagraphDirection, type BoxAutoSize, type BoxVerticalAlign } from '@core/text/textExtras';
@@ -29,6 +31,8 @@ import { IconButton } from '@components/IconButton';
 import { Icon } from '@components/Icon';
 import { ValueField } from '@components/ValueField';
 import { TooltipProvider } from '@components/Tooltip';
+import { Accordion, type AccordionItem } from '@components/Accordion';
+import { useDockPanelHeader } from '@components/DockPanel';
 import { TextFillRows, TextStrokeRows } from './TextFillRows';
 import { VariableAxesSection, TextPathOptions, OpenTypeControls } from './TextOptionControls';
 import { TwirlGroup } from './appearance/TwirlGroup';
@@ -81,12 +85,13 @@ const LINE_JOINS: ReadonlyArray<{ value: StrokeLineJoin; label: string }> = [
 ];
 
 /**
- * The standalone Text panel: the selection's text layer, or the defaults a new
- * text layer would take when nothing is selected.
+ * AE's Character panel: the selection's text layer, or the defaults a new text
+ * layer would take when nothing is selected. Its paragraph rows are the
+ * Paragraph panel's (ParagraphPanel.tsx) — the same body, the other variant.
  */
 export function CharacterPanel(): JSX.Element {
   const selected = useSelectionStore((s) => s.ids);
-  return <TextSettingsBody nodeId={selected[0]} nodeIds={selected} variant="panel" />;
+  return <TextSettingsBody nodeId={selected[0]} nodeIds={selected} variant="character" />;
 }
 
 export interface TextSettingsBodyProps {
@@ -95,27 +100,35 @@ export interface TextSettingsBodyProps {
   /** Every layer a text style preset applies to, primary first. */
   nodeIds?: ReadonlyArray<string>;
   /**
-   * `panel` — the dock tab's card layout, every control in view.
-   * `section` — the Properties panel's Text section: the everyday controls
-   * (font, size, leading, tracking, fill, alignment) up top and the rest behind
-   * a collapsed "More text options", sized for a ~280px column.
+   * `character` — the Character panel: AE's character rows, then the Source
+   * Text, Text Box, Path Options and Presets groups.
+   * `paragraph` — the Paragraph panel: alignment, indents, spacing, direction.
+   * `section` — the Properties panel's Text section: AE's Character and
+   * Paragraph as two twirl-downs and the rarer controls behind a collapsed
+   * "More text options", sized for a ~280px column.
+   * `panel` — what `character` was called while one panel held both (until
+   * 2026-10); kept so an older caller still gets the Character panel.
    */
-  variant?: 'panel' | 'section';
+  variant?: 'character' | 'paragraph' | 'section' | 'panel';
 }
 
 /**
  * Character + Paragraph settings — ONE implementation of every text control,
- * arranged two ways. The Properties section and the Text panel were once two
- * copies (the old TextSection was deleted for drifting from this panel), so the
- * handlers, fallbacks and range styling below are shared and only the layout
- * at the bottom differs.
+ * arranged three ways (the Character panel, the Paragraph panel, the Properties
+ * Text section). The Properties section and the Text panel were once two copies
+ * (the old TextSection was deleted for drifting from this panel), so the
+ * handlers, fallbacks and range styling below are shared and only the layout at
+ * the bottom differs.
  */
 /** The tree groups the Text settings read. */
 const TEXT_TREE_GROUPS = ['text', 'masks'] as const;
 
-export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSettingsBodyProps): JSX.Element {
+export function TextSettingsBody({ nodeId, nodeIds, variant = 'character' }: TextSettingsBodyProps): JSX.Element {
   const primary = nodeId;
   const selected = useMemo(() => nodeIds ?? (nodeId ? [nodeId] : []), [nodeIds, nodeId]);
+  /** The dock panels — not the Properties section, which lives in ANOTHER panel's dock slot. */
+  const isCharacterPanel = variant === 'character' || variant === 'panel';
+  const isParagraphPanel = variant === 'paragraph';
   // Swap Fill and Stroke (Shift+X) is a registered command.
   useEffect(() => installTextCommands(), []);
 
@@ -131,7 +144,8 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
   const isText = uiKindOf(layer) === 'text';
   const tComp = isText ? TEXT_COMPONENT : undefined;
   // The Text Box card's measured facts (content height, overflow, text on a path) — the engine's.
-  const textLayout = useTextLayout(isText ? primary : null);
+  // The Paragraph panel draws no Text Box, so it asks for none.
+  const textLayout = useTextLayout(isText && !isParagraphPanel ? primary : null);
 
   // Bound layer hooks — Character properties
   const [content, setContent] = useComponentProp(primary, tComp, 'content');
@@ -231,6 +245,42 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
   const contentStrRaw = String(content ?? '');
   // Grapheme clusters — the index space runs and the edit selection use.
   const textLen = graphemeCount(contentStrRaw);
+
+  // ── The Character panel's dock header ──
+  // The subject goes in the tab ("Character: Title"), and the saved text
+  // styles — the panel's old "Presets ▾" header button — in its ≡ menu. Only
+  // the dock panels hand these over: the Properties section sits in the
+  // PROPERTIES panel's dock slot, whose menu and title are not its to set.
+  const dockHeader = useDockPanelHeader();
+  const setCustomMenuItems = dockHeader?.setCustomMenuItems;
+  const setTitleDetail = dockHeader?.setTitleDetail;
+  // The text style presets are the Properties Text section's own menu
+  // component (SectionPresetMenu): mounted in a slot below it draws nothing and
+  // registers its rows here, so both menus offer the same "Text Style Presets ▸"
+  // from one implementation. The registry hands out the SAME array until a row
+  // a reader can see changes — handing the dock a fresh array per render is the
+  // v0.8.1 update loop (PropertiesPanel.dockMenu.native.test.tsx).
+  const [presetMenu] = useState(() => new SectionMenuRegistry());
+  const presetRows = useSyncExternalStore(presetMenu.subscribe, presetMenu.rows);
+  useEffect(() => {
+    if (!isCharacterPanel || !setCustomMenuItems) return;
+    setCustomMenuItems(presetRows);
+    return () => setCustomMenuItems([]);
+  }, [isCharacterPanel, setCustomMenuItems, presetRows]);
+  const subject = isCharacterPanel && hasTarget ? layer?.name || null : null;
+  useEffect(() => {
+    if (!isCharacterPanel || !setTitleDetail) return;
+    setTitleDetail(subject);
+    return () => setTitleDetail(null);
+  }, [isCharacterPanel, setTitleDetail, subject]);
+
+  // The panels' group rows (Source Text, Text Box …) remember their open state
+  // the way the Properties sections do; ids are prefixed, so they never collide.
+  const groupsOpen = usePreferenceStore((s) => s.inspectorSections);
+  const setPref = usePreferenceStore((s) => s.set);
+  const toggleGroup = (id: string, open: boolean): void => {
+    setPref('inspectorSections', { ...usePreferenceStore.getState().inspectorSections, [id]: open });
+  };
 
   /**
    * Style the characters `lo..hi` — the ONE place this panel writes style runs,
@@ -622,32 +672,16 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
     ranged ? setCharProp('verticalAlign', next, () => {}) : layerWide();
 
   // ── The blocks. Built once, arranged by `variant` at the bottom. ──
-  const panelHead = (
-      <div className={styles.panelHead}>
-        <div className={styles.panelHeadLeft}>
-          <span className={styles.panelHeadTitle}>Text</span>
-          <span className={`${styles.targetBadge}${hasTarget ? ` ${styles.targetBadgeActive}` : ''}`}>
-            {hasTarget ? layer?.name || 'Selected Text' : 'Default Preset'}
-          </span>
-        </div>
-        {hasTarget && (
-          <SectionPresetMenu
-            sectionId="text"
-            label="Text style presets"
-            // B4: the props the layer STORES (PropertyInfo.stored), from the mirror at call time.
-            capture={() => (primary ? mirrorTextPresetCapture(documentMirror(), primary) : {})}
-            apply={(values) => textPresetEdit(selected.length > 0 ? selected : [], values)}
-          />
-        )}
-      </div>
-  );
 
+  // Per-character styling in progress: one status line and its one verb.
   const rangeNotice = ranged && (
-        <div className={styles.rangeNotice}>
-          <span>{`Styling ${selection.end - selection.start} character${selection.end - selection.start === 1 ? '' : 's'}`}</span>
+        <div className={styles.rangeNotice} role="status">
+          <span className={styles.rangeNoticeText}>
+            {`Styling ${selection.end - selection.start} character${selection.end - selection.start === 1 ? '' : 's'}`}
+          </span>
           <Button
             size="xs"
-            variant="ghost"
+            variant="secondary"
             onClick={clearRunStyling}
             title="Reset per-character styling for selected range"
           >
@@ -656,29 +690,38 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
         </div>
   );
 
-  // Text content & Source Text keyframing.
-  const contentCard = hasTarget && (
-        <div className={styles.sectionCard}>
-          <div className={styles.contentHead}>
-            <span className={styles.sectionHeader}>Content</span>
+  // Source Text: the content box and its keyframe switch (a bordered verb
+  // while off, the accent while the text is animated).
+  const sourceKeyButton = hasTarget && (
             <Button
               size="xs"
-              variant={sourceAnimated ? 'primary' : 'ghost'}
+              variant={sourceAnimated ? 'primary' : 'secondary'}
               icon={<Icon name="keyframe" size="sm" />}
               title={sourceAnimated ? 'Remove Source Text keyframes' : 'Keyframe Source Text across timeline'}
               onClick={toggleSourceStopwatch}
             >
               {sourceAnimated ? 'Animated' : 'Keyframe'}
             </Button>
-          </div>
+  );
+  const contentBox = hasTarget && (
           <textarea
             className={styles.contentTextarea}
+            aria-label="Source Text"
             value={contentStr}
             onChange={(e) => onContentEdit(e.target.value)}
             onBlur={() => { void sourceTyping.end(); }}
             placeholder="Type text content here..."
             rows={2}
           />
+  );
+  // The Properties section's card (the panel draws a Source Text group instead).
+  const contentCard = hasTarget && (
+        <div className={styles.sectionCard}>
+          <div className={styles.contentHead}>
+            <span className={styles.sectionHeader}>Content</span>
+            {sourceKeyButton}
+          </div>
+          {contentBox}
         </div>
   );
 
@@ -1352,9 +1395,9 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
   /**
    * Text Box — AE point vs paragraph text, box size, auto-size, vertical
    * alignment. A function rather than a block: it MEASURES the text, so it runs
-   * only where it is drawn, not behind a collapsed disclosure.
+   * only where it is drawn, not behind a collapsed disclosure or group.
    */
-  const renderTextBox = (): JSX.Element | null => {
+  const renderTextBoxRows = (): JSX.Element | null => {
         // B4: the STORED box from the mirror, the MEASURED one (content height, overflow) from the
         // engine's `getTextLayout` — asked when the layer changes (useTextLayout), not per render.
         if (!hasTarget || !primary || !isText) return null;
@@ -1372,8 +1415,7 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
           { value: 'bottom', label: 'Align Bottom in Box', icon: 'align-bottom' },
         ];
         return (
-          <div className={styles.sectionCard}>
-            <div className={styles.sectionHeader}>Text Box</div>
+          <>
             <div className={styles.controlRow}>
               <Segmented
                 size="sm"
@@ -1392,11 +1434,9 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
               />
             </div>
             {onPath ? (
-              <div className={styles.controlRow}>
-                <span className={styles.metricLabel} role="note">
-                  Text on a path is point text — the paragraph box is ignored until the path is removed.
-                </span>
-              </div>
+              <p className={styles.help} role="note">
+                Text on a path is point text — the paragraph box is ignored until the path is removed.
+              </p>
             ) : null}
             {paraBox && (
               <>
@@ -1458,20 +1498,29 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
                     </IconButton>
                   ))}
                   {measuredBox?.overflow ? (
-                    <span className={styles.metricLabel} title="Some text does not fit the box" role="status">Overflow</span>
+                    <span className={styles.statusText} title="Some text does not fit the box" role="status">Overflow</span>
                   ) : null}
                 </div>
               </>
             )}
-          </div>
+          </>
         );
   };
+  /** The Properties section's Text Box card (the panel draws a Text Box group instead). */
+  const renderTextBox = (): JSX.Element | null => {
+    const rows = renderTextBoxRows();
+    return rows && (
+      <div className={styles.sectionCard}>
+        <div className={styles.sectionHeader}>Text Box</div>
+        {rows}
+      </div>
+    );
+  };
 
-  // Path options (mask text path riding).
-  const pathCard = hasTarget && maskPaths.length > 0 && (
-        <div className={styles.sectionCard}>
-          <div className={styles.controlRow}>
-            <span className={styles.sectionHeader}>Mask Path</span>
+  // Path options (mask text path riding): AE's Path Options ▸ Path, then the
+  // options of the path it rides.
+  const hasPathOptions = hasTarget && maskPaths.length > 0;
+  const pathSelect = (
             <select
               value={activePathId}
               aria-label="Mask Path"
@@ -1487,16 +1536,21 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
                 <option key={p.id} value={p.id}>{`Mask ${i + 1}`}</option>
               ))}
             </select>
+  );
+  /* Path Options — keyframeable, also listed under Text in the timeline */
+  const pathOptions = activePathId !== '' && primary ? <TextPathOptions nodeId={primary} /> : null;
+  const pathCard = hasPathOptions && (
+        <div className={styles.sectionCard}>
+          <div className={styles.controlRow}>
+            <span className={styles.sectionHeader}>Mask Path</span>
+            {pathSelect}
           </div>
-          {/* Path Options — keyframeable, also listed under Text in the timeline */}
-          {activePathId !== '' && primary && <TextPathOptions nodeId={primary} />}
+          {pathOptions}
         </div>
   );
 
   // Quick typography presets.
-  const presetsCard = (
-      <div className={styles.sectionCard}>
-        <div className={styles.sectionHeader}>Presets</div>
+  const presetGrid = (
         <div className={styles.presetGrid}>
           {PRESETS.map((p) => (
             <button
@@ -1510,6 +1564,11 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
             </button>
           ))}
         </div>
+  );
+  const presetsCard = (
+      <div className={styles.sectionCard}>
+        <div className={styles.sectionHeader}>Presets</div>
+        {presetGrid}
       </div>
   );
 
@@ -1574,49 +1633,118 @@ export function TextSettingsBody({ nodeId, nodeIds, variant = 'panel' }: TextSet
     );
   }
 
+  // ── The two dock panels. No heading inside either: the tab is the title. ──
+
+  // AE's Paragraph panel: the seven alignment buttons, indents and spacing,
+  // then direction and orientation — the Properties section's Paragraph group.
+  if (isParagraphPanel) {
+    return (
+      <TooltipProvider>
+        {/* Focus moving into the panel keeps on-canvas text editing alive —
+            see TextEditOverlay. */}
+        <div className={styles.panelRoot} {...{ [TEXT_EDIT_KEEP_ATTR]: '' }}>
+          <div className={styles.panelRows}>
+            {alignGroup}
+            {spacingGrid}
+            {directionRows}
+          </div>
+        </div>
+      </TooltipProvider>
+    );
+  }
+
+  /*
+    AE's Character panel, in AE's order (the Properties section's Character
+    group): font, the fill / stroke pair, size · leading · tracking · kerning ·
+    scales · baseline · tsume, the stroke settings, the faux styles, OpenType.
+    What AE's panel does not carry — the Source Text box, the paragraph box,
+    Path Options, the quick presets — follows as group rows that open and close
+    like the Properties sections (and remember it the same way).
+  */
+  const groupOpen = (id: string): boolean => groupsOpen[id] ?? true;
+  const characterGroups: AccordionItem[] = [];
+  if (hasTarget) {
+    characterGroups.push({
+      id: 'character.sourceText',
+      title: 'Source Text',
+      defaultOpen: true,
+      content: (
+        <>
+          {contentBox}
+          <div className={styles.groupActions}>{sourceKeyButton}</div>
+        </>
+      ),
+    });
+  }
+  if (hasTarget && isText) {
+    characterGroups.push({
+      id: 'character.textBox',
+      title: 'Text Box',
+      defaultOpen: true,
+      // It measures the text: only while it is open.
+      mountOnOpen: true,
+      content: groupOpen('character.textBox') ? renderTextBoxRows() : null,
+    });
+  }
+  if (hasPathOptions) {
+    characterGroups.push({
+      id: 'character.pathOptions',
+      title: 'Path Options',
+      defaultOpen: true,
+      content: (
+        <>
+          <div className={styles.controlRow}>
+            <span className={styles.rowLabel}>Path</span>
+            {pathSelect}
+          </div>
+          {pathOptions}
+        </>
+      ),
+    });
+  }
+  characterGroups.push({ id: 'character.presets', title: 'Presets', defaultOpen: true, content: presetGrid });
+
   return (
     <TooltipProvider>
       {/* Focus moving into the panel keeps on-canvas text editing (and its
           character selection) alive — see TextEditOverlay. */}
-      <div className={styles.root} {...{ [TEXT_EDIT_KEEP_ATTR]: '' }}>
-        {panelHead}
-        {rangeNotice}
-        {contentCard}
-        <div className={styles.sectionCard}>
-          <div className={styles.sectionHeader}>Typography</div>
+      <div className={styles.panelRoot} {...{ [TEXT_EDIT_KEEP_ATTR]: '' }}>
+        {/* The ≡ menu's Text Style Presets (draws nothing here — see `presetMenu`). */}
+        {hasTarget && (
+          <SectionMenuSlot registry={presetMenu} slotKey="text-presets" order={0}>
+            <SectionPresetMenu
+              sectionId="text"
+              label="Text style presets"
+              // B4: the props the layer STORES (PropertyInfo.stored), from the mirror at call time.
+              capture={() => (primary ? mirrorTextPresetCapture(documentMirror(), primary) : {})}
+              apply={(values) => textPresetEdit(selected, values)}
+            />
+          </SectionMenuSlot>
+        )}
+        <div className={styles.panelRows}>
+          {rangeNotice}
           {fontRow}
-          <div className={styles.metricGrid}>
-            {sizeCell}
-            {leadingCell}
-          </div>
-          {styleToolbar}
-          {openType}
-        </div>
-        <div className={styles.sectionCard}>
-          <div className={styles.sectionHeader}>Paragraph &amp; Alignment</div>
-          {alignGroup}
-          {directionRows}
-          {spacingGrid}
-        </div>
-        <div className={styles.sectionCard}>
-          <div className={styles.sectionHeader}>Appearance</div>
           {swatchDeck}
           {fillRows}
           {noneToggles}
-          {strokeGrid}
-          {strokeRows}
-        </div>
-        <div className={styles.sectionCard}>
-          <div className={styles.sectionHeader}>Metrics &amp; Scale</div>
           <div className={styles.metricGrid}>
+            {sizeCell}
+            {leadingCell}
             {trackingCell}
             {metricsRest}
           </div>
+          {strokeGrid}
+          {strokeRows}
+          {styleToolbar}
+          {openType}
+          {variableAxes}
         </div>
-        {variableAxes}
-        {renderTextBox()}
-        {pathCard}
-        {presetsCard}
+        <Accordion
+          className={styles.groups}
+          items={characterGroups}
+          openOverrides={groupsOpen}
+          onToggle={toggleGroup}
+        />
       </div>
     </TooltipProvider>
   );

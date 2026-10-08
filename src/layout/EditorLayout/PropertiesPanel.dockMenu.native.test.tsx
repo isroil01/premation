@@ -28,7 +28,10 @@ import { usePreferenceStore } from '@stores/preferenceStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import type { Command } from '@motion/engine-api';
 import { documentMirror } from '@stores/documentMirror';
-import { settleEdits, setupAppEngine, type Harness } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, historyLabels, settleEdits, setupAppEngine, type Harness } from '@core/engine/__testHelpers__/appEngine';
+import { docView } from '@core/engine/__testHelpers__/docView';
+import { values } from '@core/engine/propRefs';
+import { readNodeLight } from '@core/scene/light';
 import { PropertiesPanel } from './PropertiesPanel';
 
 let ID = '';
@@ -89,12 +92,15 @@ afterEach(async () => {
   await h.dispose();
 });
 
+/** The toolbar's search field — drawn only for a live layer, so it doubles as "the selection arrived". */
+const findSearch = (): Promise<HTMLElement> => screen.findByRole('searchbox', { name: 'Search properties' });
+
 describe('PropertiesPanel in a DockPanel with a layer selected', () => {
   it('mounts without an update loop', async () => {
     renderDock();
-    // Positive control: the selection really reached the panel — the search
-    // button only renders (portalled into the dock header) for a live layer.
-    expect(await screen.findByRole('button', { name: 'Search properties' })).toBeInTheDocument();
+    // Positive control: the selection really reached the panel — the toolbar's
+    // search field only renders for a live layer.
+    expect(await findSearch()).toBeInTheDocument();
     expect(loopWarnings).toEqual([]);
   });
 
@@ -113,14 +119,17 @@ describe('PropertiesPanel in a DockPanel with a layer selected', () => {
     // the rows the panel had just handed over — the loop above had been
     // re-handing them every pass, which is the only reason they ever showed.
     renderDock();
-    await screen.findByRole('button', { name: 'Search properties' });
+    await findSearch();
     openHeaderMenu();
     expect(await screen.findByText(LANES_ROW)).toBeInTheDocument();
     expect(screen.getByText('Open Effect Controls panel')).toBeInTheDocument();
   });
 
-  it('keeps the dock header to the search toggle — no switch glyphs beside the title', () => {
+  it('keeps the dock header to its title and ≡ — no search toggle, no switch glyphs beside the title', async () => {
     renderDock();
+    // The search is a field in the panel's own toolbar now, not a header glyph.
+    expect(await findSearch()).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Search properties' })).not.toBeInTheDocument();
     expect(screen.queryByRole('group', { name: 'Layer switches' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Solo' })).not.toBeInTheDocument();
   });
@@ -129,7 +138,7 @@ describe('PropertiesPanel in a DockPanel with a layer selected', () => {
     // The switch rows are derived from scene state, so toggling one MUST
     // change the menu — the case the memo has to get right without looping.
     renderDock();
-    await screen.findByRole('button', { name: 'Search properties' });
+    await findSearch();
     openHeaderMenu();
     for (const label of ['Visible', 'Solo', 'Lock']) expect(await screen.findByText(label)).toBeInTheDocument();
     act(() => {
@@ -151,6 +160,55 @@ describe('PropertiesPanel in a DockPanel with a layer selected', () => {
     expect(menus).toHaveLength(2);
     fireEvent.click(menus[1]!);
     expect(screen.queryByText(LANES_ROW)).not.toBeInTheDocument();
+    expect(loopWarnings).toEqual([]);
+  });
+});
+
+/**
+ * A section's actions are submenus of the ≡ menu (2026-10-08) — a section
+ * header only opens and closes. Each section's `menu` registers its rows with
+ * the panel (Inspector/sectionMenu.tsx), and the panel merges them into what
+ * it hands the dock: the same hand-off as the switch rows, so the same loop
+ * guard applies.
+ */
+describe('section actions in the ≡ menu', () => {
+  it('lists "Transform Presets ▸" — and no Presets button in any section header', async () => {
+    renderDock();
+    await findSearch();
+    expect(screen.queryByRole('button', { name: 'Transform presets' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Presets')).not.toBeInTheDocument();
+    openHeaderMenu();
+    fireEvent.click(await screen.findByText('Transform Presets'));
+    expect(await screen.findByText('Save Current as Preset…')).toBeInTheDocument();
+    expect(loopWarnings).toEqual([]);
+  });
+
+  it('follows the selection to a light: "Light Presets ▸" applies a look as ONE undo entry', async () => {
+    const light = (await h.run({
+      type: 'createLayer', comp: 'comp_root', kind: 'light', name: 'dock_menu_probe_light',
+      init: [{ path: 'light/lightType', value: values.choice('point') }],
+    } as Command) as { layer: string }).layer;
+    await settleEdits();
+    await documentMirror().loadTree(light);
+    await clearHistory();
+    renderDock();
+    await findSearch();
+    act(() => useSelectionStore.setState({ ids: [light] } as never));
+    // Positive control: the panel is showing the light (its chip names the type).
+    expect(await screen.findByText('Point light')).toBeInTheDocument();
+    openHeaderMenu();
+    fireEvent.click(await screen.findByText('Light Presets'));
+    // The text layer's rows left with it.
+    expect(screen.queryByText('Text Style Presets')).not.toBeInTheDocument();
+    act(() => {
+      fireEvent.click(screen.getByText('Key'));
+    });
+    await act(async () => { await settleEdits(); });
+    const lit = readNodeLight((await docView()).getNode(light)!);
+    expect([lit.type, lit.intensity, lit.falloff]).toEqual(['spot', 100, 'smooth']);
+    expect(await historyLabels()).toEqual(['Light Preset: Key']);
+    // The identity row's chip follows the light's type.
+    expect(await screen.findByText('Spot light')).toBeInTheDocument();
     expect(loopWarnings).toEqual([]);
   });
 });

@@ -53,16 +53,6 @@ import { useRigVertexSelection, clearRigVertex } from '@stores/rigVertexStore';
 import { useRigSelectionStore } from '@stores/rigSelectionStore';
 import styles from './BoneControls.module.css';
 
-/** Shared <select> chrome — matches PuppetControls so the two rig panels agree. */
-const selectStyle: React.CSSProperties = {
-  padding: '3px 8px',
-  fontSize: 'var(--font-size-xs)',
-  borderRadius: 4,
-  background: 'var(--color-surface, #1e1e1e)',
-  color: 'var(--color-text-primary, #fff)',
-  border: '1px solid var(--color-border, #333)',
-};
-
 export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null {
   // B4: re-render on this layer's header / property tree / keyframes (the live
   // pose below follows bone keys), and read the rigs from the document mirror.
@@ -362,7 +352,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
             });
             e.currentTarget.value = "";
           }}
-          style={selectStyle}
+          className={styles.select}
         >
           <option value="">Generate…</option>
           {(Object.keys(RIG_PRESETS) as RigPresetId[]).map((id) => (
@@ -434,7 +424,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                   mode: e.target.value as 'grid' | 'silhouette',
                 }));
               }}
-              style={{ fontSize: 'var(--font-size-xs)' }}
+              className={styles.select}
             >
               <option value="grid">Grid</option>
               <option value="silhouette">Outline</option>
@@ -494,7 +484,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                   }}
                 >
                   <Icon name="bone" size="sm" style={{ color: selected ? '#f97316' : '#94a3b8', opacity: selected ? 1 : 0.7 }} />
-                  <span style={{ flex: 1, fontSize: 'var(--font-size-xs)', lineHeight: 1 }}>{bone.name ?? bone.id}</span>
+                  <span className={styles.boneName}>{bone.name ?? bone.id}</span>
                   {hasIk && <span className={styles.badge}>IK</span>}
                 </button>
               );
@@ -527,21 +517,8 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                       e.currentTarget.blur();
                     }
                   }}
-                  style={{
-                    flex: 1,
-                    minWidth: 0,
-                    fontSize: 'var(--font-size-xs)',
-                    padding: '2px 4px',
-                    borderRadius: 4,
-                    background: 'transparent',
-                    color: 'var(--color-text-primary, #fff)',
-                    border: '1px solid transparent',
-                  }}
-                  onFocus={(e) => (e.currentTarget.style.border = '1px solid var(--color-border, #333)')}
-                  onBlur={(e) => {
-                    e.currentTarget.style.border = '1px solid transparent';
-                    commitRename(bone.id, bone.name);
-                  }}
+                  className={styles.nameInput}
+                  onBlur={() => commitRename(bone.id, bone.name)}
                 />
                 <span className={styles.subText}>
                   {bone.parentId
@@ -694,7 +671,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                         );
                       });
                   }}
-                  style={selectStyle}
+                  className={styles.select}
                 >
                   <option value="ik">IK (pose from the goal)</option>
                   <option value="fk">FK (pose from the bones)</option>
@@ -818,7 +795,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                 onChange={(e) => {
                   void edit('Set Controller Shape', controllerFieldCommands(nodeId, c.id, 'shape', e.target.value as ControllerShape));
                 }}
-                style={selectStyle}
+                className={styles.select}
               >
                 {CONTROLLER_SHAPES.map((sh) => (<option key={sh} value={sh}>{sh}</option>))}
               </select>
@@ -828,7 +805,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                 onChange={(e) => {
                   void edit('Set Controller Side', controllerFieldCommands(nodeId, c.id, 'side', e.target.value as ControllerSide));
                 }}
-                style={selectStyle}
+                className={styles.select}
               >
                 {CONTROLLER_SIDES.map((sd) => (<option key={sd} value={sd}>{sd}</option>))}
               </select>
@@ -866,7 +843,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                 void edit('Add Controller', addControllerCommands(nodeId, defaultControllerFor({ kind, boneId }, controllers, bones)));
                 e.currentTarget.value = "";
               }}
-              style={selectStyle}
+              className={styles.select}
             >
               <option value="">Add controller…</option>
               {bones.map((b) => (

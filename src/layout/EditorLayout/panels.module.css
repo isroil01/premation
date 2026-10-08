@@ -55,9 +55,10 @@
   background: transparent;
   border: none;
   color: inherit;
-  font-family: inherit;
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
+  /* The panel `button` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-button);
   cursor: pointer;
   white-space: nowrap;
   user-select: none;
@@ -116,8 +117,11 @@
 .assetNote {
   padding: 0 var(--space-2) var(--space-1);
   color: var(--color-text-tertiary);
-  font-size: var(--font-size-xs);
-  line-height: var(--line-height-normal);
+  /* The panel `help` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  line-height: var(--panel-line-height-help);
   flex: 0 0 auto;
 }
 
@@ -135,11 +139,16 @@
 
 .emptyNote {
   margin: 0 0 var(--space-4);
-  font-size: var(--font-size-xs);
+  /* The panel `help` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  line-height: var(--panel-line-height-help);
 }
 
-/* Properties: header + search stay put; the accordion is the only scroller.
-   One gutter (`--space-5`) from search through section names through extras. */
+/* Properties: identity row + toolbar stay put; the accordion is the only
+   scroller. One gutter (`--space-5`) from the toolbar through section names
+   through extras. */
 .inspectorShell {
   display: flex;
   flex-direction: column;
@@ -154,29 +163,14 @@
   --bar-height-panel: var(--control-height-md);
 }
 
-/* The inspector's foot: property counts and AE's U / UU Show filter. */
-.inspectorFooter {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  flex: none;
-  min-height: var(--control-height-md);
-  padding: 0 var(--space-3);
-  border-top: 1px solid var(--color-border-subtle);
-  color: var(--color-text-tertiary);
-  font-size: var(--font-size-xs);
-  font-variant-numeric: tabular-nums;
-}
-
 /*
  * The selection's identity row (`SelectionHeader`): label colour, glyph, name,
- * kind. The first row of the panel body, not portalled into the dock header —
- * that header keeps its title and gets only the search toggle. Sits on the
- * panel ground, not the header colour — the dock header directly above it is
- * already the dark band, and two stacked bands read as two headers for one
- * panel. Left padding is one step under the section gutter because the label
- * swatch is a button whose dot sits centred inside it.
+ * kind chip. The first row of the panel body, not portalled into the dock
+ * header — that header keeps its title and ≡ alone. Sits on the panel ground,
+ * not the header colour — the dock header directly above it is already the
+ * dark band, and two stacked bands read as two headers for one panel. Left
+ * padding is one step under the section gutter because the label swatch is a
+ * button whose dot sits centred inside it.
  */
 .layerHead {
   flex: none;
@@ -189,24 +183,33 @@
   background: var(--color-panel);
 }
 
-.layerKind {
+/*
+ * Properties' ONE toolbar row (2026-10-08), under the identity row: the
+ * always-visible property search, then AE's U / UU as a Show filter (All /
+ * Keyed / Changed). It replaced a search toggle portalled into the dock header
+ * and a footer of property counts. The same gutter as the section names
+ * below, so field and names share one left edge.
+ */
+.propsToolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
   flex: none;
-  font-size: var(--font-size-micro);
-  font-weight: var(--font-weight-semibold);
-  letter-spacing: var(--letter-spacing-uppercase);
-  text-transform: uppercase;
-  color: var(--color-text-tertiary);
+  padding: var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--color-border-subtle);
+  background: var(--color-panel);
 }
 
-.layerName {
-  flex: 1;
+/* The field takes the row, at the Show filter's height so the two read as
+   one strip (the field's own `sm` is a dialog-row 28px), and types in the
+   panel `value` role's size like every other entry field in the panel. */
+.propsToolbar .propsSearch {
+  flex: 1 1 auto;
   min-width: 0;
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  height: var(--control-height-md);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-value);
 }
 
 .layerHeadBtn {
@@ -235,11 +238,6 @@
 .layerHeadBtn:focus-visible {
   outline: 1px solid var(--color-focus-ring);
   outline-offset: 1px;
-}
-
-.layerHeadBtnActive {
-  background: var(--color-surface-2);
-  color: var(--color-text-primary);
 }
 
 /* No sub-tab strip any more (2026-09-15): the body is one list, see
@@ -279,14 +277,6 @@
   min-width: 0;
 }
 
-.layerGlyph {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--color-text-tertiary);
-  flex: none;
-}
-
 /* Scene panel — compositions above layers (Assets stays media-only). */
 .sceneShell {
   display: flex;
@@ -317,10 +307,10 @@
 }
 
 .compSectionLabel {
-  font-size: var(--font-size-micro);
-  font-weight: var(--font-weight-semibold);
-  letter-spacing: var(--letter-spacing-uppercase);
-  text-transform: uppercase;
+  /* The panel `group` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-group);
   color: var(--color-text-tertiary);
 }
 
@@ -367,9 +357,12 @@
 
 .compEmpty {
   padding: 4px var(--space-4) 10px;
-  font-size: var(--font-size-xs);
+  /* The panel `help` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  line-height: var(--panel-line-height-help);
   color: var(--color-text-tertiary);
-  line-height: 1.35;
 }
 
 .compList {
@@ -417,13 +410,19 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
+  /* The panel `label` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
 }
 
 .compMeta {
   flex: none;
-  font-size: var(--font-size-micro);
+  /* The panel `help` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  line-height: var(--panel-line-height-help);
   color: var(--color-text-tertiary);
   font-variant-numeric: tabular-nums;
 }
@@ -470,8 +469,11 @@
   padding: var(--space-8) var(--space-6);
   text-align: center;
   color: var(--color-text-tertiary);
-  font-size: var(--font-size-sm);
-  line-height: var(--line-height-normal);
+  /* The panel `help` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  line-height: var(--panel-line-height-help);
 }
 
 /* Explanatory copy inside an inspector section (e.g. what a null object is).
@@ -480,8 +482,11 @@
   margin: 0;
   padding: var(--space-1) 0;
   color: var(--color-text-tertiary);
-  font-size: var(--font-size-xs);
-  line-height: var(--line-height-normal);
+  /* The panel `help` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  line-height: var(--panel-line-height-help);
 }
 
 /* Footer of the Pre-composition section: child count + "Enter group". */
@@ -494,7 +499,11 @@
 
 .groupCount {
   color: var(--color-text-tertiary);
-  font-size: var(--font-size-xs);
+  /* The panel `help` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  line-height: var(--panel-line-height-help);
   font-variant-numeric: tabular-nums;
 }
 
@@ -623,7 +632,11 @@
   gap: var(--space-3);
   padding: 0 var(--space-5);
   height: 24px;
-  font-size: var(--font-size-xs);
+  /* The panel `help` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  line-height: var(--panel-line-height-help);
   color: var(--color-text-tertiary);
   border-top: 1px solid var(--color-divider);
   background: var(--color-panel-header);
@@ -717,9 +730,10 @@
   background: var(--color-primary);
   color: var(--color-primary-foreground);
   border: 1px solid transparent;
-  font-family: inherit;
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-semibold);
+  /* The panel `button` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-button);
   cursor: pointer;
   transition: var(--motion-hover-transition);
   white-space: nowrap;
@@ -747,8 +761,10 @@
   color: var(--color-text-secondary);
   border: 1px solid var(--color-border-strong);
   border-radius: 4px;
-  font-size: var(--font-size-sm);
-  font-weight: 500;
+  /* The panel `button` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-button);
   cursor: pointer;
   white-space: nowrap;
   transition: color 0.1s, background 0.1s, border-color 0.1s;
@@ -801,8 +817,10 @@
 .assetSelectionCount {
   flex: 1;
   min-width: 0;
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
+  /* The panel `label` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
   color: var(--color-text-secondary);
   white-space: nowrap;
   overflow: hidden;
@@ -879,9 +897,10 @@
   border: none;
   border-bottom: 2px solid transparent;
   color: var(--color-text-tertiary);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
-  font-family: inherit;
+  /* The panel `tab` role (typography.css) — the library's sections are tabs. */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-tab);
   cursor: pointer;
   transition: color var(--motion-duration-fast) var(--motion-ease-standard),
     border-color var(--motion-duration-fast) var(--motion-ease-standard);
@@ -897,7 +916,7 @@
   composes: libTab;
   color: var(--color-primary);
   border-bottom-color: var(--color-primary);
-  font-weight: var(--font-weight-semibold);
+  font-weight: var(--panel-weight-tab-active);
 }
 
 /* ── Library Category Strip & Filter Chips ────────────────────────── */
@@ -937,8 +956,10 @@
   border: 1px solid var(--color-border-subtle);
   background: var(--color-surface-0);
   color: var(--color-text-secondary);
-  font-size: var(--font-size-micro);
-  font-weight: var(--font-weight-medium);
+  /* The panel `button` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-button);
   white-space: nowrap;
   cursor: pointer;
   user-select: none;
@@ -955,7 +976,6 @@
   background: var(--color-primary-subtle);
   color: var(--color-primary);
   border-color: var(--color-primary);
-  font-weight: var(--font-weight-semibold);
 }
 
 /* ── Components, Shapes, and Text helpers ─────────────────────────── */
@@ -1031,7 +1051,11 @@
    (the selected layer, the selected keyframes). */
 .libSectionNote {
   padding: 0 var(--space-1) var(--space-2);
-  font-size: var(--font-size-micro);
+  /* The panel `help` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  line-height: var(--panel-line-height-help);
   color: var(--color-text-muted);
 }
 .libGrid {
@@ -1107,9 +1131,10 @@
   transition: border-color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 .libChipPro {
-  font-size: var(--font-size-micro);
-  font-weight: 800;
-  letter-spacing: 0.06em;
+  /* The panel `label` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
   padding: 1px 4px;
   border-radius: var(--radius-sm);
   background: rgba(139, 92, 246, 0.2);
@@ -1142,8 +1167,10 @@
   background: transparent;
   border: none;
   cursor: pointer;
-  font-family: inherit;
-  font-size: var(--font-size-sm);
+  /* The panel `label` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
   text-align: left;
   transition: background var(--motion-duration-fast) var(--motion-ease-standard),
     color var(--motion-duration-fast) var(--motion-ease-standard);
@@ -1154,6 +1181,10 @@
 }
 .libMotionItem {
   color: var(--color-text-secondary);
+  /* The panel `label` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
 }
 .libTextItem:hover {
   background: var(--color-hover);
@@ -1168,9 +1199,12 @@
   outline-offset: -1px;
 }
 .libTextMeta {
-  font-size: var(--font-size-xs);
+  /* The panel `help` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  line-height: var(--panel-line-height-help);
   color: var(--color-text-muted);
-  font-family: var(--font-family-mono);
   flex: none;
 }
 
@@ -1242,9 +1276,11 @@
 }
 
 .presetName {
-  font-size: var(--font-size-sm);
+  /* The panel `label` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
   color: var(--color-text-primary);
-  font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1252,10 +1288,13 @@
 }
 
 .presetDesc {
-  font-size: var(--font-size-xs);
+  /* The panel `help` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  line-height: var(--panel-line-height-help);
   color: var(--color-text-tertiary);
   text-align: left;
-  line-height: 1.25;
   white-space: normal;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -1579,10 +1618,10 @@
   gap: var(--space-2);
   padding: 5px 10px 5px 8px;
   border-bottom: 1px solid var(--color-border);
-  font-size: var(--font-size-micro);
-  font-weight: var(--font-weight-semibold);
-  letter-spacing: var(--letter-spacing-wide);
-  text-transform: uppercase;
+  /* The panel `label` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
   color: var(--color-text-tertiary);
   user-select: none;
   flex: 0 0 auto;
@@ -1611,7 +1650,10 @@
   gap: var(--space-3);
   height: 26px;
   padding-right: 10px;
-  font-size: var(--font-size-sm);
+  /* The panel `label` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
   color: var(--color-text-secondary);
   cursor: default;
   user-select: none;
@@ -1725,8 +1767,10 @@
   border: 1px solid var(--color-primary);
   border-radius: var(--radius-sm);
   color: var(--color-text-primary);
-  font-size: var(--font-size-sm);
-  font-family: inherit;
+  /* The panel `value` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-value);
   outline: none;
 }
 
@@ -1742,8 +1786,10 @@
 
 .assetBulkCount {
   flex: 1 1 auto;
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
+  /* The panel `label` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
   color: var(--color-text-secondary);
 }
 
@@ -1842,7 +1888,11 @@
   padding: 32px 16px;
   text-align: center;
   color: var(--color-text-muted);
-  font-size: var(--font-size-sm);
+  /* The panel `help` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  line-height: var(--panel-line-height-help);
 }
 
 /* ── Assets: footage readout ─────────────────────────────────────────
@@ -1860,7 +1910,10 @@
 }
 
 .assetMetaName {
-  font-size: var(--font-size-xs);
+  /* The panel `label` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
   color: var(--color-text-secondary);
   white-space: nowrap;
   overflow: hidden;
@@ -1869,7 +1922,11 @@
 }
 
 .assetMetaFacts {
-  font-size: var(--font-size-micro);
+  /* The panel `help` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  line-height: var(--panel-line-height-help);
   color: var(--color-text-tertiary);
   white-space: nowrap;
   flex-shrink: 0;
@@ -1915,8 +1972,10 @@
 }
 
 .assetHeaderName {
-  font-size: var(--font-size-xs);
-  font-weight: 500;
+  /* The panel `label` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
   color: var(--color-text-primary);
   white-space: nowrap;
   overflow: hidden;
@@ -1924,7 +1983,11 @@
 }
 
 .assetHeaderFacts {
-  font-size: var(--font-size-micro);
+  /* The panel `help` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  line-height: var(--panel-line-height-help);
   color: var(--color-text-tertiary);
   white-space: nowrap;
   overflow: hidden;
@@ -2147,7 +2210,10 @@
   border: 1px solid var(--color-border);
   background: var(--color-surface-2);
   color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
+  /* The panel `button` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-button);
   cursor: pointer;
   transition: background-color 0.1s, color 0.1s, border-color 0.1s;
   flex: 0 0 auto;
@@ -2258,9 +2324,12 @@
   border-radius: var(--radius-sm);
   background: var(--color-overlay-scrim);
   color: var(--color-text-inverse);
-  font-size: var(--font-size-micro);
+  /* The panel `help` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  line-height: var(--panel-line-height-help);
   font-variant-numeric: tabular-nums;
-  line-height: 1.4;
   pointer-events: none;
 }
 
@@ -2345,8 +2414,10 @@
   margin-top: 4px;
   height: 16px;
   line-height: 16px;
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
+  /* The panel `label` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
   color: var(--color-text-primary);
   white-space: nowrap;
   overflow: hidden;
@@ -2359,8 +2430,11 @@
   gap: 4px;
   margin-top: 2px;
   height: 14px;
-  line-height: 14px;
-  font-size: var(--font-size-micro);
+  /* The panel `help` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  line-height: var(--panel-line-height-help);
   color: var(--color-text-tertiary);
   white-space: nowrap;
   overflow: hidden;
@@ -2384,7 +2458,10 @@
   border: 1px solid var(--color-border-subtle);
   border-radius: var(--radius-sm);
   color: var(--color-text-primary);
-  font-size: var(--font-size-xs);
+  /* The panel `label` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
   cursor: pointer;
   user-select: none;
   box-sizing: border-box;
@@ -2415,7 +2492,11 @@
   border-radius: var(--radius-full);
   background: var(--color-surface-1);
   color: var(--color-text-tertiary);
-  font-size: var(--font-size-micro);
+  /* The panel `help` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  line-height: var(--panel-line-height-help);
   font-variant-numeric: tabular-nums;
   flex: 0 0 auto;
 }
@@ -2433,7 +2514,11 @@
   border-radius: var(--radius-sm);
   background: var(--color-surface-0);
   color: var(--color-text-tertiary);
-  font-size: var(--font-size-xs);
+  /* The panel `help` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  line-height: var(--panel-line-height-help);
   box-sizing: border-box;
   user-select: none;
   cursor: default;
@@ -2457,10 +2542,10 @@
   margin: 4px var(--space-2) 2px;
   padding: 0 var(--space-2);
   color: var(--color-text-tertiary);
-  font-size: var(--font-size-micro);
-  font-weight: var(--font-weight-semibold);
-  letter-spacing: var(--letter-spacing-wide);
-  text-transform: uppercase;
+  /* The panel `subgroup` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-subgroup);
   user-select: none;
   box-sizing: border-box;
 }
@@ -2571,10 +2656,10 @@
   border: 0;
   background: transparent;
   font: inherit;
-  font-size: var(--font-size-micro);
-  font-weight: var(--font-weight-semibold);
-  letter-spacing: var(--letter-spacing-wide);
-  text-transform: uppercase;
+  /* The panel `subgroup` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-subgroup);
   text-align: left;
   color: var(--color-text-tertiary);
   user-select: none;
@@ -2631,7 +2716,10 @@
   column-gap: var(--space-2);
   row-gap: 2px;
   margin: 0;
-  font-size: var(--font-size-xs);
+  /* The panel `label` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
 }
 
 .assetDrawerKey {
@@ -2663,7 +2751,11 @@
 
 .assetDrawerEmpty {
   padding: var(--space-2) var(--space-3);
-  font-size: var(--font-size-xs);
+  /* The panel `help` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  line-height: var(--panel-line-height-help);
   color: var(--color-text-tertiary);
 }
 
@@ -2693,7 +2785,10 @@
   white-space: nowrap;
   direction: rtl;
   text-align: left;
-  font-size: var(--font-size-xs);
+  /* The panel `label` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
   color: var(--color-text-secondary);
 }
 
@@ -2704,7 +2799,11 @@
   gap: var(--space-3);
   padding: var(--space-6) var(--space-4);
   text-align: center;
-  font-size: var(--font-size-xs);
+  /* The panel `help` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  line-height: var(--panel-line-height-help);
   color: var(--color-text-tertiary);
 }
 
@@ -2788,7 +2887,10 @@
 /* Library ▸ Transitions: the two groups, named by how they are added. */
 .libSectionTitle {
   padding: var(--space-3) var(--space-3) var(--space-2);
-  font-size: var(--font-size-sm);
+  /* The panel `subgroup` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-subgroup);
   color: var(--color-text-secondary);
 }
 
@@ -2807,7 +2909,10 @@
   background: var(--color-surface-1);
   color: var(--color-text-primary);
   font: inherit;
-  font-size: var(--font-size-sm);
+  /* The panel `label` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
   text-align: left;
   cursor: grab;
 }

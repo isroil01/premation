@@ -2266,12 +2266,16 @@ from the struct's maximum + 800.
     views?)` sends one group per owner.
   - **`FrameGeometry.views: OverlayView[]`** (10; riding the frame's first
     message): `{mode, camera, liveCamera, lens, compWidth, compHeight}` — the
-    camera layer the view's chrome resolves (`viewCameraNode` with no in/out
-    test, as the chrome always did; empty = the default camera), the one the
-    renderer's rule picks (plus the layer being live at the frame: what the
-    camera tools drive), and the chrome camera resolved at the frame
-    (`cameraFromNode`, parent-lifted): position, focal length, principal point,
-    yaw / pitch / roll. The views resolve in the viewport's composition (TS:
+    camera layer the view looks through at the frame's time, picked by the
+    renderer's own rule (`view_camera_node`: a `camera:<id>` view's camera,
+    else the topmost enabled camera inside its in/out bar at the frame; empty =
+    the default camera) so the chrome, the gizmos and the camera tools sit on
+    the frame drawn; `liveCamera`, the same layer (kept for its readers); and
+    that camera resolved at the frame (`cameraFromNode`, parent-lifted):
+    position, focal length, principal point, yaw / pitch / roll. (Until
+    2026-10-08 `camera` / `lens` skipped the in/out test, so with the topmost
+    camera outside its bar the chrome drew through a different lens than the
+    frame.) The views resolve in the viewport's composition (TS:
     the active tab's; C++: `Session::active_comp`). Electron main collects them
     with the layers and hands them to the page as `EngineFrameMeta.geometryViews`;
     `overlayView(viewport, mode, time)` reads them (src/stores/overlayGeometry.ts).

@@ -114,12 +114,13 @@ motion::xf::Mat2D world_matrix_of(const Document& d, std::string_view node, cons
   return world;
 }
 
-/// liveParent3DResolvers' `world2DOf`: the STATIC geometry's world affine.
-motion::xf::Mat2D world_2d_static(const Document& d, std::string_view node) {
-  return world_matrix_of(d, node, [&d](const std::string& id) -> std::optional<motion::xf::Local2D> {
-    const Node* n = d.node(id);
-    return n != nullptr ? read_geometry_local(*n) : std::nullopt;
-  });
+/// A node's 2D world affine at comp `seconds`, every link's ANIMATED values
+/// winning — what the renderer lifts a 2D parent by (threed_port.cpp
+/// `parent_world_3d` / `parent_world_matrix` over the walk's `world2d`). The
+/// static geometry left a 3D layer under a keyed 2D null where the null was
+/// authored while the frame drew it where the null had moved.
+motion::xf::Mat2D world_2d_animated(const SpaceCtx& c, std::string_view node, double seconds) {
+  return world_matrix_of(c.d, node, [&c, seconds](const std::string& id) { return local_at(c, id, seconds); });
 }
 
 /// threeD.ts `readNode3D` / anchor.ts `readNodeAnchor`: a Transform number, else 0.
@@ -174,7 +175,7 @@ std::optional<motion::xf::Mat4> parent_world_matrix_at(const SpaceCtx& c, std::s
     for (std::size_t k = chain.size(); k-- > 0;) {
       const Node& a = *chain[k];
       if (!is_3d_enabled(a)) {
-        acc = motion::xf::from_mat2d(world_2d_static(c.d, a.id));
+        acc = motion::xf::from_mat2d(world_2d_animated(c, a.id, seconds));
         continue;
       }
       const auto local = resolve_node_3d(c, a, seconds);
@@ -185,7 +186,7 @@ std::optional<motion::xf::Mat4> parent_world_matrix_at(const SpaceCtx& c, std::s
     if (acc) return acc;
   }
   // Pure-2D chain: the parent's own world affine, lifted (z untouched, AE's rule).
-  return motion::xf::from_mat2d(world_2d_static(c.d, parentId));
+  return motion::xf::from_mat2d(world_2d_animated(c, parentId, seconds));
 }
 
 /// `toWorldPointAt(node, seconds, p)`: a point in the node's PARENT space → world.
@@ -310,8 +311,7 @@ std::optional<LayerSpace> layer_space_at(const SpaceCtx& c, std::string_view nod
   const bool device = kind == "camera" || kind == "light";
   if (!is_3d_enabled(*n) && !device) {
     // 2D: the composition is the world plane.
-    return LayerSpace{motion::xf::LayerSpace2D(
-        world_matrix_of(c.d, node, [&c, seconds](const std::string& id) { return local_at(c, id, seconds); }))};
+    return LayerSpace{motion::xf::LayerSpace2D(world_2d_animated(c, node, seconds))};
   }
   // 3D: layer → world is a 4x4 (world_3d_at); world → comp is the camera.
   const std::optional<motion::xf::Mat4> m = world_3d_at(c, node, seconds, compWidth, compHeight);

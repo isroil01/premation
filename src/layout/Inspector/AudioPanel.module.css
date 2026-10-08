@@ -3,76 +3,23 @@
   fader share one dB axis and sit in the same column, because the whole point of
   the panel is that the measurement and the control that answers it are the same
   gesture apart.
+
+  Its words take the panel type roles (typography.css): label-role keys,
+  value-role numbers, bordered-verb buttons, one help line. No title — the tab.
 */
 
 .root {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 10px 12px;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-5) var(--space-4);
   height: 100%;
   min-height: 0;
   overflow-y: auto;
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
-}
-
-.head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.title {
-  font-size: var(--font-size-sm);
-  font-weight: 600;
   color: var(--color-text-primary);
-}
-
-.menuBtn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: none;
-  color: var(--color-text-tertiary);
-  cursor: pointer;
-}
-
-.menuBtn:hover {
-  background: var(--color-hover);
-  border-color: var(--color-border);
-  color: var(--color-text-primary);
-}
-
-.options {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 8px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface-1);
-}
-
-.optRow {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.optRow select {
-  background: var(--color-surface-1);
-  color: var(--color-text-primary);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  padding: 2px 4px;
-  font-size: var(--font-size-xs);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  line-height: var(--panel-line-height);
 }
 
 /* ── Meter deck ─────────────────────────────────────────────────────
@@ -88,14 +35,17 @@
   padding-left: 30px;
 }
 
+/* The dB marks: tick numbers, the help size in the value face. */
 .scale {
   position: absolute;
   left: 0;
   top: 14px;
   bottom: 18px;
   width: 28px;
-  font-size: var(--font-size-micro);
-  color: var(--color-text-muted);
+  font-family: var(--panel-font-family-value);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  color: var(--color-text-tertiary);
   font-variant-numeric: tabular-nums;
 }
 
@@ -127,9 +77,9 @@
 }
 
 .clipLedOn {
-  background: var(--color-danger, #e5484d);
-  border-color: var(--color-danger, #e5484d);
-  box-shadow: 0 0 6px color-mix(in srgb, var(--color-danger, #e5484d) 60%, transparent);
+  background: var(--color-danger);
+  border-color: var(--color-danger);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--color-danger) 60%, transparent);
 }
 
 .meterWrap {
@@ -161,10 +111,10 @@
   bottom: 0;
   background: linear-gradient(
     to top,
-    var(--color-success, #30a46c) 0%,
-    var(--color-success, #30a46c) 62%,
-    var(--color-warning, #d08a3a) 84%,
-    var(--color-danger, #e5484d) 100%
+    var(--color-success) 0%,
+    var(--color-success) 62%,
+    var(--color-warning) 84%,
+    var(--color-danger) 100%
   );
 }
 
@@ -196,54 +146,60 @@
   cursor: default;
 }
 
+/* L / R under the strips: labels. */
 .chLabel {
-  font-size: var(--font-size-micro);
-  font-weight: 600;
-  color: var(--color-text-tertiary);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
+  color: var(--color-text-secondary);
 }
 
 /* ── Readouts ──────────────────────────────────────────────────────── */
 .readout {
   display: grid;
-  grid-template-columns: auto 1fr auto 1fr;
+  grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
-  gap: 4px 8px;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+}
+
+.readPair {
+  display: contents;
 }
 
 .readLabel {
-  color: var(--color-text-tertiary);
-  font-size: var(--font-size-micro);
-  font-weight: 600;
+  margin: 0;
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
+  color: var(--color-text-secondary);
 }
 
 .readVal {
-  color: var(--color-text-primary);
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--panel-font-family-value);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-value);
   font-variant-numeric: tabular-nums;
+  color: var(--color-text-primary);
 }
 
 .fades {
-  display: flex;
-  gap: 6px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
 }
 
-.fades > button {
-  flex: 1;
-  padding: 4px 6px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface-2);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
-  cursor: pointer;
-}
-
-.fades > button:hover {
-  background: var(--color-hover);
-  color: var(--color-text-primary);
-}
-
+/* One line of help — a state or an empty-state hint, never a paragraph. */
 .note {
   margin: 0;
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  line-height: var(--panel-line-height-help);
+  font-weight: var(--panel-weight-help);
   color: var(--color-text-tertiary);
-  line-height: 1.5;
 }

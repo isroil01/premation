@@ -1,12 +1,19 @@
 /**
  * SelectionHeader — the first row of the Properties panel: WHAT is selected.
  *
- *   [● label] [kind] Layer name  …………………  Shape layer
- *   [● label] [≡]    3 layers    …………………  2 shapes, 1 text
+ *   [● label] [kind] Layer name  …………  [Shape layer]
+ *   [● label] [kind] Key         …………  [Spot light]
+ *   [● label] [≡]    3 layers    …………  [2 shapes, 1 text]
  *
  * Double-click the name (or focus it and press Enter / F2) to rename. Enter
  * commits, Escape cancels, and the rename goes through `renameLayer`, which
  * follows it through every expression that named the layer in ONE undo entry.
+ *
+ * The kind is a small bordered chip in the panel `label` role (2026-10-08).
+ * As muted text at the row's end it was cut off first and read like a second
+ * title; the panel's one title is its tab ("Properties: Key"). A single
+ * layer's chip never truncates — the name gives way instead — and a light
+ * says which light it is, as After Effects' Light Settings name them.
  *
  * ## Why the switches left (2026-09-15)
  *
@@ -34,7 +41,9 @@ import { renameLayerEdit } from '@layout/Scene/sceneEdits';
 import { LABEL_COLORS } from '@core/scene/labelColor';
 import { edit } from '@core/engine/uiEdits';
 import { useMirrorLayers } from '@hooks/useMirror';
+import { cn } from '@utils/cn';
 import { activeMirrorCompId, canBe3DLayer, inspectorKindOf, is3DLayer, isRenderableLayer } from './inspectorMirror';
+import { useComponentProp } from './useComponentProp';
 import styles from './SelectionHeader.module.css';
 
 // ── Layer switches ─────────────────────────────────────────────────
@@ -214,7 +223,7 @@ export function layerSwitchMenuItems(nodeIds: ReadonlyArray<string>): DropdownIt
 
 // ── Identity ───────────────────────────────────────────────────────
 
-/** What a single layer is called, in the header's muted right-hand text. */
+/** What a single layer is called, in the header's kind chip. */
 const KIND_NOUN: Readonly<Record<string, string>> = {
   shape: 'Shape layer',
   text: 'Text layer',
@@ -250,6 +259,37 @@ const KIND_COUNT: Readonly<Record<string, readonly [string, string]>> = {
 
 function kindNoun(kind: string): string {
   return KIND_NOUN[kind] ?? 'Layer';
+}
+
+/** A light's chip: its Light Type, as After Effects' Light Settings name it. */
+const LIGHT_NOUN: Readonly<Record<string, string>> = {
+  parallel: 'Parallel light',
+  spot: 'Spot light',
+  point: 'Point light',
+  ambient: 'Ambient light',
+  environment: 'Environment light',
+};
+
+/** An unset or unknown type reads as a point light, as `readNodeLight` coerces it. */
+export function lightNoun(lightType: unknown): string {
+  return (typeof lightType === 'string' ? LIGHT_NOUN[lightType] : undefined) ?? 'Point light';
+}
+
+const TRANSFORM = { type: 'Transform' } as const;
+
+/** The kind chip. Bordered and never truncated: a fact about the layer, not a second title. */
+function KindChip({ text, shrink = false }: { text: string; shrink?: boolean }): JSX.Element {
+  return <span className={cn(styles.kindChip, shrink && styles.kindChipShrink)} title={shrink ? text : undefined}>{text}</span>;
+}
+
+/**
+ * A light layer's chip, which names its type. Its own component so only a
+ * LIGHT subscribes to `lightType` — on any other layer the prop is not in the
+ * tree, and reading it would wake the header on every write to the layer.
+ */
+function LightKindChip({ nodeId }: { nodeId: string }): JSX.Element {
+  const [lightType] = useComponentProp(nodeId, TRANSFORM, 'lightType');
+  return <KindChip text={lightNoun(lightType)} />;
 }
 
 function kindIcon(kind: string): IconName {
@@ -439,14 +479,16 @@ function SelectionHeaderInner({ nodeIds = [], actions }: SelectionHeaderProps): 
       {live.length > 1 ? (
         <>
           <Icon name="layers" size="sm" className={styles.kindIcon} />
-          <span className={styles.name}>{live.length} layers</span>
-          <span className={styles.kind}>{kindBreakdown(live)}</span>
+          <span className={cn(styles.name, styles.nameCount)}>{live.length} layers</span>
+          {/* A breakdown can run long ("2 shapes, 1 text, 3 lights"): this one
+              chip may give way, with the whole of it in its tooltip. */}
+          <KindChip text={kindBreakdown(live)} shrink />
         </>
       ) : (
         <>
           <Icon name={kindIcon(kind)} size="sm" className={styles.kindIcon} />
           <LayerName nodeId={primary} name={layer.name || primary} locked={layer.switches.locked} />
-          <span className={styles.kind}>{kindNoun(kind)}</span>
+          {kind === 'light' ? <LightKindChip nodeId={primary} /> : <KindChip text={kindNoun(kind)} />}
         </>
       )}
       {actions}

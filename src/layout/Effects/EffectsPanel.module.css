@@ -1,11 +1,26 @@
+/* The Effects & Presets panel. Its text takes the panel type roles
+   (typography.css): the tab is its only title, so nothing in here is a heading. */
 .root {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
-  padding: var(--space-5);
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-5) var(--space-4);
   height: 100%;
   min-height: 0;
   overflow-y: auto;
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  line-height: var(--panel-line-height);
+}
+
+/* One line of help — an empty state or a "nothing matches", never a paragraph. */
+.help {
+  margin: 0;
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  line-height: var(--panel-line-height-help);
+  font-weight: var(--panel-weight-help);
+  color: var(--color-text-tertiary);
 }
 
 /*
@@ -28,13 +43,16 @@
   min-width: 0;
 }
 
+/* A row's property name: the panel `label` role. */
 .blendLabel {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--font-size-xs);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
   color: var(--color-text-secondary);
 }
 
@@ -56,8 +74,10 @@
   background: var(--color-surface-1);
   border: 1px solid var(--color-border);
   color: var(--color-text-primary);
-  font-family: inherit;
-  font-size: var(--font-size-xs);
+  /* A dropdown's choice is a value — in the text face: it is a word. */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-value);
   cursor: pointer;
   min-width: 88px;
   justify-content: space-between;
@@ -66,25 +86,6 @@
 
 .blendTrigger:hover {
   border-color: var(--color-border-strong);
-}
-
-.sectionTitle {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  margin-top: var(--space-3);
-  padding-bottom: var(--space-2);
-  border-bottom: 1px solid var(--color-border);
-  font-family: var(--font-family-sans);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-bold);
-  color: var(--color-text-primary);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
-.sectionTitle:first-child {
-  margin-top: 0;
 }
 
 .maskControls {
@@ -109,8 +110,9 @@
   background: var(--color-surface-1);
   border: 1px solid var(--color-border);
   color: var(--color-text-primary);
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-xs);
+  font-family: var(--panel-font-family-value);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-value);
 }
 
 /* A stacked label + field, used two- and three-up inside `.maskControls`.
@@ -124,7 +126,9 @@
   gap: var(--space-1);
   flex: 1 1 0;
   min-width: 0;
-  font-size: var(--font-size-xs);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
   color: var(--color-text-secondary);
 }
 
@@ -146,7 +150,9 @@
   background: var(--color-primary);
   border: 1px solid var(--color-primary);
   color: var(--color-primary-foreground);
-  font-size: var(--font-size-xs);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-value);
   cursor: pointer;
 }
 
@@ -156,8 +162,8 @@
   gap: var(--space-2);
 }
 
-/* Action chip. 26px and 12px type to sit level with the browser rows and the
-   search field above them — at 11px in a 20px box these read as a toolbar
+/* Action chip — a bordered verb (the panel `button` role). 26px to sit level
+   with the rows around it: at 11px in a 20px box these read as a toolbar
    crammed under a heading rather than as buttons. */
 .addChip {
   display: inline-flex;
@@ -169,8 +175,9 @@
   background: var(--color-surface-1);
   border: 1px solid var(--color-border);
   color: var(--color-text-secondary);
-  font-family: inherit;
-  font-size: var(--font-size-sm);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-button);
   cursor: pointer;
   transition: border-color var(--motion-duration-fast) var(--motion-ease-standard),
     color var(--motion-duration-fast) var(--motion-ease-standard),
@@ -238,13 +245,16 @@
   justify-content: space-between;
 }
 
+/* An effect's (or a mask's) name on its twirl row. Inside a Properties
+   section that row is a `subgroup`; at the top of Effect Controls it is the
+   panel's `group` (see `.controlsBody .itemLabel`). */
 .itemLabel,
 .itemLabelOff {
   flex: 1 1 0%;
   min-width: 0;
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
-  letter-spacing: 0;
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-subgroup);
   color: var(--color-text-primary);
   cursor: pointer;
   overflow: hidden;
@@ -288,17 +298,28 @@
   gap: var(--space-2);
 }
 
+/* The panel's one toolbar row: the search takes the width, the favourites
+   filter keeps its square. */
 .searchRow {
   display: flex;
   align-items: center;
   gap: var(--space-2);
 }
 
-/* Favourites star on a BrowserRow — not a nested <button> (row is already one).
-   Always visible (muted); starred rows keep the accent colour. Hover on the
-   BrowserRow cannot style this from another CSS module, so we do not hide it. */
-.fxStar,
-.fxStarFilter {
+.searchRow > :first-child {
+  flex: 1 1 auto;
+}
+
+.searchRow > :not(:first-child) {
+  flex: none;
+}
+
+/* Favourites star on a BrowserRow — not a nested <button> (the row is already
+   one). Hidden until its row is hovered, focused or the keyboard row; a starred
+   effect keeps its accent star in view, which is what makes favourites findable
+   by eye. The row carries `.fxLeafRow` from this module, so its hover can
+   reach the star. */
+.fxStar {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -309,17 +330,12 @@
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--color-text-muted);
+  color: var(--color-text-tertiary);
   cursor: pointer;
-  opacity: 0.55;
+  opacity: 0;
   transition: opacity var(--motion-duration-fast) var(--motion-ease-standard),
     color var(--motion-duration-fast) var(--motion-ease-standard),
     background var(--motion-duration-fast) var(--motion-ease-standard);
-}
-
-.fxStarFilter {
-  opacity: 1;
-  border: 1px solid var(--color-border);
 }
 
 .fxStarOn {
@@ -328,22 +344,19 @@
   color: var(--color-accent);
 }
 
-.fxStarFilterOn {
-  composes: fxStarFilter;
-  color: var(--color-accent);
-  background: var(--color-selected);
-  border-color: var(--color-accent);
+.fxLeafRow:hover .fxStar,
+.fxLeafRow:focus-visible .fxStar,
+.fxLeafRow[data-selected] .fxStar,
+.fxStar:focus-visible {
+  opacity: 1;
 }
 
-.fxStar:hover,
-.fxStarFilter:hover {
-  opacity: 1;
+.fxStar:hover {
   color: var(--color-text-primary);
   background: var(--color-hover);
 }
 
-.fxStar:focus-visible,
-.fxStarFilter:focus-visible {
+.fxStar:focus-visible {
   outline: 2px solid var(--color-focus-ring);
   outline-offset: 1px;
 }
@@ -369,11 +382,14 @@
   outline-offset: 1px;
 }
 
+/* A note in the stack: the panel `help` role. */
 .hint {
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  color: var(--color-text-tertiary);
   padding: var(--space-5) var(--space-4);
-  line-height: var(--line-height-normal);
+  line-height: var(--panel-line-height-help);
 }
 
 .remove {
@@ -447,10 +463,17 @@
   min-height: var(--control-height-row);
   padding: 0 6px 0 4px;
   user-select: none;
-  font-family: var(--font-family-sans);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-regular);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
   min-width: 0;
+}
+
+/* At the top of Effect Controls an effect's twirl row IS the panel's group:
+   the `group` role's weight (inside a Properties section it stays a subgroup). */
+.controlsBody .itemLabel,
+.controlsBody .itemLabelOff {
+  font-weight: var(--panel-weight-group);
 }
 
 .effectCardHead:hover {
@@ -493,8 +516,10 @@
   background: transparent;
   border: none;
   color: var(--color-primary);
-  font-family: inherit;
-  font-size: var(--font-size-xs);
+  /* A verb, drawn as AE's link: the `button` role's face and weight. */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-button);
   cursor: pointer;
 }
 
@@ -612,8 +637,9 @@
   background: var(--color-surface-2);
   border: 1px solid var(--color-field-border);
   color: var(--color-text-primary);
-  font-family: inherit;
-  font-size: var(--font-size-xs);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-value);
   padding: 0 var(--space-2);
   border-radius: var(--radius-xs);
   cursor: pointer;
@@ -633,12 +659,13 @@
 
 
 /*
- * A collapsible parameter section — AE's "▸ Output Cycle".
+ * A collapsible parameter section — AE's "▸ Output Cycle": the panel
+ * `subgroup` role.
  *
  * The head is deliberately quieter than the effect header above it (no rule, no
- * background, secondary text): it divides one effect's controls, and drawing it
- * with the same weight as the effect title makes a grouped effect read as
- * several effects.
+ * background, secondary text until hovered): it divides one effect's controls,
+ * and drawing it with the same weight as the effect title makes a grouped
+ * effect read as several effects.
  */
 .paramGroup {
   display: flex;
@@ -657,9 +684,9 @@
   border-radius: var(--radius-xs);
   cursor: pointer;
   color: var(--color-text-secondary);
-  font-family: var(--font-family-sans);
-  font-size: 11.5px;
-  font-weight: var(--font-weight-semibold);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-subgroup);
   text-align: left;
   transition: color var(--motion-duration-fast) var(--motion-ease-standard),
     background-color var(--motion-duration-fast) var(--motion-ease-standard);
@@ -729,32 +756,46 @@
   overflow: hidden;
 }
 
+/* The identity row: the master fx switch, the layer's name, the lock. */
 .layerHead {
   flex: none;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   min-height: 28px;
-  padding: 6px 8px;
+  padding: var(--space-1) var(--space-3);
   border-bottom: 1px solid var(--color-border-subtle);
   background: var(--color-panel-header);
   min-width: 0;
 }
 
+/* The layer's name is the panel's subject — a VALUE, in the text face, the
+   way the Properties identity row draws it. Never a heading: the tab is. */
 .layerName {
   flex: 1 1 0%;
   min-width: 0;
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-semibold);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-value);
   color: var(--color-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.layerCount {
-  flex: none;
-  font-size: var(--font-size-xs);
+/* AE's `fx` mark on the master switch: the accent while the layer's effects
+   render, quiet while they are switched off. */
+.masterFx {
+  font-family: var(--panel-font-family-value);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-group);
+  font-style: italic;
+  line-height: 1;
+  color: var(--color-primary);
+}
+
+.masterFxOff {
+  composes: masterFx;
   color: var(--color-text-tertiary);
 }
 
@@ -764,6 +805,12 @@
   min-width: 0;
   overflow-y: auto;
   overflow-x: hidden;
+}
+
+/* The panel's one empty-state line, on the stack's gutter. */
+.controlsEmpty {
+  composes: help;
+  padding: var(--space-3) var(--space-3);
 }
 
 /* ── Virtualised effects browser ─────────────────────────────────────
@@ -788,8 +835,23 @@
   min-width: 0;
 }
 
+/* A leaf (an effect, a preset, a shape operator, a simulation): the `label`
+   role in the primary colour — it is the thing you pick, not a caption.
+   Two classes deep so it wins over BrowserRow's own `.row` whichever
+   stylesheet loads first; the keyboard row keeps BrowserRow's on-accent colour. */
+.browserList .fxLeafRow {
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
+}
+
+.browserList .fxLeafRow:not([data-selected]) {
+  color: var(--color-text-primary);
+}
+
 /* Folder header, as a ROW: the same chrome BrowserFolder draws, minus the
-   accordion, because an open folder's children are now siblings in the list. */
+   accordion, because an open folder's children are now siblings in the list.
+   A folder opens and closes: the panel `group` role. */
 .fxFolderRow {
   display: flex;
   align-items: center;
@@ -802,14 +864,18 @@
   border-bottom: 1px solid var(--color-border);
   border-radius: 0;
   color: var(--color-text-primary);
-  font-family: var(--font-family-sans);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
-  letter-spacing: -0.01em;
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-group);
   text-align: left;
   cursor: pointer;
   user-select: none;
   transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.fxFolderRow:focus-visible {
+  outline: 1px solid var(--color-focus-ring);
+  outline-offset: -1px;
 }
 
 .fxFolderRow:hover,
@@ -840,13 +906,15 @@
   white-space: nowrap;
 }
 
-/* Orientation, not a metric — quiet until the folder is hovered or open. */
+/* Orientation, not a metric — a quiet value, shown once the folder is hovered
+   or open. */
 .fxFolderCount {
   flex: none;
-  font-family: var(--font-family-mono);
+  font-family: var(--panel-font-family-value);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-value);
   font-variant-numeric: tabular-nums;
-  font-size: var(--font-size-micro);
-  color: var(--color-text-muted);
+  color: var(--color-text-tertiary);
   opacity: 0;
 }
 
@@ -894,14 +962,17 @@
 }
 
 .fxPreviewName {
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
   color: var(--color-text-primary);
 }
 
 .fxPreviewCat {
-  font-size: var(--font-size-micro);
-  color: var(--color-text-muted);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  color: var(--color-text-tertiary);
 }
 
 /* Effect header extras (grip, empty label swatch, ↑ ↓ ✕) — drawn on hover or

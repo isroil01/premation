@@ -39,6 +39,7 @@ import {
   type CompareSnapshot,
 } from '@stores/compareStore';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
+import { Icon } from '@components/Icon';
 import styles from './CompareOverlay.module.css';
 
 /** How much |live − snapshot| is amplified so a subtle drift is visible. */
@@ -125,6 +126,22 @@ export function CompareOverlay(): JSX.Element | null {
     [setWipe],
   );
 
+  const hide = useCallback(() => useCompareStore.getState().setVisible(false), []);
+
+  // Esc returns to the live view while a snapshot is up — there is always a
+  // way out that does not need the Compare menu.
+  useEffect(() => {
+    if (!visible) return;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.isContentEditable || t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
+      hide();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [visible, hide]);
+
   if (!visible || !snap) return null;
   // Toggle mode showing the LIVE frame draws nothing at all — the chip would
   // otherwise claim a comparison is on screen when the picture is unchanged.
@@ -156,8 +173,19 @@ export function CompareOverlay(): JSX.Element | null {
         </button>
       )}
       <div className={styles.chip}>
-        {snap.label}
-        <span className={styles.chipSide}>{describeFraming(snap)}</span>
+        <span className={styles.chipText}>
+          {snap.label}
+          <span className={styles.chipSide}>{describeFraming(snap)}</span>
+        </span>
+        <button
+          type="button"
+          className={styles.chipClose}
+          aria-label="Hide snapshot (Esc)"
+          title="Hide snapshot — back to the live view (Esc / Shift+F5)"
+          onClick={hide}
+        >
+          <Icon name="close" size="sm" />
+        </button>
       </div>
     </div>
   );

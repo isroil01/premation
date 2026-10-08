@@ -4,10 +4,13 @@
   min-width: 0;
 }
 
+/* A block's name inside a section (Video Source, Audio Waveform): the panel
+   `subgroup` role (typography.css). */
 .title {
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-text-secondary);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-subgroup);
+  color: var(--color-text-primary);
   margin: 0 0 var(--space-3) 0;
   letter-spacing: -0.01em;
   display: flex;
@@ -59,14 +62,18 @@
 
 /* Shared inspector form controls — tokenized, comfortable padding so inputs
    don't crowd each other. Used by the select/text/color inputs across the
-   Appearance / Character / Media sections (replacing inline hardcoded hex). */
+   Appearance / Character / Media sections (replacing inline hardcoded hex).
+   What a select shows is the property's VALUE: the panel `value` role's size
+   and weight, in the text face (a menu choice is a word, not a numeral). */
 .select,
 .textInput {
   width: 100%;
   background: var(--color-surface-1);
   border: 1px solid var(--color-field-border);
   color: var(--color-text-primary);
-  font-size: var(--font-size-xs);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-value);
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-sm);
   cursor: pointer;
@@ -82,6 +89,14 @@
   outline: none;
   border-color: var(--color-primary);
   box-shadow: none;
+}
+
+/* A select as a row's value (Light Type, Falloff): a fixed share of the row
+   that may give way in a narrow panel, instead of a per-call inline width. */
+.rowSelect {
+  flex: 0 1 150px;
+  width: 150px;
+  min-width: 0;
 }
 
 .colorInput {
@@ -106,7 +121,10 @@
   background: var(--color-surface-1);
   border: 1px solid var(--color-border-subtle);
   color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
+  /* A bordered verb: the panel `button` role. */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-button);
   padding: var(--space-2) var(--space-3);
   border-radius: 4px;
   cursor: pointer;
@@ -128,7 +146,9 @@
 .mediaFileName {
   flex: 1;
   min-width: 0;
-  font-size: var(--font-size-xs);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
   color: var(--color-text-tertiary);
   white-space: nowrap;
   overflow: hidden;
@@ -137,63 +157,6 @@
   padding: var(--space-2) var(--space-3);
   border-radius: 4px;
   border: 1px solid var(--color-border-subtle);
-}
-
-.colorPickerWrapper {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  background: var(--color-surface-1);
-  border: 1px solid var(--color-field-border);
-  border-radius: 4px;
-  padding: 3px 8px;
-  cursor: pointer;
-  transition: var(--motion-hover-transition);
-  width: 100%;
-  height: 24px;
-}
-
-.colorPickerWrapper:hover {
-  border-color: var(--color-text-tertiary);
-  background: var(--color-hover);
-}
-
-.colorSwatch {
-  width: 12px;
-  height: 12px;
-  border-radius: 2px;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
-  flex-shrink: 0;
-}
-
-.colorHex {
-  font-size: var(--font-size-xs);
-  font-family: var(--font-family-mono);
-  color: var(--color-text-secondary);
-  user-select: none;
-}
-
-.colorInputHidden {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  opacity: 0;
-  cursor: pointer;
-  padding: 0;
-  margin: 0;
-  border: none;
-}
-
-/* ── Compact Popover Grid Layout ────────────────────────────────── */
-.compactGrid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  margin-top: 8px;
 }
 
 /* Inline (always-visible) inspector rows — the flattened replacement for the
@@ -206,13 +169,14 @@
 
 /* A sub-group name inside a section. Sentence case at the row size, no rule
    under it: After Effects' groups are told apart by indent and order, not by
-   uppercase headings (2026-10-07). */
+   uppercase headings (2026-10-07). The panel `subgroup` role. */
 .subhead {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-regular);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-subgroup);
   color: var(--color-text-primary);
   min-height: var(--control-height-row);
   margin-top: var(--space-2);
@@ -244,50 +208,6 @@
   color: var(--color-primary);
 }
 
-.gridCell {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-  background: color-mix(in srgb, var(--color-surface-2) 40%, transparent);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 6px;
-  padding: 8px 10px;
-  cursor: pointer;
-  width: 100%;
-  text-align: left;
-  transition: background 0.12s, border-color 0.12s;
-  overflow: hidden;
-}
-
-.gridCell:hover {
-  background: color-mix(in srgb, var(--color-surface-2) 75%, transparent);
-  border-color: var(--color-border-strong);
-}
-
-.cellLabel {
-  font-size: var(--font-size-micro);
-  color: var(--color-text-tertiary);
-  font-weight: 600;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  width: 100%;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  justify-content: space-between;
-}
-
-.cellValue {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-primary);
-  font-family: var(--font-family-mono);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  width: 100%;
-}
-
 .animatedDot {
   width: 5px;
   height: 5px;
@@ -296,30 +216,7 @@
   display: inline-block;
 }
 
-/* ── Popover Dropdown Styling ── */
-.popoverContent {
-  background: var(--color-surface-2);
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  padding: 12px;
-  min-width: 210px;
-  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -2px rgba(0, 0, 0, 0.3);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.popoverContent h5 {
-  margin: 0 0 4px 0;
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  color: var(--color-text-tertiary);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  border-bottom: 1px solid var(--color-border-subtle);
-  padding-bottom: 4px;
-}
-
+/* ── Label · value rows ── */
 .popoverRow {
   display: flex;
   align-items: center;
@@ -329,14 +226,146 @@
   margin-bottom: 2px;
 }
 
+/* A property's name: the panel `label` role (typography.css). */
 .popoverLabel {
-  font-size: var(--font-size-sm);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
   color: var(--color-text-secondary);
-  font-weight: 500;
   /* The compact property rows' label column, so Align / Cap / Join labels in
      Appearance start their controls on the same x as the numeric rows. */
   min-width: var(--prop-label-col, 64px);
   flex-shrink: 0;
+}
+
+/*
+ * An On / Off property value (2026-10-08) — After Effects' hot-text switch: a
+ * toggle that reads as a VALUE, in the value role and the value colour a
+ * ValueField draws, rather than a checkbox. `aria-pressed` carries the state.
+ */
+.onOffValue {
+  display: inline-flex;
+  align-items: center;
+  height: var(--control-height-xs);
+  padding: 0 var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--value-field-color, var(--color-primary));
+  font-family: var(--panel-font-family-value);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-value);
+  line-height: 1;
+  cursor: pointer;
+  transition: var(--motion-hover-transition);
+}
+
+.onOffValue:hover {
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-primary) 25%, transparent);
+  color: var(--color-primary-hover);
+}
+
+.onOffValue:focus-visible {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 1px var(--color-primary);
+}
+
+/* A bordered verb under the row it acts on (Add Target, Aim by Angle). */
+.actionRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-height-row);
+}
+
+/* A read-only value (a derived "50.0 mm", a count): the panel `value` role —
+   numerals in mono, tabular — in the secondary colour, since it cannot be
+   scrubbed the way a ValueField's accent-coloured number can. */
+.valueText {
+  font-family: var(--panel-font-family-value);
+  font-size: var(--panel-font-size);
+  line-height: var(--panel-line-height);
+  font-weight: var(--panel-weight-value);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+/* A read-only value in words (a file name, "Static texture"): the panel
+   `value` role's size and weight in the text face, secondary, one line. */
+.readout {
+  min-width: 0;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  line-height: var(--panel-line-height);
+  font-weight: var(--panel-weight-value);
+  color: var(--color-text-secondary);
+}
+
+/* A real warning that needs more than a line (an SVG feature that will not
+   survive conversion): the panel `help` role in the warning colour, boxed. */
+.warningBox {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 25%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-warning) 8%, transparent);
+  color: var(--color-warning);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  line-height: var(--panel-line-height-help);
+  font-weight: var(--panel-weight-help);
+}
+
+.warningBox > svg,
+.warningBox > span:first-child {
+  flex: none;
+}
+
+/* A column of notes or actions after a section's rows. */
+.stackAfter {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+}
+
+/* A quiet qualifier inside a label (" · needs position keys"): the label
+   role's weight, in the tertiary colour. */
+.labelNote {
+  font-weight: var(--panel-weight-label);
+  color: var(--color-text-tertiary);
+}
+
+/* One short help line — an empty state, a hint the row cannot carry as a
+   tooltip. The panel `help` role. Never a paragraph inside a property list. */
+.helpLine {
+  margin: 0;
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  line-height: var(--panel-line-height-help);
+  font-weight: var(--panel-weight-help);
+  color: var(--color-text-tertiary);
+}
+
+/* The one help line a property list may carry: a real warning. The panel
+   `help` role in the warning colour. */
+.helpWarning {
+  margin: 0 0 var(--space-2);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  line-height: var(--panel-line-height-help);
+  font-weight: var(--panel-weight-help);
+  color: var(--color-warning);
 }
 
 .resetBtn {
@@ -406,8 +435,8 @@
   min-width: 0;
 }
 
-/* The "More" disclosure — sentence case, the weight of a row label, so it
-   reads as part of the list rather than a heading over it. */
+/* The "More" disclosure — a twirl inside the section, so the panel `subgroup`
+   role (typography.css), quiet in colour until pointed at. */
 .moreToggle {
   display: inline-flex;
   align-items: center;
@@ -420,7 +449,9 @@
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--color-text-tertiary);
-  font-size: var(--font-size-sm);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-subgroup);
   cursor: pointer;
   transition: var(--motion-hover-transition);
 }

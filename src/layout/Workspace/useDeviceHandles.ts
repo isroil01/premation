@@ -27,7 +27,7 @@ import { Gizmo3D } from '@motion/workspace';
 import { useGuidesStore } from '@stores/guidesStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { documentMirror } from '@stores/documentMirror';
-import { getWorkspaceController } from '@core/workspace/WorkspaceController';
+import { displayedRenderView } from '@core/workspace/displayedView';
 import { isSceneCameraView } from '@core/scene/cameraViewMode';
 import { useSceneRefGeometry } from './useSceneRefGeometry';
 import { beginViewportGesture, endViewportGesture } from '@core/workspace/viewportGesture';
@@ -53,7 +53,7 @@ export function useDeviceHandles(stageRef: React.RefObject<HTMLElement | null>) 
   // The camera this view looks THROUGH gets no handle — the same suppression
   // the wireframe already has, resolved from the same shared hook so the two
   // can never disagree about which camera that is.
-  const { activeCameraId, camera, compWidth, compHeight, sceneLayers, recordOf } = useSceneRefGeometry(camera3dMode);
+  const { activeCameraId, camera, compWidth, compHeight, sceneLayers, recordOf } = useSceneRefGeometry(camera3dMode, { mainViewport: true });
   const viewingThrough = isSceneCameraView(camera3dMode) ? activeCameraId : null;
 
   const [hovered, setHovered] = useState<DeviceHandle | null>(null);
@@ -75,14 +75,16 @@ export function useDeviceHandles(stageRef: React.RefObject<HTMLElement | null>) 
     const stage = stageRef.current;
     if (!stage) return;
 
+    // The transform the dots are DRAWN with (Gizmo3dOverlay's, the frame on
+    // screen's — useOverlayView), so a dot is grabbed where it is seen.
     const compLocal = (e: PointerEvent): { x: number; y: number } => {
       const rect = stage.getBoundingClientRect();
       return Gizmo3D.viewportToComp(
         { x: e.clientX - rect.left, y: e.clientY - rect.top },
-        getWorkspaceController().getView(),
+        displayedRenderView(),
       );
     };
-    const tolerance = (): number => 12 / (getWorkspaceController().getView().scale || 1);
+    const tolerance = (): number => 12 / (displayedRenderView().scale || 1);
 
     /** Project a world point exactly as the overlay draws it (the view's pushed camera). */
     const projector = (): ((p: Vec3) => { x: number; y: number }) => {

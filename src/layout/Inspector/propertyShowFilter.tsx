@@ -1,12 +1,13 @@
 /**
- * The Properties footer's Show filter — After Effects' U / UU for the
- * inspector (2026-10-07).
+ * The Properties toolbar's Show filter — After Effects' U / UU for the
+ * inspector (2026-10-07; in the toolbar beside the search since 2026-10-08).
  *
- * "Animated" lists only the properties with keyframes or an expression (U);
- * "Modified" adds every property whose value is set away from its default
+ * "Keyed" lists only the properties with keyframes or an expression (U);
+ * "Changed" adds every property whose value is set away from its default
  * (UU). Each listed property is drawn with the same row the rest of the
  * inspector uses (`MultiPropertyRow` for a number), so editing, keyframing and
- * multi-selection work as they do in its own section.
+ * multi-selection work as they do in its own section. The search field beside
+ * the filter narrows the list by property name.
  *
  * Read from the document mirror: one row per PROPERTY (a Position's X and Y
  * are one row), hidden (advanced) properties left out.
@@ -35,48 +36,42 @@ function sameValue(a: Value, b: Value): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
-export interface PropertyCounts {
-  total: number;
-  animated: number;
-  modified: number;
-}
-
 /**
  * The layer's properties for a Show mode, one track name per property, in the
- * tree's order — plus the counts the footer prints.
+ * tree's order.
  */
 export function propertiesForShow(nodeId: string, show: Exclude<PropertyShow, 'all'>): string[] {
   return classify(nodeId)[show];
 }
 
-export function propertyCounts(nodeId: string): PropertyCounts {
-  const c = classify(nodeId);
-  return { total: c.total, animated: c.animated.length, modified: c.modified.length };
-}
-
-function classify(nodeId: string): { total: number; animated: string[]; modified: string[] } {
+function classify(nodeId: string): { animated: string[]; modified: string[] } {
   const m = documentMirror();
   const tree = m.layer(nodeId) ? m.tree(nodeId) : undefined;
   const seen = new Set<string>();
   const animated: string[] = [];
   const modified: string[] = [];
-  let total = 0;
   for (const track of tracksIn(tree)) {
     const r = trackRefIn(tree, track);
     if (!r || seen.has(r.path) || r.info.hidden) continue;
     seen.add(r.path);
-    total += 1;
     const keyed = m.keyframes(nodeId, r.path).length > 0 || r.info.expression !== '';
     if (keyed) animated.push(track);
     const v = r.info.value;
     const d = r.info.defaultValue;
     if (keyed || (v !== undefined && d !== undefined && !sameValue(v, d))) modified.push(track);
   }
-  return { total, animated, modified };
+  return { animated, modified };
+}
+
+export interface FilteredPropertyListProps {
+  nodeId: string;
+  show: Exclude<PropertyShow, 'all'>;
+  /** The toolbar's search: a non-empty query keeps the properties whose name contains it. */
+  query?: string;
 }
 
 /** The rows a Show filter lists, drawn in place of the sections. */
-export function FilteredPropertyList({ nodeId, show }: { nodeId: string; show: Exclude<PropertyShow, 'all'> }): JSX.Element | null {
+export function FilteredPropertyList({ nodeId, show, query = '' }: FilteredPropertyListProps): JSX.Element | null {
   // The layer's header, tree and keyframes: a new key or a reset re-lists.
   const watchIds = useMemo(() => [nodeId], [nodeId]);
   useMirrorLayersWatch(watchIds);
@@ -84,11 +79,17 @@ export function FilteredPropertyList({ nodeId, show }: { nodeId: string; show: E
   const m = documentMirror();
   const layer = m.layer(nodeId);
   if (!layer) return null;
-  const tracks = propertiesForShow(nodeId, show);
+  const tree = m.tree(nodeId);
+  const labelOf = (track: string): string => mirrorPropertyMeta(track, layer, tree).label;
+  const all = propertiesForShow(nodeId, show);
+  const q = query.trim().toLowerCase();
+  const tracks = q ? all.filter((track) => labelOf(track).toLowerCase().includes(q) || track.toLowerCase().includes(q)) : all;
   if (tracks.length === 0) {
     return (
       <p className={panels.sectionNote}>
-        {show === 'animated' ? 'No animated properties on this layer.' : 'Every property is at its default.'}
+        {q && all.length > 0
+          ? `No ${show === 'animated' ? 'keyed' : 'changed'} properties match “${query.trim()}”.`
+          : show === 'animated' ? 'No keyed properties on this layer.' : 'Every property is at its default.'}
       </p>
     );
   }
@@ -99,7 +100,7 @@ export function FilteredPropertyList({ nodeId, show }: { nodeId: string; show: E
         : (
           <PropertyRow
             key={track}
-            label={mirrorPropertyMeta(track, layer, m.tree(nodeId)).label}
+            label={labelOf(track)}
             compact
             layout="inspector"
           >

@@ -1,35 +1,61 @@
 /**
- * LightSection — curated light controls (preset / type / colour / intensity /
- * shaping) replacing the raw generic prop dump. Intensity, radius and the rest
- * of the numeric rows are keyframeable: the renderer already samples their
- * tracks (buildSnapshot reads av.get('intensity') / av.get('radius')), so each
- * row carries the standard keyframe toggle.
+ * LightSection — After Effects' Light Options for a light layer (2026-10-08):
  *
- * Two things this section used to make unreachable:
+ *   Light Type
+ *   Color · Color Temperature · Intensity
+ *   Cone Angle · Cone Feather                      (Spot)
+ *   Falloff · Radius · Falloff Distance            (Point, Spot)
+ *   Casts Shadows  On/Off
+ *     Shadow Darkness · Shadow Diffusion · ▶ Shadow Map
+ *   Point of Interest X Y Z  [Aim by Angle]        (Spot, Parallel)
+ *     — or Direction  [Add Target]
+ *   ▶ Viewer: Show Glow in Viewer  On/Off          (Point, Spot)
  *
- *  • ENVIRONMENT lights. `LightType` has five members and the engine expands an
- *    environment light into a full SH-probe rig, but the coercion here folded
- *    anything that was not ambient/spot/parallel down to 'point' and the type
- *    menu offered four options — so an environment light created from the New
- *    Light dialog displayed, and edited, as a point light, and `envPreset` /
- *    `envRotation` (which buildSnapshot reads, the latter per-frame) had no
- *    controls at all.
+ * Numeric rows are keyframeable — the renderer samples their tracks — so each
+ * carries the standard keyframe toggle.
  *
- *  • COLOUR TEMPERATURE. Lighting is chosen in Kelvin; the hex picker cannot
- *    express that, so every warm/cool decision was eyeballed. The Kelvin row
- *    writes the same `fill` prop through the blackbody fit, and reads its own
- *    position back from the colour, so the two controls stay one value.
+ * ## The panel grammar (typography.css, "Panel type roles")
+ *
+ * A twirl only opens and closes: Casts Shadows is a ROW whose value reads On /
+ * Off, never a group header with a checkbox in it. Explanations are tooltips,
+ * not paragraphs; the one help line left is the light-count warning. Picking a
+ * whole look is an action on the section, so the preset picker is "Light
+ * Presets ▸" in the Properties ≡ menu (`LightPresetsMenu`), not a row.
+ *
+ * ## Only rows the engine reads
+ *
+ *  • Falloff, Radius and Falloff Distance are drawn for Point and Spot only:
+ *    the engine shades a Parallel light with no distance term
+ *    (lights3d.cpp, solid3d.wgsl) and an Ambient one has no position. Radius
+ *    is the reach of the Smooth and Inverse Square curves and of the legacy
+ *    ramp; under Falloff None it changes only the viewer glow's size, so it is
+ *    drawn then only while the glow is on. Falloff Distance is read by Smooth
+ *    alone (Inverse Square ignores it).
+ *  • Show Glow in Viewer is for Point and Spot: a Parallel light's glow is a
+ *    radial blob at a meaningless position (light_wash.cpp). A Parallel or
+ *    Ambient light that already HAS its glow on keeps the row, so it can be
+ *    turned off.
+ *  • An ENVIRONMENT light has no position, no reach and no cone: the engine
+ *    reads its sky (`envPreset`, a preset or an `asset:` image), rotation,
+ *    reflections and intensity, expands them into an ambient + parallel rig
+ *    and a prefiltered reflection map, and skips it for the glow. So it shows
+ *    only those rows, plus its visible sky and its key-light shadow.
+ *
+ * COLOUR TEMPERATURE: lighting is chosen in Kelvin; the hex picker cannot
+ * express that. The Kelvin row writes the same `fill` prop through the
+ * blackbody fit and reads its own position back from the colour, so the two
+ * controls stay one value.
  */
 
 import { useEffect } from 'react';
-import { useMirrorFootage, useMirrorLayer } from '@hooks/useMirror';
+import { useMirrorFootage, useMirrorLayer, useMirrorProperty } from '@hooks/useMirror';
 import { useActiveCompLayers } from '@hooks/useMirrorFields';
 import { uiKindOf } from '@core/mirror/layerKinds';
-import { useActiveCompSize } from './inspectorMirror';
 import { ColorPicker } from '@components/ColorPicker';
-import { Checkbox } from '@components/Checkbox';
 import { Button } from '@components/Button';
 import { ValueField } from '@components/ValueField';
+import type { DropdownItem } from '@components/Dropdown';
+import { cn } from '@utils/cn';
 import { getTime } from '@stores/playbackClockStore';
 import { edit } from '@core/engine/uiEdits';
 import { componentOfType, values } from '@core/engine/propRefs';
@@ -53,6 +79,9 @@ import {
   useComponentProp,
 } from './useComponentProp';
 import { TwirlGroup } from './appearance/TwirlGroup';
+import { MultiPropertyPairRow, type PairFieldSpec } from './MultiPropertyPairRow';
+import { OnOffRow } from './OnOffRow';
+import { useSectionMenuRows } from './sectionMenu';
 import styles from './TransformSection.module.css';
 import { KeyframeRow as KfRow } from './KeyframeRow';
 
@@ -74,35 +103,125 @@ interface LightPreset {
   /** Spot only. */
   cone?: number;
   coneFeather?: number;
-  hint: string;
 }
 
-const LIGHT_PRESETS: LightPreset[] = [
-  { label: 'Key', type: 'spot', intensity: 100, kelvin: 5600, falloff: 'smooth', cone: 45, coneFeather: 45, hint: 'The main source: a daylight-balanced spot at full energy.' },
-  { label: 'Fill', type: 'point', intensity: 45, kelvin: 6500, falloff: 'smooth', hint: 'A soft, low-energy wash opposite the key to open the shadows.' },
-  { label: 'Rim / Back', type: 'spot', intensity: 140, kelvin: 7000, falloff: 'smooth', cone: 30, coneFeather: 30, hint: 'Hot, slightly cool and narrow — separates the subject from the background.' },
-  { label: 'Soft top', type: 'parallel', intensity: 65, kelvin: 6000, falloff: 'none', hint: 'An even overhead wash, like a bounced ceiling.' },
-  { label: 'Warm practical', type: 'point', intensity: 80, kelvin: 2700, falloff: 'inverse-square', hint: 'A tungsten lamp in shot: warm, and falling off physically.' },
-  { label: 'Cool moonlight', type: 'parallel', intensity: 55, kelvin: 10000, falloff: 'none', hint: 'A dim, very blue directional wash.' },
-  { label: 'Sunset key', type: 'spot', intensity: 110, kelvin: 2200, falloff: 'smooth', cone: 70, coneFeather: 70, hint: 'Low, wide and orange — a sun near the horizon.' },
+export const LIGHT_PRESETS: readonly LightPreset[] = [
+  // The main source: a daylight-balanced spot at full energy.
+  { label: 'Key', type: 'spot', intensity: 100, kelvin: 5600, falloff: 'smooth', cone: 45, coneFeather: 45 },
+  // A soft, low-energy wash opposite the key to open the shadows.
+  { label: 'Fill', type: 'point', intensity: 45, kelvin: 6500, falloff: 'smooth' },
+  // Hot, slightly cool and narrow — separates the subject from the background.
+  { label: 'Rim / Back', type: 'spot', intensity: 140, kelvin: 7000, falloff: 'smooth', cone: 30, coneFeather: 30 },
+  // An even overhead light, like a bounced ceiling.
+  { label: 'Soft top', type: 'parallel', intensity: 65, kelvin: 6000, falloff: 'none' },
+  // A tungsten lamp in shot: warm, and falling off physically.
+  { label: 'Warm practical', type: 'point', intensity: 80, kelvin: 2700, falloff: 'inverse-square' },
+  // A dim, very blue directional light.
+  { label: 'Cool moonlight', type: 'parallel', intensity: 55, kelvin: 10000, falloff: 'none' },
+  // Low, wide and orange — a sun near the horizon.
+  { label: 'Sunset key', type: 'spot', intensity: 110, kelvin: 2200, falloff: 'smooth', cone: 70, coneFeather: 70 },
 ];
+
+/** A new light's colour when its Style carries no fill (readNodeLight's default). */
+const DEFAULT_COLOR = '#fff3c0';
 
 /** The canonical five-member LightType, matching `readNodeLight`'s coercion. */
 function coerceLightType(v: unknown): LightType {
   return v === 'ambient' || v === 'spot' || v === 'parallel' || v === 'environment' ? v : 'point';
 }
 
+function coerceFalloff(v: unknown): LightFalloff {
+  return v === 'smooth' || v === 'inverse-square' || v === 'legacy' ? v : 'none';
+}
+
+const num = (v: unknown, fb: number): number => (typeof v === 'number' ? v : fb);
+
 /** The rows' components (Transform, the Style fill), resolved by the write seam when a row writes (the reads are the mirror's). */
 const TRANSFORM = { type: 'Transform' } as const;
 const STYLE = { type: 'Style' } as const;
 
-/** How a closed Falloff row names the model in force. */
-const FALLOFF_LABEL: Record<string, string> = {
-  none: 'None',
-  smooth: 'Smooth',
-  'inverse-square': 'Inverse Square Clamped',
-  legacy: 'Radius ramp',
-};
+/** Point of Interest as Position draws its axes: one row, three fields, each keyframed on its own track. */
+const POI_FIELDS: readonly PairFieldSpec[] = [
+  { prop: 'poiX', prefix: 'X' },
+  { prop: 'poiY', prefix: 'Y' },
+  { prop: 'poiZ', prefix: 'Z' },
+];
+
+/**
+ * Transform-component props (+ the light's Style fill) as ONE engine batch —
+ * one undo entry for one menu pick. Refused whole when any prop is not an
+ * engine property of this light (nothing half-applied).
+ */
+function sendLightLook(nodeId: string, label: string, t: Record<string, unknown>, fill?: string): void {
+  const seconds = getTime();
+  // The components the batch lands on, from the write seam at write time.
+  const tId = componentOfType(nodeId, 'Transform') ?? '';
+  const sId = componentOfType(nodeId, 'Style');
+  const { cmds, rest } = componentPropsCommands(nodeId, tId, t, seconds);
+  const fillCmds = fill !== undefined && sId ? componentPropCommands(nodeId, sId, 'fill', fill, seconds) : [];
+  const missing = [...Object.keys(rest), ...(fillCmds === null ? ['fill'] : [])];
+  if (missing.length > 0) {
+    reportUnaddressed(nodeId, missing, label);
+    return;
+  }
+  void edit(label, [...cmds, ...(fillCmds ?? [])]);
+}
+
+/**
+ * Apply a whole look as ONE undoable edit: `light/lightType` and
+ * `light/falloff` (layer fields), Intensity and the cone (keyed at the
+ * playhead where animated), and the colour (`layer/fill`).
+ */
+export function applyLightPreset(nodeId: string, p: LightPreset): void {
+  sendLightLook(nodeId, `Light Preset: ${p.label}`, {
+    lightType: p.type,
+    intensity: p.intensity,
+    // Stored explicitly, `none` included: an ABSENT falloff is what the
+    // 1.7.0 → 1.8.0 migration reads as the old radius ramp.
+    falloff: p.falloff,
+    ...(p.type === 'spot'
+      ? { lightCone: p.cone ?? LIGHT_DEFAULTS.cone, lightConeFeather: p.coneFeather ?? LIGHT_DEFAULTS.coneFeather }
+      : {}),
+  }, kelvinToHex(p.kelvin));
+}
+
+/** The preset whose look the light has exactly, if any. */
+function presetInForce(type: LightType, intensity: number, falloff: LightFalloff, color: string): LightPreset | undefined {
+  const hex = color.trim().toLowerCase();
+  return LIGHT_PRESETS.find((p) => p.type === type && p.intensity === intensity && p.falloff === falloff && kelvinToHex(p.kelvin) === hex);
+}
+
+/**
+ * "Light Presets ▸" in the Properties ≡ menu — Light Options' `menu` in the
+ * section registry (see sectionMenu.tsx). One pick sets type, energy, colour
+ * and shaping as ONE undoable edit; the look in force is ticked. Draws
+ * nothing.
+ */
+export function LightPresetsMenu({ nodeId }: { nodeId: string; nodeIds?: ReadonlyArray<string> }): null {
+  const [typeRaw] = useComponentProp(nodeId, TRANSFORM, 'lightType');
+  const [intensityRaw] = useComponentProp(nodeId, TRANSFORM, 'intensity');
+  const [falloffRaw] = useComponentProp(nodeId, TRANSFORM, 'falloff');
+  const [fillRaw] = useComponentProp(nodeId, STYLE, 'fill');
+  const active = presetInForce(
+    coerceLightType(typeRaw),
+    num(intensityRaw, LIGHT_DEFAULTS.intensity),
+    coerceFalloff(falloffRaw),
+    typeof fillRaw === 'string' ? fillRaw : DEFAULT_COLOR,
+  );
+  useSectionMenuRows([{
+    type: 'item',
+    id: 'light-presets',
+    label: 'Light Presets',
+    submenu: LIGHT_PRESETS.map((p): DropdownItem => ({
+      type: 'item',
+      id: `light-preset-${p.label}`,
+      label: p.label,
+      ...(p === active ? { icon: 'check' as const } : {}),
+      onSelect: () => applyLightPreset(nodeId, p),
+    })),
+  }]);
+  return null;
+}
 
 export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null {
   // The layer's header and the active comp from the document mirror (B4).
@@ -124,9 +243,13 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
   const [mapSizeRaw, setMapSize] = useComponentProp(nodeId, TRANSFORM, 'shadowMapSize');
   const [shadowBiasRaw, setShadowBias] = useComponentProp(nodeId, TRANSFORM, 'shadowBias');
   const [shadowSoftRaw, setShadowSoft] = useComponentProp(nodeId, TRANSFORM, 'shadowSoftness');
-  const [poiXRaw, setPoiX] = useComponentProp(nodeId, TRANSFORM, 'poiX');
-  const [poiYRaw, setPoiY] = useComponentProp(nodeId, TRANSFORM, 'poiY');
-  const [poiZRaw, setPoiZ] = useComponentProp(nodeId, TRANSFORM, 'poiZ');
+  // Whether the light is targeted: AE's Orient Towards Point of Interest, the
+  // engine's own answer (true while a POI is STORED). Not "is poiX a number" —
+  // the mirror lists an untargeted light's Point of Interest as a latent
+  // property reading 0, so that test said every light was targeted and
+  // "Add Target" could never be reached. The Point of Interest row reads and
+  // writes its three fields itself.
+  const orientInfo = useMirrorProperty(nodeId, POI_PATH);
   const [envPresetRaw, setEnvPreset] = useComponentProp(nodeId, TRANSFORM, 'envPreset');
   const [envRotationRaw, setEnvRotation] = useComponentProp(nodeId, TRANSFORM, 'envRotation');
   const [envReflRaw, setEnvRefl] = useComponentProp(nodeId, TRANSFORM, 'envReflections');
@@ -134,7 +257,6 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
   const [envVisibleRaw, setEnvVisible] = useComponentProp(nodeId, TRANSFORM, 'envVisible');
   const [envSkyBlurRaw, setEnvSkyBlur] = useComponentProp(nodeId, TRANSFORM, 'envSkyBlur');
   const [envLayerRaw, setEnvLayer] = useComponentProp(nodeId, TRANSFORM, 'envLayer');
-  const { width: compWidth, height: compHeight } = useActiveCompSize();
   // The library, for the "Image…" sky. Selected as the whole array (a filtered
   // one would be a fresh reference on every store read, which re-renders
   // forever) and narrowed in a memo — the same shape the other asset rows use.
@@ -154,15 +276,14 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
   }, [envAssetId]);
   if (!layer) return null;
 
-  const num = (v: unknown, fb: number): number => (typeof v === 'number' ? v : fb);
   const intensity = num(intensityRaw, LIGHT_DEFAULTS.intensity);
   const radius = num(radiusRaw, LIGHT_DEFAULTS.radius);
-  const color = typeof fillRaw === 'string' ? fillRaw : '#fff3c0';
+  const color = typeof fillRaw === 'string' ? fillRaw : DEFAULT_COLOR;
   const type = coerceLightType(typeRaw);
   const angle = num(angleRaw, LIGHT_DEFAULTS.angle);
   const cone = num(coneRaw, LIGHT_DEFAULTS.cone);
   const feather = num(featherRaw, LIGHT_DEFAULTS.coneFeather);
-  const falloff = falloffRaw === 'smooth' || falloffRaw === 'inverse-square' || falloffRaw === 'legacy' ? falloffRaw : 'none';
+  const falloff = coerceFalloff(falloffRaw);
   const falloffDistance = num(falloffDistRaw, LIGHT_DEFAULTS.falloffDistance);
   const darkness = num(darknessRaw, LIGHT_DEFAULTS.shadowDarkness);
   const diffusion = num(diffusionRaw, LIGHT_DEFAULTS.shadowDiffusion);
@@ -188,68 +309,19 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
     const k = uiKindOf(l);
     return l.id !== nodeId && (k === 'video' || k === 'image' || k === 'comp');
   });
-  // A light is "targeted" (aimed in 3D) as soon as any POI component exists —
-  // the same test readNodeLight applies.
-  const hasPOI = [poiXRaw, poiYRaw, poiZRaw].some((v) => typeof v === 'number');
-  /*
-    An environment light has NO position, no reach and no cone: buildSnapshot
-    reads only its `envPreset`, its `envRotation`, its `envReflections` and
-    its `intensity`, expands those into the derived ambient+parallel rig and
-    the prefiltered reflection map, and explicitly skips it for both the glow
-    wash and 2.5D shadow casting. Every other row here would be a control that
-    changes nothing, so none of them are drawn.
-  */
+  // A light is "targeted" (aimed in 3D) as soon as any POI component is stored
+  // — the test readNodeLight applies, as the engine reports it.
+  const orient = orientInfo?.value;
+  const hasPOI = orient?.kind === 'bool' && orient.value;
+
   const isEnv = type === 'environment';
-  /** point / spot / parallel — the lights that actually sit somewhere. */
+  /** point / spot / parallel — the lights that sit somewhere and cast. */
   const positional = !isEnv && type !== 'ambient';
   const aimable = type === 'spot' || type === 'parallel';
-
-  const activePreset = LIGHT_PRESETS.find(
-    (p) => p.type === type
-      && p.intensity === intensity
-      && p.falloff === falloff
-      && kelvinToHex(p.kelvin) === color.trim().toLowerCase(),
-  );
-
-  /**
-   * Transform-component props (+ the light's Style fill) as ONE engine batch —
-   * one undo entry for one menu pick. Refused whole when any prop is not an
-   * engine property of this light (nothing half-applied).
-   */
-  const sendLook = (label: string, t: Record<string, unknown>, fill?: string): void => {
-    const seconds = getTime();
-    // The components the batch lands on, from the write seam at write time.
-    const tId = componentOfType(nodeId, 'Transform') ?? '';
-    const sId = componentOfType(nodeId, 'Style');
-    const { cmds, rest } = componentPropsCommands(nodeId, tId, t, seconds);
-    const fillCmds = fill !== undefined && sId ? componentPropCommands(nodeId, sId, 'fill', fill, seconds) : [];
-    const missing = [...Object.keys(rest), ...(fillCmds === null ? ['fill'] : [])];
-    if (missing.length > 0) {
-      reportUnaddressed(nodeId, missing, label);
-      return;
-    }
-    void edit(label, [...cmds, ...(fillCmds ?? [])]);
-  };
-
-  /**
-   * Apply a whole look as ONE undoable edit: `light/lightType` and
-   * `light/falloff` (layer fields), Intensity and the cone (keyed at the
-   * playhead where animated), and the colour (`layer/fill`).
-   */
-  const applyPreset = (label: string): void => {
-    const p = LIGHT_PRESETS.find((x) => x.label === label);
-    if (!p) return;
-    sendLook(`Light Preset: ${p.label}`, {
-      lightType: p.type,
-      intensity: p.intensity,
-      // Stored explicitly, `none` included: an ABSENT falloff is what the
-      // 1.7.0 → 1.8.0 migration reads as the old radius ramp.
-      falloff: p.falloff,
-      ...(p.type === 'spot'
-        ? { lightCone: p.cone ?? LIGHT_DEFAULTS.cone, lightConeFeather: p.coneFeather ?? LIGHT_DEFAULTS.coneFeather }
-        : {}),
-    }, kelvinToHex(p.kelvin));
-  };
+  /** The lights the engine attenuates with distance (see the module note). */
+  const hasFalloff = type === 'point' || type === 'spot';
+  const showRadius = hasFalloff && (falloff !== 'none' || hasGlow);
+  const showGlow = type === 'point' || type === 'spot' || (hasGlow && !isEnv);
 
   // The engine shades with at most MAX_LIGHTS3D lights per draw (`kMaxLights`,
   // native/engine/src/render_graph/threed.cpp); extra scene lights are silently
@@ -265,39 +337,14 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
     <div className={styles.section}>
       <div className={styles.inlineRows}>
         {lightLayerCount > MAX_LIGHTS3D && (
-          <p
-            style={{
-              margin: '0 0 6px',
-              fontSize: 'var(--font-size-micro)',
-              color: 'var(--color-warning)',
-              lineHeight: 1.5,
-            }}
-          >
-            {lightLayerCount} lights in this comp — only the first {MAX_LIGHTS3D} in
-            layer order light the 3D scene; the rest are ignored by shading.
+          <p className={styles.helpWarning} role="note">
+            {`Only the first ${MAX_LIGHTS3D} lights in layer order shade 3D layers — this comp has ${lightLayerCount}.`}
           </p>
         )}
         <div className={styles.popoverRow}>
-          <span className={styles.popoverLabel}>Preset</span>
+          <span className={styles.popoverLabel}>Light Type</span>
           <select
-            className={styles.select}
-            style={{ width: 150 }}
-            value={activePreset?.label ?? ''}
-            onChange={(e) => applyPreset(e.target.value)}
-            aria-label="Light preset"
-            title={activePreset?.hint ?? 'Start from a lighting-department look, then adjust'}
-          >
-            {!activePreset && <option value="">Custom</option>}
-            {LIGHT_PRESETS.map((p) => (
-              <option key={p.label} value={p.label}>{p.label}</option>
-            ))}
-          </select>
-        </div>
-        <div className={styles.popoverRow}>
-          <span className={styles.popoverLabel}>Type</span>
-          <select
-            className={styles.select}
-            style={{ width: 150 }}
+            className={cn(styles.select, styles.rowSelect)}
             value={type}
             onChange={(e) => {
               const next = coerceLightType(e.target.value);
@@ -307,7 +354,7 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
               // probe, and an undefined one would leave the light silently
               // reading the fallback with a menu that could not show which
               // preset was in force.
-              sendLook('Set Light Type', {
+              sendLightLook(nodeId, 'Set Light Type', {
                 lightType: next,
                 // The mirror reads an unset sky / rotation as its default, so
                 // the shown values are written, not only a missing one.
@@ -319,13 +366,13 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
                   : {}),
               });
             }}
-            aria-label="Light type"
+            aria-label="Light Type"
           >
-            <option value="point">Point (glow)</option>
-            <option value="ambient">Ambient (lift)</option>
-            <option value="spot">Spot (cone)</option>
-            <option value="parallel">Parallel (directional)</option>
-            <option value="environment">Environment (sky probe)</option>
+            <option value="parallel">Parallel</option>
+            <option value="spot">Spot</option>
+            <option value="point">Point</option>
+            <option value="ambient">Ambient</option>
+            <option value="environment">Environment</option>
           </select>
         </div>
         {isEnv && (
@@ -333,8 +380,7 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
             <div className={styles.popoverRow}>
               <span className={styles.popoverLabel}>Sky</span>
               <select
-                className={styles.select}
-                style={{ width: 150 }}
+                className={cn(styles.select, styles.rowSelect)}
                 value={skyMenuValue}
                 onChange={(e) => {
                   const v = e.target.value;
@@ -354,19 +400,18 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
                 {ENVIRONMENT_PRESETS.map((p) => (
                   <option key={p.id} value={p.id}>{p.label}</option>
                 ))}
-                <option value="image">Image… (HDRI / equirect)</option>
+                <option value="image">Image…</option>
               </select>
             </div>
             {envAssetId !== null && (
               <div className={styles.popoverRow}>
                 <span className={styles.popoverLabel}>Image</span>
                 <select
-                  className={styles.select}
-                  style={{ width: 150 }}
+                  className={cn(styles.select, styles.rowSelect)}
                   value={envAssetId}
                   onChange={(e) => setEnvPreset(environmentSkyForAsset(e.target.value))}
                   aria-label="Environment image"
-                  title="An equirectangular (2:1 lat-long) image. An imported EXR is projected from its LINEAR float planes; an 8-bit file is linearised from sRGB first."
+                  title="An equirectangular (2:1 lat-long) image or HDRI. An imported EXR is projected from its LINEAR float planes; an 8-bit file is linearised from sRGB first."
                 >
                   <option value="">Choose an image…</option>
                   {envAssetMissing && <option value={envAssetId}>{`${envAssetId} (missing)`}</option>}
@@ -385,7 +430,7 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
               <ColorPicker value={color} onChange={(hex) => setFill(hex)} aria-label="Light color" />
             </div>
             <div className={styles.popoverRow}>
-              <span className={styles.popoverLabel}>Temperature</span>
+              <span className={styles.popoverLabel}>Color Temperature</span>
               <ValueField
                 value={nearestKelvin(color)}
                 min={KELVIN_MIN}
@@ -393,54 +438,48 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
                 step={100}
                 unit="K"
                 onChange={(v) => setFill(kelvinToHex(v))}
-                aria-label="Color temperature"
+                aria-label="Color Temperature"
               />
             </div>
           </>
         )}
         <KfRow nodeId={nodeId} prop="intensity" label="Intensity" value={intensity} unit="%" min={0} onStatic={(v) => setIntensity(v)} />
         {isEnv && (
-          <KfRow
-            nodeId={nodeId}
-            prop="envRotation"
-            label="Sky rotation"
-            value={envRotation}
-            unit="°"
-            onStatic={(v) => setEnvRotation(v)}
-          />
-        )}
-        {/*
-          Reflections: the strength of the environment's MIRRORED half — the
-          prefiltered specular map a Physical material reflects — as distinct
-          from Intensity, which drives the irradiance rig that lights it. 100
-          is physically matched to Intensity, so the row only ever pulls the
-          reflection away from the light, never invents one; it stores nothing
-          at the default, and a scene that never opens it is unchanged.
-        */}
-        {isEnv && (
-          <KfRow
-            nodeId={nodeId}
-            prop="envReflections"
-            label="Reflections"
-            value={envReflections}
-            unit="%"
-            min={0}
-            onStatic={(v) => setEnvRefl(v !== LIGHT_DEFAULTS.envReflections ? v : undefined)}
-          />
-        )}
-        {isEnv && (
           <>
-            <div className={styles.popoverRow}>
-              <span className={styles.popoverLabel}>Show environment</span>
-              <Checkbox
-                checked={envVisible}
-                onChange={() => setEnvVisible(envVisible ? false : true)}
-                title="Draw the sky behind every layer of the composition, rotated with this light"
-              />
-            </div>
+            <KfRow
+              nodeId={nodeId}
+              prop="envRotation"
+              label="Sky Rotation"
+              value={envRotation}
+              unit="°"
+              onStatic={(v) => setEnvRotation(v)}
+            />
+            {/*
+              Reflections: the strength of the environment's MIRRORED half — the
+              prefiltered specular map a Physical material reflects — as distinct
+              from Intensity, which drives the irradiance rig that lights it. 100
+              is physically matched to Intensity, so the row only ever pulls the
+              reflection away from the light, never invents one; it stores nothing
+              at the default, and a scene that never opens it is unchanged.
+            */}
+            <KfRow
+              nodeId={nodeId}
+              prop="envReflections"
+              label="Reflections"
+              value={envReflections}
+              unit="%"
+              min={0}
+              onStatic={(v) => setEnvRefl(v !== LIGHT_DEFAULTS.envReflections ? v : undefined)}
+            />
+            <OnOffRow
+              label="Show Environment"
+              on={envVisible}
+              onToggle={() => setEnvVisible(!envVisible)}
+              title="Draw the sky behind every layer of the composition, rotated with this light"
+            />
             {envVisible && (
               <div className={styles.popoverRow}>
-                <span className={styles.popoverLabel}>Background blur</span>
+                <span className={styles.popoverLabel}>Background Blur</span>
                 <ValueField
                   value={envSkyBlur}
                   min={0}
@@ -453,10 +492,9 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
               </div>
             )}
             <div className={styles.popoverRow}>
-              <span className={styles.popoverLabel}>Source layer</span>
+              <span className={styles.popoverLabel}>Source Layer</span>
               <select
-                className={styles.select}
-                style={{ width: 150 }}
+                className={cn(styles.select, styles.rowSelect)}
                 value={envLayer}
                 onChange={(e) => setEnvLayer(e.target.value || undefined)}
                 aria-label="Environment source layer"
@@ -471,32 +509,27 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
                 ) : null}
               </select>
             </div>
-            <div className={styles.popoverRow}>
-              <span className={styles.popoverLabel}>Cast shadows</span>
-              <Checkbox
-                checked={castsShadows}
-                onChange={() => setShadows(castsShadows ? false : true)}
-                title="The environment's brightest direction casts a soft shadow map (the sky's key light)"
-              />
-            </div>
+            <OnOffRow
+              label="Casts Shadows"
+              on={castsShadows}
+              onToggle={() => setShadows(!castsShadows)}
+              title="The environment's brightest direction casts a soft shadow map (the sky's key light)"
+            />
             {castsShadows && (
               <>
-                <KfRow nodeId={nodeId} prop="shadowDarkness" label="Shadow darkness" value={darkness} unit="%" min={0} max={100} onStatic={(v) => setDarkness(v)} />
-                <KfRow nodeId={nodeId} prop="shadowSoftness" label="Shadow softness" value={shadowSoftness} unit="tx" min={0} onStatic={(v) => setShadowSoft(v)} />
+                <KfRow nodeId={nodeId} prop="shadowDarkness" label="Shadow Darkness" value={darkness} unit="%" min={0} max={100} onStatic={(v) => setDarkness(v)} />
+                <KfRow nodeId={nodeId} prop="shadowSoftness" label="Shadow Softness" value={shadowSoftness} unit="tx" min={0} onStatic={(v) => setShadowSoft(v)} />
               </>
             )}
           </>
         )}
-        {aimable && !hasPOI && (
-          <KfRow nodeId={nodeId} prop="lightAngle" label="Direction" value={angle} unit="°" onStatic={(v) => setAngle(v)} />
-        )}
         {type === 'spot' && (
           <>
-            <KfRow nodeId={nodeId} prop="lightCone" label="Cone angle" value={cone} unit="°" min={1} onStatic={(v) => setCone(v)} />
+            <KfRow nodeId={nodeId} prop="lightCone" label="Cone Angle" value={cone} unit="°" min={1} onStatic={(v) => setCone(v)} />
             <KfRow
               nodeId={nodeId}
               prop="lightConeFeather"
-              label="Cone feather"
+              label="Cone Feather"
               value={feather}
               unit="%"
               min={0}
@@ -505,13 +538,12 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
             />
           </>
         )}
-        {positional && (
-          <TwirlGroup prefKey="light.falloff" label="Falloff" defaultOpen={falloff !== 'none'} summary={FALLOFF_LABEL[falloff] ?? falloff}>
+        {hasFalloff && (
+          <>
             <div className={styles.popoverRow}>
               <span className={styles.popoverLabel}>Falloff</span>
               <select
-                className={styles.select}
-                style={{ width: 110 }}
+                className={cn(styles.select, styles.rowSelect)}
                 value={falloff}
                 onChange={(e) => setFalloff(e.target.value)}
                 aria-label="Falloff"
@@ -522,135 +554,116 @@ export function LightSection({ nodeId }: { nodeId: string }): JSX.Element | null
                 <option value="legacy">Radius ramp (legacy)</option>
               </select>
             </div>
-            <KfRow nodeId={nodeId} prop="radius" label="Radius" value={radius} unit="px" min={1} onStatic={(v) => setRadius(v)} />
-            {(falloff === 'smooth' || falloff === 'inverse-square') && (
+            {showRadius && (
+              <KfRow nodeId={nodeId} prop="radius" label="Radius" value={radius} unit="px" min={1} onStatic={(v) => setRadius(v)} />
+            )}
+            {falloff === 'smooth' && (
               <KfRow
                 nodeId={nodeId}
                 prop="falloffDistance"
-                label="Falloff distance"
+                label="Falloff Distance"
                 value={falloffDistance}
                 unit="px"
                 min={1}
                 onStatic={(v) => setFalloffDist(v)}
               />
             )}
-          </TwirlGroup>
+          </>
         )}
         {positional && (
-          <TwirlGroup
-            prefKey="light.shadows"
-            label="Casts Shadows"
-            defaultOpen={castsShadows}
-            summary={castsShadows ? `On · ${darkness}%` : 'Off'}
-            trailing={(
-              <Checkbox
-                checked={castsShadows}
-                onChange={() => setShadows(castsShadows ? false : true)}
-                title="Content layers drop a soft shadow away from this light"
-                aria-label="Cast shadows"
-              />
-            )}
-          >
-            {castsShadows ? (
+          <>
+            <OnOffRow
+              label="Casts Shadows"
+              on={castsShadows}
+              onToggle={() => setShadows(!castsShadows)}
+              title="Content layers drop a soft shadow away from this light"
+            />
+            {castsShadows && (
               <>
-                <KfRow nodeId={nodeId} prop="shadowDarkness" label="Shadow darkness" value={darkness} unit="%" min={0} max={100} onStatic={(v) => setDarkness(v)} />
-                <KfRow nodeId={nodeId} prop="shadowDiffusion" label="Shadow diffusion" value={diffusion} unit="px" min={0} onStatic={(v) => setDiffusion(v)} />
+                <KfRow nodeId={nodeId} prop="shadowDarkness" label="Shadow Darkness" value={darkness} unit="%" min={0} max={100} onStatic={(v) => setDarkness(v)} />
+                <KfRow nodeId={nodeId} prop="shadowDiffusion" label="Shadow Diffusion" value={diffusion} unit="px" min={0} onStatic={(v) => setDiffusion(v)} />
                 {/*
                   AE parity 4.3: every shadow-casting light renders a shadow MAP (up
                   to four per 3D run) — geometry-aware, landing on floors and any
                   surface at any angle, cast onto itself, across runs. Lights past
                   the fourth fall back to a projected copy of the caster's
-                  silhouette, which Shadow diffusion above still shapes.
+                  silhouette, which Shadow Diffusion above still shapes.
                 */}
-                <TwirlGroup prefKey="light.shadowMap" label="Shadow Map" defaultOpen={false} summary={`${mapSize}`}>
+                <TwirlGroup
+                  prefKey="light.shadowMap"
+                  label={<span title="Shadows are depth-mapped (up to four lights per 3D scene); further lights project a soft copy.">Shadow Map</span>}
+                  defaultOpen={false}
+                  summary={`${mapSize}`}
+                >
                   <div className={styles.popoverRow}>
-                    <span className={styles.popoverLabel}>Map quality</span>
+                    <span className={styles.popoverLabel}>Resolution</span>
                     <select
-                      className={styles.select}
-                      style={{ width: 110 }}
+                      className={cn(styles.select, styles.rowSelect)}
                       value={String(mapSize)}
                       onChange={(e) => {
                         const v = Number(e.target.value);
                         setMapSize(v === LIGHT_DEFAULTS.shadowMapSize ? undefined : v);
                       }}
-                      aria-label="Map quality"
+                      aria-label="Shadow Map Resolution"
                     >
-                      <option value="512">Draft (512)</option>
-                      <option value="1024">Standard (1024)</option>
-                      <option value="2048">High (2048)</option>
+                      <option value="512">512</option>
+                      <option value="1024">1024</option>
+                      <option value="2048">2048</option>
                     </select>
                   </div>
                   {/* Bias trades the two failures against each other: too little
                       and a lit surface stripes itself with its own depth
                       quantization, too much and the shadow lifts off the foot of
                       its caster. Both are visible, so this is a real control. */}
-                  <KfRow nodeId={nodeId} prop="shadowBias" label="Shadow bias" value={shadowBias} unit="px" min={0} onStatic={(v) => setShadowBias(v)} />
-                  <KfRow nodeId={nodeId} prop="shadowSoftness" label="Map softness" value={shadowSoftness} unit="tx" min={0} onStatic={(v) => setShadowSoft(v)} />
-                  <p style={{ margin: '2px 0 6px', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
-                    Shadows are depth-mapped (up to four lights per 3D scene); further lights project a soft copy.
-                  </p>
+                  <KfRow nodeId={nodeId} prop="shadowBias" label="Shadow Bias" value={shadowBias} unit="px" min={0} onStatic={(v) => setShadowBias(v)} />
+                  <KfRow nodeId={nodeId} prop="shadowSoftness" label="Map Softness" value={shadowSoftness} unit="tx" min={0} onStatic={(v) => setShadowSoft(v)} />
                 </TwirlGroup>
               </>
-            ) : null}
-          </TwirlGroup>
-        )}
-        {aimable && (
-          <TwirlGroup prefKey="light.poi" label="Point of Interest" defaultOpen={hasPOI} summary={hasPOI ? 'Targeted' : 'Aimed by angle'}>
-            {hasPOI ? (
-              <>
-                <KfRow nodeId={nodeId} prop="poiX" label="Target X" value={num(poiXRaw, compWidth / 2)} unit="px" onStatic={(v) => setPoiX(v)} />
-                <KfRow nodeId={nodeId} prop="poiY" label="Target Y" value={num(poiYRaw, compHeight / 2)} unit="px" onStatic={(v) => setPoiY(v)} />
-                <KfRow nodeId={nodeId} prop="poiZ" label="Target Z" value={num(poiZRaw, 0)} unit="px" onStatic={(v) => setPoiZ(v)} />
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  // AE's Orient Towards Point of Interest off (`transform/orientTowardsPointOfInterest`).
-                  onClick={() => { void edit('Remove Point of Interest', { type: 'setProperty', prop: { layer: nodeId, path: POI_PATH }, value: values.bool(false) }); }}
-                >
-                  Remove target (aim by angle)
-                </Button>
-              </>
-            ) : (
-              <>
-                <p style={{ margin: '2px 0 6px', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
-                  Direction alone can only swing this light within the comp plane —
-                  it can never aim at a layer sitting at a different depth. A target
-                  aims it in real 3D.
-                </p>
-                <Button
-                  size="xs"
-                  variant="secondary"
-                  // On: the target lands at the composition centre (w/2, h/2, 0).
-                  onClick={() => { void edit('Enable Point of Interest', { type: 'setProperty', prop: { layer: nodeId, path: POI_PATH }, value: values.bool(true) }); }}
-                >
-                  Add target
-                </Button>
-              </>
             )}
-          </TwirlGroup>
+          </>
         )}
-        {type !== 'environment' && (
-          <div className={styles.popoverRow}>
-            <span className={styles.popoverLabel}>Visible glow</span>
-            <Checkbox
-              checked={hasGlow}
-              onChange={() => setGlow(hasGlow ? false : true)}
+        {aimable && hasPOI && (
+          <>
+            <MultiPropertyPairRow nodeId={nodeId} label="Point of Interest" props={POI_FIELDS} />
+            <div className={styles.actionRow}>
+              <Button
+                size="sm"
+                variant="secondary"
+                title="Remove the target and aim this light by its Direction angle"
+                // AE's Orient Towards Point of Interest off (`transform/orientTowardsPointOfInterest`).
+                onClick={() => { void edit('Remove Point of Interest', { type: 'setProperty', prop: { layer: nodeId, path: POI_PATH }, value: values.bool(false) }); }}
+              >
+                Aim by Angle
+              </Button>
+            </div>
+          </>
+        )}
+        {aimable && !hasPOI && (
+          <>
+            <KfRow nodeId={nodeId} prop="lightAngle" label="Direction" value={angle} unit="°" onStatic={(v) => setAngle(v)} />
+            <div className={styles.actionRow}>
+              <Button
+                size="sm"
+                variant="secondary"
+                title="Direction can only swing this light within the comp plane — a target aims it at a point in 3D"
+                // On: the target lands at the composition centre (w/2, h/2, 0).
+                onClick={() => { void edit('Enable Point of Interest', { type: 'setProperty', prop: { layer: nodeId, path: POI_PATH }, value: values.bool(true) }); }}
+              >
+                Add Target
+              </Button>
+            </div>
+          </>
+        )}
+        {showGlow && (
+          <TwirlGroup prefKey="light.viewer" label="Viewer" defaultOpen={hasGlow} summary={hasGlow ? 'Glow On' : 'Glow Off'}>
+            <OnOffRow
+              label="Show Glow in Viewer"
+              on={hasGlow}
+              onToggle={() => setGlow(!hasGlow)}
               title="Also draw a soft bloom over the frame. It brightens everything beneath it, 2D layers included — leave off for lighting that only affects 3D layers"
             />
-          </div>
+          </TwirlGroup>
         )}
-        <p style={{ margin: '6px 0 0', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
-          {type === 'ambient'
-            ? 'A uniform lift brightening the whole frame (screen blend).'
-            : type === 'spot'
-              ? 'A cone of light along its direction, fading over the radius.'
-              : type === 'parallel'
-                ? 'A directional wash across the frame (like sunlight), brighter on the source side.'
-                : isEnv
-                  ? 'Image-based lighting: the sky — a preset, any equirectangular image or HDRI from the library, or a live composition / footage layer — lights 3D layers from every side through a spherical-harmonic probe, reflects in glossy surfaces from a prefiltered HDR map, can be shown behind the composition, and can cast a soft shadow from its brightest direction. It takes no light slots.'
-                  : 'A point light brightening the layers beneath it (screen blend).'}
-          {' '}Numeric parameters are keyframeable.
-        </p>
       </div>
     </div>
   );

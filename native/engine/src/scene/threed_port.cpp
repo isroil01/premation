@@ -1618,7 +1618,10 @@ std::optional<RLayer> Scene3D::light_layer(const doc::Node& n) {
   w.width = comp_.width;
   w.height = comp_.height;
   w.fill = "#000";
-  w.visible = n.visible && lt.glow;
+  // The glow (Light Glow, and the pool it lands as below) is a VIEWER aid:
+  // never part of a delivered frame — the Render Queue, the Export dialog and
+  // `premation render` all build with forExport (export_job.cpp).
+  w.visible = n.visible && lt.glow && !comp_.forExport;
   LightWash lw;
   lw.color = lt.color;
   lw.intensity = av.get("intensity").value_or(lt.intensity);

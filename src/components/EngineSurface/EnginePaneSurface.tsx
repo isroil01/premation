@@ -51,15 +51,28 @@ export interface PaneLayerView {
   sourceTime?: number;
 }
 
-interface Desired {
+/**
+ * The view a pane's frame was DRAWN with — the setViewport the engine had
+ * applied when the frame arrived. The pane's chrome is drawn through it, so it
+ * moves with the pixels rather than with the pane's live camera, which runs
+ * ahead of them for as long as the engine takes to draw the new framing.
+ */
+export interface PaneDrawnView {
+  /** The comp → canvas transform the frame was asked with (the pane camera it came from); null = the engine's contain fit. */
+  readonly render: PaneView | null;
+  /** setViewport `view`: 'active', an axis view, `camera:<id>`, 'custom'. */
+  readonly view: string;
+  /** The custom view's orbit when `view` is 'custom'. */
+  readonly customView: CustomViewParams | null;
+}
+
+interface Desired extends PaneDrawnView {
   width: number;
   height: number;
   dpr: number;
   zoom: number;
   panX: number;
   panY: number;
-  view: string;
-  customView: CustomViewParams | null;
   layer: PaneLayerView | null;
 }
 
@@ -67,6 +80,8 @@ interface Pending {
   frame: VideoFrame;
   meta: EngineFrameMeta;
   release: () => void;
+  /** The viewport applied when the frame arrived: the one it was drawn with (null: none acknowledged yet). */
+  view: Desired | null;
 }
 
 function sameCustomView(a: CustomViewParams | null, b: CustomViewParams | null): boolean {
@@ -88,7 +103,7 @@ function sameDesired(a: Desired, b: Desired): boolean {
     && a.panY === b.panY && a.view === b.view && sameCustomView(a.customView, b.customView) && sameLayerView(a.layer, b.layer);
 }
 
-export function EnginePaneSurface({ mode, getView, framingRev, layer, surround, className, style }: {
+export function EnginePaneSurface({ mode, getView, framingRev, layer, surround, onDrawnView, className, style }: {
   mode: Camera3dMode;
   /** The pane's live camera (usePaneWorkspace getRenderView, with the contain fit as the fallback); absent = the engine contain-fits the frame. */
   getView?: () => PaneView;
@@ -98,6 +113,12 @@ export function EnginePaneSurface({ mode, getView, framingRev, layer, surround, 
   layer?: PaneLayerView;
   /** Paint this around the composition (the Preview page's surround); absent = the frame as it is. */
   surround?: PaneSurround | null;
+  /**
+   * Told when a drawn frame was drawn with another view than the last one —
+   * once per applied viewport (identity), never per frame. The pane's chrome
+   * draws through it (SecondaryViewPane).
+   */
+  onDrawnView?: (view: PaneDrawnView) => void;
   className?: string;
   style?: CSSProperties;
 }): JSX.Element | null {
@@ -105,6 +126,8 @@ export function EnginePaneSurface({ mode, getView, framingRev, layer, surround, 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const modeRef = useRef(mode);
   modeRef.current = mode;
+  const onDrawnViewRef = useRef(onDrawnView);
+  onDrawnViewRef.current = onDrawnView;
   const surroundRef = useRef(surround ?? null);
   surroundRef.current = surround ?? null;
   const getViewRef = useRef(getView);
@@ -135,16 +158,28 @@ export function EnginePaneSurface({ mode, getView, framingRev, layer, surround, 
     const board = new Float32Array(BOARD_FLOATS);  // all zero: the frame as it is, no pasteboard
     const blitter = createFrameBlitter(canvas, () => { if (pending) schedule(); }, () => {});
 
+    /** The view of the frame on screen, as last reported (identity: one object per applied viewport). */
+    let reported: Desired | null = null;
     const draw = (): void => {
       raf = 0;
       const p = pending;
       pending = null;
       if (!p) return;
-      fillBoard();
+      // The camera this frame was drawn with (a frame that beat every acknowledgement: the latest asked).
+      const drawnWith = p.view ?? applied ?? last;
+      fillBoard(drawnWith);
       try {
-        if (!blitter.draw(p.frame, board, p.release)) pending = p;  // GPU not up yet: keep the newest frame
+        if (!blitter.draw(p.frame, board, p.release)) {
+          pending = p;  // GPU not up yet: keep the newest frame
+          return;
+        }
       } catch {
         p.release();
+        return;
+      }
+      if (drawnWith && drawnWith !== reported) {
+        reported = drawnWith;
+        onDrawnViewRef.current?.(drawnWith);
       }
     };
     function schedule(): void {
@@ -155,17 +190,19 @@ export function EnginePaneSurface({ mode, getView, framingRev, layer, surround, 
     let inFlight = false;
     let again = false;
     let last: Desired | null = null;
+    /** The viewport the engine last acknowledged: frames from here on are drawn with it. */
+    let applied: Desired | null = null;
 
-    // The surround's rectangle follows the camera the frames are asked with; worked out
+    // The surround's rectangle follows the camera the frame was drawn with; worked out
     // again only when that camera or the surround changes, never per frame.
     let boardCam: Desired | null = null;
     let boardSurround: PaneSurround | null = null;
-    function fillBoard(): void {
+    function fillBoard(cam: Desired | null): void {
       const s = surroundRef.current;
-      if (last === boardCam && s === boardSurround) return;
-      boardCam = last;
+      if (cam === boardCam && s === boardSurround) return;
+      boardCam = cam;
       boardSurround = s;
-      const d = last;
+      const d = cam;
       const rect = !s || !d ? null
         : d.zoom > 0 ? compUvRect({ width: d.width, height: d.height, zoom: d.zoom, panX: d.panX, panY: d.panY }, s.compWidth, s.compHeight)
           : fitUvRect(d.width, d.height, s.compWidth, s.compHeight);
@@ -189,6 +226,8 @@ export function EnginePaneSurface({ mode, getView, framingRev, layer, surround, 
         width, height, dpr, zoom,
         panX: v && zoom > 0 ? (r.width / 2 - v.offsetX) / zoom : 0,
         panY: v && zoom > 0 ? (r.height / 2 - v.offsetY) / zoom : 0,
+        // Kept (not copied): the frames of this viewport are drawn at exactly this comp → canvas transform.
+        render: v && zoom > 0 ? v : null,
         view: isCustomViewId(m) ? 'custom' : m,
         customView: isCustomViewId(m) ? g.customViews[m] : null,
         layer: layerRef.current ?? null,
@@ -234,6 +273,8 @@ export function EnginePaneSurface({ mode, getView, framingRev, layer, surround, 
             ...(d.customView.poi !== null ? { poi: d.customView.poi } : {}),
           },
         } : {}),
+      }).then((res) => {
+        if (res.ok) applied = d;  // frames from here on are drawn with this viewport
       }).finally(() => {
         inFlight = false;
         if (again) {
@@ -279,7 +320,8 @@ export function EnginePaneSurface({ mode, getView, framingRev, layer, surround, 
           request();  // route A caps the size it asks for (copyRouteDpr)
         }
         if (pending) pending.release();  // newest wins
-        pending = { frame: frame as VideoFrame, meta, release };
+        // The viewport applied NOW is the one this frame was drawn with.
+        pending = { frame: frame as VideoFrame, meta, release, view: applied };
         schedule();
       });
       request();

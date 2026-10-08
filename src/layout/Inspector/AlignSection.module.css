@@ -1,21 +1,67 @@
-.root {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-/* One gutter (`--space-5`) for everything, matching the Properties sections. */
+/*
+  The Align panel, as After Effects': "Align Layers to" and its select, then a
+  label-role caption over each row of icon buttons. One gutter (`--space-5`)
+  for everything, matching the Properties sections. No heading: the tab.
+*/
 .panelRoot {
   display: flex;
   flex-direction: column;
-  gap: var(--space-5);
-  padding: var(--space-5);
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-5) var(--space-4);
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
   overflow-y: auto;
   background: var(--color-panel);
   color: var(--color-text-primary);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  line-height: var(--panel-line-height);
+}
+
+/* "Align Layers to" — a caption and its value, on one row. */
+.targetRow {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--control-height-row);
+}
+
+/* The panel `label` role. */
+.caption {
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
+  color: var(--color-text-secondary);
+  user-select: none;
+}
+
+/* A dropdown's current choice is a value (in the text face: it is a word). */
+.select {
+  width: 100%;
+  min-width: 0;
+  height: var(--control-height-row);
+  padding: 0 var(--space-2);
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-value);
+  outline: none;
+  box-sizing: border-box;
+  cursor: pointer;
+  transition: border-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.select:hover {
+  border-color: var(--color-border);
+}
+
+.select:focus-visible {
+  border-color: var(--color-primary);
 }
 
 .group {
@@ -24,109 +70,20 @@
   gap: var(--space-2);
 }
 
-.groupLabel {
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
-  letter-spacing: var(--letter-spacing-uppercase);
-  text-transform: uppercase;
-  color: var(--color-text-secondary);
-}
-
-/* Six align buttons in one row, two distribute buttons in another — the same
-   column width in both, so the two rows read as one grid. */
+/* Six buttons to a row in every group — the same column width in each, so
+   the rows read as one grid. */
 .grid {
   display: grid;
   grid-template-columns: repeat(6, var(--control-height-lg));
   gap: var(--space-1);
 }
 
-.button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: var(--control-height-lg);
-  height: var(--control-height-lg);
-  padding: 0;
-  border: none;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  transition:
-    background-color var(--motion-duration-fast) var(--motion-ease-standard),
-    color var(--motion-duration-fast) var(--motion-ease-standard);
-}
-
-.button:hover:not(:disabled) {
-  background: var(--color-hover);
-  color: var(--color-text-primary);
-}
-
-.button:active:not(:disabled) {
-  background: var(--color-surface-2);
-}
-
-.button:focus-visible {
-  outline: 1px solid var(--color-focus-ring);
-  outline-offset: 1px;
-}
-
-.button:disabled {
-  opacity: 0.35;
-  cursor: default;
-}
-
-.targetRow {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-}
-
-/* Segmented switch: one well, the chosen segment raised one step. */
-.segmented {
-  display: inline-flex;
-  padding: 2px;
-  gap: 2px;
-  background: var(--color-surface-0);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-md);
-}
-
-.segment {
-  height: var(--control-height-sm);
-  padding: 0 var(--space-3);
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-text-tertiary);
-  font-family: inherit;
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
-  white-space: nowrap;
-  cursor: pointer;
-  transition:
-    background-color var(--motion-duration-fast) var(--motion-ease-standard),
-    color var(--motion-duration-fast) var(--motion-ease-standard);
-}
-
-.segment:hover {
-  color: var(--color-text-primary);
-}
-
-.segment:focus-visible {
-  outline: 1px solid var(--color-focus-ring);
-  outline-offset: -1px;
-}
-
-.segmentActive {
-  background: var(--color-surface-2);
-  color: var(--color-text-primary);
-}
-
-.hint {
+/* The one empty-state line. */
+.help {
   margin: 0;
-  font-size: var(--font-size-xs);
-  line-height: var(--line-height-normal);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  line-height: var(--panel-line-height-help);
+  font-weight: var(--panel-weight-help);
   color: var(--color-text-tertiary);
 }

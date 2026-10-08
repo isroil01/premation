@@ -555,12 +555,17 @@ std::vector<api::OverlayView> overlay_views(const PCtx& pc, const OverlaySubscri
     v.mode = mode;
     v.comp_width = w;
     v.comp_height = h;
-    const Node* chrome = view_camera_node(nodes, mode, {});
+    // The camera the RENDERER looks through (threed_port.cpp Scene3D::view_camera_node): a `camera:<id>` view's,
+    // else the topmost visible camera live at the frame, else the default camera. The chrome resolves the same
+    // one — with the topmost camera outside its bar, the camera without the in/out test drew the gizmos through
+    // another lens than the frame's. (No composition: no bar to test.)
     const Node* live = comp ? view_camera_node(nodes, mode, [&](const Node& n) { return live_at(pc, n, *comp, seconds); })
-                            : chrome;
-    if (chrome != nullptr) v.camera = chrome->id;
-    if (live != nullptr) v.live_camera = live->id;
-    v.lens = lens_of(chrome != nullptr ? camera_at(sc, *chrome, w, h, seconds) : motion::xf::default_camera(w, h));
+                            : view_camera_node(nodes, mode, {});
+    if (live != nullptr) {
+      v.camera = live->id;
+      v.live_camera = live->id;
+    }
+    v.lens = lens_of(live != nullptr ? camera_at(sc, *live, w, h, seconds) : motion::xf::default_camera(w, h));
     out.push_back(std::move(v));
   }
   return out;

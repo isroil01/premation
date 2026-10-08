@@ -13,12 +13,13 @@
   margin-bottom: var(--space-2);
 }
 
+/* Panel type roles (typography.css): a block's name is a `subgroup`, never
+   an uppercase, letter-spaced label. */
 .title {
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
-  letter-spacing: var(--letter-spacing-uppercase);
-  text-transform: uppercase;
-  color: var(--color-text-tertiary);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-subgroup);
+  color: var(--color-text-primary);
 }
 
 .add {
@@ -30,13 +31,18 @@
   background: var(--color-surface-1);
   border: 1px solid var(--color-border);
   color: var(--color-text-primary);
-  font-size: var(--font-size-xs);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-button);
   cursor: pointer;
 }
 .add:hover { border-color: var(--color-border-strong); }
 
 .empty {
-  font-size: var(--font-size-xs);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  line-height: var(--panel-line-height-help);
   color: var(--color-text-tertiary);
   padding: var(--space-2) 0;
 }
@@ -58,9 +64,10 @@
 }
 
 .groupTitle {
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-text-secondary);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-subgroup);
+  color: var(--color-text-primary);
 }
 
 .remove {
@@ -78,11 +85,10 @@
 .remove:hover { color: var(--color-text-primary); background: var(--color-surface-2); }
 
 .subhead {
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
-  letter-spacing: var(--letter-spacing-uppercase);
-  text-transform: uppercase;
-  color: var(--color-text-tertiary);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-subgroup);
+  color: var(--color-text-secondary);
   margin: var(--space-2) 0 var(--space-1);
 }
 
@@ -127,7 +133,9 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--font-size-xs);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
   color: var(--color-text-secondary);
 }
 
@@ -174,7 +182,9 @@
   background: var(--color-surface-2);
   border: 1px solid var(--color-border);
   color: var(--color-text-primary);
-  font-size: var(--font-size-xs);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-value);
   cursor: pointer;
 }
 .pick:hover { border-color: var(--color-border-strong); }
@@ -191,4 +201,26 @@
   padding: var(--space-1) 0 var(--space-2);
 }
 
+/* A selector's expression: code, so the value face (mono). */
+.exprInput {
+  width: 100%;
+  resize: vertical;
+  padding: 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+  font-family: var(--panel-font-family-value);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-value);
+}
 
+/* One help line under the expression: the panel `help` role. */
+.exprHint {
+  margin-top: var(--space-2);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  line-height: var(--panel-line-height-help);
+  font-weight: var(--panel-weight-help);
+  color: var(--color-text-tertiary);
+}

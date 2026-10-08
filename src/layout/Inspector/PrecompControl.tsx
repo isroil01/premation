@@ -38,18 +38,20 @@ export function PrecompControl({ nodeId }: { nodeId: string }): JSX.Element | nu
     return (
       <>
         <div className={styles.row}>
-          <span className={styles.label}>Collapse Transformations</span>
+          <span
+            className={styles.label}
+            title={collapsed
+              ? 'This composition’s layers render in the host: they meet its camera, depth sort and lights, and are not cropped to their own frame.'
+              : 'This composition renders to its own frame first, then composites as one flat layer — so its 3D layers cannot meet the host’s camera.'}
+          >
+            Collapse Transformations
+          </span>
           <Switch
             checked={collapsed}
             onChange={(e) => { void setLayersSwitch([nodeId], { collapse: e.currentTarget.checked }, 'Collapse Transformations'); }}
             aria-label="Collapse Transformations (join the host composition's 3D space)"
           />
         </div>
-        <p style={{ margin: '2px 0 6px', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
-          {collapsed
-            ? 'This composition’s layers render in the host: they meet its camera, depth sort and lights, and are not cropped to their own frame.'
-            : 'This composition renders to its own frame first, then composites as one flat layer — so its 3D layers cannot meet the host’s camera.'}
-        </p>
         <RetimeSection nodeId={nodeId} />
         <CompOverridesSection nodeId={nodeId} />
       </>
@@ -73,18 +75,20 @@ export function PrecompControl({ nodeId }: { nodeId: string }): JSX.Element | nu
     return (
       <>
         <div className={styles.row}>
-          <span className={styles.label}>Continuous Rasterization</span>
+          <span
+            className={styles.label}
+            title={cr
+              ? 'Re-rendered at the size it is actually drawn, from the smallest scale up. Costs memory in proportion to scale²; very large layers are bounded by the VRAM budget.'
+              : 'Vector layers already re-render automatically once they pass 400%, so a title or logo a camera pushes into stays sharp on its own. Turn this on only to force re-rendering below 400% as well.'}
+          >
+            Continuous Rasterization
+          </span>
           <Switch
             checked={cr}
             onChange={(e) => { void setLayersSwitch([nodeId], { collapse: e.currentTarget.checked }, 'Continuous Rasterization'); }}
             aria-label="Continuous Rasterization (re-render vector content at the scale it is drawn)"
           />
         </div>
-        <p style={{ margin: '2px 0 6px', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
-          {cr
-            ? 'Re-rendered at the size it is actually drawn, from the smallest scale up. Costs memory in proportion to scale²; very large layers are bounded by the VRAM budget.'
-            : 'Vector layers already re-render automatically once they pass 400%, so a title or logo a camera pushes into stays sharp on its own. Turn this on only to force re-rendering below 400% as well.'}
-        </p>
       </>
     );
   }

@@ -1,127 +1,93 @@
 /**
- * InfoReadout — the pointer (position, colour under it) and the composition
- * (size, frame rate, selection) as read-only values.
+ * InfoReadout — After Effects' Info panel, as values: the colour under the
+ * pointer (R, G, B, A) beside its position (X, Y), then the selected layer —
+ * its name, In, Out and Duration (2026-10).
  *
- * Extracted 2026-09-15 so the Audio panel can carry it at its top: "Info &
- * Audio" and "Audio" were two right-rail tabs that both drew a master meter,
- * and the rails were cut to the everyday set. `InfoAudioPanel` still renders
- * the full form for the on-demand Info panel; Audio renders `compact`.
+ * Everything shown is read, never invented: the pointer from `infoStore` (the
+ * viewport writes it as the cursor moves), the layer from the document mirror
+ * (`LayerInfo.timing`), the timecode in the layer's composition's own rate and
+ * start frame — the same In / Out the timeline's columns show.
+ *
+ * The master meter that used to sit under this is gone: the Audio panel is the
+ * one meter (and the one that can do something about what it shows).
  */
 
 import { useInfoStore } from '@stores/infoStore';
 import { useSelectionStore } from '@stores/selectionStore';
-import { useActiveCompFps, useMirrorLayer } from '@hooks/useMirror';
-import { useActiveCompSize } from './inspectorMirror';
-import { cn } from '@utils/cn';
+import { documentMirror } from '@stores/documentMirror';
+import { useActiveMirrorComp, useMirrorLayer } from '@hooks/useMirror';
+import { flicksToSeconds } from '@motion/engine-api';
+import { settingsFps, settingsStartFrame } from '@core/mirror/compFacts';
+import { framesToTimecode } from '@core/time/timecode';
 import styles from './InfoAudioPanel.module.css';
 
-export interface InfoReadoutProps {
-  /** One dense two-column grid instead of two labelled groups. */
-  compact?: boolean;
+/** One key / value pair of the readout — a label-role key, a value-role value. */
+function Pair({ k, v, title }: { k: string; v: string; title?: string }): JSX.Element {
+  return (
+    <div className={styles.pair}>
+      <dt className={styles.key}>{k}</dt>
+      <dd className={styles.value} title={title}>{v}</dd>
+    </div>
+  );
 }
 
-export function InfoReadout({ compact = false }: InfoReadoutProps): JSX.Element {
+export function InfoReadout(): JSX.Element {
   const { x, y, rgba, present } = useInfoStore();
   const selectedIds = useSelectionStore((s) => s.ids);
-  const { width: compWidth, height: compHeight } = useActiveCompSize();
-  // The rate as the settings dialog shows it: NTSC 30000/1001 reads 29.97.
-  const compFps = Number(useActiveCompFps().toFixed(3));
+  const layer = useMirrorLayer(selectedIds[0]);
+  const activeComp = useActiveMirrorComp();
 
-  const swatch =
-    rgba && rgba.a > 0
-      ? `rgba(${rgba.r}, ${rgba.g}, ${rgba.b}, ${(rgba.a / 255).toFixed(2)})`
-      : 'transparent';
-  const hexColor = rgba
-    ? `#${rgba.r.toString(16).padStart(2, '0')}${rgba.g.toString(16).padStart(2, '0')}${rgba.b.toString(16).padStart(2, '0')}`.toUpperCase()
-    : '—';
-  const primaryNode = useMirrorLayer(selectedIds[0]);
-  const selectedLabel = primaryNode
-    ? `${primaryNode.name}${selectedIds.length > 1 ? ` +${selectedIds.length - 1}` : ''}`
-    : 'None';
+  const channel = (v: number | undefined): string => (rgba && v !== undefined ? String(v) : '—');
+  const swatch = rgba && rgba.a > 0
+    ? `rgba(${rgba.r}, ${rgba.g}, ${rgba.b}, ${(rgba.a / 255).toFixed(2)})`
+    : 'transparent';
 
-  if (compact) {
-    return (
-      <section className={styles.compact} aria-label="Info">
-        <div className={styles.compactGrid}>
-          <span className={styles.key}>X</span>
-          <span className={cn(styles.value, styles.mono)}>{present ? x : '—'}</span>
-          <span className={styles.key}>Y</span>
-          <span className={cn(styles.value, styles.mono)}>{present ? y : '—'}</span>
-          <span className={styles.key}>Colour</span>
-          <span className={cn(styles.value, styles.mono)}>
-            {rgba && <span className={styles.colorSwatch} style={{ background: swatch }} />}
-            {hexColor}
-          </span>
-          <span className={styles.key}>Alpha</span>
-          <span className={cn(styles.value, styles.mono)}>{rgba ? `${Math.round((rgba.a / 255) * 100)}%` : '—'}</span>
-          <span className={styles.key}>Comp</span>
-          <span className={cn(styles.value, styles.mono)}>{compWidth}×{compHeight}</span>
-          <span className={styles.key}>Rate</span>
-          <span className={cn(styles.value, styles.mono)}>{compFps} fps</span>
-        </div>
-      </section>
-    );
-  }
+  // The layer's own composition (the active one, almost always) sets the rate
+  // and the start frame its In / Out read on.
+  const comp = (layer && documentMirror().comp(layer.comp)) || activeComp;
+  const fps = settingsFps(comp?.settings);
+  const startFrame = settingsStartFrame(comp?.settings);
+  const inSec = layer ? flicksToSeconds(layer.timing.inPoint) : 0;
+  const outSec = layer ? flicksToSeconds(layer.timing.outPoint) : 0;
+  const count = layer ? selectedIds.filter((id) => documentMirror().hasLayer(id)).length : 0;
 
   return (
     <>
-      {/* ── Pointer ── */}
+      {/* ── Under the pointer: colour on the left, position on the right ── */}
       <section className={styles.group} aria-label="Pointer">
-        <div className={styles.groupHead}>
-          <span className={styles.groupLabel}>Pointer</span>
-          <span className={cn(styles.status, present && styles.statusLive)}>{present ? 'Live' : 'Idle'}</span>
-        </div>
-        <div className={styles.rows}>
-          <div className={styles.row}>
-            <span className={styles.key}>X</span>
-            <span className={cn(styles.value, styles.mono)}>{present ? `${x} px` : '—'}</span>
+        <dl className={styles.pointerGrid}>
+          <Pair k="R" v={channel(rgba?.r)} />
+          <Pair k="X" v={present ? String(x) : '—'} />
+          <Pair k="G" v={channel(rgba?.g)} />
+          <Pair k="Y" v={present ? String(y) : '—'} />
+          <Pair k="B" v={channel(rgba?.b)} />
+          <div className={styles.pair}>
+            <dt className={styles.srOnly}>Colour</dt>
+            <dd className={styles.swatchValue}>
+              {rgba ? <span className={styles.swatch} style={{ background: swatch }} /> : null}
+            </dd>
           </div>
-          <div className={styles.row}>
-            <span className={styles.key}>Y</span>
-            <span className={cn(styles.value, styles.mono)}>{present ? `${y} px` : '—'}</span>
-          </div>
-          <div className={styles.row}>
-            <span className={styles.key}>RGB</span>
-            <span className={cn(styles.value, styles.mono)}>
-              {rgba ? (
-                <>
-                  <span className={styles.colorSwatch} style={{ background: swatch }} />
-                  {`${rgba.r}, ${rgba.g}, ${rgba.b}`}
-                </>
-              ) : '—'}
-            </span>
-          </div>
-          <div className={styles.row}>
-            <span className={styles.key}>Alpha</span>
-            <span className={cn(styles.value, styles.mono)}>{rgba ? `${Math.round((rgba.a / 255) * 100)}%` : '—'}</span>
-          </div>
-          <div className={styles.row}>
-            <span className={styles.key}>Hex</span>
-            <span className={cn(styles.value, styles.mono)}>{hexColor}</span>
-          </div>
-        </div>
+          <Pair k="A" v={channel(rgba?.a)} />
+        </dl>
       </section>
 
-      {/* ── Composition ── */}
-      <section className={styles.group} aria-label="Composition">
-        <div className={styles.groupHead}>
-          <span className={styles.groupLabel}>Composition</span>
-        </div>
-        <div className={styles.rows}>
-          <div className={styles.row}>
-            <span className={styles.key}>Size</span>
-            <span className={cn(styles.value, styles.mono)}>{compWidth} × {compHeight}</span>
-          </div>
-          <div className={styles.row}>
-            <span className={styles.key}>Frame rate</span>
-            <span className={cn(styles.value, styles.mono)}>{compFps} fps</span>
-          </div>
-          <div className={styles.row}>
-            <span className={styles.key}>Selected</span>
-            <span className={styles.value} title={primaryNode?.name ?? undefined}>{selectedLabel}</span>
-          </div>
-        </div>
-      </section>
+      {/* ── The selected layer ── */}
+      {layer && (
+        <section className={styles.group} aria-label="Selected layer">
+          {count > 1 ? (
+            <div className={styles.subject}>{`${count} layers`}</div>
+          ) : (
+            <>
+              <div className={styles.subject} title={layer.name}>{layer.name}</div>
+              <dl className={styles.rows}>
+                <Pair k="In" v={framesToTimecode(inSec, fps, startFrame)} />
+                <Pair k="Out" v={framesToTimecode(outSec, fps, startFrame)} />
+                <Pair k="Duration" v={framesToTimecode(Math.max(0, outSec - inSec), fps)} />
+              </dl>
+            </>
+          )}
+        </section>
+      )}
     </>
   );
 }

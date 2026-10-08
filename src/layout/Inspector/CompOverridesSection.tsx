@@ -50,6 +50,8 @@ import { useEngineEdit } from './useEngineEdit';
 import { jsonFieldCommands } from './layerFieldEdits';
 import styles from './ParentControl.module.css';
 import ta from './TextAnimatorControls.module.css';
+import tStyles from './TransformSection.module.css';
+import { Button } from '@components/Button';
 
 const LABEL: Record<OverridableProp, string> = {
   x: 'X', y: 'Y', rotation: 'Rotation', scaleX: 'Scale X', scaleY: 'Scale Y', opacity: 'Opacity',
@@ -164,7 +166,7 @@ export function CompOverridesSection({ nodeId }: { nodeId: string }): JSX.Elemen
     <>
       <div className={styles.row}>
         <span className={styles.label}>Essential Properties</span>
-        <span style={{ fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)' }}>
+        <span className={tStyles.readout}>
           {overrides.size > 0
             ? `${overrides.size} overridden`
             : promoted.size > 0
@@ -173,9 +175,7 @@ export function CompOverridesSection({ nodeId }: { nodeId: string }): JSX.Elemen
         </span>
       </div>
       {promoted.size === 0 && (
-        <p style={{ margin: '0 0 6px', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.45 }}>
-          Right-click a property in the source composition to publish it here.
-        </p>
+        <p className={tStyles.helpLine}>Right-click a property in the source composition to publish it here.</p>
       )}
 
       {rows.map(({ source, props }) => {
@@ -192,10 +192,9 @@ export function CompOverridesSection({ nodeId }: { nodeId: string }): JSX.Elemen
                 {source.name || source.id}
               </span>
               {layerOverrides.length > 0 && (
-                <button
-                  type="button"
-                  className={styles.select}
-                  style={{ width: 'auto', padding: '0 8px', fontSize: 'var(--font-size-micro)' }}
+                <Button
+                  size="sm"
+                  variant="secondary"
                   onClick={() => {
                     void edit('Reset Overrides', overridesCommands(nodeId, (next) => {
                       for (const k of Object.keys(next)) if (parseOverrideKey(k)?.origNodeId === source.id) delete next[k];
@@ -204,7 +203,7 @@ export function CompOverridesSection({ nodeId }: { nodeId: string }): JSX.Elemen
                   aria-label={`Reset all overrides on ${source.name || source.id}`}
                 >
                   Reset
-                </button>
+                </Button>
               )}
             </div>
             {props.map((prop) => {

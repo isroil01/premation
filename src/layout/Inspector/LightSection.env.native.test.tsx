@@ -21,7 +21,9 @@
 
 import { render, cleanup, fireEvent, screen, act } from '@testing-library/react';
 import type { PropertyInit } from '@motion/engine-api';
-import { LightSection } from './LightSection';
+import type { DropdownItem } from '@components/Dropdown';
+import { LightSection, LightPresetsMenu } from './LightSection';
+import { SectionMenuRegistry, SectionMenuSlot } from './sectionMenu';
 import { useSelectionStore } from '@stores/selectionStore';
 import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
@@ -99,7 +101,7 @@ describe('the light Type menu', () => {
   it('offers every type the engine understands, and each round-trips', async () => {
     for (const want of ALL_TYPES) {
       await mount();
-      const select = screen.getByLabelText('Light type') as HTMLSelectElement;
+      const select = screen.getByLabelText('Light Type') as HTMLSelectElement;
       expect([...select.options].map((o) => o.value)).toContain(want);
       fireEvent.change(select, { target: { value: want } });
       await idle();
@@ -107,15 +109,21 @@ describe('the light Type menu', () => {
       // silently turn 'environment' into 'point'.
       expect((await currentLight()).type).toBe(want);
       // ...and the section must display back what it just wrote.
-      expect((screen.getByLabelText('Light type') as HTMLSelectElement).value).toBe(want);
+      expect((screen.getByLabelText('Light Type') as HTMLSelectElement).value).toBe(want);
       cleanup();
     }
+  });
+
+  it('names the types as After Effects does — plain words, no parentheticals', async () => {
+    await mount();
+    const select = screen.getByLabelText('Light Type') as HTMLSelectElement;
+    expect([...select.options].map((o) => o.textContent)).toEqual(['Parallel', 'Spot', 'Point', 'Ambient', 'Environment']);
   });
 
   it('lands on a real sky when switching TO environment — one undo entry', async () => {
     await mount();
     const before = (await h.doc());
-    fireEvent.change(screen.getByLabelText('Light type'), { target: { value: 'environment' } });
+    fireEvent.change(screen.getByLabelText('Light Type'), { target: { value: 'environment' } });
     await idle();
     const preset = (await currentLight()).envPreset;
     expect(ENVIRONMENT_PRESETS.map((p) => p.id)).toContain(preset);
@@ -145,13 +153,13 @@ describe('an environment light', () => {
     // A preset sky shows no picker: the row exists only for an image sky.
     expect(screen.queryAllByLabelText('Environment image')).toHaveLength(0);
 
-    expect(numRow('Sky rotation')).toBeTruthy();
+    expect(numRow('Sky Rotation')).toBeTruthy();
     expect(numRow('Intensity')).toBeTruthy();
   });
 
   it('hides the rows the environment path never reads', async () => {
     await mount({ lightType: 'environment' });
-    for (const gone of ['Radius', 'Falloff', 'Cone angle', 'Direction', 'Target X', 'Light color', 'Color temperature']) {
+    for (const gone of ['Radius', 'Falloff', 'Cone Angle', 'Direction', 'Point of Interest X', 'Light color', 'Color Temperature', 'Show Glow in Viewer']) {
       expect({ row: gone, found: screen.queryAllByLabelText(gone).length }).toEqual({ row: gone, found: 0 });
     }
   });
@@ -159,7 +167,7 @@ describe('an environment light', () => {
   it('writes envRotation, which is what the renderer samples per frame', async () => {
     await mount({ lightType: 'environment', envRotation: 30 });
     expect((await currentLight()).envRotation).toBe(30);
-    fireEvent.keyDown(numRow('Sky rotation'), { key: 'ArrowUp' });
+    fireEvent.keyDown(numRow('Sky Rotation'), { key: 'ArrowUp' });
     await idle();
     expect((await currentLight()).envRotation).not.toBe(30);
   });
@@ -232,7 +240,7 @@ describe('colour temperature', () => {
   it('writes the light colour through the blackbody fit', async () => {
     await mount({ lightType: 'point' });
     expect((await currentLight()).color).toBe('#fff3c0');
-    const field = numRow('Color temperature');
+    const field = numRow('Color Temperature');
     fireEvent.keyDown(field, { key: 'ArrowDown' });
     await idle();
     const after = (await currentLight()).color;
@@ -243,23 +251,52 @@ describe('colour temperature', () => {
   });
 });
 
+/**
+ * The preset picker left the rows (2026-10-08): a whole look is an action on
+ * the section, so it is "Light Presets ▸" in the Properties ≡ menu, handed
+ * over through the section-menu registry the panel reads (sectionMenu.tsx).
+ */
 describe('light presets', () => {
+  /** The light's menu mounted the way `SectionMenuHosts` mounts it. */
+  function mountMenu(): SectionMenuRegistry {
+    const reg = new SectionMenuRegistry();
+    render(
+      <SectionMenuSlot registry={reg} slotKey="custom" order={0}>
+        <LightPresetsMenu nodeId={ID} />
+      </SectionMenuSlot>,
+    );
+    return reg;
+  }
+  const lightPresets = (reg: SectionMenuRegistry): DropdownItem[] => {
+    const row = reg.rows().find((r) => r.type === 'item' && r.label === 'Light Presets');
+    if (row?.type !== 'item' || !row.submenu) throw new Error('no Light Presets submenu');
+    return row.submenu;
+  };
+  const ticked = (reg: SectionMenuRegistry): string[] =>
+    lightPresets(reg).filter((r) => r.type === 'item' && r.icon === 'check').map((r) => (r.type === 'item' ? String(r.label) : ''));
+
+  it('are no longer a row of the section', async () => {
+    await mount({ lightType: 'point' });
+    expect(screen.queryAllByLabelText('Light preset')).toHaveLength(0);
+    expect(screen.queryByText('Preset')).toBeNull();
+  });
+
   it('apply type, energy, colour and shaping in one pick — one undo entry', async () => {
     await mount({ lightType: 'point' });
+    const reg = mountMenu();
     const before = (await h.doc());
-    const presets = screen.getByLabelText('Light preset') as HTMLSelectElement;
-    const key = [...presets.options].find((o) => o.value === 'Key');
-    expect(key).toBeTruthy();
-    fireEvent.change(presets, { target: { value: 'Key' } });
+    expect(lightPresets(reg).map((r) => (r.type === 'item' ? r.label : r.type))).toContain('Key');
+    expect(ticked(reg)).toEqual([]);
+    const key = lightPresets(reg).find((r) => r.type === 'item' && r.label === 'Key');
+    act(() => { if (key?.type === 'item') key.onSelect?.({} as never); });
     await idle();
     const lit = (await currentLight());
     expect(lit.type).toBe('spot');
     expect(lit.intensity).toBe(100);
     expect(lit.falloff).toBe('smooth');
     expect(lit.color).toBe(kelvinToHex(5600));
-    // ...and the menu now reports the preset it just applied, rather than
-    // falling back to Custom.
-    expect((screen.getByLabelText('Light preset') as HTMLSelectElement).value).toBe('Key');
+    // ...and the menu now ticks the preset it just applied.
+    expect(ticked(reg)).toEqual(['Key']);
     settle();
     expect((await historyLabels())).toEqual(['Light Preset: Key']);
     await undo();

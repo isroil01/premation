@@ -25,6 +25,7 @@ function resetLayoutStore(): void {
       bottomTimeline: [],
     },
     activePanelByRegion: {},
+    dockGroups: { leftSidebar: [], rightInspector: [] },
   });
 }
 

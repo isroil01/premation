@@ -483,19 +483,9 @@ function ExpressionSelectorBody({
           spellCheck={false}
           rows={3}
           aria-label="Selector expression"
-          style={{
-            width: '100%',
-            resize: 'vertical',
-            fontFamily: 'var(--font-mono, monospace)',
-            fontSize: 'var(--font-size-xs)',
-            padding: 6,
-            borderRadius: 'var(--radius-sm)',
-            border: '1px solid var(--color-border)',
-            background: 'var(--color-surface-2)',
-            color: 'var(--color-text-primary)',
-          }}
+          className={styles.exprInput}
         />
-        <div style={{ fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', marginTop: 4 }}>
+        <div className={styles.exprHint}>
           Returns 0–100. Sees <code>textIndex</code>, <code>textTotal</code>,{' '}
           <code>selectorValue</code>, <code>time</code>, <code>Math</code>.
         </div>

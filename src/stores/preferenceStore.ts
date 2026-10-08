@@ -293,7 +293,7 @@ export const DEFAULT_PREFERENCES: Preferences = {
    * now scrolls rather than truncates, so this is a starting point, not a
    * floor.
    */
-  timelineHeaderWidth: 899,
+  timelineHeaderWidth: 941,
   retainOriginalSvg: true,
   showLayerBounds: true,
   deviceWireframesAll: false,
@@ -349,6 +349,11 @@ export const localStorageBackend: PreferenceBackend = {
         window.localStorage.setItem(MARKER, '1');
         delete parsed.useProxies; // fall back to the (new) default: true
       }
+      // The header width the previous release shipped (899, before TrkMat
+      // widened to fit its pick-whip) was persisted with every profile; still
+      // at exactly that number, the user never dragged it, so follow the new
+      // default rather than hiding Parent & Link's last 42px behind the lanes.
+      if (parsed.timelineHeaderWidth === 899) delete parsed.timelineHeaderWidth;
       return parsed;
     } catch {
       return null;

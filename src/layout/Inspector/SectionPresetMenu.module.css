@@ -15,9 +15,10 @@
   border-radius: var(--radius-sm);
   background: var(--color-surface-2);
   color: var(--color-text-secondary);
-  font-family: inherit;
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
+  /* The panel `button` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-button);
   cursor: pointer;
   transition: all var(--motion-duration-fast) var(--motion-ease-standard);
 }
@@ -46,8 +47,10 @@
   border-radius: var(--radius-sm);
   background: var(--color-surface-2);
   color: var(--color-text-primary);
-  font-family: inherit;
-  font-size: var(--font-size-xs);
+  /* An entry field: the panel `value` role's size and weight. */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-value);
 }
 
 .nameBtn {

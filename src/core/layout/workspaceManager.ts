@@ -8,7 +8,7 @@
  * left as claims — see the wiring audit.
  */
 
-import { useLayoutStore, type RegionId } from '@stores/layoutStore';
+import { useLayoutStore, type DockGroupState, type DockSide, type RegionId } from '@stores/layoutStore';
 import { getSettingsManager } from '@core/services/coreServices';
 import { isPanelAvailable } from '@core/config/panelAvailability';
 
@@ -25,6 +25,12 @@ export interface WorkspaceSnapshot {
   timelinePosition?: 'bottom' | 'top';
   leftSidebarSplit?: boolean;
   rightInspectorSplit?: boolean;
+  /**
+   * Each side's panel groups (tabs within a group, groups stacked). Absent on
+   * the builtins and on workspaces saved before groups: applying one then
+   * forms the default groups for its panel lists.
+   */
+  dockGroups?: Partial<Record<DockSide, ReadonlyArray<DockGroupState>>>;
   createdAt?: number;
   /**
    * A panel this preset exists FOR. When the build does not have it, the whole
@@ -95,7 +101,8 @@ export const BUILTIN_WORKSPACES: ReadonlyArray<WorkspaceSnapshot> = [
     panelOrder: {
       leftSidebar: ['assets', 'effectControls', 'scene'],
       // AE's Default right column.
-      rightInspector: ['properties', 'info', 'audio', 'preview', 'effects', 'align', 'character'],
+      // [Info | Audio] and [Character | Paragraph] share a group each (dockGroups.ts).
+      rightInspector: ['properties', 'info', 'audio', 'preview', 'effects', 'align', 'character', 'paragraph'],
       centerWorkspace: [],
       bottomTimeline: [],
     },
@@ -373,6 +380,7 @@ export class WorkspaceManager {
       leftSidebarPosition: store.leftSidebarPosition,
       rightInspectorPosition: store.rightInspectorPosition,
       timelinePosition: store.timelinePosition,
+      dockGroups: store.dockGroups,
       externalPanels: store.externalPanels.map((pId) => ({ id: pId })),
     };
 
@@ -401,6 +409,7 @@ export class WorkspaceManager {
       leftSidebarPosition: target.leftSidebarPosition,
       rightInspectorPosition: target.rightInspectorPosition,
       timelinePosition: target.timelinePosition,
+      dockGroups: target.dockGroups,
     });
 
     // Apply external popouts if defined

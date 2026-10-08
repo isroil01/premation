@@ -133,12 +133,16 @@ TEST_CASE("setOverlayGeometry views: each view mode carries its resolved view ca
   CHECK(def.lens[2] == Approx(-focal));
 }
 
-TEST_CASE("setOverlayGeometry views: the camera tools' camera must be live at the frame", "[b4r5][view]") {
+TEST_CASE("setOverlayGeometry views: the view looks through the camera live at the frame, as the renderer does",
+          "[b4r5][view]") {
   Harness h;
   (void)h.hello();
   const auto cam1 = make_layer(h, api::LayerKind::camera);
   const auto cam2 = make_layer(h, api::LayerKind::camera);
-  // The topmost camera starts at 2 s: before that the renderer (and the camera tools) use the one below.
+  set_value(h, cam1, "transform/position", doc::v_vec3(100, 200, -1500));
+  set_value(h, cam2, "transform/position", doc::v_vec3(1700, 900, -2500));
+  // The topmost camera starts at 2 s: before that the renderer looks through the one below — and so must the
+  // chrome (its camera, its lens) and the camera tools.
   api::LayerTimingPatch patch;
   patch.layer = cam2;
   patch.in_point = 2 * kSec;
@@ -149,10 +153,21 @@ TEST_CASE("setOverlayGeometry views: the camera tools' camera must be live at th
   sub.viewport = 1;
   sub.views = {"active"};
   const Frame early = frame_with(h, sub, 0);
-  CHECK(early.views.at("active").camera == cam2);       // the chrome's rule: no in/out test
-  CHECK(early.views.at("active").live_camera == cam1);  // the renderer's rule
+  const auto& e = early.views.at("active");
+  CHECK(e.live_camera == cam1);
+  CHECK(e.camera == e.live_camera);
+  REQUIRE(e.lens.size() == 9);
+  CHECK(e.lens[0] == Approx(100));
+  CHECK(e.lens[1] == Approx(200));
+  CHECK(e.lens[2] == Approx(-1500));
   const Frame late = frame_with(h, sub, 3 * kSec);
-  CHECK(late.views.at("active").live_camera == cam2);
+  const auto& l = late.views.at("active");
+  CHECK(l.live_camera == cam2);
+  CHECK(l.camera == cam2);
+  REQUIRE(l.lens.size() == 9);
+  CHECK(l.lens[0] == Approx(1700));
+  CHECK(l.lens[1] == Approx(900));
+  CHECK(l.lens[2] == Approx(-2500));
 }
 
 TEST_CASE("setOverlayGeometry scene3d: cameras, lights and 3D layers; groups keep each overlay's kinds", "[b4r5][view]") {

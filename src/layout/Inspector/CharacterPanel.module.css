@@ -1,3 +1,29 @@
+/*
+  The Character and Paragraph panels, and the Properties panel's Text section —
+  one body (`TextSettingsBody`), three layouts. Every word drawn here takes a
+  panel type role (typography.css): label, value, button or help. The tab is
+  the only title; the group rows below the Character panel's rows are the
+  shared Accordion's, so they read exactly like the Properties sections.
+*/
+
+/* ── The dock panels ── */
+.panelRoot {
+  display: flex;
+  flex-direction: column;
+  background: var(--color-panel);
+  color: var(--color-text-primary);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  line-height: var(--panel-line-height);
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+/* A padded column for a panel that borrows these rows (the Tracker panel). */
 .root {
   display: flex;
   flex-direction: column;
@@ -5,14 +31,36 @@
   padding: var(--space-3) var(--space-4);
   background: var(--color-panel);
   color: var(--color-text-primary);
-  font-family: var(--font-family-sans);
-  font-size: var(--font-size-xs);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  line-height: var(--panel-line-height);
   box-sizing: border-box;
   width: 100%;
   max-width: 100%;
   min-width: 0;
   overflow-x: hidden;
   overflow-y: auto;
+}
+
+/* The panel's own rows, on the Accordion's gutter so they line up with the
+   group rows under them. */
+.panelRows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-5) var(--space-4);
+  min-width: 0;
+}
+
+/* The Character panel's group rows (Source Text, Text Box …). */
+.groups {
+  border-top: 1px solid var(--color-border);
+}
+
+/* A group's one verb, at its foot (Source Text ▸ Keyframe). */
+.groupActions {
+  display: flex;
+  justify-content: flex-end;
 }
 
 /* ── Section layout (the Properties panel's Text section) ──
@@ -26,23 +74,13 @@
   min-width: 0;
   box-sizing: border-box;
   color: var(--color-text-primary);
-  font-size: var(--font-size-sm);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  line-height: var(--panel-line-height);
 }
 
-.sectionRow {
-  display: grid;
-  grid-template-columns: minmax(48px, auto) minmax(0, 1fr);
-  align-items: center;
-  gap: var(--space-2);
-  min-height: var(--control-height-row);
-}
-
-.sectionRowLabel {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
-  user-select: none;
-}
-
+/* "More text options" — a twirl inside the section, beside the Character and
+   Paragraph twirls: the `subgroup` role, as TwirlGroup draws them. */
 .disclosure {
   display: flex;
   align-items: center;
@@ -51,15 +89,11 @@
   padding: 0;
   border: none;
   background: transparent;
-  color: var(--color-text-secondary);
-  font-family: inherit;
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
-  cursor: pointer;
-}
-
-.disclosure:hover {
   color: var(--color-text-primary);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-subgroup);
+  cursor: pointer;
 }
 
 .disclosure:focus-visible {
@@ -74,64 +108,15 @@
   min-width: 0;
 }
 
-/* ── Panel Header / Target Status ── */
-.panelHead {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding-bottom: var(--space-2);
-  border-bottom: 1px solid var(--color-border-subtle);
-  font-size: var(--font-size-micro);
-  color: var(--color-text-secondary);
-}
-
-.panelHeadLeft {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-}
-
-.panelHeadTitle {
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-text-primary);
-  letter-spacing: -0.01em;
-}
-
-.targetBadge {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  padding: 2px var(--space-2);
-  border-radius: var(--radius-full);
-  background: var(--color-surface-2);
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-micro);
-  font-weight: var(--font-weight-medium);
-  max-width: 160px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.targetBadgeActive {
-  background: var(--color-primary-subtle);
-  color: var(--color-primary);
-}
-
-/* ── Section Dividers (Seamless Inspector Style, No Full Borders) ── */
+/* ── Blocks of the section layout ── */
 .sectionCard {
   display: flex;
   flex-direction: column;
   gap: var(--space-2-5, 10px);
-  padding-bottom: var(--space-3);
+  padding: 0 0 var(--space-3);
   border-bottom: 1px solid var(--color-border-subtle);
   background: transparent;
   border-radius: 0;
-  padding-left: 0;
-  padding-right: 0;
-  padding-top: 0;
   width: 100%;
   min-width: 0;
   box-sizing: border-box;
@@ -142,31 +127,71 @@
   padding-bottom: var(--space-2);
 }
 
+/* A block's caption ("Text Box", "Variable Axes"): the `label` role. */
 .sectionHeader {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
   color: var(--color-text-secondary);
-  letter-spacing: -0.01em;
   user-select: none;
 }
 
-/* ── Ranged Selection Banner ── */
+/* A row's caption ("Path"): the `label` role. */
+.rowLabel {
+  flex: none;
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
+  color: var(--color-text-secondary);
+  user-select: none;
+}
+
+/* One line of help — a note, never a paragraph. */
+.help {
+  margin: 0;
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  line-height: var(--panel-line-height-help);
+  font-weight: var(--panel-weight-help);
+  color: var(--color-text-tertiary);
+}
+
+/* A state the rows report ("Overflow"). */
+.statusText {
+  flex: none;
+  padding: 0 var(--space-2);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  color: var(--color-warning);
+}
+
+/* ── Ranged selection: a status line and its Reset ── */
 .rangeNotice {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--space-2) var(--space-3);
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
   background: var(--color-primary-subtle);
   border-radius: var(--radius-sm);
-  font-size: var(--font-size-micro);
-  color: var(--color-selection);
-  font-weight: var(--font-weight-medium);
 }
 
-/* ── Text Content & Keyframing ── */
+.rangeNoticeText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  color: var(--color-selection);
+}
+
+/* ── Source Text ── */
 .contentHead {
   display: flex;
   align-items: center;
@@ -183,9 +208,10 @@
   color: var(--color-text-primary);
   border: 1px solid var(--color-border-subtle);
   border-radius: var(--radius-sm);
-  font-size: var(--font-size-xs);
-  font-family: inherit;
-  line-height: 1.45;
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-value);
+  line-height: var(--panel-line-height);
   resize: vertical;
   outline: none;
   transition:
@@ -202,7 +228,7 @@
   background: var(--color-surface-1);
 }
 
-/* ── Typography Rows ── */
+/* ── Font family & weight ── */
 .fontRow {
   display: grid;
   grid-template-columns: 1fr 100px;
@@ -213,6 +239,7 @@
   box-sizing: border-box;
 }
 
+/* A dropdown's current choice is a value (sans: it is a word, not a number). */
 .fontSelect {
   width: 100%;
   min-width: 0;
@@ -222,8 +249,9 @@
   border: 1px solid var(--color-border-subtle);
   border-radius: var(--radius-sm);
   padding: 0 var(--space-2);
-  font-size: var(--font-size-xs);
-  font-family: inherit;
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-value);
   outline: none;
   box-sizing: border-box;
   cursor: pointer;
@@ -238,7 +266,7 @@
   border-color: var(--color-primary);
 }
 
-/* ── Appearance: Fill, Stroke & Swatch Deck ── */
+/* ── Fill & stroke swatches ── */
 .appearanceRow {
   display: flex;
   align-items: center;
@@ -307,7 +335,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: var(--font-size-micro);
+  font-size: var(--panel-font-size-help);
   cursor: pointer;
   z-index: 3;
   padding: 0;
@@ -335,9 +363,11 @@
   min-width: 0;
 }
 
+/* The face the swatches paint with — a value. */
 .appearanceMeta {
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-value);
   color: var(--color-text-primary);
   white-space: nowrap;
   overflow: hidden;
@@ -345,11 +375,14 @@
 }
 
 .appearanceSub {
-  font-size: var(--font-size-micro);
-  color: var(--color-text-muted);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  color: var(--color-text-tertiary);
 }
 
-/* ── Segmented Control Groups (Formatting & Alignment) ── */
+/* ── Toggle strips (faux styles, alignment, None fill / stroke) ──
+   A toggle reads as a VALUE: the same weight on or off; the state is colour. */
 .controlGroup {
   display: flex;
   align-items: center;
@@ -370,8 +403,9 @@
   border-radius: var(--radius-xs);
   background: transparent;
   color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-value);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -391,7 +425,6 @@
 .groupItem[data-active="true"] {
   background: var(--color-surface-1);
   color: var(--color-primary);
-  font-weight: var(--font-weight-semibold);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
 }
 
@@ -405,7 +438,7 @@
   cursor: not-allowed;
 }
 
-/* ── Two-Column Studio Metric Grid ── */
+/* ── Two-column metric grid: a label, its value, its unit ── */
 .metricGrid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -440,13 +473,14 @@
 }
 
 .metricLabel {
-  font-size: var(--font-size-micro);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-text-tertiary);
-  letter-spacing: -0.01em;
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
+  color: var(--color-text-secondary);
   user-select: none;
   min-width: 20px;
   flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .metricInput {
@@ -456,9 +490,10 @@
   border: none;
   background: transparent;
   color: var(--color-text-primary);
-  font-family: inherit;
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
+  font-family: var(--panel-font-family-value);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-value);
+  font-variant-numeric: tabular-nums;
   text-align: right;
   outline: none;
   cursor: ew-resize;
@@ -472,8 +507,10 @@
 }
 
 .metricUnit {
-  font-size: var(--font-size-micro);
-  color: var(--color-text-muted);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  color: var(--color-text-tertiary);
   margin-left: 2px;
   flex-shrink: 0;
 }
@@ -489,9 +526,9 @@
   border: none;
   background: transparent;
   color: var(--color-text-primary);
-  font-family: inherit;
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-value);
   outline: none;
   cursor: pointer;
   padding: 0;
@@ -503,23 +540,32 @@
   min-width: 0;
 }
 
-/* The small "Auto" switch beside the leading value. */
+/* A small switch inside a row ("Auto" leading, the OpenType features): it
+   reads as a value, and the accent says it is on. */
 .metricToggle {
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   border: none;
   background: transparent;
-  color: var(--color-text-muted);
-  font-family: inherit;
-  font-size: var(--font-size-micro);
+  color: var(--color-text-tertiary);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-value);
   padding: 0;
   cursor: pointer;
+}
+
+.metricToggle:hover {
+  color: var(--color-text-primary);
 }
 
 .metricToggle[data-active="true"] {
   color: var(--color-primary);
 }
 
-/* ── Path & Box Options ── */
+/* ── Rows: a caption, then its control ── */
 .controlRow {
   display: flex;
   align-items: center;
@@ -527,49 +573,8 @@
   gap: var(--space-2);
   width: 100%;
   box-sizing: border-box;
-  font-size: var(--font-size-xs);
-}
-
-.inlineCheck {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  cursor: pointer;
-  user-select: none;
-}
-
-.inlineCheckLabel {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
-}
-
-.inlineField {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-}
-
-.inlineNumber {
-  width: 60px;
-  height: var(--control-height-row);
-  padding: 0 var(--space-2);
-  background: var(--color-surface-2);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-sm);
-  color: var(--color-text-primary);
-  font-size: var(--font-size-xs);
-  font-family: inherit;
-  text-align: right;
-  outline: none;
-  transition: border-color var(--motion-duration-fast) var(--motion-ease-standard);
-}
-
-.inlineNumber:hover {
-  border-color: var(--color-border);
-}
-
-.inlineNumber:focus {
-  border-color: var(--color-primary);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
 }
 
 .pathSelect {
@@ -577,7 +582,7 @@
   height: var(--control-height-row);
 }
 
-/* ── Style Presets Grid (Borderless Clean Chips) ── */
+/* ── Quick typography presets: bordered verbs ── */
 .presetGrid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(68px, 1fr));
@@ -590,13 +595,14 @@
 }
 
 .presetChip {
-  padding: 5px 8px;
+  padding: 4px 8px;
   border-radius: var(--radius-sm);
   background: var(--color-surface-2);
-  border: none;
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
+  border: 1px solid var(--color-border-subtle);
+  color: var(--color-text-primary);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-button);
   text-align: center;
   cursor: pointer;
   white-space: nowrap;
@@ -604,13 +610,18 @@
   text-overflow: ellipsis;
   transition:
     background-color var(--motion-duration-fast) var(--motion-ease-standard),
-    color var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard),
     transform var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .presetChip:hover {
   background: var(--color-hover);
-  color: var(--color-text-primary);
+  border-color: var(--color-border);
+}
+
+.presetChip:focus-visible {
+  outline: 1px solid var(--color-focus-ring);
+  outline-offset: 1px;
 }
 
 .presetChip:active {

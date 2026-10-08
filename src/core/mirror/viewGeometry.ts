@@ -54,6 +54,10 @@ export function dofOfPush(dof: readonly number[]): DofConfig | null {
  * scene camera ignored), else the pushed view camera, else the default camera
  * framed to the comp (before the first frame of the subscription). The axis
  * views report it too; they project orthographically (`projectorOf`).
+ *
+ * `drawn`: for a custom view, the orbit the frame ON SCREEN was drawn with
+ * (core/workspace/displayedView.ts `drawnCustomView`) — it wins over the stored
+ * params, which move ahead of the picture while a custom view is navigated.
  */
 export function viewCameraOf(
   mode: string,
@@ -61,8 +65,9 @@ export function viewCameraOf(
   customViews: Readonly<Record<string, CustomViewParams>>,
   compWidth: number,
   compHeight: number,
+  drawn?: CustomViewParams | null,
 ): Camera3D {
-  if (isCustomViewId(mode)) return customViewCamera(customViews[mode]!, compWidth, compHeight);
+  if (isCustomViewId(mode)) return customViewCamera(drawn ?? customViews[mode]!, compWidth, compHeight);
   return (view && cameraOfLens(view.lens)) ?? Project3D.defaultCamera(compWidth, compHeight);
 }
 

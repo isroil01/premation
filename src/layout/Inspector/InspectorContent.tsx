@@ -15,6 +15,11 @@
  * header longer. The rail already identifies the panel; the header's job is
  * the section's NAME.
  *
+ * Section headers carry no buttons either (2026-10-08): a group row opens and
+ * closes, nothing else. A section's actions — its presets — are its `menu`,
+ * mounted by `SectionMenuHosts` and listed in the Properties ≡ menu; only an
+ * icon control with a tooltip (Effects' add +) may still sit in a header.
+ *
  * `InspectorAccordion` is exported because the Rigging panel is the same
  * mechanism over a different (much shorter) list: one accordion, one search
  * box, the same persisted open/closed behaviour.
@@ -34,6 +39,7 @@ import {
   sectionCoverage,
   type InspectorSectionDef,
 } from './inspectorSections';
+import { SectionMenuSlot, type SectionMenuRegistry } from './sectionMenu';
 import styles from '@layout/EditorLayout/panels.module.css';
 
 /**
@@ -182,5 +188,54 @@ export function InspectorContent({ nodeId, query = '', nodeIds }: InspectorConte
 
   return <InspectorAccordion items={matched.map((def) => toAccordionItem(def, nodeId, q.length > 0, selection))} />;
 }
+
+export interface SectionMenuHostsProps {
+  /** Where the menus register — the Properties panel's, read into its ≡ menu. */
+  registry: SectionMenuRegistry;
+  /** The primary selected layer. */
+  nodeId: string;
+  /** The whole selection, primary first. Defaults to the primary alone. */
+  nodeIds?: ReadonlyArray<string>;
+}
+
+const NO_IDS: ReadonlyArray<string> = [];
+
+/**
+ * Every applicable section's `menu`, for the selection, in registry order —
+ * each in its own `SectionMenuSlot`, so its rows land in the Properties ≡ menu
+ * as "<Section> Presets ▸" (sectionMenu.tsx). Drawn beside the accordion, not
+ * in it: a collapsed section, one the search hid, and the Keyed / Changed
+ * views all keep their actions.
+ *
+ * Memoised: the panel re-renders on every search keystroke and every ≡-menu
+ * hand-off, and hands this the same selection each time.
+ */
+export const SectionMenuHosts = memo(function SectionMenuHosts({
+  registry,
+  nodeId,
+  nodeIds = NO_IDS,
+}: SectionMenuHostsProps): JSX.Element | null {
+  // Which sections apply reads the layers' trees, as the accordion's does.
+  useMirrorTreeShape(nodeId);
+  useRetainTrees(nodeIds);
+  if (!documentMirror().layer(nodeId)) return null;
+  const selection = [nodeId, ...nodeIds.filter((id) => id !== nodeId)];
+  const defs = inspectorSectionsForSelection(selection);
+  return (
+    <>
+      {defs.map((def, order) => {
+        const Menu = def.menu;
+        if (!Menu) return null;
+        // `id` is unique among the sections that apply (the shared `custom`
+        // rows are mutually exclusive — see the registry's module note).
+        return (
+          <SectionMenuSlot key={def.id} registry={registry} slotKey={def.id} order={order}>
+            <Menu nodeId={nodeId} nodeIds={selection} />
+          </SectionMenuSlot>
+        );
+      })}
+    </>
+  );
+});
 
 export default InspectorContent;

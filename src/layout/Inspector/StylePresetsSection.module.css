@@ -10,12 +10,13 @@
   gap: var(--space-2);
 }
 
+/* A shelf's name: the panel `label` role (typography.css) — it was an
+   uppercase, letter-spaced caption. */
 .groupLabel {
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--color-text-tertiary);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
+  color: var(--color-text-secondary);
 }
 
 .grid {
@@ -69,9 +70,11 @@
   background-position: 0 0, 0 4px, 4px -4px, -4px 0;
 }
 
+/* A preset's name under its swatch: the panel `label` role. */
 .label {
-  font-size: var(--font-size-micro);
-  font-weight: 500;
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
   line-height: 1.1;
   text-align: center;
   max-width: 58px;

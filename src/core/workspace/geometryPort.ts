@@ -45,6 +45,8 @@ import { flattenCompLayers } from '@core/mirror/compLayers';
 import { uiKindOf } from '@core/mirror/layerKinds';
 import { mirrorMaskIds } from '@core/mirror/masks';
 import { projectorOf, viewCameraOf } from '@core/mirror/viewGeometry';
+import { drawnCustomView } from '@core/workspace/displayedView';
+import type { CustomViewParams } from '@core/workspace/customViews';
 import { activeCompRootId } from '@core/scene/activeComp';
 import { isSceneCameraView } from '@core/scene/cameraViewMode';
 import { bezierToPoints } from '@core/engine/props';
@@ -286,8 +288,9 @@ interface ViewContext {
   lookedThrough: string;
 }
 
-function viewContext(viewOf: ViewOf): ViewContext {
-  const mode = viewOf() ?? mainMode();
+function viewContext(viewOf: ViewOf, drawnOf?: () => CustomViewParams | null): ViewContext {
+  const own = viewOf();
+  const mode = own ?? mainMode();
   // The active tab's playhead — the time the tools write at (ports.ts
   // `playheadSeconds`); a C++-drawn viewport's records are its frame's anyway.
   const s = useProjectStore.getState();
@@ -296,7 +299,10 @@ function viewContext(viewOf: ViewOf): ViewContext {
   const compWidth = settings?.width ?? 1920;
   const compHeight = settings?.height ?? 1080;
   const view = overlayView(MAIN_VIEWPORT, mode, time);
-  const cam = viewCameraOf(mode, view, useGuidesStore.getState().customViews, compWidth, compHeight);
+  // A custom view's orbit as the frame on screen was drawn: the main viewport's
+  // (EngineSurface), or a pane's own (`drawnOf`, EnginePaneSurface).
+  const drawn = own === undefined ? drawnCustomView(mode) : drawnOf?.() ?? null;
+  const cam = viewCameraOf(mode, view, useGuidesStore.getState().customViews, compWidth, compHeight, drawn);
   return {
     mode,
     time,
@@ -432,8 +438,10 @@ function workspaceNodeOf(id: string, zIndex: number, rec: OverlayLayer | undefin
  *   pane passes its own view so its hit-testing and selection chrome describe
  *   the pixels IT shows. A getter, so a pane can change its view without
  *   rebuilding its port.
+ * @param drawnOf A pane's: the custom orbit its frame on screen was drawn
+ *   with (EnginePaneSurface), null = the stored one.
  */
-export function createSceneGraphPort(viewOf?: () => Camera3dMode): SceneGraphPort {
+export function createSceneGraphPort(viewOf?: () => Camera3dMode, drawnOf?: () => CustomViewParams | null): SceneGraphPort {
   const view: ViewOf = () => viewOf?.();
   /** The mode this port's subscription holds (re-held when a pane switches views). */
   let held: { mode: string; release: () => void } | null = null;
@@ -452,7 +460,7 @@ export function createSceneGraphPort(viewOf?: () => Camera3dMode): SceneGraphPor
     // Nodes asked for BY ID are the ones a tool is about to edit: their trees
     // are fetched (one layer each, never the whole canvas).
     if (loadTrees) for (const id of ids) documentMirror().tree(id);
-    const ctx = viewContext(view);
+    const ctx = viewContext(view, drawnOf);
     const out = new Map<string, WorkspaceNode>();
     ids.forEach((id, i) => {
       const wn = workspaceNodeOf(id, index(id, i), overlayLayer(MAIN_VIEWPORT, id, ctx.time), ctx);

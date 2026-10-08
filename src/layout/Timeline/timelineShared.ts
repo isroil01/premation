@@ -74,7 +74,7 @@ export const TL_COLUMN_WIDTHS = {
   /** Ten 22px switches + nine 4px gaps — mirrors `--tl-col-switches`. */
   switches: 256,
   mode: 70,
-  matte: 58,
+  matte: 100,
   parent: 120,
   /** Each of In / Out / Duration — mirrors `TIMELINE_EXTRA_COLUMNS`. */
   extra: 72,

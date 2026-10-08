@@ -17,8 +17,11 @@
 
 .hint {
   margin: 0 0 2px;
-  font-size: var(--font-size-micro);
-  line-height: 1.5;
+  /* The panel `help` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  line-height: var(--panel-line-height-help);
   color: var(--color-text-tertiary);
 }
 
@@ -32,7 +35,10 @@
 /* Fixed gutter — the alignment is what makes the rows read as a list. */
 .label {
   flex: 0 0 62px;
-  font-size: var(--font-size-micro);
+  /* The panel `label` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
   color: var(--color-text-secondary);
 }
 
@@ -41,7 +47,10 @@
   min-width: 0;
   height: 22px;
   padding: 0 4px;
-  font-size: var(--font-size-micro);
+  /* The panel `value` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-value);
   color: var(--color-text-primary);
   background: var(--color-surface-2);
   border: 1px solid var(--color-border);
@@ -52,7 +61,11 @@
   margin: 0;
   padding: 8px;
   text-align: center;
-  font-size: var(--font-size-micro);
+  /* The panel `help` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  line-height: var(--panel-line-height-help);
   color: var(--color-text-tertiary);
   border: 1px dashed var(--color-border-subtle);
   border-radius: var(--radius-sm, 4px);
@@ -89,7 +102,10 @@
    edge it survives a theme, a colour-blind reader and a screenshot. */
 .ordinal {
   flex: 0 0 12px;
-  font-size: var(--font-size-micro);
+  /* The panel `value` role (typography.css). */
+  font-family: var(--panel-font-family-value);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-value);
   font-variant-numeric: tabular-nums;
   text-align: right;
   color: var(--color-text-tertiary);
@@ -110,8 +126,10 @@
 }
 
 .kind {
-  font-size: var(--font-size-micro);
-  font-weight: 600;
+  /* The panel `subgroup` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-subgroup);
   color: var(--color-text-primary);
 }
 
@@ -122,7 +140,10 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--font-size-micro);
+  /* The panel `label` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
   font-variant-numeric: tabular-nums;
   color: var(--color-text-tertiary);
 }
@@ -132,7 +153,10 @@
   width: 18px;
   height: 18px;
   padding: 0;
-  font-size: var(--font-size-micro);
+  /* The panel `button` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-button);
   line-height: 1;
   color: var(--color-text-secondary);
   background: transparent;
@@ -168,7 +192,10 @@
 }
 
 .fieldLabel {
-  font-size: var(--font-size-micro);
+  /* The panel `label` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
   color: var(--color-text-tertiary);
 }
 
@@ -177,8 +204,10 @@
   min-width: 0;
   height: 22px;
   padding: 0 5px;
-  font-family: var(--font-family-mono, monospace);
-  font-size: var(--font-size-micro);
+  /* The panel `value` role (typography.css). */
+  font-family: var(--panel-font-family-value);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-value);
   color: var(--color-text-primary);
   background: var(--color-surface-1);
   border: 1px solid var(--color-border);
@@ -187,15 +216,21 @@
 
 .rowHint {
   margin: 3px 0 0 16px;
-  font-size: var(--font-size-micro);
-  line-height: 1.4;
+  /* The panel `help` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  line-height: var(--panel-line-height-help);
   color: var(--color-text-tertiary);
 }
 
 .warn {
   margin: 3px 0 0 16px;
-  font-size: var(--font-size-micro);
-  line-height: 1.4;
+  /* The panel `help` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  line-height: var(--panel-line-height-help);
   color: var(--color-warning, #ffb703);
 }
 
@@ -209,7 +244,10 @@
 }
 
 .compiledLabel {
-  font-size: var(--font-size-micro);
+  /* The panel `label` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
   color: var(--color-text-secondary);
 }
 
@@ -218,8 +256,10 @@
   max-height: 84px;
   overflow: auto;
   padding: 5px 6px;
-  font-family: var(--font-family-mono, monospace);
-  font-size: var(--font-size-micro);
+  /* The panel `value` role (typography.css). */
+  font-family: var(--panel-font-family-value);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-value);
   line-height: 1.5;
   /* Wraps rather than scrolls sideways: this text is meant to be READ, and a
      horizontally scrolling formula is one nobody reads. */
@@ -232,8 +272,11 @@
 
 .error {
   margin: 0;
-  font-size: var(--font-size-micro);
-  line-height: 1.5;
+  /* The panel `help` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  line-height: var(--panel-line-height-help);
   color: var(--color-danger, #ff6b6b);
 }
 
@@ -245,7 +288,10 @@
 
 .note {
   margin: 0;
-  font-size: var(--font-size-micro);
-  line-height: 1.5;
+  /* The panel `help` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  line-height: var(--panel-line-height-help);
   color: var(--color-text-tertiary);
 }

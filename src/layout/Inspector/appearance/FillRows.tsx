@@ -211,7 +211,7 @@ export function FillRows({ nodeId }: { nodeId: string }): JSX.Element | null {
                   <Icon name="gradient" size="sm" />
                   <span>{gradientArmed ? 'Editing on canvas' : 'Edit on canvas'}</span>
                 </button>
-                <span className={styles.popoverLabel} style={{ fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)' }}>Stops:</span>
+                <span className={styles.popoverLabel}>Stops</span>
                 <StopList nodeId={nodeId} paint={fill} />
               </div>
             )}

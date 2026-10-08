@@ -93,8 +93,8 @@
     "parent": "comp_root",
     "transform": {
      "position": {
-      "x": -400,
-      "y": 120
+      "x": 745,
+      "y": 260
      },
      "rotation": 0,
      "scale": {
@@ -108,17 +108,17 @@
       "type": "Transform",
       "props": {
        "__kind": "light",
-       "x": -400,
-       "y": 120,
+       "x": 745,
+       "y": 260,
        "rotation": 0,
        "lightGlow": true,
        "lightType": "parallel",
        "intensity": 100,
        "radius": 60,
-       "z": 400,
-       "poiX": 340,
-       "poiY": 240,
-       "poiZ": -500
+       "z": -615,
+       "poiX": 240,
+       "poiY": 180,
+       "poiZ": 0
       }
      },
      {

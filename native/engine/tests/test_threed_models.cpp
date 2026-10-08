@@ -21,10 +21,12 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cstring>
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "docexpr.hpp"
@@ -352,6 +354,51 @@ TEST_CASE("3D leftovers: a corner-pinned 3D layer renders on the pinned 2D path"
   CHECK((card->model_matrix[2] != 0 || card->model_matrix[5] != 0));  // projective: a non-affine bottom row
   REQUIRE(flat != nullptr);
   CHECK(flat->corner_pin.empty());  // a non-convex pin reads as none
+}
+
+TEST_CASE("Light Glow is a viewer aid: a viewport frame draws it, an export never does", "[scene][light][export]") {
+  // A glowing point light, and a glowing spot whose beam lands on the back plate as a pool (the same wash layer).
+  const std::string project = R"({"version":"1.9.0","scene":{"version":"1.0.0","nodes":[
+    {"id":"comp_root","name":"Composition 1","parent":null,"children":["plate","panel","key","spot","cam"],"transform":{"position":{"x":0,"y":0},"rotation":0,"scale":{"x":1,"y":1}},"visible":true,"locked":false,"components":[{"id":"comp_root_meta","type":"group","props":{"__kind":"group"}}]},
+    {"id":"plate","name":"plate","children":[],"parent":"comp_root","transform":{"position":{"x":240,"y":180},"rotation":0,"scale":{"x":1,"y":1}},"components":[
+      {"id":"plate_t","type":"Transform","props":{"__kind":"shape","x":240,"y":180,"rotation":0,"width":480,"height":360,"z":200,"acceptsLights":true}},
+      {"id":"plate_s","type":"Style","props":{"opacity":100,"fill":"#808080"}}],"visible":true,"locked":false},
+    {"id":"panel","name":"panel","children":[],"parent":"comp_root","transform":{"position":{"x":200,"y":180},"rotation":0,"scale":{"x":1,"y":1}},"components":[
+      {"id":"panel_t","type":"Transform","props":{"__kind":"shape","x":200,"y":180,"rotation":0,"width":160,"height":100,"z":0,"rotationY":20,"acceptsLights":true}},
+      {"id":"panel_s","type":"Style","props":{"opacity":100,"fill":"#3a7bd5"}}],"visible":true,"locked":false},
+    {"id":"key","name":"key","children":[],"parent":"comp_root","transform":{"position":{"x":120,"y":70},"rotation":0,"scale":{"x":1,"y":1}},"components":[{"id":"key_t","type":"Transform","props":{"__kind":"light","x":120,"y":70,"rotation":0,"lightGlow":true,"z":-150,"intensity":110,"radius":460,"lightType":"point"}},{"id":"key_s","type":"Style","props":{"opacity":100,"fill":"#fff2d8"}}],"visible":true,"locked":false},
+    {"id":"spot","name":"spot","children":[],"parent":"comp_root","transform":{"position":{"x":360,"y":120},"rotation":0,"scale":{"x":1,"y":1}},"components":[{"id":"spot_t","type":"Transform","props":{"__kind":"light","x":360,"y":120,"rotation":0,"lightGlow":true,"z":-300,"intensity":90,"radius":300,"lightType":"spot","lightCone":40,"poiX":360,"poiY":180,"poiZ":200}},{"id":"spot_s","type":"Style","props":{"opacity":100,"fill":"#d8f2ff"}}],"visible":true,"locked":false},
+    {"id":"cam","name":"cam","children":[],"parent":"comp_root","transform":{"position":{"x":240,"y":180},"rotation":0,"scale":{"x":1,"y":1}},"components":[{"id":"cam_t","type":"Transform","props":{"__kind":"camera","x":240,"y":180,"rotation":0,"z":-1000,"focalLength":1000}}],"visible":true,"locked":false}]},
+    "animation":{"tracks":{},"expressions":{}},"comps":{"comp_root":{"id":"comp_root","name":"comp_root","width":480,"height":360,"fps":30,"durationSeconds":10,"background":"#0c0c12"}},
+    "motionBlur":{"enabled":false,"shutterAngle":180,"shutterPhase":-90,"samples":8,"adaptiveSampleLimit":128},
+    "colorManagement":{"workingSpace":"srgb-linear","displayTransform":"srgb","bitDepth":16},"projectItems":{"folders":[],"footage":{}},
+    "openTabs":{"tabOrder":["tab1"],"activeTabId":"tab1","tabs":{"tab1":{"id":"tab1","compositionId":"comp_root","breadcrumbPath":["comp_root"],"title":"comp_root","time":0,"frame":0}}}})";
+  const auto json = js::parse(project);
+  REQUIRE(json.has_value());
+  doc::Document d;
+  doc::EditorView view;
+  doc::ExprCache cache;
+  (void)doc::restore_document(d, view, json.value(), {});
+  doc::DocExprEnv env(d, view, cache);
+  const sc::BuildContext ctx{d, view, env, cache, nullptr, {}};
+  const auto has = [](const sc::NativeFrame& f, std::string_view id) {
+    return std::ranges::any_of(f.file.scene.renderables, [id](const api::Renderable& r) { return r.id == id; });
+  };
+  const sc::NativeFrame viewport = sc::build_native_frame(ctx, "comp_root", 0, sc::export_view(480, 360, 480, 360), false);
+  sc::CompOverrides delivered;
+  delivered.forExport = true;  // export_job.cpp: the Render Queue, the Export dialog, `premation render`
+  const sc::NativeFrame exported =
+      sc::build_native_frame(ctx, "comp_root", 0, sc::export_view(480, 360, 480, 360), true, {}, 0, delivered);
+
+  CHECK(has(viewport, "key"));
+  CHECK(has(viewport, "spot"));
+  CHECK_FALSE(has(exported, "key"));
+  CHECK_FALSE(has(exported, "spot"));
+  // Only the glow goes: the lights still light the layers, the same in both.
+  CHECK(has(exported, "panel"));
+  CHECK(has(exported, "plate"));
+  CHECK(exported.file.scene.lights3d == viewport.file.scene.lights3d);
+  CHECK(exported.file.scene.lights3d.size() == 2);
 }
 
 TEST_CASE("3D leftovers: what the document cannot supply is reported, never guessed", "[scene][gltf][displacement]") {

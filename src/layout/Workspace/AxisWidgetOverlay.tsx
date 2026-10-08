@@ -22,6 +22,7 @@ import { compHas3DContent } from '@core/mirror/compLayers';
 import { viewCameraOf } from '@core/mirror/viewGeometry';
 import { orthoViewOf } from '@core/scene/cameraViewMode';
 import { isCustomViewId } from '@core/workspace/customViews';
+import { drawnCustomView } from '@core/workspace/displayedView';
 import { orbitNavBy } from '@core/workspace/cameraNav';
 import { beginViewportGesture, endViewportGesture } from '@core/workspace/viewportGesture';
 import { useOverlayRequest } from '@hooks/useOverlayRequest';
@@ -100,7 +101,8 @@ export const AxisWidgetOverlay: React.FC = () => {
   useOverlayRequest('axisWidget', [], [], has3D && !isCustomViewId(camera3dMode) ? [camera3dMode] : []);
   if (!has3D) return null;
   const view = isCustomViewId(camera3dMode) ? undefined : overlayView(MAIN_VIEWPORT, camera3dMode, secondsToFlicks(time));
-  const camera: Camera3D = viewCameraOf(camera3dMode, view, customViews, compWidth, compHeight);
+  // A custom view's orbit as the frame on screen was drawn (re-read as frames land).
+  const camera: Camera3D = viewCameraOf(camera3dMode, view, customViews, compWidth, compHeight, drawnCustomView(camera3dMode));
   const orthoView: OrthoView | null = orthoViewOf(camera3dMode);
 
   const project = (p: Vec3): Project3D.Projected =>

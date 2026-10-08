@@ -37,7 +37,9 @@ import { useProjectStore } from '@stores/projectStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { trackValueCommands } from './viewportEdits';
 import { useSceneRefGeometry } from './useSceneRefGeometry';
+import { useOverlayView } from './useOverlayView';
 import type { RenderView } from '@core/workspace/renderView';
+import type { CustomViewParams } from '@core/workspace/customViews';
 import { Project3D, type Vec3 } from '@motion/scene';
 import { Gizmo3D, Gizmo3DMath, pointLines, type GizmoHandleType, type RenderedGizmo3D, type SnapLine, type SnapPointTarget } from '@motion/workspace';
 import { useUIStore } from '@stores/uiStore';
@@ -84,17 +86,15 @@ const SNAP_MOVE = 10;
 const SNAP_DEG = 15;
 const SNAP_SCALE = 0.1;
 
-/** Identity view — the fallback while a pane's camera does not exist yet. */
-const IDENTITY_VIEW: RenderView = { scale: 1, offsetX: 0, offsetY: 0 };
-
 /** Which VIEW this gizmo belongs to. Omit every field for the main viewport. */
 export interface Gizmo3dViewOptions {
   /** View mode to project through. Defaults to `guidesStore.camera3dMode`. */
   mode?: Camera3dMode;
   /**
    * This view's live comp → canvas transform (`canvasPx = compPx·scale + offset`,
-   * CSS px, relative to `stageRef`'s box). Defaults to the main viewport's
-   * controller view. A pane passes `usePaneWorkspace().getRenderView`.
+   * CSS px, relative to `stageRef`'s box). Defaults to the main viewport's view
+   * of the frame on screen (useOverlayView). A pane passes
+   * `usePaneWorkspace().getRenderView`.
    */
   getView?: () => RenderView | undefined;
   /**
@@ -104,6 +104,8 @@ export interface Gizmo3dViewOptions {
    * until the next stray pointer move.
    */
   viewRev?: number;
+  /** A pane's: the custom orbit its frame on screen was drawn with (EnginePaneSurface). */
+  drawnCustomView?: CustomViewParams | null;
 }
 
 export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, options?: Gizmo3dViewOptions) {
@@ -123,25 +125,25 @@ export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, option
   const mainMode = useGuidesStore((s) => s.camera3dMode);
   // The view this instance draws for: a pane's own mode when it passes one.
   const mode = options?.mode ?? mainMode;
+  const getViewOpt = options?.getView;
+  const viewRev = options?.viewRev ?? 0;
   // Camera, ortho axis, ground-plane visibility and the scene wireframes all
-  // come from ONE shared resolver — the inspection panes use it too.
-  const refGeometry = useSceneRefGeometry(mode);
+  // come from ONE shared resolver — the inspection panes use it too. The main
+  // viewport's camera is the one its frame on screen was drawn with.
+  const refGeometry = useSceneRefGeometry(mode, { mainViewport: !getViewOpt, drawnCustomView: options?.drawnCustomView });
   const customViews = useGuidesStore((s) => s.customViews);
 
   /**
-   * The view reader, behind a ref.
-   *
-   * Every consumer below (the rAF resync, the pointer handlers, the hit
-   * tolerance) needs the CURRENT transform, and the pane's `getRenderView`
-   * reads a live camera. Holding it in a ref keeps the pointer-listener effect
-   * from re-attaching whenever the host re-renders with a new closure.
+   * Comp → canvas view transform (RenderView: canvasPx = compPx·scale + offset,
+   * CSS px): `viewTransform` draws the overlay, `readViewRef` gives the pointer
+   * handlers and the hit tolerance the SAME transform at call time — the main
+   * viewport's is the frame on screen's, a pane's its live camera (see
+   * useOverlayView). Behind a ref, so the pointer-listener effect does not
+   * re-attach whenever the host re-renders.
    */
-  const getViewOpt = options?.getView;
-  const viewRev = options?.viewRev ?? 0;
-  const readViewRef = useRef<() => RenderView>(() => getWorkspaceController().getView());
-  readViewRef.current = getViewOpt
-    ? (): RenderView => getViewOpt() ?? IDENTITY_VIEW
-    : (): RenderView => getWorkspaceController().getView();
+  const { view: viewTransform, read: readView } = useOverlayView(getViewOpt, viewRev);
+  const readViewRef = useRef<() => RenderView>(readView);
+  readViewRef.current = readView;
   // Snapping reads the MAIN workspace's features, projected through the main
   // view — a secondary pane (own camera, own framing) must not snap to them.
   const mainViewRef = useRef(true);
@@ -244,47 +246,6 @@ export function useGizmo3d(stageRef: React.RefObject<HTMLElement | null>, option
   // read-only inspection panes use too — one resolution path, so the panes and
   // the interactive viewport cannot disagree about where anything sits.
   const { camera, orthoView, sceneGizmos, groundGridVisible, groundLevel, scene3d } = refGeometry;
-
-  // Comp → canvas view transform (RenderView: canvasPx = compPx·scale + offset,
-  // CSS px). Kept in state and re-synced on wheel / pointer input so the SVG
-  // overlay follows viewport pan & zoom.
-  const [viewTransform, setViewTransform] = useState<RenderView>(() => readViewRef.current());
-  useEffect(() => {
-    const sync = (): void => {
-      const v = readViewRef.current();
-      setViewTransform((prev) =>
-        prev.scale === v.scale && prev.offsetX === v.offsetX && prev.offsetY === v.offsetY ? prev : v,
-      );
-    };
-    // Coalesced to one sync per animation frame. Wheel and pointermove fire
-    // far above frame rate (120+ Hz on trackpads), and each changed view used
-    // to setState → re-render the whole SVG overlay (every frustum, light
-    // cone and layer box re-projected through React) per EVENT — several full
-    // reconciliations per painted frame during a zoom, which is exactly the
-    // "the 3D wireframes lag and stutter while zooming" feel. One rAF behind
-    // the engine's own rAF-coalesced render keeps the overlay at most a frame
-    // behind the canvas, at a fraction of the work.
-    let rafId: number | null = null;
-    const queueSync = (): void => {
-      if (rafId !== null) return;
-      rafId = requestAnimationFrame(() => {
-        rafId = null;
-        sync();
-      });
-    };
-    sync();
-    window.addEventListener('wheel', queueSync, { passive: true, capture: true });
-    window.addEventListener('pointermove', queueSync, { capture: true });
-    window.addEventListener('pointerup', queueSync, { capture: true });
-    return () => {
-      if (rafId !== null) cancelAnimationFrame(rafId);
-      window.removeEventListener('wheel', queueSync, { capture: true } as EventListenerOptions);
-      window.removeEventListener('pointermove', queueSync, { capture: true } as EventListenerOptions);
-      window.removeEventListener('pointerup', queueSync, { capture: true } as EventListenerOptions);
-    };
-    // `viewRev` re-syncs for framing changes no pointer event announces (a
-    // pane auto-fitting on resize); the reader itself lives in a ref.
-  }, [viewRev]);
 
   const renderedGizmoRef = useRef<RenderedGizmo3D | null>(null);
 

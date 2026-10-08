@@ -54,8 +54,11 @@
      4 × 22px cells + 3 × 3px gaps. */
   --tl-col-preinfo: 97px;
   --tl-col-mode: 70px;
-  /* The legend reads "TrkMat" now — AE's name for it — rather than a bare "T". */
-  --tl-col-matte: 58px;
+  /* The legend reads "TrkMat" now — AE's name for it — rather than a bare "T".
+     100px, not 58: the pick-whip takes a 22px square out of the column (as in
+     Parent & Link), which left the mode dropdown ~25px — "None" / "Alpha Inv"
+     cut to a sliver. Room for the whip plus the longest label, "Alpha Inv". */
+  --tl-col-matte: 100px;
   --tl-col-parent: 120px;
   /* In / Out / Duration, off by default. 72px each — the same number
      `TIMELINE_EXTRA_COLUMNS` in `timelineColumns.ts` carries, and the two have

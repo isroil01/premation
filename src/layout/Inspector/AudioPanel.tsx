@@ -29,11 +29,13 @@
  * ## Units and floor
  *
  * AE's Audio panel menu offers Units (decibels / percent) and a Slider Minimum.
- * Both are here, and both are per-user view settings rather than document
- * state — they change how a number is spelled, never what is stored.
+ * Both are here — in this panel's ≡ menu, as AE keeps them (2026-10; they were
+ * a popover under an in-panel title) — and both are per-user view settings
+ * rather than document state: they change how a number is spelled, never what
+ * is stored.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
@@ -51,8 +53,9 @@ import { useEngineEdit } from './useEngineEdit';
 import { valueCommands } from './inspectorEdits';
 import { fadeEdit } from './audioEdits';
 import { channelDb, fromChannelDb, CLIP_DB } from './faderMath';
-import { InfoReadout } from './InfoReadout';
-import { Icon } from '@components/Icon';
+import { Button } from '@components/Button';
+import { useDockPanelHeader } from '@components/DockPanel';
+import type { DropdownItem } from '@components/Dropdown';
 import { cn } from '@utils/cn';
 import styles from './AudioPanel.module.css';
 
@@ -66,6 +69,45 @@ const PEAK_HOLD_MS = 1200;
 type Units = 'db' | 'percent';
 
 const AUDIO_TRACKS = [AUDIO_LEVEL_DB_PROP, AUDIO_PAN_PROP] as const;
+
+/** The Slider Minimum choices, AE's. */
+const FLOORS_DB: readonly number[] = [-96, -72, -48, -24, -12];
+
+/**
+ * The Audio panel's ≡ rows — AE's Audio Options: Units and Slider Minimum, each
+ * a submenu whose current choice is ticked (a radio set: picking the ticked row
+ * keeps it).
+ */
+export function audioOptionsMenuRows(
+  units: Units,
+  floorDb: number,
+  setUnits: (u: Units) => void,
+  setFloorDb: (db: number) => void,
+): DropdownItem[] {
+  return [
+    {
+      type: 'item',
+      id: 'audio-units',
+      label: 'Units',
+      submenu: [
+        { type: 'checkbox', id: 'audio-units-db', label: 'Decibels', checked: units === 'db', onChange: () => setUnits('db') },
+        { type: 'checkbox', id: 'audio-units-percent', label: 'Percentage', checked: units === 'percent', onChange: () => setUnits('percent') },
+      ],
+    },
+    {
+      type: 'item',
+      id: 'audio-slider-minimum',
+      label: 'Slider Minimum',
+      submenu: FLOORS_DB.map((db): DropdownItem => ({
+        type: 'checkbox',
+        id: `audio-floor-${-db}`,
+        label: `${db} dB`,
+        checked: floorDb === db,
+        onChange: () => setFloorDb(db),
+      })),
+    },
+  ];
+}
 
 interface Target {
   nodeId: string;
@@ -115,7 +157,16 @@ export function AudioPanel(): JSX.Element {
 
   const [units, setUnits] = useState<Units>('db');
   const [floorDb, setFloorDb] = useState(-48);
-  const [menuOpen, setMenuOpen] = useState(false);
+
+  // AE's Audio Options, in this panel's ≡ menu. Memoised: handing the dock a
+  // fresh array per render is the v0.8.1 update loop (PropertiesPanel).
+  const optionsMenu = useMemo(() => audioOptionsMenuRows(units, floorDb, setUnits, setFloorDb), [units, floorDb]);
+  const setCustomMenuItems = useDockPanelHeader()?.setCustomMenuItems;
+  useEffect(() => {
+    if (!setCustomMenuItems) return;
+    setCustomMenuItems(optionsMenu);
+    return () => setCustomMenuItems([]);
+  }, [setCustomMenuItems, optionsMenu]);
 
   // ── The master meter ──────────────────────────────────────────────
   const [bars, setBars] = useState({ l: 0, r: 0 });
@@ -203,50 +254,9 @@ export function AudioPanel(): JSX.Element {
 
   return (
     <div className={styles.root}>
-      <div className={styles.head}>
-        <span className={styles.title}>Audio</span>
-        <button
-          type="button"
-          className={styles.menuBtn}
-          aria-label="Audio panel options"
-          aria-expanded={menuOpen}
-          title="Units and slider minimum"
-          onClick={() => setMenuOpen((v) => !v)}
-        >
-          <Icon name="more-horizontal" size="sm" />
-        </button>
-      </div>
-
-      {menuOpen && (
-        <div className={styles.options} role="group" aria-label="Audio panel options">
-          <label className={styles.optRow}>
-            <span>Units</span>
-            <select
-              value={units}
-              onChange={(e) => setUnits(e.currentTarget.value as Units)}
-              aria-label="Level units"
-            >
-              <option value="db">Decibels</option>
-              <option value="percent">Percent</option>
-            </select>
-          </label>
-          <label className={styles.optRow}>
-            <span>Slider minimum</span>
-            <select
-              value={String(floorDb)}
-              onChange={(e) => setFloorDb(Number(e.currentTarget.value))}
-              aria-label="Slider minimum"
-            >
-              {[-96, -72, -48, -24, -12].map((v) => (
-                <option key={v} value={v}>{v} dB</option>
-              ))}
-            </select>
-          </label>
-        </div>
-      )}
-
-      {/* ── Pointer + composition readout (the old Info & Audio tab) ── */}
-      <InfoReadout compact />
+      {/* No title (the tab is the panel's only one) and no options popover —
+          Units and Slider Minimum are the ≡ menu's (`audioOptionsMenuRows`).
+          The pointer readout that sat here is the Info panel's again. */}
 
       {/* ── Meter + faders, sharing one dB scale ───────────────────── */}
       <div className={styles.deck}>
@@ -289,51 +299,54 @@ export function AudioPanel(): JSX.Element {
         ))}
       </div>
 
-      {/* ── Readout ─────────────────────────────────────────────────── */}
+      {/* ── Readout: label-role keys, value-role numbers ───────────── */}
       {target ? (
         <>
-          <div className={styles.readout}>
-            <span className={styles.readLabel}>L</span>
-            <span className={styles.readVal}>{fmt(lDb)}</span>
-            <span className={styles.readLabel}>R</span>
-            <span className={styles.readVal}>{fmt(rDb)}</span>
-          </div>
-          <div className={styles.readout}>
-            <span className={styles.readLabel}>Pan</span>
-            <span className={styles.readVal}>
-              {target.pan === 0 ? 'Centre' : `${Math.abs(target.pan)}% ${target.pan < 0 ? 'L' : 'R'}`}
-            </span>
-          </div>
+          <dl className={styles.readout}>
+            <div className={styles.readPair}>
+              <dt className={styles.readLabel}>L</dt>
+              <dd className={styles.readVal}>{fmt(lDb)}</dd>
+            </div>
+            <div className={styles.readPair}>
+              <dt className={styles.readLabel}>R</dt>
+              <dd className={styles.readVal}>{fmt(rDb)}</dd>
+            </div>
+            <div className={styles.readPair}>
+              <dt className={styles.readLabel}>Pan</dt>
+              <dd className={styles.readVal}>
+                {target.pan === 0 ? 'Centre' : `${Math.abs(target.pan)}% ${target.pan < 0 ? 'L' : 'R'}`}
+              </dd>
+            </div>
+          </dl>
           <div className={styles.fades}>
-            <button
-              type="button"
+            <Button
+              size="sm"
+              variant="secondary"
               onClick={() => { void fadeEdit([target.nodeId], 'in'); }}
               title={`Ramp up from silence over ${DEFAULT_FADE_SEC}s`}
             >
-              Fade in
-            </button>
-            <button
-              type="button"
+              Fade In
+            </Button>
+            <Button
+              size="sm"
+              variant="secondary"
               onClick={() => { void fadeEdit([target.nodeId], 'out'); }}
               title={`Ramp down to silence over ${DEFAULT_FADE_SEC}s`}
             >
-              Fade out
-            </button>
+              Fade Out
+            </Button>
           </div>
           {(target.levelAnimated || target.panAnimated) && (
-            <p className={styles.note}>
+            <p className={styles.note} role="status">
               {target.levelAnimated && target.panAnimated
                 ? 'Level and pan are keyframed'
                 : target.levelAnimated ? 'Level is keyframed' : 'Pan is keyframed'}
-              {' '}— moving a fader keys at the playhead.
+              {' '}— a fader move keys at the playhead.
             </p>
           )}
         </>
       ) : (
-        <p className={styles.note}>
-          Select a layer with sound to set its level and pan. The meter above
-          always shows the master mix.
-        </p>
+        <p className={styles.note}>Select a layer with sound to set its level and pan.</p>
       )}
     </div>
   );

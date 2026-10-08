@@ -879,6 +879,7 @@ export const APP_MENU: MenuGroupModel[] = [
           { commandId: 'view.info', label: 'Info' },
           { commandId: 'view.scene', label: 'Layers' },
           { commandId: 'view.library', label: 'Library' },
+          { commandId: 'view.paragraph', label: 'Paragraph' },
           { commandId: 'view.plugins', label: 'Plugins' },
           { commandId: 'view.preview', label: 'Preview' },
           { commandId: 'view.rig', label: 'Rigging' },

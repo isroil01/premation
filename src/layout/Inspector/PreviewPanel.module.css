@@ -1,124 +1,41 @@
+/*
+  The Preview panel, laid out as After Effects': the transport row, then one
+  row per setting — a label-role caption and its value — with the settings
+  grouped under the shared Accordion's group rows. No heading inside: the tab
+  is the panel's title.
+*/
 .root {
   display: flex;
   flex-direction: column;
   background: var(--color-panel);
   color: var(--color-text-primary);
-  font-family: inherit;
-  font-size: var(--font-size-xs);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  line-height: var(--panel-line-height);
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
   overflow-y: auto;
-  padding: var(--space-4) var(--space-4) var(--space-6);
-  gap: var(--space-4);
 }
 
-/* ── Timecode HUD Card ─────────────────────────────────────────── */
-.hudCard {
+/* The rows above the groups, on the Accordion's gutter. */
+.top {
   display: flex;
   flex-direction: column;
-  background: var(--color-surface-1);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-md);
-  padding: var(--space-3) var(--space-4);
   gap: var(--space-2);
+  padding: var(--space-3) var(--space-5);
 }
 
-.hudPrimary {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-2);
+.groups {
+  border-top: 1px solid var(--color-border);
 }
 
-.timecodeGroup {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-1);
-}
-
-.timecodeCurrent {
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-lg);
-  font-weight: var(--font-weight-bold);
-  color: var(--color-text-primary);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.02em;
-  line-height: 1;
-}
-
-.timecodeDuration {
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-xs);
-  color: var(--color-text-tertiary);
-  font-variant-numeric: tabular-nums;
-}
-
-.statusPill {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  padding: 2px var(--space-2);
-  border-radius: var(--radius-full);
-  font-size: var(--font-size-micro);
-  font-weight: var(--font-weight-bold);
-  letter-spacing: var(--letter-spacing-uppercase);
-  text-transform: uppercase;
-  background: var(--color-surface-2);
-  color: var(--color-text-secondary);
-  border: 1px solid var(--color-border-subtle);
-}
-
-.statusPillLive {
-  background: color-mix(in srgb, var(--color-success) 14%, transparent);
-  color: var(--color-success);
-  border-color: color-mix(in srgb, var(--color-success) 30%, transparent);
-}
-
-.statusDot {
-  width: 6px;
-  height: 6px;
-  border-radius: var(--radius-full);
-  background: currentColor;
-}
-
-.statusPillLive .statusDot {
-  box-shadow: 0 0 6px var(--color-success);
-}
-
-.hudSecondary {
+/* ── Transport ─────────────────────────────────────────────────── */
+.transport {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding-top: var(--space-2);
-  border-top: 1px solid var(--color-border-subtle);
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-micro);
-  color: var(--color-text-tertiary);
-  font-variant-numeric: tabular-nums;
-}
-
-.specsBadge {
-  display: inline-flex;
-  align-items: center;
   gap: var(--space-1);
-  padding: 1px 6px;
-  border-radius: var(--radius-xs);
-  background: var(--color-surface-0);
-  border: 1px solid var(--color-border-subtle);
-  color: var(--color-text-secondary);
-}
-
-/* ── Pro Transport Deck ────────────────────────────────────────── */
-.transportDeck {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  background: var(--color-surface-1);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-md);
-  padding: var(--space-2) var(--space-3);
-  gap: var(--space-1);
+  min-height: var(--control-height-lg);
 }
 
 .transportDivider {
@@ -128,229 +45,53 @@
   margin: 0 var(--space-1);
 }
 
-/* ── Section Cards ─────────────────────────────────────────────── */
-.card {
-  display: flex;
-  flex-direction: column;
-  background: var(--color-surface-1);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-md);
-  padding: var(--space-3) var(--space-4);
-  gap: var(--space-3);
-}
-
-.cardHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-}
-
-.sectionTitle {
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
-  letter-spacing: var(--letter-spacing-uppercase);
-  text-transform: uppercase;
-  color: var(--color-text-secondary);
-}
-
-.settingRow {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-
-.settingLabelRow {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-}
-
-.settingLabel {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
-  font-weight: var(--font-weight-medium);
-}
-
-.settingHint {
-  font-size: var(--font-size-micro);
-  color: var(--color-text-tertiary);
-  font-family: var(--font-family-mono);
-}
-
-/* ── Segmented Control Pills ───────────────────────────────────── */
-.segmented {
-  display: flex;
-  align-items: center;
-  background: var(--color-surface-0);
-  border: 1px solid var(--color-field-border);
-  border-radius: var(--radius-sm);
-  padding: 2px;
-  gap: 2px;
-  width: 100%;
-  box-sizing: border-box;
-}
-
-.segmentedItem {
-  flex: 1 1 0;
-  min-width: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 24px;
-  padding: 0 var(--space-2);
-  border: none;
-  border-radius: calc(var(--radius-sm) - 2px);
-  background: transparent;
-  color: var(--color-text-secondary);
-  font-family: inherit;
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
-  white-space: nowrap;
-  cursor: pointer;
-  user-select: none;
-  transition:
-    background-color var(--motion-duration-fast) var(--motion-ease-standard),
-    color var(--motion-duration-fast) var(--motion-ease-standard);
-}
-
-.segmentedItem:hover {
-  color: var(--color-text-primary);
-}
-
-.segmentedItem:active {
-  transform: scale(0.97);
-}
-
-.segmentedItem:focus-visible {
-  outline: 1px solid var(--color-focus-ring);
-}
-
-.segmentedItemActive {
-  background: var(--color-surface-2);
-  color: var(--color-text-primary);
-  font-weight: var(--font-weight-semibold);
-  box-shadow: var(--shadow-sm);
-}
-
-/* ── Quality Row with Draft Toggle ─────────────────────────────── */
-.draftRow {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding-top: var(--space-2);
-  border-top: 1px solid var(--color-border-subtle);
-}
-
-/* ── Audio Monitoring Card ─────────────────────────────────────── */
-.audioDeck {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
-.audioHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.meterContainer {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-
-.meterRow {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.channelLabel {
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-micro);
-  font-weight: var(--font-weight-bold);
-  color: var(--color-text-tertiary);
-  width: 10px;
-  flex: none;
-}
-
-.meterTrack {
-  flex: 1 1 auto;
-  height: 6px;
-  background: var(--color-surface-0);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-full);
-  overflow: hidden;
-  position: relative;
-}
-
-.meterFill {
-  height: 100%;
-  border-radius: var(--radius-full);
-  background: var(--color-primary);
-  transition: width var(--motion-duration-fast) linear;
-}
-
-.meterFillPeak {
-  background: var(--color-warning);
-}
-
-.meterStatusText {
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-micro);
-  color: var(--color-text-tertiary);
-  text-align: right;
-  min-width: 44px;
-}
-
-/* ── Keyboard Shortcuts Footer ─────────────────────────────────── */
-.shortcutFooter {
-  display: flex;
-  flex-direction: column;
-  background: var(--color-surface-0);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: var(--radius-md);
-  padding: var(--space-3);
-  gap: var(--space-2);
-}
-
-.shortcutTitle {
-  font-size: var(--font-size-micro);
-  font-weight: var(--font-weight-semibold);
-  letter-spacing: var(--letter-spacing-uppercase);
-  text-transform: uppercase;
-  color: var(--color-text-tertiary);
-}
-
-.shortcutGrid {
+/* ── A setting: its caption, then its value ─────────────────────── */
+.row {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: var(--space-2);
+  grid-template-columns: minmax(72px, auto) minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--control-height-row);
 }
 
-.shortcutItem {
+.label {
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
+  color: var(--color-text-secondary);
+  user-select: none;
+}
+
+/* A dropdown's current choice is a value (in the text face: it is a word). */
+.select {
+  width: 100%;
+  min-width: 0;
+  height: var(--control-height-row);
+  padding: 0 var(--space-2);
+  background: var(--color-surface-2);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-value);
+  outline: none;
+  box-sizing: border-box;
+  cursor: pointer;
+  transition: border-color var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.select:hover {
+  border-color: var(--color-border);
+}
+
+.select:focus-visible {
+  border-color: var(--color-primary);
+}
+
+/* Toggles that read as values: the accent while on. */
+.toggles {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  font-size: var(--font-size-micro);
-  color: var(--color-text-secondary);
-}
-
-.kbd {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 1px 5px;
-  background: var(--color-surface-2);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-xs);
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-micro);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-text-primary);
-  box-shadow: 0 1px 0 var(--color-border);
+  gap: var(--space-1);
 }

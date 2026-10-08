@@ -556,7 +556,7 @@ const STATIC: Record<string, MetaSpec> = {
   orbitYaw: { ...DEG('Orbit Yaw', 'camera', ORDER.camera), min: -180, max: 180 },
   orbitPitch: { ...DEG('Orbit Pitch', 'camera', ORDER.camera), min: -89, max: 89 },
   dofStrength: {
-    label: 'Blur Strength', group: 'camera', type: 'number', unit: 'px',
+    label: 'Blur Level', group: 'camera', type: 'number', unit: 'px',
     min: 0, max: 60, step: 1, precision: 1, defaultValue: 0, resettable: true, order: ORDER.camera,
   },
   focusDistance: {
@@ -604,7 +604,7 @@ const STATIC: Record<string, MetaSpec> = {
     min: 0, max: 4, step: 0.05, precision: 2, defaultValue: 0, resettable: true, order: ORDER.camera,
   },
   diffractionFringe: {
-    label: 'Diffraction Fringe', group: 'camera', type: 'number', unit: '',
+    label: 'Iris Diffraction Fringe', group: 'camera', type: 'number', unit: '',
     min: 0, max: 1, step: 0.01, precision: 2, defaultValue: 0, resettable: true, order: ORDER.camera,
   },
 

@@ -22,7 +22,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { TooltipProvider } from '@components/Tooltip/Tooltip';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useProjectStore } from '@stores/projectStore';
-import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
+import { clearHistory, setupAppEngine, historyLabels, sec } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { documentMirror } from '@stores/documentMirror';
@@ -141,6 +141,17 @@ describe('the identity row', () => {
     expect(screen.queryByRole('group', { name: 'Layer switches' })).not.toBeInTheDocument();
   });
 
+  it('says which light a light layer is', async () => {
+    const L = (await h.run({
+      type: 'createLayer', comp: 'comp_root', kind: 'light', name: 'shell_light',
+      init: [{ path: 'light/lightType', value: { kind: 'choice', value: 'parallel' } }],
+    })).layer;
+    await documentMirror().loadTree(L);
+    select([L]);
+    renderPanel();
+    expect(screen.getByText('Parallel light')).toBeInTheDocument();
+  });
+
   it('counts a multi-selection and breaks it down by kind, with the align row above', async () => {
     expect(kindBreakdown([A, B, T])).toBe('2 shapes, 1 text');
     select([A, B, T]);
@@ -177,6 +188,65 @@ describe('the identity row', () => {
     await act(async () => { await engineIdle(); });
     expect((await docView()).getNode(A)?.name).toBe('Hero');
     expect(screen.queryByRole('textbox', { name: 'Layer name' })).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * ONE toolbar under the identity row (2026-10-08): the search field, always
+ * there, and AE's U / UU as a Show filter. It replaced the search toggle that
+ * was portalled into the dock header and the footer's property counts.
+ */
+describe('the toolbar', () => {
+  it('shows the search and the Show filter without a toggle, and no footer counts', async () => {
+    select([A]);
+    renderPanel();
+    expect(screen.getByRole('searchbox', { name: 'Search properties' })).toBeInTheDocument();
+    const filter = screen.getByRole('radiogroup', { name: 'Show properties' });
+    expect([...filter.querySelectorAll('[role="radio"]')].map((r) => r.textContent)).toEqual(['All', 'Keyed', 'Changed']);
+    expect(screen.getByRole('radio', { name: 'All' }).getAttribute('aria-checked')).toBe('true');
+    expect(screen.queryByText(/properties · \d+ animated/)).not.toBeInTheDocument();
+  });
+
+  it('is not drawn with nothing selected', async () => {
+    renderPanel();
+    expect(screen.queryByRole('searchbox', { name: 'Search properties' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('radiogroup', { name: 'Show properties' })).not.toBeInTheDocument();
+  });
+
+  it('Keyed lists only the keyed properties, and the search narrows that list', async () => {
+    await h.run({
+      type: 'addKeyframes',
+      keys: [0, 1].map((s) => ({
+        prop: { layer: A, path: 'transform/opacity' }, time: sec(s), value: { kind: 'scalar' as const, value: 100 - s * 50 }, spatialIn: [], spatialOut: [],
+      })),
+    });
+    await act(async () => { await engineIdle(); await documentMirror().whenIdle(); });
+    select([A]);
+    renderPanel();
+    fireEvent.click(screen.getByRole('radio', { name: 'Keyed' }));
+    // The sections give way to the one keyed row.
+    expect(screen.queryByText('Contents')).not.toBeInTheDocument();
+    expect(screen.getAllByRole('spinbutton', { name: 'Opacity' }).length).toBeGreaterThan(0);
+    expect(screen.queryAllByRole('spinbutton', { name: 'Position X' })).toHaveLength(0);
+
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search properties' }), { target: { value: 'scale' } });
+    expect(screen.queryAllByRole('spinbutton', { name: 'Opacity' })).toHaveLength(0);
+    expect(screen.getByText('No keyed properties match “scale”.')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search properties' }), { target: { value: 'opa' } });
+    expect(screen.getAllByRole('spinbutton', { name: 'Opacity' }).length).toBeGreaterThan(0);
+  });
+});
+
+describe('section actions', () => {
+  it('are submenus of the ⋯ menu, not buttons in the section headers', async () => {
+    select([A]);
+    renderPanel();
+    // No section header carries a text button any more.
+    expect(screen.queryByText('Presets')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Properties panel options' }));
+    expect(await screen.findByText('Transform Presets')).toBeInTheDocument();
+    expect(screen.getByText('Fill & Stroke Presets')).toBeInTheDocument();
   });
 });
 

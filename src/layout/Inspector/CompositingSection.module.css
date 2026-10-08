@@ -18,10 +18,10 @@
 }
 
 .groupTitle {
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  /* The panel `subgroup` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-subgroup);
   color: var(--color-text-tertiary);
   margin-bottom: 2px;
 }
@@ -41,8 +41,10 @@
 }
 
 .label {
-  font-size: var(--font-size-xs);
-  font-weight: 500;
+  /* The panel `label` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
   color: var(--color-text-secondary);
   white-space: nowrap;
 }
@@ -58,8 +60,10 @@
   background: var(--color-surface-1);
   border: 1px solid var(--color-border);
   color: var(--color-text-primary);
-  font-family: inherit;
-  font-size: var(--font-size-xs);
+  /* The panel `value` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-value);
   cursor: pointer;
   min-width: 110px;
   max-width: 160px;
@@ -87,7 +91,10 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  font-size: var(--font-size-xs);
+  /* The panel `label` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
   color: var(--color-text-secondary);
 }
 

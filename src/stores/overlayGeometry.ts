@@ -20,7 +20,24 @@
 import { flicksToSeconds, type OverlayKind, type OverlayLayerGeometry, type OverlayRequest, type OverlayRig, type OverlayRigOptions, type OverlayView } from '@motion/engine-api';
 import { engine } from '@core/engine/engineInstance';
 import { engineViewport, engineViewportNow } from '@core/engine/windowViewport';
+import type { CustomViewParams } from '@core/workspace/customViews';
 import { documentMirror } from './documentMirror';
+
+/**
+ * The VIEW a drawn frame was drawn WITH: the viewport its engine had applied
+ * (EngineSurface's setViewport), published with the frame. The overlays drawn
+ * over the picture project through it (core/workspace/displayedView.ts) rather
+ * than through the page's LIVE view state, which runs ahead of the picture for
+ * as long as the engine takes to draw the new view.
+ */
+export interface OverlayFrameView {
+  /** comp → stage CSS px the frame was asked for (RenderView: canvasPx = compPx·scale + offset). */
+  readonly render: { readonly scale: number; readonly offsetX: number; readonly offsetY: number };
+  /** setViewport `view`: 'active', an axis view, `camera:<id>` or 'custom'. */
+  readonly view: string;
+  /** The custom view's orbit when `view` is 'custom', else null. */
+  readonly customView: CustomViewParams | null;
+}
 
 /**
  * The records of a viewport no engine frame carries (no FrameGeometry): what
@@ -65,6 +82,8 @@ function viewsByMode(views: ReadonlyArray<OverlayView> | undefined): Map<string,
 
 const pushed = new Map<number, FrameSet>();
 const computed = new Map<number, FrameSet>();
+/** The view of the frame on screen, per engine-driven viewport (see `OverlayFrameView`). */
+const frameViews = new Map<number, OverlayFrameView>();
 /** Viewports the C++ engine draws (EngineSurface in 'viewport' mode): their geometry is the frames'. */
 const engineDriven = new Set<number>();
 const listeners = new Map<number, Set<() => void>>();
@@ -75,7 +94,7 @@ const pendingSubscription = new Map<number, Promise<void>>();
 // viewport subscribed and the geometry its last drawn frame carried. By
 // reference, installed once — nothing per frame.
 if (typeof window !== 'undefined') {
-  (window as unknown as { __premationOverlayGeometry?: unknown }).__premationOverlayGeometry = { pushed, engineDriven, subscribed };
+  (window as unknown as { __premationOverlayGeometry?: unknown }).__premationOverlayGeometry = { pushed, engineDriven, subscribed, frameViews };
 }
 
 function merge(records: ReadonlyArray<OverlayLayerGeometry>): Map<string, OverlayLayer> {
@@ -169,11 +188,15 @@ function watchLayerRemovals(): () => void {
 /** EngineSurface: the C++ engine draws `viewport` (true) or stopped (false). */
 export function setEngineDrivenViewport(viewport: number, driven: boolean): void {
   if (driven) {
+    // A view recorded while nothing drew this viewport describes no frame on screen.
+    if (!engineDriven.has(viewport)) frameViews.delete(viewport);
     engineDriven.add(viewport);
     stopLayerWatch ??= watchLayerRemovals();
   } else {
     engineDriven.delete(viewport);
     pushed.delete(viewport);
+    // No frame on screen any more: the overlays fall back to the live view.
+    if (frameViews.delete(viewport)) notify(viewport);
     if (engineDriven.size === 0) {
       stopLayerWatch?.();
       stopLayerWatch = null;
@@ -181,16 +204,42 @@ export function setEngineDrivenViewport(viewport: number, driven: boolean): void
   }
 }
 
-/** EngineSurface: a drawn frame's geometry (the records its meta carried). */
+/**
+ * EngineSurface: a drawn frame's geometry (the records its meta carried) and
+ * the view it was drawn with (`frameView`; omitted or null keeps the last one).
+ */
 export function publishFrameGeometry(
   viewport: number,
   time: number,
   revision: number,
   records: ReadonlyArray<OverlayLayerGeometry>,
   views?: ReadonlyArray<OverlayView>,
+  frameView?: OverlayFrameView | null,
 ): void {
   pushed.set(viewport, { time, revision, layers: merge(records), views: viewsByMode(views) });
+  if (frameView) frameViews.set(viewport, frameView);
   notify(viewport);
+}
+
+/**
+ * EngineSurface: the view of a drawn frame that carried no geometry (no
+ * subscription). Told only when it is a different view — by identity: the
+ * surface hands over the one object per applied viewport, so nothing is
+ * allocated or compared per frame.
+ */
+export function publishFrameView(viewport: number, frameView: OverlayFrameView): void {
+  if (frameViews.get(viewport) === frameView) return;
+  frameViews.set(viewport, frameView);
+  notify(viewport);
+}
+
+/**
+ * The view the frame on screen was drawn with, while the C++ engine draws
+ * `viewport` and has drawn a frame with a known view; undefined otherwise (the
+ * live view state is then what is displayed).
+ */
+export function overlayFrameView(viewport: number): OverlayFrameView | undefined {
+  return engineDriven.has(viewport) ? frameViews.get(viewport) : undefined;
 }
 
 /**

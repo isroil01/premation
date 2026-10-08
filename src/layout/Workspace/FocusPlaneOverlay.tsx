@@ -62,11 +62,12 @@ import { documentMirror } from '@stores/documentMirror';
 import { flattenCompLayers } from '@core/mirror/compLayers';
 import { isMirrorDescendantOf } from '@core/mirror/layerTree';
 import { uiKindOf } from '@core/mirror/layerKinds';
-import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { focusRangeAt } from '@core/scene/camera3d';
 import { isSceneCameraView } from '@core/scene/cameraViewMode';
 import type { RenderView } from '@core/workspace/renderView';
+import type { CustomViewParams } from '@core/workspace/customViews';
 import { useSceneRefGeometry } from './useSceneRefGeometry';
+import { useOverlayView } from './useOverlayView';
 import { beginViewportGesture, endViewportGesture } from '@core/workspace/viewportGesture';
 import { GestureSession } from '@core/engine/uiEdits';
 import { useProjectStore } from '@stores/projectStore';
@@ -116,68 +117,23 @@ const RING_STYLE: Record<FocusRingKind, { width: number; dash: string; opacity: 
   far: { width: 1, dash: '3 5', opacity: 0.4 },
 };
 
-/**
- * The comp → canvas transform, resynced at most once per frame.
- *
- * The same rAF coalescing `useGizmo3d` documents: wheel and pointermove fire
- * well above frame rate, and a setState per event re-renders the whole overlay
- * several times per painted frame during a zoom.
- */
-function useViewTransform(getView?: () => RenderView | undefined, viewRev = 0): RenderView {
-  // Behind a ref so a host re-rendering with a fresh closure does not re-attach
-  // the window listeners; `viewRev` is the explicit "resync now" channel for
-  // framing changes no pointer event announces (a pane auto-fitting).
-  const readRef = useRef<() => RenderView>(() => getWorkspaceController().getView());
-  readRef.current = getView
-    ? (): RenderView => getView() ?? IDENTITY_VIEW
-    : (): RenderView => getWorkspaceController().getView();
-  const [view, setView] = useState<RenderView>(() => readRef.current());
-  useEffect(() => {
-    const sync = (): void => {
-      const v = readRef.current();
-      setView((prev) =>
-        prev.scale === v.scale && prev.offsetX === v.offsetX && prev.offsetY === v.offsetY ? prev : v,
-      );
-    };
-    let rafId: number | null = null;
-    const queueSync = (): void => {
-      if (rafId !== null) return;
-      rafId = requestAnimationFrame(() => {
-        rafId = null;
-        sync();
-      });
-    };
-    sync();
-    window.addEventListener('wheel', queueSync, { passive: true, capture: true });
-    window.addEventListener('pointermove', queueSync, { capture: true });
-    window.addEventListener('pointerup', queueSync, { capture: true });
-    return () => {
-      if (rafId !== null) cancelAnimationFrame(rafId);
-      window.removeEventListener('wheel', queueSync, { capture: true } as EventListenerOptions);
-      window.removeEventListener('pointermove', queueSync, { capture: true } as EventListenerOptions);
-      window.removeEventListener('pointerup', queueSync, { capture: true } as EventListenerOptions);
-    };
-  }, [viewRev]);
-  return view;
-}
-
-/** Identity view — the fallback while a pane's camera does not exist yet. */
-const IDENTITY_VIEW: RenderView = { scale: 1, offsetX: 0, offsetY: 0 };
-
 /** Which VIEW this overlay belongs to. Omit every field for the main viewport. */
 export interface FocusPlaneOverlayProps {
   /** View mode to project through. Defaults to `guidesStore.camera3dMode`. */
   mode?: Camera3dMode;
   /**
    * This view's live comp → canvas transform, in CSS px relative to the
-   * overlay's own box. Defaults to the main viewport's controller view.
+   * overlay's own box. Defaults to the main viewport's view of the frame on
+   * screen (useOverlayView).
    */
   getView?: () => RenderView | undefined;
   /** Bumped when `getView` would answer differently (a pane's `framingRev`). */
   viewRev?: number;
+  /** A pane's: the custom orbit its frame on screen was drawn with (EnginePaneSurface). */
+  drawnCustomView?: CustomViewParams | null;
 }
 
-export function FocusPlaneOverlay({ mode: modeProp, getView, viewRev }: FocusPlaneOverlayProps = {}): JSX.Element | null {
+export function FocusPlaneOverlay({ mode: modeProp, getView, viewRev, drawnCustomView }: FocusPlaneOverlayProps = {}): JSX.Element | null {
   const visibility = useFocusPlaneStore((s) => s.visibility);
   const dragDistance = useFocusPlaneStore((s) => s.dragDistance);
   const mainMode = useGuidesStore((s) => s.camera3dMode);
@@ -187,7 +143,7 @@ export function FocusPlaneOverlay({ mode: modeProp, getView, viewRev }: FocusPla
   // Camera, ortho axis, the 3D-scene gate and the id of the camera this view
   // looks through — all from the resolver the wireframes and the inspection
   // panes share, so this overlay cannot disagree with them about the view.
-  const { camera, orthoView, activeCameraId, scene3d, recordOf } = useSceneRefGeometry(camera3dMode);
+  const { camera, orthoView, activeCameraId, scene3d, recordOf } = useSceneRefGeometry(camera3dMode, { mainViewport: !getView, drawnCustomView });
   const selectedIds = useSelectionStore((s) => s.ids);
   const time = useCurrentTime();
   // Frame-coalesced: a focus drag bumps the revision per pointer event and this
@@ -196,7 +152,8 @@ export function FocusPlaneOverlay({ mode: modeProp, getView, viewRev }: FocusPla
   // 'always' with no camera selected shows the ACTIVE camera's plane (whatever
   // this view looks through): its id is the pushed Active Camera view's.
   const activeViewTick = useOverlayRequest('focusPlane', [], [], visibility === 'always' && scene3d ? ['active'] : []);
-  const viewTransform = useViewTransform(getView, viewRev);
+  // The same transform the 3D gizmo and the wireframes are drawn with.
+  const { view: viewTransform } = useOverlayView(getView, viewRev);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [hovered, setHovered] = useState(false);
 

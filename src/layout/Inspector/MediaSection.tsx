@@ -246,12 +246,21 @@ export function MediaSection({ nodeId }: { nodeId: string }): JSX.Element | null
 
           {!silent && (
             <>
-              <h4 className={styles.title} style={{ marginTop: 12 }}>Audio</h4>
+              <h4
+                className={styles.title}
+                style={{ marginTop: 12 }}
+                title="Plays and exports with the layer's timeline bar — keyframe Level to duck under a voiceover."
+              >
+                Audio
+              </h4>
               {speedAltered ? (
-                <p style={{ margin: '2px 0 6px', fontSize: 'var(--font-size-micro)', color: 'var(--color-warning, #d08a3a)', lineHeight: 1.5 }}>
-                  Audio is muted while freeze frame is on — a held picture has no
-                  continuous soundtrack. Time remap, stretch and reverse keep audio
-                  in sync (varispeed). Clear freeze to hear sound.
+                // A real warning, so one help line stays on screen; the why is its tooltip.
+                <p
+                  className={styles.helpWarning}
+                  role="note"
+                  title="A held picture has no continuous soundtrack. Time remap, stretch and reverse keep audio in sync (varispeed)."
+                >
+                  Audio is muted while freeze frame is on — clear freeze to hear sound.
                 </p>
               ) : (
                 <>
@@ -290,9 +299,6 @@ export function MediaSection({ nodeId }: { nodeId: string }): JSX.Element | null
                       aria-label="Mute this video's audio track"
                     />
                   </InspectorRow>
-                  <p style={{ margin: '2px 0 6px', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
-                    {"Plays and exports with the layer's timeline bar — keyframe Level to duck under a voiceover."}
-                  </p>
                 </>
               )}
             </>

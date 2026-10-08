@@ -1,55 +1,61 @@
 /**
- * DockPanel — a region's panels, in the chrome that region calls for.
+ * DockPanel — one sidebar's panels, as After Effects panel groups.
  *
- * ## Three chromes (2026-10, the After Effects direction)
+ * ## Groups: tabs and stacking at once (2026-10)
  *
- *   • LEFT sidebar, open  → a TAB STRIP across the top (Project · Effect
- *     Controls…), the active panel under it. Names, not icons.
- *   • RIGHT inspector, open → a STACK of bars, one per panel, each a click
- *     away and each showing its name; the active panel's body opens under its
- *     own bar. This keeps what the rail was built for (below): no panel is
- *     ever hidden behind an overflow menu.
- *   • Either side, CLOSED → hidden behind a thin edge with a grip (2026-10;
- *     it was an icon rail). Click the edge, or open any panel, to bring it back.
+ * A sidebar is a COLUMN of groups stacked top to bottom; each group is a TAB
+ * STRIP with one panel in front of it, open or collapsed to the strip. So
+ * Info and Audio can be two tabs of one group while Properties, Preview and
+ * Effects & Presets stack below each other — how After Effects' right column
+ * is organised. It replaces a per-side choice between "tabs" and "stacked
+ * sections" and the fixed two-pane split, each of which could only express
+ * one of the two (2026-10 review). The model is `layoutStore.dockGroups`
+ * (core/layout/dockGroups.ts); this file draws it and turns gestures into its
+ * actions:
  *
- * The rail's history, which is why the right side is a stack and not tabs:
+ *   • click a tab              → that panel in front, its group open;
+ *   • twirl ▶/▼ or double-click → collapse / expand the group;
+ *   • drag a tab               → onto another strip: join that group; onto a
+ *                                gap between groups: a group of its own — on
+ *                                either side, so a tab crosses sidebars too;
+ *   • drag a divider           → share the height between two open groups;
+ *   • ≡ / right-click a tab    → the panel's rows, then panel, group and side
+ *                                verbs (the same moves without a drag).
  *
- * ## Why a rail and not a tab strip
+ * ## No tab is ever out of reach
  *
- * This used to be a horizontal tab strip that showed the first three panels and
- * hid the rest behind a ≡ menu. The right inspector registers fourteen panels,
- * so eleven of them — Align, Swatches, Scopes, Preview, Source, Tracker,
- * Rigging, Effects, Graph, Presets, Paragraph — were invisible until the user
- * guessed that the hamburger held them. A tab that cannot be seen is a feature
- * that does not exist; the two "Where is X?" reports that prompted this were
- * both about panels that were open the whole time.
+ * A strip whose tabs do not fit scrolls sideways (the wheel scrolls it), fades
+ * at the edge that has more, and shows a » that lists every tab of the group,
+ * marking the ones that are scrolled out of view. The front tab is kept in
+ * view. A sidebar's closed panels are one "+" away (the last strip).
  *
- * A rail scales: at 28px a tab, fourteen panels take 420px of the sidebar's
- * height and every one of them is a single click with its name a hover away.
- * It is also what the COLLAPSED sidebar already drew — so collapsing now simply
- * hides the content column, and no icon moves.
+ * ## One title per panel
  *
- * ## One header, one menu
- *
- * The strip carried a split button, a ≡ menu with "Split View" in it, a
- * right-click menu on every tab with "Move / Undock" in it, and the ≡ menu with
- * "Move / Undock" in it again — four homes for six actions. Now:
- *
- *   • the header names the ACTIVE panel and holds ONE options menu (⋯) — what
- *     you can do with this panel, then what you can do with this sidebar, then
- *     which registered panels are not docked yet;
- *   • a rail tab's right-click offers the same per-panel verbs for THAT panel,
- *     so a panel need not be activated to be moved or closed;
- *   • the collapse toggle sits at the foot of the rail, where it also reads as
- *     the way back when the sidebar is collapsed to the rail alone.
- *
- * Reordering is still drag-and-drop along the rail.
+ * The tab is the panel's only title: a panel never repeats its name inside.
+ * What the panel is showing follows the name in the tab — "Properties: Logo",
+ * the way After Effects names the subject (`setTitleDetail`). Panel-wide
+ * actions go in the group's ≡ menu (`setCustomMenuItems`).
  */
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode, type DragEvent } from 'react';
-import { useLayoutStore } from '@stores/layoutStore';
-import type { RegionId } from '@stores/layoutStore';
-import type { IconName } from '@components/Icon';
+import {
+  createContext,
+  Fragment,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type DragEvent,
+  type KeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+  type ReactNode,
+  type WheelEvent,
+} from 'react';
+import { useLayoutStore, type DockGroupState, type DockSide, type RegionId } from '@stores/layoutStore';
+import { bottomRegionOf, reconcileGroups, sideOfRegion } from '@core/layout/dockGroups';
 import { openContextMenu, type ContextMenuItem } from '@stores/contextMenuStore';
 import { Icon } from '@components/Icon';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
@@ -58,12 +64,14 @@ import { panelDef, availablePanelDefs } from '@layout/EditorLayout/panelDefs';
 import styles from './DockPanel.module.css';
 
 export interface DockPanelHeaderContextValue {
+  /** A slot in the group's strip for the front panel's own compact controls. */
   target: HTMLDivElement | null;
+  /** The front panel's rows for its group's ≡ menu. Hand a memoised array. */
   setCustomMenuItems?: (items: DropdownItem[]) => void;
   /**
-   * What the panel is showing, printed after its title — "Properties: Logo",
-   * the way After Effects names the subject in the panel's tab. `null` clears
-   * it. Display only: the panel's accessible name stays its title.
+   * What the panel is showing, printed after its title in the tab —
+   * "Properties: Logo". `null` clears it. Display only: the tab's accessible
+   * name stays the panel's title.
    */
   setTitleDetail?: (detail: string | null) => void;
 }
@@ -78,45 +86,32 @@ export function useDockPanelHeader(): DockPanelHeaderContextValue | null {
 }
 
 export interface DockPanelProps {
+  /** The sidebar this column draws: `leftSidebar` or `rightInspector` (a `_bottom` region means the same side). */
   region: RegionId;
   renderers: Record<string, (() => ReactNode) | (() => JSX.Element)>;
+  /** Extra controls at the end of the FIRST group's strip. */
   headerExtras?: ReactNode;
   className?: string;
-  isSplit?: boolean;
-  splitPosition?: 'top' | 'bottom';
-  onToggleSplit?: () => void;
   /**
-   * Which edge of the sidebar the rail sits on. The OUTER edge — the one at
-   * the window's side — so the pointer can overshoot onto it and the content
-   * pane stays adjacent to the viewport. Defaults from the region: the left
-   * sidebar puts it left, the inspector puts it right; a sidebar the user has
-   * re-docked to the other side passes the other value.
+   * Which edge of the window the sidebar sits on, so menus open toward the
+   * inside. Defaults from the region: the left sidebar left, the inspector
+   * right; a sidebar re-docked to the other side passes the other value.
    */
   railSide?: 'left' | 'right';
-}
-
-interface TabDescriptor {
-  id: string;
-  label: string;
-  /** What the rail prints under the glyph — `shortTitle` when the def has one. */
-  railLabel: string;
-  icon?: IconName;
-  closable: boolean;
 }
 
 /**
  * Panels offered for THIS side that are not docked anywhere on it.
  *
- * Shared by the ⋯ menu's "Open Panel" block and the rail's "+" button, so the
- * two can never offer different lists. Checks both panes of a split side: a
- * panel sitting in the bottom pane is open, and offering to "open" it from the
- * top pane would only move focus, which is not what a "+" promises.
+ * Shared by the ≡ menu's "Open Panel" block and the "+" button, so the two can
+ * never offer different lists. Checks the side's old bottom pane too, for a
+ * layout that has not been re-saved since groups replaced the split.
  */
 export function closedPanelDefsForSide(
-  side: 'leftSidebar' | 'rightInspector',
+  side: DockSide,
   panelOrder: Partial<Record<RegionId, ReadonlyArray<string>>>,
 ): ReturnType<typeof availablePanelDefs> {
-  const docked = new Set([...(panelOrder[side] ?? []), ...(panelOrder[`${side}_bottom`] ?? [])]);
+  const docked = new Set([...(panelOrder[side] ?? []), ...(panelOrder[bottomRegionOf(side)] ?? [])]);
   return availablePanelDefs().filter((def) => def.region === side && !docked.has(def.id));
 }
 
@@ -130,321 +125,148 @@ function spawnPopout(panelId: string): void {
   }
 }
 
-export function DockPanel({
-  region,
-  renderers,
-  headerExtras,
-  className,
-  isSplit = false,
-  splitPosition,
-  onToggleSplit,
-  railSide,
-}: DockPanelProps): JSX.Element | null {
-  const isLeft = region.startsWith('leftSidebar');
-  const isTop = splitPosition ? splitPosition === 'top' : (region === 'leftSidebar' || region === 'rightInspector');
-  const regionKey = isLeft ? 'leftSidebar' : 'rightInspector';
-  const side = railSide ?? (isLeft ? 'left' : 'right');
+// ── The tab being dragged ─────────────────────────────────────────────
+//
+// Shared by both columns, so a gap in the OTHER sidebar lights up as a drop
+// target too. Not React state: one value, written on drag start and end.
 
-  const panelOrder = useLayoutStore((s) => s.panelOrder[region] ?? []);
-  // The whole map, for "which of this side's panels are closed" — a split side
-  // spans two regions, and the "+" must not offer a panel open in the other pane.
+let draggingPanel: string | null = null;
+const dragListeners = new Set<() => void>();
+
+function setDraggingPanel(id: string | null): void {
+  if (draggingPanel === id) return;
+  draggingPanel = id;
+  for (const fn of [...dragListeners]) fn();
+}
+
+function subscribeDragging(fn: () => void): () => void {
+  dragListeners.add(fn);
+  return () => {
+    dragListeners.delete(fn);
+  };
+}
+
+function useDraggingPanel(): string | null {
+  return useSyncExternalStore(subscribeDragging, () => draggingPanel, () => null);
+}
+
+/** A panel id carried by a drag — the shared value, or the drag's own payload. */
+function draggedId(e: DragEvent): string | null {
+  if (draggingPanel) return draggingPanel;
+  try {
+    return e.dataTransfer.getData('text/plain') || null;
+  } catch {
+    return null;
+  }
+}
+
+/** The smallest height a divider drag leaves an open group: its strip and a few rows. */
+const MIN_GROUP_PX = 88;
+
+interface TabDescriptor {
+  id: string;
+  label: string;
+  closable: boolean;
+}
+
+export function DockPanel({ region, renderers, headerExtras, className, railSide }: DockPanelProps): JSX.Element | null {
+  const side: DockSide = sideOfRegion(region) ?? 'rightInspector';
+  const isLeft = side === 'leftSidebar';
+  const edge = railSide ?? (isLeft ? 'left' : 'right');
+
+  const storedGroups = useLayoutStore((s) => s.dockGroups[side]);
+  const order = useLayoutStore((s) => s.panelOrder[side]);
+  const orderBottom = useLayoutStore((s) => s.panelOrder[bottomRegionOf(side)]);
+  // The whole map, for the "+" — which of this side's panels are closed.
   const allPanelOrder = useLayoutStore((s) => s.panelOrder);
-  const activeTabId = useLayoutStore((s) => s.activePanelByRegion[region]);
   const panels = useLayoutStore((s) => s.panels);
-  const isRegionCollapsed = useLayoutStore((s) => s.regions[regionKey]?.collapsed ?? false);
-  const openPanel = useLayoutStore((s) => s.openPanel);
-  const closePanel = useLayoutStore((s) => s.closePanel);
-  const movePanel = useLayoutStore((s) => s.movePanel);
-
+  const focusId = useLayoutStore((s) => s.activePanelByRegion[side]);
+  const isRegionCollapsed = useLayoutStore((s) => s.regions[side]?.collapsed ?? false);
   const isCollapsed = isRegionCollapsed || className?.includes('collapsed-view') || false;
-
-  const allItems: TabDescriptor[] = useMemo(() => {
-    return panelOrder
-      .map((id) => panels[id])
-      .filter((p): p is NonNullable<typeof p> => !!p)
-      .map((p) => {
-        const def = panelDef(p.id);
-        const label = typeof p.title === 'string' ? p.title : p.id;
-        return {
-          id: p.id,
-          label,
-          railLabel: def?.shortTitle ?? label,
-          icon: p.icon as IconName | undefined,
-          closable: def ? def.closable : (p.closable ?? false),
-        };
-      });
-  }, [panelOrder, panels]);
-
-  // Guard against a stale persisted active id that no longer has a tab.
-  const effectiveActiveId = allItems.some((i) => i.id === activeTabId) ? activeTabId : allItems[0]?.id;
-  const activeItem = allItems.find((i) => i.id === effectiveActiveId);
-
-  const [headerActionsEl, setHeaderActionsEl] = useState<HTMLDivElement | null>(null);
-  // The active panel's own rows for the ⋯ menu, tagged with the panel that
-  // handed them over; rows whose owner is not the active panel are ignored. A
-  // tab switch therefore drops the old rows without a reset effect — and a
-  // reset effect cannot work here: a parent's effects run AFTER its children's
-  // on the same commit, so clearing on `effectiveActiveId` wiped the rows the
-  // newly mounted panel had just set.
-  const [customMenu, setCustomMenu] = useState<{ owner: string | undefined; items: DropdownItem[] }>(
-    { owner: undefined, items: NO_ITEMS },
-  );
-  const customMenuItems = customMenu.owner === effectiveActiveId ? customMenu.items : NO_ITEMS;
-
-  const setCustomMenuItems = useCallback(
-    (items: DropdownItem[]) => setCustomMenu({ owner: effectiveActiveId, items }),
-    [effectiveActiveId],
-  );
-
-  const headerContextValue = useMemo(
-    () => ({
-      target: headerActionsEl,
-      setCustomMenuItems,
-    }),
-    [headerActionsEl, setCustomMenuItems],
-  );
-
-  const otherSide: RegionId = isLeft ? 'rightInspector' : 'leftSidebar';
-  const otherSideLabel = isLeft ? 'Move to Right Inspector' : 'Move to Left Sidebar';
-  const paneDest: RegionId = isTop
-    ? (isLeft ? 'leftSidebar_bottom' : 'rightInspector_bottom')
-    : (isLeft ? 'leftSidebar' : 'rightInspector');
-  const paneLabel = isTop ? 'Move to Bottom Pane' : 'Move to Top Pane';
-
-  const moveTo = (panelId: string, dest: RegionId): void => {
-    const destLen = useLayoutStore.getState().panelOrder[dest]?.length ?? 0;
-    movePanel(panelId, dest, destLen);
-  };
-
-  /**
-   * The per-panel verbs, as plain data so the header menu and the rail's
-   * right-click draw the SAME list for their respective panel. One source, so
-   * the two cannot drift into offering different things.
-   */
-  const panelVerbs = (item: TabDescriptor): Array<{ id: string; label: string; icon: IconName; onSelect: () => void }> => [
-    ...(isSplit ? [{ id: 'move-pane', label: paneLabel, icon: 'layout' as IconName, onSelect: () => moveTo(item.id, paneDest) }] : []),
-    { id: 'move-side', label: otherSideLabel, icon: (isLeft ? 'panel-right' : 'panel-left') as IconName, onSelect: () => moveTo(item.id, otherSide) },
-    { id: 'popout', label: 'Undock Panel', icon: 'pop-out', onSelect: () => spawnPopout(item.id) },
-    ...(item.closable ? [{ id: 'close', label: 'Close Panel', icon: 'close' as IconName, onSelect: () => closePanel(item.id) }] : []),
-    // The other panels of THIS group that can be closed (a permanent panel has no Close).
-    ...(allItems.some((other) => other.id !== item.id && other.closable)
-      ? [{
-          id: 'close-others',
-          label: 'Close Other Panels in Group',
-          icon: 'close' as IconName,
-          onSelect: () => {
-            for (const other of allItems) if (other.id !== item.id && other.closable) closePanel(other.id);
-          },
-        }]
-      : []),
-  ];
-
-  /** This side's closed panels as menu rows — the ⋯ menu's "Open Panel" block and the rail's "+". */
-  const openItems: DropdownItem[] = useMemo(
-    () => closedPanelDefsForSide(regionKey, allPanelOrder).map((def): DropdownItem => ({
-      type: 'item', id: `open-${def.id}`, label: def.title, icon: def.icon, onSelect: () => openPanel(def.id),
-    })),
-    // `openPanel` is a stable store action.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [regionKey, allPanelOrder],
-  );
-
-  /** The ≡ menu for one panel: its own rows, its verbs, then the sidebar's. */
-  const buildMenu = (forItem: TabDescriptor | undefined, custom: ReadonlyArray<DropdownItem>): DropdownItem[] => {
-    const items: DropdownItem[] = [];
-    if (forItem) {
-      items.push({ type: 'label', label: forItem.label });
-      if (custom.length > 0) {
-        items.push(...custom, { type: 'separator' });
-      }
-      for (const v of panelVerbs(forItem)) {
-        items.push({ type: 'item', id: v.id, label: v.label, icon: v.icon, onSelect: v.onSelect });
-      }
-    }
-
-    items.push(
-      { type: 'separator' },
-      { type: 'label', label: isLeft ? 'Sidebar' : 'Inspector' },
-      {
-        type: 'item',
-        id: 'toggle-collapse',
-        label: isLeft ? 'Hide Left Panels' : 'Hide Right Panels',
-        icon: (side === 'left' ? 'chevron-left' : 'chevron-right') as IconName,
-        onSelect: () => useLayoutStore.getState().setCollapsed(regionKey, true),
-      },
-    );
-    if (onToggleSplit) {
-      items.push({
-        type: 'item',
-        id: 'split-view',
-        label: isSplit ? 'Merge Panes' : 'Split into Two Panes',
-        icon: (isSplit ? 'minimize' : 'panel-bottom') as IconName,
-        onSelect: onToggleSplit,
-      });
-    }
-
-    // Registered for this side but not docked — the on-demand panels and
-    // anything the user closed. The same list as the rail's "+" (`openItems`).
-    if (openItems.length > 0) {
-      items.push({ type: 'separator' }, { type: 'label', label: 'Open Panel' }, ...openItems);
-    }
-    return items;
-  };
-
-  const menuItems: DropdownItem[] = useMemo(
-    () => buildMenu(activeItem, customMenuItems),
-    // `buildMenu` is a closure over the same inputs listed here.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [allItems, activeItem, onToggleSplit, isSplit, isTop, isLeft, side, regionKey, paneDest, paneLabel, otherSide, otherSideLabel, customMenuItems, openItems],
-  );
+  const dragging = useDraggingPanel();
 
   /*
-    The stack's open sections (right inspector). Several can be open at once,
-    the way a column of panels works in After Effects; the store's ACTIVE panel
-    is simply the one last opened, and a panel made active from elsewhere (a
-    command, a double-click on a layer) opens itself here.
+    The groups as drawn: reconciled with what is docked (a test or an import
+    may seed `panelOrder` alone — the store reconciles the same way on its next
+    action, with the same ids), limited to registered panels.
   */
-  const [expanded, setExpanded] = useState<ReadonlyArray<string>>(() => readExpanded(region));
-  // The tab or bar a dragged panel is over (see `dropHandlers`). Up here with
-  // the other hooks: everything below the empty-region guard must be hook-free.
-  const [dropOn, setDropOn] = useState<string | null>(null);
-  const lastActive = useRef<string | undefined>(undefined);
-  useEffect(() => {
-    if (!effectiveActiveId || lastActive.current === effectiveActiveId) return;
-    lastActive.current = effectiveActiveId;
-    setExpanded((prev) => (prev.includes(effectiveActiveId) ? prev : [...prev, effectiveActiveId]));
-  }, [effectiveActiveId]);
-  useEffect(() => {
-    writeExpanded(region, expanded);
-  }, [region, expanded]);
-  const toggleSection = (id: string): void => {
-    if (expanded.includes(id)) {
-      setExpanded(expanded.filter((x) => x !== id));
-      return;
+  const groups = useMemo(() => {
+    const members = [...new Set([...(order ?? []), ...(orderBottom ?? [])])];
+    return reconcileGroups(side, members, storedGroups)
+      .map((g) => {
+        const ids = g.panels.filter((id) => !!panels[id]);
+        return { ...g, panels: ids, active: g.active && ids.includes(g.active) ? g.active : (ids[0] ?? null) };
+      })
+      .filter((g) => g.panels.length > 0);
+  }, [side, order, orderBottom, storedGroups, panels]);
+
+  const describe = useCallback((id: string): TabDescriptor => {
+    const p = panels[id];
+    const def = panelDef(id);
+    return {
+      id,
+      label: p && typeof p.title === 'string' ? p.title : (def?.title ?? id),
+      closable: def ? def.closable : (p?.closable ?? false),
+    };
+  }, [panels]);
+
+  /** This side's closed panels as menu rows (the "+" and the ≡ menu's Open Panel). */
+  const closedDefs = useMemo(() => closedPanelDefsForSide(side, allPanelOrder), [side, allPanelOrder]);
+
+  // ── Divider drags: the share of height between two open groups ──────
+  const groupEls = useRef(new Map<string, HTMLElement>());
+  const bindGroupEl = useCallback((id: string, el: HTMLElement | null) => {
+    if (el) groupEls.current.set(id, el);
+    else groupEls.current.delete(id);
+  }, []);
+  const startResize = useCallback((above: DockGroupState, below: DockGroupState, e: ReactPointerEvent<HTMLDivElement>) => {
+    const elA = groupEls.current.get(above.id);
+    const elB = groupEls.current.get(below.id);
+    if (!elA || !elB) return;
+    e.preventDefault();
+    const target = e.currentTarget;
+    target.setPointerCapture?.(e.pointerId);
+    // Every open group's flex-grow becomes its on-screen height for the drag,
+    // so moving the divider changes exactly these two and nothing else jumps.
+    const open = groups.filter((g) => !g.collapsed);
+    const heights = new Map<string, number>();
+    for (const g of open) {
+      const el = groupEls.current.get(g.id);
+      if (!el) continue;
+      const h = el.getBoundingClientRect().height;
+      heights.set(g.id, h);
+      el.style.flexGrow = String(h);
     }
-    setExpanded([...expanded, id]);
-    lastActive.current = id;
-    openPanel(id);
-  };
+    const hA = heights.get(above.id) ?? 0;
+    const hB = heights.get(below.id) ?? 0;
+    const total = hA + hB;
+    if (total < 2 * MIN_GROUP_PX) return;
+    const startY = e.clientY;
+    const onMove = (ev: PointerEvent): void => {
+      const a = Math.min(total - MIN_GROUP_PX, Math.max(MIN_GROUP_PX, hA + (ev.clientY - startY)));
+      heights.set(above.id, a);
+      heights.set(below.id, total - a);
+      elA.style.flexGrow = String(a);
+      elB.style.flexGrow = String(total - a);
+    };
+    const onUp = (): void => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+      useLayoutStore.getState().setGroupWeights(side, Object.fromEntries(heights));
+      // The store's (normalised) weights take over the inline values.
+      for (const g of open) {
+        const el = groupEls.current.get(g.id);
+        if (el) el.style.flexGrow = '';
+      }
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+  }, [groups, side]);
 
   // All hooks must run before this guard — bail out only once they have.
-  if (allItems.length === 0) return null;
-
-  const activeRenderer = effectiveActiveId ? renderers[effectiveActiveId] : undefined;
-
-  /**
-   * Where a dragged panel would land: the tab or bar under the pointer shows
-   * an accent edge, so a drop — within this sidebar or from the other one —
-   * is never a guess.
-   */
-  const dropHandlers = (id: string): {
-    onDragOver: (e: DragEvent<HTMLDivElement>) => void;
-    onDragLeave: () => void;
-    onDrop: (e: DragEvent<HTMLDivElement>) => void;
-  } => ({
-    onDragOver: (e) => {
-      onDragOver(e);
-      if (dropOn !== id) setDropOn(id);
-    },
-    onDragLeave: () => setDropOn((cur) => (cur === id ? null : cur)),
-    onDrop: (e) => {
-      setDropOn(null);
-      onDrop(id)(e);
-    },
-  });
-
-  /** Drag handlers — plain HTML5 DnD for rail reordering. */
-  const onDragStart = (id: string) => (e: DragEvent<HTMLDivElement>) => {
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', id);
-  };
-  const onDragOver = (e: DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-  };
-  const onDrop = (targetId: string | null) => (e: DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const src = e.dataTransfer.getData('text/plain');
-    if (!src || src === targetId) return;
-    let targetIdx = panelOrder.length;
-    if (targetId !== null) {
-      targetIdx = panelOrder.indexOf(targetId);
-      if (targetIdx === -1) targetIdx = panelOrder.length;
-    }
-    movePanel(src, region, targetIdx);
-  };
-
-  const onRailContextMenu = (item: TabDescriptor) => (e: React.MouseEvent) => {
-    e.preventDefault();
-    const verbs = panelVerbs(item);
-    const entries: ContextMenuItem[] = [];
-    for (const v of verbs) {
-      if (v.id === 'close') entries.push({ id: 'sep-close', separator: true });
-      entries.push({ id: v.id, label: v.label, onSelect: v.onSelect });
-    }
-    openContextMenu(e.clientX, e.clientY, entries);
-  };
-
-  // Only the LAST rail in a region carries the add button: a split region
-  // stacks two DockPanels, and one "+" per side is clean and unambiguous.
-  const showRailAdd = !isSplit || splitPosition === 'bottom';
-
-  /**
-   * Keyboard traversal of the rail — the tablist pattern.
-   *
-   * The roving tabindex was already here (only the active tab is in the tab
-   * order), but nothing MOVED it: Tab landed on the active icon and the only
-   * way to the next panel was the mouse. Up/Down walk the rail (Left/Right
-   * too, so a user who thinks of it as a tab strip is not wrong), Home/End
-   * jump, and Enter/Space open the focused panel. Focus moves on arrow keys
-   * without activating — activation on every arrow press would re-render the
-   * whole content pane per step, and a user scanning icons by keyboard does
-   * not want fourteen panels to flash past.
-   */
-  const onRailKeyDown = (e: React.KeyboardEvent<HTMLDivElement>): void => {
-    // Only this tablist's OWN tabs: in the stack chrome the panel body sits
-    // inside the same element, and a body may carry tabs (and Enter/Space
-    // targets) of its own that must not be walked or swallowed here.
-    if (!(e.target instanceof HTMLElement) || !e.target.hasAttribute('data-dock-tab')) return;
-    const tabs = Array.from(
-      e.currentTarget.querySelectorAll<HTMLButtonElement>('[data-dock-tab]'),
-    );
-    if (tabs.length === 0) return;
-    const current = tabs.findIndex((t) => t === document.activeElement);
-    let next = -1;
-    switch (e.key) {
-      case 'ArrowDown':
-      case 'ArrowRight':
-        next = current < 0 ? 0 : (current + 1) % tabs.length;
-        break;
-      case 'ArrowUp':
-      case 'ArrowLeft':
-        next = current < 0 ? tabs.length - 1 : (current - 1 + tabs.length) % tabs.length;
-        break;
-      case 'Home':
-        next = 0;
-        break;
-      case 'End':
-        next = tabs.length - 1;
-        break;
-      case 'Enter':
-      case ' ':
-        if (current >= 0) {
-          e.preventDefault();
-          tabs[current]?.click();
-        }
-        return;
-      default:
-        return;
-    }
-    e.preventDefault();
-    const target = tabs[next];
-    if (!target) return;
-    // Roving tabindex: the focused tab becomes the one Tab returns to.
-    for (const t of tabs) t.tabIndex = t === target ? 0 : -1;
-    target.focus();
-  };
+  if (groups.length === 0) return null;
 
   // Closed: the sidebar is hidden. What stays is a thin edge with a grip — one
   // click (or Enter) brings the panels back, as do Window ▸ Panels and every
@@ -458,7 +280,7 @@ export function DockPanel({
           className={styles.edge}
           aria-label={showLabel}
           title={showLabel}
-          onClick={() => useLayoutStore.getState().setCollapsed(regionKey, false)}
+          onClick={() => useLayoutStore.getState().setCollapsed(side, false)}
         >
           <span className={styles.edgeGrip} aria-hidden />
         </button>
@@ -466,249 +288,516 @@ export function DockPanel({
     );
   }
 
-  /** The ≡ panel menu, for the tab strip's active tab. */
-  const panelMenu = (
-    <Dropdown
-      placement={side === 'right' ? 'bottom-end' : 'bottom-start'}
-      offset={{ x: 0, y: 4 }}
-      noScroll
-      trigger={
-        <button type="button" className={styles.menuBtn} aria-label="Panel options" title="Panel options">
-          <Icon name="menu" size="sm" />
-        </button>
-      }
-      items={menuItems}
-    />
-  );
-
-  /** The active panel's own header controls (a search toggle, a view switch). */
-  const headerActions = (
-    <div className={styles.headerActions}>
-      <div ref={setHeaderActionsEl} className={styles.customActions} />
-      {headerExtras}
+  const lastIndex = groups.length - 1;
+  return (
+    <div className={cn(styles.root, styles.column, className)} data-dock-column={side}>
+      {groups.map((g, i) => {
+        const above = groups[i - 1];
+        return (
+          <Fragment key={g.id}>
+            <Seam
+              side={side}
+              index={i}
+              dragging={dragging}
+              resize={above && !above.collapsed && !g.collapsed ? (e) => startResize(above, g, e) : undefined}
+            />
+            <DockGroup
+              group={g}
+              index={i}
+              side={side}
+              isLeft={isLeft}
+              edge={edge}
+              focused={!!focusId && g.panels.includes(focusId)}
+              describe={describe}
+              renderer={g.active ? renderers[g.active] : undefined}
+              headerExtras={i === 0 ? headerExtras : undefined}
+              closedDefs={i === lastIndex ? closedDefs : null}
+              dragging={dragging}
+              bindEl={bindGroupEl}
+            />
+          </Fragment>
+        );
+      })}
+      <Seam side={side} index={groups.length} dragging={dragging} />
     </div>
   );
+}
 
-  const addLabel = isLeft ? 'Open a sidebar panel' : 'Open an inspector panel';
-  const addButton = showRailAdd && openItems.length > 0 ? (
-    <Dropdown
-      placement={side === 'right' ? 'bottom-end' : 'bottom-start'}
-      offset={{ x: 0, y: 4 }}
-      noScroll
-      trigger={
-        <button type="button" className={styles.actionBtn} aria-label={addLabel} title="Open panel">
-          <Icon name="plus" size="sm" />
-        </button>
-      }
-      items={[{ type: 'label', label: 'Open Panel' }, ...openItems]}
-    />
-  ) : null;
+// ── The gap between two groups ────────────────────────────────────────
 
-  const body = (
-    <DockPanelHeaderContext.Provider value={headerContextValue}>
-      <div className={styles.content}>{activeRenderer ? activeRenderer() : null}</div>
-    </DockPanelHeaderContext.Provider>
-  );
+interface SeamProps {
+  side: DockSide;
+  /** Where a dropped tab's new group goes: before the group at this index. */
+  index: number;
+  dragging: string | null;
+  /** Present when both neighbours are open: the seam is a height divider. */
+  resize?: (e: ReactPointerEvent<HTMLDivElement>) => void;
+}
 
-  const tabButton = (item: TabDescriptor, isActive: boolean, className: string, lead?: ReactNode): JSX.Element => (
-    <button
-      type="button"
-      role="tab"
-      data-dock-tab=""
-      tabIndex={isActive ? 0 : -1}
-      aria-selected={isActive}
-      aria-label={item.label}
-      title={item.label}
-      className={className}
-      onClick={() => openPanel(item.id)}
-    >
-      {lead}
-      <span className={styles.tabLabel}>{item.label}</span>
-    </button>
-  );
-
-  // LEFT, open: a tab strip over the active panel.
-  if (isLeft) {
+/**
+ * The gap between two groups. While a tab is being dragged it is a drop zone
+ * that makes the tab a group of its own; between two open groups it is the
+ * divider that shares their height; otherwise just the frame showing through.
+ */
+function Seam({ side, index, dragging, resize }: SeamProps): JSX.Element {
+  const [over, setOver] = useState(false);
+  if (dragging) {
     return (
-      <div className={cn(styles.root, styles.tabsRoot, className)}>
-        <div className={styles.strip}>
+      <div
+        className={cn(styles.seam, styles.seamDrop, over && styles.seamDropOver)}
+        data-dock-seam={index}
+        aria-hidden
+        onDragOver={(e) => {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+          if (!over) setOver(true);
+        }}
+        onDragLeave={() => setOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setOver(false);
+          const id = draggedId(e);
+          setDraggingPanel(null);
+          if (id) useLayoutStore.getState().movePanelToNewGroup(id, side, index);
+        }}
+      />
+    );
+  }
+  if (resize) {
+    return (
+      <div
+        className={cn(styles.seam, styles.seamResize)}
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label="Resize panel groups"
+        onPointerDown={resize}
+      />
+    );
+  }
+  return <div className={cn(styles.seam, index === 0 && styles.seamFirst)} aria-hidden />;
+}
+
+// ── One group ─────────────────────────────────────────────────────────
+
+interface DockGroupProps {
+  group: DockGroupState;
+  index: number;
+  side: DockSide;
+  isLeft: boolean;
+  edge: 'left' | 'right';
+  /** The side's focused panel is in this group (AE outlines the panel in use). */
+  focused: boolean;
+  describe: (id: string) => TabDescriptor;
+  renderer: (() => ReactNode) | undefined;
+  headerExtras?: ReactNode;
+  /** The side's closed panels, for the "+" — only the last group carries it. */
+  closedDefs: ReturnType<typeof availablePanelDefs> | null;
+  dragging: string | null;
+  bindEl: (id: string, el: HTMLElement | null) => void;
+}
+
+/** Where tabs are clipped in a strip, for the fades and the ». */
+interface StripOverflow {
+  any: boolean;
+  left: boolean;
+  right: boolean;
+}
+
+const NO_OVERFLOW: StripOverflow = { any: false, left: false, right: false };
+
+function DockGroup({
+  group, index, side, isLeft, edge, focused, describe, renderer, headerExtras, closedDefs, dragging, bindEl,
+}: DockGroupProps): JSX.Element {
+  const active = group.active;
+  const tabs = useMemo(() => group.panels.map(describe), [group.panels, describe]);
+  const activeTab = tabs.find((t) => t.id === active) ?? tabs[0]!;
+
+  // The front panel's own rows and subject, tagged with the panel that handed
+  // them over: rows from a panel no longer in front are ignored, so switching
+  // tabs drops them without a reset effect (a parent's effect runs AFTER the
+  // child's on the same commit, and clearing there wiped what the newly
+  // mounted panel had just set — the v0.8.1 lesson).
+  const [headerEl, setHeaderEl] = useState<HTMLDivElement | null>(null);
+  const [custom, setCustom] = useState<{ owner: string | null; items: DropdownItem[] }>({ owner: null, items: NO_ITEMS });
+  const [detail, setDetail] = useState<{ owner: string | null; text: string | null }>({ owner: null, text: null });
+  const setCustomMenuItems = useCallback((items: DropdownItem[]) => setCustom({ owner: active, items }), [active]);
+  const setTitleDetail = useCallback((text: string | null) => setDetail({ owner: active, text }), [active]);
+  const ctx = useMemo(
+    () => ({ target: headerEl, setCustomMenuItems, setTitleDetail }),
+    [headerEl, setCustomMenuItems, setTitleDetail],
+  );
+  const customItems = custom.owner === active ? custom.items : NO_ITEMS;
+  const titleDetail = detail.owner === active ? detail.text : null;
+
+  // ── Overflow: fades, the », the front tab kept in view ───────────────
+  const tabsRef = useRef<HTMLDivElement>(null);
+  const [overflow, setOverflow] = useState<StripOverflow>(NO_OVERFLOW);
+  const measure = useCallback(() => {
+    const el = tabsRef.current;
+    if (!el) return;
+    const any = el.scrollWidth > el.clientWidth + 1;
+    const next: StripOverflow = {
+      any,
+      left: any && el.scrollLeft > 1,
+      right: any && el.scrollLeft + el.clientWidth < el.scrollWidth - 1,
+    };
+    setOverflow((cur) => (cur.any === next.any && cur.left === next.left && cur.right === next.right ? cur : next));
+  }, []);
+  useEffect(() => {
+    const el = tabsRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [measure]);
+  useLayoutEffect(() => {
+    const el = tabsRef.current?.querySelector<HTMLElement>('[data-dock-tab][aria-selected="true"]');
+    el?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+    measure();
+  }, [active, tabs.length, titleDetail, measure]);
+
+  const onWheel = (e: WheelEvent<HTMLDivElement>): void => {
+    const el = e.currentTarget;
+    if (el.scrollWidth <= el.clientWidth || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+    el.scrollLeft += e.deltaY;
+  };
+
+  const isHidden = (i: number): boolean => {
+    const el = tabsRef.current;
+    const t = el?.querySelectorAll<HTMLElement>('[data-dock-tab]')[i];
+    if (!el || !t) return false;
+    const slot = t.parentElement ?? t;
+    return slot.offsetLeft < el.scrollLeft || slot.offsetLeft + slot.offsetWidth > el.scrollLeft + el.clientWidth + 1;
+  };
+
+  // ── Actions ───────────────────────────────────────────────────────────
+  const store = useLayoutStore.getState;
+  /** Whether the group was collapsed when a double-click's first press landed. */
+  const collapsedAtPress = useRef(false);
+  const sideLabel = isLeft ? 'Left Sidebar' : 'Right Inspector';
+  const otherSide: DockSide = isLeft ? 'rightInspector' : 'leftSidebar';
+  const otherLabel = isLeft ? 'Move to Right Inspector' : 'Move to Left Sidebar';
+  const show = (id: string): void => store().openPanel(id);
+
+  /** Panel verbs for one tab — the ≡ menu and the right-click draw the same list. */
+  const panelVerbs = (t: TabDescriptor): Array<{ id: string; label: string; icon: 'layout' | 'panel-right' | 'panel-left' | 'pop-out' | 'close'; onSelect: () => void }> => [
+    ...(group.panels.length > 1
+      ? [{ id: 'own-group', label: 'Move to New Group', icon: 'layout' as const, onSelect: () => store().movePanelToNewGroup(t.id, side, index + 1) }]
+      : []),
+    { id: 'move-side', label: otherLabel, icon: isLeft ? 'panel-right' : 'panel-left', onSelect: () => store().movePanel(t.id, otherSide, 0) },
+    { id: 'popout', label: 'Undock Panel', icon: 'pop-out', onSelect: () => spawnPopout(t.id) },
+    ...(t.closable ? [{ id: 'close', label: 'Close Panel', icon: 'close' as const, onSelect: () => store().closePanel(t.id) }] : []),
+    ...(tabs.some((o) => o.id !== t.id && o.closable)
+      ? [{
+          id: 'close-others',
+          label: 'Close Other Panels in Group',
+          icon: 'close' as const,
+          onSelect: () => {
+            for (const o of tabs) if (o.id !== t.id && o.closable) store().closePanel(o.id);
+          },
+        }]
+      : []),
+  ];
+
+  /** Group verbs — collapse, merge, close. */
+  const groupVerbs = (): Array<{ id: string; label: string; onSelect: () => void }> => [
+    {
+      id: 'collapse',
+      label: group.collapsed ? 'Expand Group' : 'Collapse Group',
+      onSelect: () => store().toggleGroupCollapsed(group.id),
+    },
+    ...(index > 0 ? [{ id: 'merge-up', label: 'Merge with Group Above', onSelect: () => store().mergeGroupUp(group.id) }] : []),
+    ...(tabs.some((t) => t.closable) ? [{ id: 'close-group', label: 'Close Group', onSelect: () => store().closeGroup(group.id) }] : []),
+  ];
+
+  /** Open a closed panel INTO this group, as a tab. */
+  const openHere = (id: string): void => {
+    store().openPanel(id);
+    store().movePanelToGroup(id, group.id);
+  };
+
+  const menuItems = (): DropdownItem[] => {
+    const items: DropdownItem[] = [{ type: 'label', label: activeTab.label }];
+    if (customItems.length > 0) items.push(...customItems, { type: 'separator' });
+    for (const v of panelVerbs(activeTab)) items.push({ type: 'item', id: v.id, label: v.label, icon: v.icon, onSelect: v.onSelect });
+    items.push({ type: 'separator' }, { type: 'label', label: 'Group' });
+    for (const v of groupVerbs()) items.push({ type: 'item', id: v.id, label: v.label, onSelect: v.onSelect });
+    items.push(
+      { type: 'separator' },
+      { type: 'label', label: sideLabel },
+      {
+        type: 'item',
+        id: 'hide-side',
+        label: isLeft ? 'Hide Left Panels' : 'Hide Right Panels',
+        icon: edge === 'left' ? 'chevron-left' : 'chevron-right',
+        onSelect: () => store().setCollapsed(side, true),
+      },
+    );
+    const closed = closedPanelDefsForSide(side, store().panelOrder);
+    if (closed.length > 0) {
+      items.push({
+        type: 'item',
+        id: 'open-here',
+        label: 'Open Panel in This Group',
+        icon: 'plus',
+        submenu: closed.map((def): DropdownItem => ({ type: 'item', id: `open-${def.id}`, label: def.title, icon: def.icon, onSelect: () => openHere(def.id) })),
+      });
+    }
+    return items;
+  };
+
+  const onTabContextMenu = (t: TabDescriptor) => (e: React.MouseEvent): void => {
+    e.preventDefault();
+    const entries: ContextMenuItem[] = [];
+    for (const v of panelVerbs(t)) {
+      if (v.id === 'close') entries.push({ id: 'sep-close', separator: true });
+      entries.push({ id: v.id, label: v.label, onSelect: v.onSelect });
+    }
+    entries.push({ id: 'sep-group', separator: true });
+    for (const v of groupVerbs()) entries.push({ id: v.id, label: v.label, onSelect: v.onSelect });
+    openContextMenu(e.clientX, e.clientY, entries);
+  };
+
+  // ── Keyboard: the tablist pattern, plus Up / Down between groups ─────
+  const onTabsKeyDown = (e: KeyboardEvent<HTMLDivElement>): void => {
+    // Only this tablist's OWN tabs: a panel body may carry tabs of its own.
+    if (!(e.target instanceof HTMLElement) || !e.target.hasAttribute('data-dock-tab')) return;
+    const own = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('[data-dock-tab]'));
+    const current = own.findIndex((t) => t === document.activeElement);
+    let target: HTMLButtonElement | undefined;
+    switch (e.key) {
+      case 'ArrowRight':
+        target = own[current < 0 ? 0 : (current + 1) % own.length];
+        break;
+      case 'ArrowLeft':
+        target = own[current < 0 ? own.length - 1 : (current - 1 + own.length) % own.length];
+        break;
+      case 'Home':
+        target = own[0];
+        break;
+      case 'End':
+        target = own[own.length - 1];
+        break;
+      case 'ArrowDown':
+      case 'ArrowUp': {
+        // To the front tab of the next / previous group in this column.
+        const column = e.currentTarget.closest('[data-dock-column]');
+        const lists = column ? Array.from(column.querySelectorAll<HTMLElement>('[role="tablist"][data-dock-group]')) : [];
+        const at = lists.indexOf(e.currentTarget);
+        const next = lists[at + (e.key === 'ArrowDown' ? 1 : -1)];
+        target = next?.querySelector<HTMLButtonElement>('[data-dock-tab][aria-selected="true"]')
+          ?? next?.querySelector<HTMLButtonElement>('[data-dock-tab]')
+          ?? undefined;
+        if (!target) return;
+        e.preventDefault();
+        target.focus();
+        return;
+      }
+      case 'Enter':
+      case ' ':
+        if (current >= 0) {
+          e.preventDefault();
+          own[current]?.click();
+        }
+        return;
+      default:
+        return;
+    }
+    if (!target) return;
+    e.preventDefault();
+    // Roving tabindex: the focused tab becomes the one Tab returns to.
+    for (const t of own) t.tabIndex = t === target ? 0 : -1;
+    target.focus();
+  };
+
+  // ── Drag and drop into this strip ─────────────────────────────────────
+  const [dropAt, setDropAt] = useState<number | null>(null);
+  /** The insertion index under the pointer, counted without the dragged tab itself. */
+  const insertionIndex = (clientX: number, id: string | null): number => {
+    const el = tabsRef.current;
+    const slots = el ? Array.from(el.querySelectorAll<HTMLElement>('[data-dock-slot]')) : [];
+    let i = 0;
+    for (const slot of slots) {
+      if (slot.dataset.dockSlot === id) continue;
+      const r = slot.getBoundingClientRect();
+      if (clientX < r.left + r.width / 2) return i;
+      i++;
+    }
+    return i;
+  };
+  const stripDrag = {
+    onDragOver: (e: DragEvent<HTMLDivElement>): void => {
+      if (!dragging) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      const at = insertionIndex(e.clientX, dragging);
+      if (at !== dropAt) setDropAt(at);
+    },
+    onDragLeave: (e: DragEvent<HTMLDivElement>): void => {
+      if (e.relatedTarget instanceof Node && e.currentTarget.contains(e.relatedTarget)) return;
+      setDropAt(null);
+    },
+    onDrop: (e: DragEvent<HTMLDivElement>): void => {
+      e.preventDefault();
+      const id = draggedId(e);
+      const at = insertionIndex(e.clientX, id);
+      setDropAt(null);
+      setDraggingPanel(null);
+      if (id) store().movePanelToGroup(id, group.id, at);
+    },
+  };
+  useEffect(() => {
+    if (!dragging) setDropAt(null);
+  }, [dragging]);
+
+  /** The tab the drop marker sits before (a dragged tab never marks itself). */
+  const visibleTabs = tabs.filter((t) => t.id !== dragging);
+  const markBefore = dropAt !== null ? visibleTabs[dropAt]?.id ?? null : null;
+  const markAtEnd = dropAt !== null && dropAt >= visibleTabs.length;
+
+  const title = group.collapsed ? `Expand ${activeTab.label}` : `Collapse ${activeTab.label}`;
+  const closedAdd = closedDefs && closedDefs.length > 0 ? closedDefs : null;
+
+  return (
+    <section
+      ref={(el) => bindEl(group.id, el)}
+      className={cn(styles.group, group.collapsed && styles.groupCollapsed, focused && styles.groupFocused)}
+      style={group.collapsed ? undefined : { flexGrow: group.weight }}
+      data-dock-group-id={group.id}
+      aria-label={`${tabs.map((t) => t.label).join(', ')} panel group`}
+    >
+      <div className={cn(styles.strip, overflow.left && styles.stripMoreLeft, overflow.right && styles.stripMoreRight)} {...stripDrag}>
+        <button
+          type="button"
+          className={styles.twirl}
+          aria-expanded={!group.collapsed}
+          aria-label={title}
+          title={title}
+          onClick={() => store().toggleGroupCollapsed(group.id)}
+        >
+          <span aria-hidden>{group.collapsed ? '▶' : '▼'}</span>
+        </button>
+        <div className={styles.tabsWrap}>
           <div
-            className={styles.stripTabs}
+            ref={tabsRef}
+            className={cn(styles.tabs, markAtEnd && styles.tabsDropEnd)}
             role="tablist"
             aria-orientation="horizontal"
-            aria-label="Sidebar panels"
-            onDragOver={onDragOver}
-            onDrop={onDrop(null)}
-            onKeyDown={onRailKeyDown}
+            aria-label={`${isLeft ? 'Sidebar' : 'Inspector'} panel group ${index + 1}`}
+            data-dock-group=""
+            onKeyDown={onTabsKeyDown}
+            onWheel={onWheel}
+            onScroll={measure}
           >
-            {allItems.map((item) => {
-              const isActive = item.id === effectiveActiveId;
+            {tabs.map((t) => {
+              const isActive = t.id === active;
               return (
                 <div
-                  key={item.id}
+                  key={t.id}
+                  data-dock-slot={t.id}
+                  className={cn(styles.slot, isActive && styles.slotActive, markBefore === t.id && styles.dropBefore, dragging === t.id && styles.slotDragging)}
                   draggable
-                  onDragStart={onDragStart(item.id)}
-                  {...dropHandlers(item.id)}
-                  className={cn(styles.stripSlot, isActive && styles.stripSlotActive, dropOn === item.id && styles.dropBefore)}
-                  onContextMenu={onRailContextMenu(item)}
+                  onDragStart={(e) => {
+                    e.dataTransfer.effectAllowed = 'move';
+                    try { e.dataTransfer.setData('text/plain', t.id); } catch { /* no payload: the shared value carries it */ }
+                    setDraggingPanel(t.id);
+                  }}
+                  onDragEnd={() => setDraggingPanel(null)}
+                  onContextMenu={onTabContextMenu(t)}
                 >
-                  {tabButton(item, isActive, cn(styles.stripTab, isActive && styles.stripTabActive))}
-                  {isActive && panelMenu}
+                  <button
+                    type="button"
+                    role="tab"
+                    data-dock-tab=""
+                    tabIndex={isActive ? 0 : -1}
+                    aria-selected={isActive}
+                    aria-label={t.label}
+                    title={isActive && titleDetail ? `${t.label}: ${titleDetail}` : t.label}
+                    className={cn(styles.tab, isActive && styles.tabActive)}
+                    onMouseDown={(e) => {
+                      if (e.detail <= 1) collapsedAtPress.current = group.collapsed;
+                    }}
+                    onClick={() => show(t.id)}
+                    // The first click already opened a collapsed group, so a
+                    // double-click flips the state the group had BEFORE it:
+                    // collapsed → open (and stays open), open → collapsed.
+                    onDoubleClick={() => store().setGroupCollapsed(group.id, !collapsedAtPress.current)}
+                  >
+                    <span className={styles.tabLabel}>
+                      {t.label}
+                      {isActive && titleDetail ? <span className={styles.tabDetail}>: {titleDetail}</span> : null}
+                    </span>
+                  </button>
                 </div>
               );
             })}
           </div>
-          {headerActions}
-          {addButton && <div className={styles.stripAdd}>{addButton}</div>}
+          <span className={cn(styles.fade, styles.fadeLeft)} aria-hidden />
+          <span className={cn(styles.fade, styles.fadeRight)} aria-hidden />
         </div>
-        {body}
-      </div>
-    );
-  }
-
-  // RIGHT, open: a stack of bars; every open panel sits under its own bar.
-  const openIds = allItems.filter((i) => expanded.includes(i.id)).map((i) => i.id);
-  return (
-    <div
-      className={cn(styles.root, styles.stackRoot, className)}
-      role="tablist"
-      aria-orientation="vertical"
-      aria-label="Inspector panels"
-      onKeyDown={onRailKeyDown}
-    >
-      {allItems.map((item) => (
-        <StackSection
-          key={item.id}
-          item={item}
-          open={openIds.includes(item.id)}
-          inTabOrder={item.id === effectiveActiveId}
-          side={side}
-          renderer={renderers[item.id]}
-          headerExtras={headerExtras}
-          buildMenu={buildMenu}
-          onToggle={() => toggleSection(item.id)}
-          onDragStart={onDragStart(item.id)}
-          dropTarget={dropOn === item.id}
-          {...dropHandlers(item.id)}
-          onContextMenu={onRailContextMenu(item)}
-        />
-      ))}
-      {addButton && <div className={styles.barAdd}>{addButton}</div>}
-    </div>
-  );
-}
-
-const EXPANDED_KEY = 'premation.dock.expanded.';
-
-/** Which sections were open last time — a per-machine convenience, never document state. */
-function readExpanded(region: RegionId): ReadonlyArray<string> {
-  try {
-    const raw = window.localStorage.getItem(EXPANDED_KEY + region);
-    const parsed: unknown = raw ? JSON.parse(raw) : null;
-    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : [];
-  } catch {
-    return [];
-  }
-}
-
-function writeExpanded(region: RegionId, ids: ReadonlyArray<string>): void {
-  try {
-    window.localStorage.setItem(EXPANDED_KEY + region, JSON.stringify(ids));
-  } catch {
-    /* blocked storage: the open set lasts for this session only */
-  }
-}
-
-interface StackSectionProps {
-  item: TabDescriptor;
-  open: boolean;
-  /** The roving tabindex: only the store's active panel's bar is a Tab stop. */
-  inTabOrder: boolean;
-  side: 'left' | 'right';
-  renderer: (() => ReactNode) | undefined;
-  headerExtras: ReactNode;
-  buildMenu: (item: TabDescriptor, custom: ReadonlyArray<DropdownItem>) => DropdownItem[];
-  onToggle: () => void;
-  onDragStart: (e: DragEvent<HTMLDivElement>) => void;
-  onDragOver: (e: DragEvent<HTMLDivElement>) => void;
-  onDragLeave: () => void;
-  onDrop: (e: DragEvent<HTMLDivElement>) => void;
-  /** A dragged panel is over this bar and would land above it. */
-  dropTarget: boolean;
-  onContextMenu: (e: React.MouseEvent) => void;
-}
-
-/**
- * One panel of the stack: its bar and, when open, its body.
- *
- * Its own component because each open panel needs its OWN header slot and its
- * own ≡-menu rows (DockPanelHeaderContext) — with one shared slot, two open
- * panels would write their header controls into the same element.
- */
-function StackSection({
-  item, open, inTabOrder, side, renderer, headerExtras, buildMenu,
-  onToggle, onDragStart, onDragOver, onDragLeave, onDrop, dropTarget, onContextMenu,
-}: StackSectionProps): JSX.Element {
-  const [headerEl, setHeaderEl] = useState<HTMLDivElement | null>(null);
-  const [custom, setCustom] = useState<DropdownItem[]>(NO_ITEMS);
-  const [detail, setDetail] = useState<string | null>(null);
-  const ctx = useMemo(
-    () => ({ target: headerEl, setCustomMenuItems: setCustom, setTitleDetail: setDetail }),
-    [headerEl],
-  );
-  return (
-    <>
-      <div
-        draggable
-        onDragStart={onDragStart}
-        onDragOver={onDragOver}
-        onDragLeave={onDragLeave}
-        onDrop={onDrop}
-        className={cn(styles.bar, open && styles.barActive, dropTarget && styles.dropAbove)}
-        onContextMenu={onContextMenu}
-      >
-        <button
-          type="button"
-          role="tab"
-          data-dock-tab=""
-          tabIndex={inTabOrder ? 0 : -1}
-          aria-selected={open}
-          aria-label={item.label}
-          title={item.label}
-          className={styles.barTab}
-          onClick={onToggle}
-        >
-          <span className={styles.barTwirl} aria-hidden>{open ? '▼' : '▶'}</span>
-          <span className={styles.tabLabel}>
-            {item.label}
-            {open && detail ? <span className={styles.tabDetail}>: {detail}</span> : null}
-          </span>
-        </button>
-        <div className={styles.headerActions}>
-          {open && (
-            <>
-              <div ref={setHeaderEl} className={styles.customActions} />
-              {headerExtras}
-            </>
+        <div className={styles.stripEnd}>
+          <div ref={setHeaderEl} className={styles.customActions} />
+          {headerExtras}
+          {overflow.any && (
+            <Dropdown
+              placement={edge === 'right' ? 'bottom-end' : 'bottom-start'}
+              offset={{ x: 0, y: 4 }}
+              noScroll
+              trigger={
+                <button type="button" className={cn(styles.iconBtn, styles.overflowBtn)} aria-label="All panels in this group" title="All panels in this group">
+                  »
+                </button>
+              }
+              items={() => tabs.map((t, i): DropdownItem => ({
+                type: 'item',
+                id: `tab-${t.id}`,
+                label: isHidden(i) ? `${t.label}  ·  scrolled out of view` : t.label,
+                icon: t.id === active ? 'check' : undefined,
+                onSelect: () => show(t.id),
+              }))}
+            />
+          )}
+          {closedAdd && (
+            <Dropdown
+              placement={edge === 'right' ? 'bottom-end' : 'bottom-start'}
+              offset={{ x: 0, y: 4 }}
+              noScroll
+              trigger={
+                <button
+                  type="button"
+                  className={styles.iconBtn}
+                  aria-label={isLeft ? 'Open a sidebar panel' : 'Open an inspector panel'}
+                  title="Open panel"
+                >
+                  <Icon name="plus" size="sm" />
+                </button>
+              }
+              items={[
+                { type: 'label', label: 'Open Panel' },
+                ...closedAdd.map((def): DropdownItem => ({
+                  type: 'item', id: `open-${def.id}`, label: def.title, icon: def.icon, onSelect: () => show(def.id),
+                })),
+              ]}
+            />
           )}
           <Dropdown
-            placement={side === 'right' ? 'bottom-end' : 'bottom-start'}
+            placement={edge === 'right' ? 'bottom-end' : 'bottom-start'}
             offset={{ x: 0, y: 4 }}
             noScroll
             trigger={
-              <button type="button" className={styles.menuBtn} aria-label="Panel options" title="Panel options">
+              <button type="button" className={styles.iconBtn} aria-label="Panel options" title="Panel options">
                 <Icon name="menu" size="sm" />
               </button>
             }
-            items={() => buildMenu(item, open ? custom : NO_ITEMS)}
+            items={menuItems}
           />
         </div>
       </div>
-      {open && (
+      {!group.collapsed && (
         <DockPanelHeaderContext.Provider value={ctx}>
-          <div className={styles.content} data-stack-panel={item.id}>{renderer ? renderer() : null}</div>
+          <div className={styles.content} data-dock-panel={active ?? undefined}>{renderer ? renderer() : null}</div>
         </DockPanelHeaderContext.Provider>
       )}
-    </>
+    </section>
   );
 }

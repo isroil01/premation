@@ -6,6 +6,7 @@ import { useActiveWorkspace } from '@stores/projectStore';
 import { useActiveCompSize } from '@hooks/useMirrorFrame';
 import { useMirrorJson } from '@hooks/useMirrorFields';
 import { layerScreenMapping } from './layerScreen';
+import { useDisplayedCamera2D } from './useOverlayView';
 import type { TrackPointHost } from './TrackPointOverlay';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { pinColor, pinHasTransformGizmo, type PinKind, type PuppetRig } from '@core/rig/puppet';
@@ -153,7 +154,7 @@ export function PuppetOverlay({ host }: { host?: TrackPointHost } = {}): JSX.Ele
   // clearing them between two sends let a frame land without this layer's geometry, which
   // dropped the overlay for that frame on every pin selection.
   useEffect(() => {
-    void requestOverlayLayers(MAIN_VIEWPORT, 'puppetPins', active ? [selectedNodeId!] : [], PUPPET_KINDS, active ? ['active'] : []).then(() => setTick((t) => t + 1));
+    void requestOverlayLayers(MAIN_VIEWPORT, 'puppetPins', active ? [selectedNodeId!] : [], PUPPET_KINDS).then(() => setTick((t) => t + 1));
   }, [active, selectedNodeId]);
   useEffect(() => {
     void setOverlayRigFocus(MAIN_VIEWPORT, active ? { pin: selectedPinId ?? '', bone: '', authoring: true } : undefined);
@@ -162,6 +163,10 @@ export function PuppetOverlay({ host }: { host?: TrackPointHost } = {}): JSX.Ele
     void requestOverlayLayers(MAIN_VIEWPORT, 'puppetPins', [], PUPPET_KINDS);
     void setOverlayRigFocus(MAIN_VIEWPORT, undefined);
   }, []);
+
+  // The comp ↔ stage mapping of the frame on screen (the pins move with the
+  // picture, not ahead of it). A hook: read before the early return below.
+  const camera = useDisplayedCamera2D();
 
   // Keyboard listener to delete selected pin
   useEffect(() => {
@@ -187,7 +192,6 @@ export function PuppetOverlay({ host }: { host?: TrackPointHost } = {}): JSX.Ele
   const pins = rig?.pins ?? [];
 
   const controller = getWorkspaceController();
-  const camera = controller.ws.camera;
 
   // ONE projection, shared with BoneOverlay and the effect-handle overlay.
   //

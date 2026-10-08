@@ -45,6 +45,7 @@ import { secondsToFlicks } from '@motion/engine-api';
 import { MAIN_VIEWPORT, overlayLayer } from '@stores/overlayGeometry';
 import { openLayerOnDoubleClick } from '@layout/LayerViewer/openLayer';
 import { useLayerScreenMapping } from './useLayerScreenMapping';
+import { useDisplayedCamera2D } from './useOverlayView';
 import styles from './RotoBrushOverlay.module.css';
 
 /** How long a click waits for its second press (Windows' default is 500 ms). */
@@ -77,7 +78,8 @@ export function RotoBrushOverlay(): JSX.Element | null {
     if (active) useRotoBrushStore.getState().setNode(nodeId);
   }, [active, nodeId]);
 
-  const camera = getWorkspaceController().ws.camera;
+  // The comp ↔ stage mapping of the frame on screen: re-renders on a pan / zoom.
+  const camera = useDisplayedCamera2D();
   const mapping = useLayerScreenMapping(nodeId, time, comp, camera, sceneTick);
 
   /** Client coords → layer-local px, or null when the projection is gone. */

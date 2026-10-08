@@ -22,7 +22,10 @@
 .label {
   flex: 1;
   min-width: 0;
-  font-size: var(--font-size-xs);
+  /* The panel `label` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
   color: var(--color-text-secondary);
   white-space: nowrap;
   overflow: hidden;
@@ -30,16 +33,19 @@
 }
 
 .chain {
-  font-size: var(--font-size-xs);
+  /* The panel `value` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-value);
   color: var(--color-text-primary);
 }
 
 .groupHeader {
-  font-size: var(--font-size-micro);
-  font-weight: 600;
+  /* The panel `subgroup` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-subgroup);
   color: var(--color-text-tertiary);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
   margin: var(--space-1, 4px) 0 2px;
 }
 
@@ -52,7 +58,10 @@
   max-width: 140px;
   height: var(--control-height-xs, 20px);
   padding: 0 var(--space-1, 4px);
-  font-size: var(--font-size-xs);
+  /* The panel `value` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-value);
   color: var(--color-text-primary, #ddd);
   background: var(--color-surface-1, rgba(255, 255, 255, 0.06));
   border: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.12));
@@ -87,7 +96,10 @@
 
 .hint {
   margin: 2px 0 0;
-  font-size: var(--font-size-micro);
+  /* The panel `help` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  line-height: var(--panel-line-height-help);
   color: var(--color-text-tertiary);
-  line-height: 1.5;
 }

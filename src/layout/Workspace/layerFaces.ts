@@ -16,10 +16,8 @@ import { secondsToFlicks, type LayerFace } from '@motion/engine-api';
 import { engine } from '@core/engine/engineInstance';
 import { projectWorldFaces, type PickedFace, type WorldFace } from '@core/scene/facePicking';
 import type { FaceKind } from '@core/scene/faceMaterials';
-import { projectorOf, viewCameraOf } from '@core/mirror/viewGeometry';
+import { mainViewProjector } from '@core/workspace/displayedView';
 import { documentMirror } from '@stores/documentMirror';
-import { useGuidesStore } from '@stores/guidesStore';
-import { MAIN_VIEWPORT, overlayView } from '@stores/overlayGeometry';
 
 interface Entry {
   key: string;
@@ -73,11 +71,12 @@ export function onLayerFaces(fn: () => void): () => void {
   return () => { listeners.delete(fn); };
 }
 
-/** World faces through the main viewport's view (its camera as the push resolved it, or a custom / axis view). */
+/**
+ * World faces through the main viewport's view: the view MODE's own camera as
+ * the push resolved it (a `camera:<id>` view's camera — not the active one, which
+ * it used to take), a custom view's orbit as drawn, or an axis view.
+ */
 export function projectFacesForView(faces: readonly WorldFace[], time: number, compW: number, compH: number): PickedFace[] {
   if (faces.length === 0) return [];
-  const g = useGuidesStore.getState();
-  const mode = g.camera3dMode;
-  const camera = viewCameraOf(mode, overlayView(MAIN_VIEWPORT, 'active', secondsToFlicks(time)), g.customViews, compW, compH);
-  return projectWorldFaces(faces, projectorOf(mode, camera, compW, compH));
+  return projectWorldFaces(faces, mainViewProjector(compW, compH, secondsToFlicks(time)));
 }

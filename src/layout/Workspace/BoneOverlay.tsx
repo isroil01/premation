@@ -7,6 +7,7 @@ import { useActiveCompSize } from '@hooks/useMirrorFrame';
 import { useMirrorJson } from '@hooks/useMirrorFields';
 import { documentMirror } from '@stores/documentMirror';
 import { layerScreenMapping } from './layerScreen';
+import { useDisplayedCamera2D } from './useOverlayView';
 import type { TrackPointHost } from './TrackPointOverlay';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { bumpScene } from '@stores/sceneStore';
@@ -249,7 +250,7 @@ export function BoneOverlay({ host }: { host?: TrackPointHost } = {}): JSX.Eleme
   // clearing them between two sends let a frame land without this layer's geometry, which
   // dropped the overlay for that frame on every bone selection.
   useEffect(() => {
-    void requestOverlayLayers(MAIN_VIEWPORT, 'boneRig', active ? [selectedNodeId!] : [], BONE_KINDS, active ? ['active'] : []).then(() => setTick((t) => t + 1));
+    void requestOverlayLayers(MAIN_VIEWPORT, 'boneRig', active ? [selectedNodeId!] : [], BONE_KINDS).then(() => setTick((t) => t + 1));
   }, [active, selectedNodeId]);
   useEffect(() => {
     void setOverlayRigFocus(MAIN_VIEWPORT, active ? { pin: '', bone: selectedBoneId ?? '', authoring: false } : undefined);
@@ -289,6 +290,10 @@ export function BoneOverlay({ host }: { host?: TrackPointHost } = {}): JSX.Eleme
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [activeTool, selectedNodeId, selectedBoneId, boneRigMode, brushRadius, drawDraft]);
 
+  // The comp ↔ stage mapping of the frame on screen (bones and handles move
+  // with the picture, not ahead of it). A hook: read before the early return.
+  const camera = useDisplayedCamera2D();
+
   if (!active) return null;
   const nodeId = selectedNodeId!;
 
@@ -320,7 +325,6 @@ export function BoneOverlay({ host }: { host?: TrackPointHost } = {}): JSX.Eleme
   const triangles = rig?.triangles ?? [];
 
   const controller = getWorkspaceController();
-  const camera = controller.ws.camera;
 
   // ONE projection, shared with PuppetOverlay and the effect-handle overlay.
   // This pair was byte-identical to Puppet's and built on `worldMatrix(geom)`,

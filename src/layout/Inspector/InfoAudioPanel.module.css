@@ -1,10 +1,17 @@
+/*
+  The Info panel. Keys take the panel `label` role, numbers the `value` role
+  (mono, tabular, so a changing readout never jitters sideways); the selected
+  layer's name is a value in the text face, the way the Properties identity
+  row draws it. No heading: the tab is the panel's title.
+*/
 .root {
   display: flex;
   flex-direction: column;
   background: var(--color-panel);
   color: var(--color-text-primary);
-  font-family: inherit;
-  font-size: var(--font-size-xs);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  line-height: var(--panel-line-height);
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
@@ -16,7 +23,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  padding: var(--space-4) var(--space-5) var(--space-5);
+  padding: var(--space-3) var(--space-5);
   border-bottom: 1px solid var(--color-border-subtle);
 }
 
@@ -24,85 +31,51 @@
   border-bottom: none;
 }
 
-.groupHead {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-height: var(--control-height-sm);
-}
-
-.groupLabel {
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
-  letter-spacing: var(--letter-spacing-uppercase);
-  text-transform: uppercase;
-  color: var(--color-text-secondary);
-}
-
-.status {
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
-  letter-spacing: var(--letter-spacing-uppercase);
-  text-transform: uppercase;
-  color: var(--color-text-muted);
-}
-
-.statusLive {
-  color: var(--color-success);
-}
-
-.rows {
-  display: flex;
-  flex-direction: column;
-}
-
-.row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  min-height: var(--control-height-row);
-  min-width: 0;
-}
-
-.key {
-  flex: none;
-  color: var(--color-text-secondary);
-}
-
-.value {
-  min-width: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  color: var(--color-text-primary);
-  font-variant-numeric: tabular-nums;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.mono {
-  font-family: var(--font-family-mono);
-}
-
-/* `InfoReadout compact` — the Audio panel's top strip. Two key/value pairs per
-   row, so six readouts cost three row heights rather than two labelled groups. */
-.compact {
-  padding: var(--space-2) 0 var(--space-3);
-  border-bottom: 1px solid var(--color-border-subtle);
-  font-size: var(--font-size-xs);
-}
-
-.compactGrid {
+/* R G B A down the left, X Y down the right — AE's arrangement. */
+.pointerGrid {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
   column-gap: var(--space-3);
   row-gap: var(--space-1);
+  margin: 0;
 }
 
-.colorSwatch {
+/* A key and its value as two cells of the grid (or of a row below). */
+.pair {
+  display: contents;
+}
+
+.key {
+  margin: 0;
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
+  color: var(--color-text-secondary);
+}
+
+.value {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--panel-font-family-value);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-value);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-primary);
+}
+
+/* The colour under the pointer, beside the position it was read at. */
+.swatchValue {
+  grid-column: 4;
+  margin: 0;
+  display: flex;
+  align-items: center;
+}
+
+.swatch {
   width: 12px;
   height: 12px;
   border-radius: var(--radius-sm);
@@ -111,104 +84,35 @@
   flex: none;
 }
 
-.iconBtn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: var(--control-height-sm);
-  height: var(--control-height-sm);
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
   padding: 0;
-  border: none;
-  border-radius: var(--radius-control);
-  background: transparent;
-  color: var(--color-text-tertiary);
-  cursor: pointer;
-  transition:
-    background-color var(--motion-duration-fast) var(--motion-ease-standard),
-    color var(--motion-duration-fast) var(--motion-ease-standard);
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }
 
-.iconBtn:hover {
-  background: var(--color-hover);
+/* The selected layer: its name, then In / Out / Duration. */
+.subject {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-value);
   color: var(--color-text-primary);
 }
 
-.iconBtn:focus-visible {
-  outline: 1px solid var(--color-focus-ring);
-  outline-offset: 1px;
-}
-
-.iconBtnMuted {
-  color: var(--color-danger);
-}
-
-/* ── Peak meter ────────────────────────────────────────────────── */
-.meterTrack {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  width: 100%;
-  box-sizing: border-box;
-}
-
-.channelRow {
-  display: flex;
+.rows {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
-  gap: var(--space-3);
-  width: 100%;
-}
-
-.channelLabel {
-  flex: none;
-  width: 12px;
-  font-size: var(--font-size-micro);
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-text-tertiary);
-}
-
-/* A recessed well carrying the full green → amber → red scale, like every
-   hardware meter. The LEVEL is drawn by uncovering it: `.meterCover` is the
-   well colour, anchored right, scaled to (1 − level). A transform rather than
-   a width, so a live meter never forces layout at 60Hz — and the red end is
-   only revealed when the level actually reaches it. */
-.meterBar {
-  position: relative;
-  flex: 1;
-  min-width: 0;
-  height: 8px;
-  background: linear-gradient(90deg, var(--color-success) 0%, var(--color-warning) 70%, var(--color-danger) 90%);
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--color-field-border);
-  overflow: hidden;
-}
-
-.meterCover {
-  position: absolute;
-  inset: 0;
-  background: var(--color-surface-0);
-  transform-origin: right center;
-  transition: transform 60ms linear;
-}
-
-.scaleRow {
-  display: flex;
-  justify-content: space-between;
-  padding-left: calc(12px + var(--space-3));
-  font-size: var(--font-size-micro);
-  font-family: var(--font-family-mono);
-  color: var(--color-text-muted);
-}
-
-.volumeSlider {
-  flex: 1;
-  min-width: 0;
-  height: 4px;
-  accent-color: var(--color-primary);
-  cursor: pointer;
-}
-
-.volumeValue {
-  flex: none;
-  min-width: 44px;
-  justify-content: flex-end;
+  column-gap: var(--space-3);
+  row-gap: var(--space-1);
+  margin: 0;
 }

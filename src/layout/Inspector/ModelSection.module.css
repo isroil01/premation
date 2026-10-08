@@ -21,11 +21,11 @@
 }
 
 .count {
-  font-size: var(--font-size-micro);
-  font-weight: 600;
+  /* The panel `label` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
   color: var(--color-text-tertiary);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
 }
 
 /* Beyond ~8 targets the list is taller than the panel; scroll it here so the
@@ -48,7 +48,10 @@
 .label {
   flex: 1;
   min-width: 0;
-  font-size: var(--font-size-xs);
+  /* The panel `label` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
   color: var(--color-text-secondary);
   white-space: nowrap;
   overflow: hidden;
@@ -115,7 +118,10 @@
 
 .hint {
   margin: 2px 0 0;
-  font-size: var(--font-size-micro);
+  /* The panel `help` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  line-height: var(--panel-line-height-help);
   color: var(--color-text-tertiary);
-  line-height: 1.5;
 }

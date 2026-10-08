@@ -46,6 +46,7 @@ import { runObjectMaskPick } from '@core/tracking/objectMask';
 import { mirrorSourceDisplaySize } from '@core/mirror/sourceSize';
 import { documentMirror } from '@stores/documentMirror';
 import { layerScreenMapping, type LayerScreenMapping } from './layerScreen';
+import { useDisplayedCamera2D } from './useOverlayView';
 import { holdViewportPicture, viewportPicture } from '@core/engine/viewportPicture';
 
 const POINT_R = 5;
@@ -144,7 +145,7 @@ export function TrackPointOverlay({ host }: { host?: TrackPointHost } = {}): JSX
     // A host has its own projection: nothing to ask the composition viewport for.
     if (hosted) return undefined;
     // Re-render once the engine has the subscription: the box exists from then.
-    void requestOverlayLayers(MAIN_VIEWPORT, 'trackPoints', active ? [active] : [], TRACK_KINDS, active ? ['active'] : []).then(() => setGeoTick((t) => t + 1));
+    void requestOverlayLayers(MAIN_VIEWPORT, 'trackPoints', active ? [active] : [], TRACK_KINDS).then(() => setGeoTick((t) => t + 1));
     return () => { void requestOverlayLayers(MAIN_VIEWPORT, 'trackPoints', [], TRACK_KINDS); };
   }, [active, hosted]);
   const pushedBox = active && !hosted ? overlayLayer(MAIN_VIEWPORT, active, secondsToFlicks(time))?.box : undefined;
@@ -156,11 +157,12 @@ export function TrackPointOverlay({ host }: { host?: TrackPointHost } = {}): JSX
   // The footage's display size from the mirror (`sourceDisplaySize`'s twin).
   const src = active ? mirrorSourceDisplaySize(documentMirror(), active) : null;
 
-  const camera = getWorkspaceController().ws.camera;
+  // The comp ↔ stage mapping of the frame on screen: re-renders on a pan / zoom.
+  const camera = useDisplayedCamera2D();
   const pushedMapping = useMemo(
     () => (active && !hosted ? layerScreenMapping(active, time, comp, camera) : null),
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- camera is a live singleton; the geometry tick re-reads the push
-    [active, hosted, time, comp.width, comp.height, sceneTick, geoTick],
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- comp by size; the geometry tick re-reads the push
+    [active, hosted, time, comp.width, comp.height, camera, sceneTick, geoTick],
   );
   const mapping = host ? host.mapping : pushedMapping;
 

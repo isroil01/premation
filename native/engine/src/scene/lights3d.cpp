@@ -187,10 +187,13 @@ std::optional<std::array<double, 3>> shade_layer(const std::array<double, 3>& no
     double lambert = 0;
     double atten = 1;
     if (light.type == "parallel") {
+      // The aim is the way the light TRAVELS, so it arrives from −aim: a
+      // one-sided face is lit when its outward normal points back at the
+      // light (the shaders' N·L against toLight = −aim). Two-sided: |N·aim|.
       const double dx = motion::js::cos(light.angle * kDeg);
       const double dy = motion::js::sin(light.angle * kDeg);
       const std::array<double, 3> L = light_aim_3d(light).value_or(std::array<double, 3>{dx * kSqrt1_2, dy * kSqrt1_2, -kSqrt1_2});
-      lambert = ndotl(normal[0] * L[0] + normal[1] * L[1] + normal[2] * L[2], oneSided);
+      lambert = ndotl(-(normal[0] * L[0] + normal[1] * L[1] + normal[2] * L[2]), oneSided);
     } else {
       const double lx = light.x - pos[0];
       const double ly = light.y - pos[1];

@@ -2694,6 +2694,7 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             { id: 'view.scene', panel: 'scene', label: 'Layers', icon: 'layers' },
             { id: 'view.library', panel: 'library', label: 'Library', icon: 'component' },
             { id: 'view.character', panel: 'character', label: 'Character', icon: 'type' },
+            { id: 'view.paragraph', panel: 'paragraph', label: 'Paragraph', icon: 'text-left' },
             { id: 'view.align', panel: 'align', label: 'Align', icon: 'align-center' },
             { id: 'view.swatches', panel: 'swatches', label: 'Swatches', icon: 'palette' },
             { id: 'view.info', panel: 'info', label: 'Info', icon: 'info' },

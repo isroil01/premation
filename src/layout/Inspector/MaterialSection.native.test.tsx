@@ -344,10 +344,11 @@ describe('Advanced-3D axes (Reflections / Transparency)', () => {
     expect((await materialOf(box))!.reflectionIntensity).toBe(100);
   });
 
-  it('Toon replaces the reflection rows with an explanation', async () => {
+  it('Toon hides the reflection rows', async () => {
     mount(await threeD('box', { shading: 'toon' }));
     expect(noField('Reflection Intensity')).toBeNull();
-    expect(screen.getByText(/Toon shading never reflects/)).toBeInTheDocument();
+    expect(noField('Reflection Sharpness')).toBeNull();
+    expect(noField('Reflection Rolloff')).toBeNull();
     // Transparency is model-independent and stays.
     expect(field('Transparency')).toBeInTheDocument();
   });

@@ -16,12 +16,12 @@ import { useActiveCompSize, useMirrorRevisionFrame } from '@hooks/useMirrorFrame
 import { useMirrorTree } from '@hooks/useMirror';
 import { MAIN_VIEWPORT, overlayLayer, requestOverlayLayers } from '@stores/overlayGeometry';
 import { mirrorEffects } from '@core/mirror/effects';
-import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { GestureSession } from '@core/engine/uiEdits';
 import { paths, ref, values } from '@core/engine/propRefs';
 import { layerToEffect } from '@core/effects/effectHandles';
 import { liquifyDabInto, liquifyFieldOf, liquifyGridFor } from '@core/effects/liquifyField';
 import { layerScreenMapping } from './layerScreen';
+import { useDisplayedCamera2D } from './useOverlayView';
 
 const KINDS: ReadonlyArray<OverlayKind> = ['bounds', 'transform'];
 
@@ -38,13 +38,15 @@ export function LiquifyBrushOverlay(): JSX.Element | null {
   const nodeId = brushNode && ids.includes(brushNode) ? brushNode : null;
   const tree = useMirrorTree(nodeId);
   useEffect(() => {
-    void requestOverlayLayers(MAIN_VIEWPORT, 'liquifyBrush', nodeId ? [nodeId] : [], KINDS, nodeId ? ['active'] : []);
+    void requestOverlayLayers(MAIN_VIEWPORT, 'liquifyBrush', nodeId ? [nodeId] : [], KINDS);
     return () => { void requestOverlayLayers(MAIN_VIEWPORT, 'liquifyBrush', [], KINDS); };
   }, [nodeId]);
   const effect = nodeId && brushEffect ? mirrorEffects(tree).find((e) => e.id === brushEffect && e.type === 'liquify') ?? null : null;
   const box = nodeId ? overlayLayer(MAIN_VIEWPORT, nodeId, secondsToFlicks(time))?.box : undefined;
   const geom = box && box.length >= 4 ? { width: box[2]!, height: box[3]! } : null;
-  const mapping = nodeId ? layerScreenMapping(nodeId, time, comp, getWorkspaceController().ws.camera) : null;
+  // The comp ↔ stage mapping of the frame on screen: re-renders on a pan / zoom.
+  const camera = useDisplayedCamera2D();
+  const mapping = nodeId ? layerScreenMapping(nodeId, time, comp, camera) : null;
 
   // The stroke's live state: the field being painted, the last dab point, the gesture.
   const stroke = useRef<{ field: number[]; last: { x: number; y: number }; gesture: GestureSession; seed: number } | null>(null);

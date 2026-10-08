@@ -26,11 +26,21 @@
  *   • only the sections about what the layer IS and how it looks open by
  *     default; everything else starts collapsed;
  *   • the first row names the selection (`SelectionHeader`), and the six layer
- *     switches are labelled checkbox rows in the ⋯ menu instead of glyphs in
- *     the dock header. The dock header keeps its title and only the search
- *     toggle is portalled into it;
+ *     switches are labelled checkbox rows in the ≡ menu instead of glyphs in
+ *     the dock header;
  *   • two or more layers selected puts align / distribute on a row above the
  *     sections; nothing selected shows the composition summary.
+ *
+ * ## The After Effects panel grammar (2026-10-08)
+ *
+ * The panel's name and subject live only in its tab ("Properties: Key" —
+ * `setTitleDetail`); the dock header holds nothing else of ours. Under the
+ * identity row sits ONE toolbar: the search field, always there, and AE's
+ * U / UU as a Show filter (All / Keyed / Changed). That replaced the search
+ * toggle portalled into the dock header and the footer's property counts. A
+ * section header only opens and closes, so the sections' actions — Transform
+ * Presets, Light Presets, … — are submenus of the ≡ menu, registered by the
+ * sections themselves (`SectionMenuHosts`, `Inspector/sectionMenu.tsx`).
  *
  * ## The selection, not the first selected layer (2026-09-04)
  *
@@ -50,13 +60,12 @@
  * in a memoised host (`InspectorContent`), so a keystroke in the search box
  * does not run twenty section renders.
  *
- * The panel is the SHELL only: the identity row, the search, the align row and
- * the scroller. Which sections exist and in what order is
+ * The panel is the SHELL only: the identity row, the toolbar, the align row
+ * and the scroller. Which sections exist and in what order is
  * `inspectorSections.ts`; how they render is `InspectorContent`.
  */
 
-import { useEffect, useMemo, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { Panel } from '@components/Panel';
 import { SearchField } from '@components/SearchField';
 import { Icon } from '@components/Icon';
@@ -70,11 +79,12 @@ import { getEventBus } from '@core/events/EventBus';
 import { getCommandRegistry } from '@core/commands/Command';
 import { asCommandId } from '@app-types/common';
 import { documentMirror } from '@stores/documentMirror';
-import { useMirrorLayersShapeWatch, useMirrorLayersWatch } from '@hooks/useMirror';
+import { useMirrorLayersShapeWatch } from '@hooks/useMirror';
 import { Segmented } from '@components/Segmented';
-import { InspectorContent } from '@layout/Inspector/InspectorContent';
-import { FilteredPropertyList, propertyCounts, type PropertyShow } from '@layout/Inspector/propertyShowFilter';
+import { InspectorContent, SectionMenuHosts } from '@layout/Inspector/InspectorContent';
+import { FilteredPropertyList, type PropertyShow } from '@layout/Inspector/propertyShowFilter';
 import { InspectorSelectionProvider } from '@layout/Inspector/inspectorSelection';
+import { SectionMenuRegistry } from '@layout/Inspector/sectionMenu';
 import {
   SelectionHeader,
   layerSwitchMenuItems,
@@ -83,7 +93,6 @@ import {
 import { SelectionAlignRow } from '@layout/Inspector/SelectionAlignRow';
 import { MographParamsSection } from '@layout/Inspector/MographParamsSection';
 import { ActiveTemplateFields } from '@layout/Templates/TemplateFieldsPanel';
-import { cn } from '@utils/cn';
 import styles from './panels.module.css';
 
 /** The applied template's fields, or nothing when no template is applied. */
@@ -154,12 +163,17 @@ registerInspectorCommands();
 /** Root groups of a layer's property tree that decide which sections the panel lists (`layer/cloner`, `layer/physics`). */
 const SHELL_ROOTS: readonly string[] = ['layer'];
 
+/** AE's U / UU, as the toolbar's Show filter (view state, not the document). */
+const SHOW_OPTIONS = [
+  { value: 'all' as const, label: 'All' },
+  { value: 'animated' as const, label: 'Keyed' },
+  { value: 'modified' as const, label: 'Changed' },
+];
+
 export function PropertiesPanel(): JSX.Element {
   const selected = useSelectionStore((s) => s.ids);
   const primary = selected[0] ?? null;
   const [query, setQuery] = useState('');
-  const [searchOpen, setSearchOpen] = useState(false);
-  // AE's U / UU for the inspector: the footer's Show filter (view state, not the document).
   const [show, setShow] = useState<PropertyShow>('all');
   // The SELECTION's headers, tree SHAPES and `layer/*` records (which sections
   // exist: a cloner or physics record adds Effects), not the scene's and not
@@ -174,11 +188,11 @@ export function PropertiesPanel(): JSX.Element {
   const showLane = usePreferenceStore((s) => s.inspectorShowLane);
   const setPref = usePreferenceStore((s) => s.set);
 
-  // Closing the search clears it; a hidden non-empty query would silently keep
-  // the panel in search view with no field on screen to say so.
-  useEffect(() => {
-    if (!searchOpen) setQuery('');
-  }, [searchOpen]);
+  // The sections' own ≡ rows ("Transform Presets ▸"), registered by
+  // `SectionMenuHosts`. The registry hands back the SAME array until a row a
+  // reader can see changes, so this is safe to memoise on (sectionMenu.tsx).
+  const [sectionMenus] = useState(() => new SectionMenuRegistry());
+  const sectionRows = useSyncExternalStore(sectionMenus.subscribe, sectionMenus.rows, sectionMenus.rows);
 
   const searching = query.trim().length > 0;
 
@@ -194,9 +208,12 @@ export function PropertiesPanel(): JSX.Element {
   // "Maximum update depth exceeded" loop, hundreds of warnings a second.
   const menuItems: DropdownItem[] = useMemo(() => {
     const switches = hasLayer ? layerSwitchMenuItems(selected) : [];
+    const sections = hasLayer ? sectionRows : [];
     return [
       ...switches,
       ...(switches.length > 0 ? [{ type: 'separator' } as const] : []),
+      ...sections,
+      ...(sections.length > 0 ? [{ type: 'separator' } as const] : []),
       {
         type: 'checkbox',
         id: 'lanes',
@@ -216,7 +233,7 @@ export function PropertiesPanel(): JSX.Element {
     // `switchSig` is listed because it IS the switch rows' input: the layers'
     // switch states live on scene nodes, which no other dependency here tracks.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasLayer, selected, switchSig, showLane, setPref]);
+  }, [hasLayer, selected, switchSig, sectionRows, showLane, setPref]);
 
   const dockHeader = useDockPanelHeader();
   const setCustomMenuItems = dockHeader?.setCustomMenuItems;
@@ -241,34 +258,18 @@ export function PropertiesPanel(): JSX.Element {
     return () => setTitleDetail(null);
   }, [setTitleDetail, titleDetail]);
 
-  const searchButton = (
-    <button
-      type="button"
-      className={cn(styles.layerHeadBtn, searchOpen && styles.layerHeadBtnActive)}
-      aria-label={searchOpen ? 'Close property search' : 'Search properties'}
-      aria-pressed={searchOpen}
-      title="Search properties"
-      onClick={() => setSearchOpen((v) => !v)}
-    >
-      <Icon name="search" size="sm" />
-    </button>
-  );
-
   // Outside a dock (a standalone mount, a test) there is no dock header to
-  // carry search and ⋯, so they sit at the end of the identity row instead.
+  // carry the ≡ menu, so it sits at the end of the identity row instead.
   const fallbackActions = dockHeader?.target ? undefined : (
-    <>
-      {searchButton}
-      <Dropdown
-        items={menuItems}
-        placement="bottom-end"
-        trigger={
-          <button type="button" className={styles.layerHeadBtn} aria-label="Properties panel options" title="Options">
-            <Icon name="more-horizontal" size="sm" />
-          </button>
-        }
-      />
-    </>
+    <Dropdown
+      items={menuItems}
+      placement="bottom-end"
+      trigger={
+        <button type="button" className={styles.layerHeadBtn} aria-label="Properties panel options" title="Options">
+          <Icon name="more-horizontal" size="sm" />
+        </button>
+      }
+    />
   );
 
   return (
@@ -281,31 +282,36 @@ export function PropertiesPanel(): JSX.Element {
       onClose={() => getEventBus().emit('PanelClosed', { panelId: 'properties' })}
     >
       <div className={styles.inspectorShell}>
-        {/* Only the search toggle rides in the dock header, beside the panel's
-            own title and ⋯ — one glyph, so the title is never truncated. */}
-        {hasLayer && dockHeader?.target && createPortal(searchButton, dockHeader.target)}
         {hasLayer && (
           <div className={styles.layerHead}>
             <SelectionHeader nodeIds={selected} actions={fallbackActions} />
           </div>
         )}
-        {hasLayer && searchOpen && (
-          <div className={styles.searchRow}>
+        {hasLayer && (
+          <div className={styles.propsToolbar}>
             <SearchField
-              placeholder="Search all properties…"
+              className={styles.propsSearch}
+              placeholder="Search properties"
               ariaLabel="Search properties"
               value={query}
               onChange={setQuery}
-              autoFocus
+            />
+            <Segmented
+              size="sm"
+              options={SHOW_OPTIONS}
+              value={show}
+              onChange={setShow}
+              aria-label="Show properties"
             />
           </div>
         )}
         <div className={styles.inspectorBody}>
           {liveCount > 1 && !searching && <SelectionAlignRow nodeIds={selected} />}
           <InspectorSelectionProvider nodeIds={selected}>
+            {hasLayer && primary && <SectionMenuHosts registry={sectionMenus} nodeId={primary} nodeIds={selected} />}
             {show === 'all' || !hasLayer || !primary
               ? <InspectorContent nodeId={primary} nodeIds={selected} query={query} />
-              : <FilteredPropertyList nodeId={primary} show={show} />}
+              : <FilteredPropertyList nodeId={primary} show={show} query={query} />}
           </InspectorSelectionProvider>
           {/* Not sections of the SELECTION: mograph parameters belong to the
               mograph player and template fields to the applied template, so
@@ -315,38 +321,9 @@ export function PropertiesPanel(): JSX.Element {
             <TemplateFieldsSection />
           </div>
         </div>
-        {hasLayer && primary && <PropertiesFooter nodeId={primary} show={show} onShow={setShow} />}
       </div>
     </Panel>
   );
 }
 
 export default PropertiesPanel;
-
-const SHOW_OPTIONS = [
-  { value: 'all' as const, label: 'All' },
-  { value: 'animated' as const, label: 'Animated' },
-  { value: 'modified' as const, label: 'Modified' },
-];
-
-/**
- * The inspector's foot (2026-10-07): how many properties the layer has and how
- * many are animated, and AE's U / UU as a Show filter.
- */
-function PropertiesFooter({ nodeId, show, onShow }: { nodeId: string; show: PropertyShow; onShow: (v: PropertyShow) => void }): JSX.Element {
-  const watchIds = useMemo(() => [nodeId], [nodeId]);
-  useMirrorLayersWatch(watchIds);
-  const counts = propertyCounts(nodeId);
-  return (
-    <div className={styles.inspectorFooter}>
-      <span>{`${counts.total} properties · ${counts.animated} animated`}</span>
-      <Segmented
-        size="sm"
-        options={SHOW_OPTIONS}
-        value={show}
-        onChange={onShow}
-        aria-label="Show properties"
-      />
-    </div>
-  );
-}

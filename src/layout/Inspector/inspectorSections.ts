@@ -71,10 +71,10 @@ import { TextSection, TextPresetAction, hasTextSection } from './TextSection';
 import { EffectsSection, EffectsSectionActions, hasEffectsSection } from './EffectsSection';
 import { AudioControls } from './AudioControls';
 import { PinnedSection, hasPinnedSection } from './PinnedSection';
-import { CameraSection } from './CameraSection';
+import { CameraSection, LensPresetsMenu } from './CameraSection';
 import { CompositingSection } from './CompositingSection';
 import { Ik3DSection, isIk3DTip } from './Ik3DSection';
-import { LightSection } from './LightSection';
+import { LightSection, LightPresetsMenu } from './LightSection';
 import { MaterialSection, MaterialPresetAction, hasMaterialSection } from './MaterialSection';
 import { MediaSection } from './MediaSection';
 import { mirrorMasksAt } from '@core/mirror/masks';
@@ -133,8 +133,21 @@ export interface InspectorSectionDef {
    */
   appliesToSelection?: (nodeIds: ReadonlyArray<string>) => boolean;
   Component: ComponentType<{ nodeId: string }>;
-  /** Optional actions component rendered on the right side of the section header row. */
+  /**
+   * A control drawn on the right of the section's header row. An ICON button
+   * with a tooltip only — Effects' add (+) — because a group row opens and
+   * closes and never holds a text button (the panel grammar, typography.css).
+   * A section's actions go in `menu`.
+   */
   actions?: ComponentType<{ nodeId: string; nodeIds?: ReadonlyArray<string> }>;
+  /**
+   * The section's actions in the Properties panel's ≡ menu (2026-10-08) —
+   * presets and the like, as a submenu named for the section ("Transform
+   * Presets ▸"). Mounted once per selection by `SectionMenuHosts`, outside the
+   * accordion so a collapsed or searched-away section still offers them; it
+   * draws nothing and calls `useSectionMenuRows` (sectionMenu.tsx).
+   */
+  menu?: ComponentType<{ nodeId: string; nodeIds?: ReadonlyArray<string> }>;
   /**
    * Extra words the inspector's search box matches on, so searching "color"
    * reaches Appearance and "shadow" reaches Layer styles. Folded in from what
@@ -221,7 +234,7 @@ export const INSPECTOR_SECTIONS: readonly InspectorSectionDef[] = [
     keywords: 'text font family size leading tracking kerning character paragraph align justify indent',
     appliesTo: hasTextSection,
     Component: TextSection,
-    actions: TextPresetAction,
+    menu: TextPresetAction,
   },
   {
     id: 'animators',
@@ -245,7 +258,7 @@ export const INSPECTOR_SECTIONS: readonly InspectorSectionDef[] = [
     keywords: 'appearance fill stroke color gradient border outline',
     appliesTo: isDrawable,
     Component: AppearanceSection,
-    actions: AppearancePresetAction,
+    menu: AppearancePresetAction,
   },
   {
     // Parametric Polygon / Star (AE's Polystar Path group): type, points,
@@ -376,7 +389,7 @@ export const INSPECTOR_SECTIONS: readonly InspectorSectionDef[] = [
     keywords: 'position scale rotation opacity anchor size 3d',
     appliesTo: (id) => kindOf(id) !== 'audio',
     Component: TransformWithThreeDSection,
-    actions: TransformPresetAction,
+    menu: TransformPresetAction,
   },
   // ── 4. Per-kind options (AE: Camera Options, Light Options, …) ────
   // At most one or two of these apply to any layer, and each is that layer's
@@ -391,6 +404,8 @@ export const INSPECTOR_SECTIONS: readonly InspectorSectionDef[] = [
     keywords: 'settings camera light particle audio volume',
     appliesTo: isKind('camera'),
     Component: CameraSection,
+    // The lenses ("Lens Presets ▸"), one pick = one undoable edit.
+    menu: LensPresetsMenu,
   },
   {
     id: 'custom',
@@ -401,6 +416,8 @@ export const INSPECTOR_SECTIONS: readonly InspectorSectionDef[] = [
     keywords: 'settings camera light particle audio volume',
     appliesTo: isKind('light'),
     Component: LightSection,
+    // The light's looks ("Light Presets ▸"), one pick = one undoable edit.
+    menu: LightPresetsMenu,
   },
   {
     id: 'custom',
@@ -488,7 +505,7 @@ export const INSPECTOR_SECTIONS: readonly InspectorSectionDef[] = [
       return kind !== 'group' && kind !== 'null' && hasMaterialSection(id);
     },
     Component: MaterialSection,
-    actions: MaterialPresetAction,
+    menu: MaterialPresetAction,
   },
   // ── 6. What can be done to its geometry ─────────────────────────
   {

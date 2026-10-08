@@ -124,7 +124,8 @@ describe('comp switches', () => {
   it('Enable Frame Blending is a composition setting, on unless turned off', async () => {
     const read = async (): Promise<boolean> => {
       const doc = await h.query({ type: 'getDocument', includeProperties: false, includeKeyframes: false });
-      return doc.comps.find((c) => c.id === s.comp)!.settings.frameBlending;
+      // Absent = on: the engine reports only an explicit off.
+      return doc.comps.find((c) => c.id === s.comp)!.settings.frameBlending !== false;
     };
     expect(await read()).toBe(true);
     await exact({ type: 'setCompositionSettings', comp: s.comp, patch: { frameBlending: false } });

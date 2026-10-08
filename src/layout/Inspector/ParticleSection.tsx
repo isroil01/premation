@@ -371,7 +371,14 @@ export function ParticleSection({ nodeId }: { nodeId: string }): JSX.Element | n
         {StaticNum('seed', 'Random Seed', 0)}
 
         <div className={styles.popoverRow}>
-          <span className={styles.popoverLabel}>Sim</span>
+          <span
+            className={styles.popoverLabel}
+            title={`${(cfg.simMode ?? 'ballistic') === 'stateful'
+              ? 'Stateful emitter with floor bounce — scrubbing replays from snapshots, identical every time.'
+              : 'Deterministic ballistic emitter — scrubbing is stable. Switch to Stateful for floor bounce.'} The layer transform moves the whole system.`}
+          >
+            Sim
+          </span>
           <select
             className={styles.select}
             style={{ width: 110 }}
@@ -448,12 +455,6 @@ export function ParticleSection({ nodeId }: { nodeId: string }): JSX.Element | n
           />
         )}
 
-        <p style={{ margin: '6px 0 0', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
-          {(cfg.simMode ?? 'ballistic') === 'stateful'
-            ? 'Stateful emitter with floor bounce — scrubbing replays from snapshots, identical every time.'
-            : 'Deterministic ballistic emitter — scrubbing is stable. Switch to Stateful for floor bounce.'}
-          {' '}The layer transform moves the whole system.
-        </p>
       </div>
     </div>
   );

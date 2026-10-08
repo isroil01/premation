@@ -40,6 +40,7 @@ import { isLookedThroughNow, navTargetNow, navUnavailableNow, orbitPivotNow, req
 
 
 import { getWorkspaceController, type WorkspaceController } from '@core/workspace/WorkspaceController';
+import { mainPictureGlue, onPicture, type PictureGlue } from '@core/workspace/displayedView';
 import {
   setPathTangent,
   motionPathTimeWindow,
@@ -419,6 +420,11 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
         }
       }
       const shownOverlay = held?.pendingPath ? { ...ov, pendingPath: held.pendingPath } : ov;
+      // The workspace builds its chrome in the LIVE camera's screen px; the picture under it is the
+      // engine's frame, drawn with the view it was asked for a frame or more ago. The chrome that sits
+      // ON the picture goes through this map so it moves with the picture, not ahead of it (null: the
+      // two agree — the steady state). A frame landing repaints (subscribeOverlayGeometry below).
+      const glue = mainPictureGlue();
       paintOverlay(overlay, shownOverlay, dprRef.current, guideDragRef.current, controller, stroke ?? held?.stroke ?? null, timeRef.current, creation ?? held?.creation ?? null, paintDragRef.current?.mode ?? 'paint', {
         brushRing: brushSizeDragRef.current
           ? { at: brushSizeDragRef.current.at, px: drawToolOptions.brushSize * (controller.getView().scale || 1), hardness: usePaintStore.getState().hardness }
@@ -426,10 +432,10 @@ export function useWorkspace(args: UseWorkspaceArgs): { ready: boolean; renderEr
         cloneHover: cloneHoverRef.current,
         cloneCompOffset: cloneCompOffsetRef.current,
         content: viewportPicture(),
-      });
-      paintMotionPath(overlay, controller, timeRef.current, dprRef.current);
-      paintRoi(overlay, controller, dprRef.current);
-      paintFaceSelection(overlay, controller, dprRef.current);
+      }, glue);
+      paintMotionPath(overlay, controller, timeRef.current, dprRef.current, glue);
+      paintRoi(overlay, controller, dprRef.current, glue);
+      paintFaceSelection(overlay, controller, dprRef.current, glue);
     };
 
     // The engine draws the composition (EngineSurface, under this overlay); the
@@ -1802,7 +1808,14 @@ interface HeldPreview {
 const HOLD_NO_EDIT_MS = 250;
 const HOLD_MAX_MS = 1500;
 
-function paintOverlay(
+/** The overlay canvas's transform for chrome drawn in live-camera px ON the picture (`glue`: displayedView). */
+function setPictureTransform(ctx: CanvasRenderingContext2D, dpr: number, glue: PictureGlue | null): void {
+  if (glue) ctx.setTransform(dpr * glue.k, 0, 0, dpr * glue.k, dpr * glue.tx, dpr * glue.ty);
+  else ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+/** The viewport's 2D chrome. Exported for the chrome's own tests (overlayChromeGlue.test). */
+export function paintOverlay(
   canvas: HTMLCanvasElement,
   overlay: WorkspaceOverlay,
   dpr: number,
@@ -1835,6 +1848,13 @@ function paintOverlay(
     cloneCompOffset: { x: number; y: number } | null;
     content: HTMLCanvasElement | null;
   } | null = null,
+  /**
+   * Live-camera px → the picture on screen (displayedView `mainPictureGlue`;
+   * null = they agree). Chrome ON the picture is drawn through it; chrome at
+   * the POINTER (marquee, creation drag, wet stroke, brush ring, clone lens,
+   * a guide being dragged out) and the rulers stay in live px.
+   */
+  glue: PictureGlue | null = null,
 ): void {
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
@@ -1843,8 +1863,13 @@ function paintOverlay(
 
   const cssW = canvas.width / dpr;
   const cssH = canvas.height / dpr;
+  // While the glue scales (a zoom the frame has not caught up with, a frame or
+  // two) line widths and handle sizes scale with it; a pan only translates.
+  const onPictureSpace = (): void => setPictureTransform(ctx, dpr, glue);
+  const atPointerSpace = (): void => ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
   const guidesState = useGuidesStore.getState();
+  onPictureSpace();
   if ((guidesState.grid || guidesState.proportionalGrid) && controller) {
     paintGrid(ctx, controller, guidesState);
   }
@@ -1865,6 +1890,7 @@ function paintOverlay(
     paintWireframeQualityLayers(ctx, controller.sceneNodes(), (p) => controller.ws.worldToScreen(p), themeGuides().TEXT);
   }
 
+  atPointerSpace();
   // Wet-stroke preview: the Brush's in-flight samples (screen space), drawn as
   // round-capped ink at brush width so what you drag IS what commits on release.
   if (paintStroke && paintStroke.length > 0) {
@@ -1970,12 +1996,16 @@ function paintOverlay(
       // Per-guide colour (AE 26.5); absent = the theme guide colour.
       ctx.strokeStyle = g.color ?? guideColor();
       ctx.beginPath();
+      // A guide is a comp position: on the picture — but full length, so its
+      // position (not the line) goes through the glue.
       if (g.axis === 'x') {
-        ctx.moveTo(g.position + 0.5, 0);
-        ctx.lineTo(g.position + 0.5, cssH);
+        const x = glue ? g.position * glue.k + glue.tx : g.position;
+        ctx.moveTo(x + 0.5, 0);
+        ctx.lineTo(x + 0.5, cssH);
       } else {
-        ctx.moveTo(0, g.position + 0.5);
-        ctx.lineTo(cssW, g.position + 0.5);
+        const y = glue ? g.position * glue.k + glue.ty : g.position;
+        ctx.moveTo(0, y + 0.5);
+        ctx.lineTo(cssW, y + 0.5);
       }
       ctx.stroke();
     }
@@ -2017,9 +2047,11 @@ function paintOverlay(
   // without claiming to be a selection, which is what makes overlapping layers
   // navigable without clicking through them.
   if (overlay.hoveredCorners) {
+    onPictureSpace();
     ctx.strokeStyle = HOVER;
     ctx.lineWidth = 1;
     strokeCornerMarks(ctx, overlay.hoveredCorners);
+    atPointerSpace();
   }
 
   const activeTool = creationDrag ? creationDrag.tool : useUIStore.getState().activeTool;
@@ -2087,6 +2119,10 @@ function paintOverlay(
 
     ctx.restore();
   }
+
+  // Everything from here to the rulers annotates the picture: snap lines, the
+  // selection outlines and handles, the pen's path.
+  onPictureSpace();
 
   // Snap lines.
   if (overlay.snapLines.length) {
@@ -2396,6 +2432,8 @@ function paintOverlay(
   // projected through whatever view is active (see sceneGizmoData.ts and
   // SceneGeometryOverlay.tsx). That is the one truth; this was the other one.
   if (guidesState.rulers && controller) {
+    // The rulers frame the stage: they stay in place (their ticks are the live camera's).
+    atPointerSpace();
     paintRulers(ctx, controller, cssW, cssH);
   }
 
@@ -2617,7 +2655,7 @@ function themeGuides(): Omit<NonNullable<typeof guideCache>, 'key'> {
  * Drawn from the SAME projected quads the picker hit-tests, so the highlight can
  * never disagree with what a click would select.
  */
-function paintFaceSelection(canvas: HTMLCanvasElement, controller: WorkspaceController, dpr: number): void {
+function paintFaceSelection(canvas: HTMLCanvasElement, controller: WorkspaceController, dpr: number, glue: PictureGlue | null = null): void {
   const fs = useFaceSelectionStore.getState();
   if (!fs.enabled) return;
   const nodeId = fs.nodeId ?? useSelectionStore.getState().ids[0];
@@ -2632,7 +2670,8 @@ function paintFaceSelection(canvas: HTMLCanvasElement, controller: WorkspaceCont
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
   ctx.save();
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  // On the picture (live px through the glue).
+  setPictureTransform(ctx, dpr, glue);
 
   const toScreen = (p: { x: number; y: number }) => controller.ws.worldToScreen(p);
 
@@ -2680,14 +2719,18 @@ function paintFaceSelection(canvas: HTMLCanvasElement, controller: WorkspaceCont
   ctx.restore();
 }
 
-function paintRoi(canvas: HTMLCanvasElement, controller: WorkspaceController, dpr: number): void {
+function paintRoi(canvas: HTMLCanvasElement, controller: WorkspaceController, dpr: number, glue: PictureGlue | null = null): void {
   const roi = useGuidesStore.getState().roi;
   if (!roi) return;
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
 
-  const tl = controller.ws.worldToScreen({ x: roi.x, y: roi.y });
-  const br = controller.ws.worldToScreen({ x: roi.x + roi.width, y: roi.y + roi.height });
+  // The region on the picture; the dimmed surround still fills the whole stage,
+  // so the corners (not the canvas) go through the glue.
+  const tl0 = controller.ws.worldToScreen({ x: roi.x, y: roi.y });
+  const br0 = controller.ws.worldToScreen({ x: roi.x + roi.width, y: roi.y + roi.height });
+  const tl = onPicture(glue, tl0.x, tl0.y);
+  const br = onPicture(glue, br0.x, br0.y);
   const x = tl.x;
   const y = tl.y;
   const w = br.x - tl.x;
@@ -2738,6 +2781,7 @@ function paintMotionPath(
   controller: WorkspaceController,
   time: number,
   dpr: number,
+  glue: PictureGlue | null = null,
 ): void {
   // Honour the visibility toggle. `motionPathVisible` had NO reader anywhere: this
   // function ran unconditionally from paintChrome, so the button in the viewport
@@ -2769,7 +2813,7 @@ function paintMotionPath(
 
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // draw ON TOP of the overlay (no clear)
+  setPictureTransform(ctx, dpr, glue); // draw ON TOP of the overlay (no clear), on the picture
 
   // For a 3D layer the trajectory goes through the SAME camera the renderer uses (motionPathProjector);
   // `z` is per point, so a layer animating in depth curves correctly.

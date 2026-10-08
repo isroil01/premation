@@ -9,14 +9,34 @@
  *   - bottomTimeline (collapsible, resizable, vertical split)
  *   - centerWorkspace (always present, fills remaining space)
  *
- * Each region may contain a vertical stack of panels; future docking will
- * add a richer graph (tabs, floating windows) without breaking this shape.
+ * Each sidebar is a column of panel GROUPS (`dockGroups`, see dockGroups.ts):
+ * tab strips stacked top to bottom, each open or collapsed — After Effects'
+ * panel groups. `panelOrder` stays the list of what is docked on a side.
  */
 
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { getEventBus } from '@core/events/EventBus';
 import { clamp } from '@utils/lang';
+import {
+  DOCK_SIDES,
+  bottomRegionOf,
+  emptyDockGroups,
+  flattenGroups,
+  groupOfPanel,
+  legacySplitGroups,
+  normalizeWeights,
+  reconcileGroups,
+  sanitizeDockGroups,
+  sanitizeGroupList,
+  sideOfRegion,
+  uniqueGroupId,
+  type DockGroupState,
+  type DockGroups,
+  type DockSide,
+} from '@core/layout/dockGroups';
+
+export type { DockGroupState, DockGroups, DockSide } from '@core/layout/dockGroups';
 
 const PANEL_ORDER_SETTINGS_KEY = 'layout.panelOrder';
 
@@ -64,8 +84,11 @@ export interface PersistedLayout {
   leftSidebarPosition?: 'left' | 'right';
   rightInspectorPosition?: 'left' | 'right';
   timelinePosition?: 'bottom' | 'top';
+  /** The old two-pane split. Read only to seed groups for a layout saved before them. */
   leftSidebarSplit?: boolean;
   rightInspectorSplit?: boolean;
+  /** Each side's panel groups (dockGroups.ts). Absent on layouts saved before groups. */
+  dockGroups?: Partial<Record<DockSide, DockGroupState[]>>;
 }
 
 /**
@@ -116,8 +139,7 @@ function saveLayout(
   leftSidebarPosition?: 'left' | 'right',
   rightInspectorPosition?: 'left' | 'right',
   timelinePosition?: 'bottom' | 'top',
-  leftSidebarSplit?: boolean,
-  rightInspectorSplit?: boolean,
+  dockGroups?: DockGroups,
 ): void {
   try {
     const data: PersistedLayout = {
@@ -128,12 +150,26 @@ function saveLayout(
       leftSidebarPosition,
       rightInspectorPosition,
       timelinePosition,
-      leftSidebarSplit,
-      rightInspectorSplit,
+      dockGroups,
     };
     localStorage.setItem(LAYOUT_PERSIST_KEY, JSON.stringify(data));
   } catch {
     // storage quota or private mode — silently ignore
+  }
+}
+
+/**
+ * Which panels the old right-hand STACK had open (DockPanel kept them in
+ * localStorage). Read once, for a layout saved before groups: those panels'
+ * groups start expanded, so the column a user left open stays open.
+ */
+function legacyExpandedPanels(): ReadonlySet<string> {
+  try {
+    const raw = localStorage.getItem('premation.dock.expanded.rightInspector');
+    const parsed: unknown = raw ? JSON.parse(raw) : null;
+    return new Set(Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : []);
+  } catch {
+    return new Set();
   }
 }
 
@@ -222,8 +258,15 @@ export interface WorkspaceLayoutInput {
   leftSidebarPosition?: 'left' | 'right';
   rightInspectorPosition?: 'left' | 'right';
   timelinePosition?: 'bottom' | 'top';
+  /** The old two-pane split: ignored (a workspace's `_bottom` lists still seed a group). */
   leftSidebarSplit?: boolean;
   rightInspectorSplit?: boolean;
+  /**
+   * Each side's panel groups. A workspace without them (every builtin) gets the
+   * default grouping for its panel lists, with the group of its active panel
+   * open.
+   */
+  dockGroups?: Partial<Record<DockSide, ReadonlyArray<DockGroupState>>>;
 }
 
 interface LayoutActions {
@@ -232,10 +275,30 @@ interface LayoutActions {
   openPanel(panelId: string): void;
   closePanel(panelId: string): void;
   togglePanel(panelId: string): void;
-  /** Move a panel tab to a new index within its current region. */
+  /** Move a panel tab to a new index within its group. */
   reorderPanel(panelId: string, toIndex: number): void;
-  /** Move a panel tab to a new region and index. */
+  /**
+   * Move a panel to another side (`toRegion`): it lands where that side puts a
+   * newly opened panel (dockGroups.ts `placePanel`). Within its own side it is
+   * a reorder inside its group. A `_bottom` region means "a new group at the
+   * bottom of that side" — what moving to the old split's lower pane did.
+   */
   movePanel(panelId: string, toRegion: RegionId, toIndex: number): void;
+  /** Move a panel into an existing group (either side), at `index` in its strip (default: the end). */
+  movePanelToGroup(panelId: string, groupId: string, index?: number): void;
+  /** Take a panel out into a group of its own, inserted at `index` in `side`'s column. */
+  movePanelToNewGroup(panelId: string, side: DockSide, index: number): void;
+  /** Bring a panel to the front of its group (and open the group) without other side effects. */
+  setGroupActive(groupId: string, panelId: string): void;
+  /** Collapse a group to its tab strip, or open it again. */
+  setGroupCollapsed(groupId: string, collapsed: boolean): void;
+  toggleGroupCollapsed(groupId: string): void;
+  /** Close every closable panel of a group. */
+  closeGroup(groupId: string): void;
+  /** Merge a group into the one above it (its tabs appended to that strip). */
+  mergeGroupUp(groupId: string): void;
+  /** Height shares for a side's expanded groups (a divider drag's result), by group id. */
+  setGroupWeights(side: DockSide, weights: Readonly<Record<string, number>>): void;
   /** Redock an external panel into a region. */
   dockPanel(panelId: string, toRegion?: RegionId): void;
   /** Mark panel for external OS window pop-out. */
@@ -243,12 +306,6 @@ interface LayoutActions {
   setRegionSize(region: RegionId, size: number): void;
   toggleRegion(region: RegionId): void;
   setCollapsed(region: RegionId, collapsed: boolean): void;
-  /** Split a sidebar into two stacked vertical panes (top & bottom). */
-  splitSidebar(side: 'left' | 'right'): void;
-  /** Unsplit a sidebar, merging bottom panels back to the top dock. */
-  unsplitSidebar(side: 'left' | 'right'): void;
-  /** Toggle split state of a sidebar. */
-  toggleSidebarSplit(side: 'left' | 'right'): void;
   /** Apply a saved workspace layout (region sizes + collapsed states + tab assignments). */
   applyWorkspaceLayout(layout: WorkspaceLayoutInput): void;
   resetLayout(): void;
@@ -292,17 +349,25 @@ export interface LayoutStore {
   panels: Record<string, PanelRegistration>;
   /** Region geometry, keyed by region id. */
   regions: LayoutMap;
-  /** Order of panels within their region (for tab stacking). */
+  /**
+   * The panels docked on each side, in on-screen order — the groups flattened.
+   * Membership lives here (menus, workspaces and the "+" read it); how a side
+   * is divided into groups lives in `dockGroups`. The `_bottom` regions are the
+   * old split's and stay empty once a layout has been loaded.
+   */
   panelOrder: Record<RegionId, ReadonlyArray<string>>;
+  /** Each side's panel groups, top to bottom (dockGroups.ts). */
+  dockGroups: DockGroups;
   /** List of currently externally popped-out panel IDs. */
   externalPanels: ReadonlyArray<string>;
-  /** The currently active panel per region (for tab focus). */
+  /**
+   * The panel last brought forward on each side — the one with focus, whose
+   * group the dock marks. Each group's own front tab is `DockGroupState.active`.
+   */
   activePanelByRegion: Partial<Record<RegionId, string>>;
   leftSidebarPosition: 'left' | 'right';
   rightInspectorPosition: 'left' | 'right';
   timelinePosition: 'bottom' | 'top';
-  leftSidebarSplit: boolean;
-  rightInspectorSplit: boolean;
   /** Active focus mode. Not persisted: a reload puts the user back in charge of the panels. */
   focusMode: FocusMode;
   /** Collapsed state per region as it was before the focus mode was entered. */
@@ -324,6 +389,114 @@ const DEFAULT_REGIONS: LayoutMap = {
 const _persisted = loadPersistedLayout();
 const _initialRegions: LayoutMap = structuredClone(DEFAULT_REGIONS);
 if (_persisted?.regions) applyPersistedToRegions(_initialRegions, _persisted.regions);
+
+/**
+ * The groups a session starts with: the persisted ones; for a layout saved
+ * before groups existed, the old split's two panes as groups
+ * (`legacySplitGroups`); otherwise none yet — the panels form the default
+ * groups as they register (`placePanel`).
+ */
+function initialDockGroups(saved: PersistedLayout | null): DockGroups {
+  const groups = emptyDockGroups();
+  const persisted = sanitizeDockGroups(saved?.dockGroups);
+  for (const side of DOCK_SIDES) {
+    const list = persisted?.[side];
+    if (list) {
+      groups[side] = list;
+      continue;
+    }
+    const top = [...new Set(saved?.panelOrder?.[side] ?? [])];
+    const bottom = [...new Set(saved?.panelOrder?.[bottomRegionOf(side)] ?? [])];
+    groups[side] = legacySplitGroups(side, top, bottom);
+  }
+  return groups;
+}
+
+/**
+ * Panels whose new group opens expanded when it is first formed: what the old
+ * right-hand stack had open, for a layout saved before groups. Cleared by
+ * Reset Layout, which means the fresh-session default.
+ */
+let _legacyExpanded: ReadonlySet<string> = _persisted && !_persisted.dockGroups ? legacyExpandedPanels() : new Set();
+
+/** A side's docked panels: its `panelOrder`, then its old split's bottom pane. */
+function sideMembers(s: LayoutStore, side: DockSide): string[] {
+  return [...new Set([...(s.panelOrder[side] ?? []), ...(s.panelOrder[bottomRegionOf(side)] ?? [])])];
+}
+
+/**
+ * Bring a side's groups and `panelOrder` back into agreement after a change to
+ * either (dockGroups.ts): membership from `panelOrder`, division from the
+ * groups. Writes `panelOrder[side]` back as the groups flattened, empties the
+ * old bottom pane, and keeps the side's focused panel one that is docked.
+ */
+function syncSide(s: LayoutStore, side: DockSide): void {
+  const groups = reconcileGroups(side, sideMembers(s, side), s.dockGroups[side], {
+    expandNew: (id) => (_legacyExpanded.has(id) ? true : undefined),
+  });
+  s.dockGroups[side] = groups;
+  s.panelOrder[side] = flattenGroups(groups);
+  s.panelOrder[bottomRegionOf(side)] = [];
+  for (const id of s.panelOrder[side]) {
+    const p = s.panels[id];
+    if (p) p.region = side;
+  }
+  const focus = s.activePanelByRegion[side];
+  if (!focus || !s.panelOrder[side].includes(focus)) {
+    const open = groups.find((g) => !g.collapsed) ?? groups[0];
+    s.activePanelByRegion[side] = open?.active ?? undefined;
+  }
+  delete s.activePanelByRegion[bottomRegionOf(side)];
+}
+
+/** Membership follows the groups after a direct edit of them, then `syncSide`. */
+function commitGroups(s: LayoutStore, side: DockSide): void {
+  s.panelOrder[side] = flattenGroups(s.dockGroups[side]);
+  s.panelOrder[bottomRegionOf(side)] = [];
+  syncSide(s, side);
+}
+
+/** The side and group holding a docked panel. */
+function locate(s: LayoutStore, panelId: string): { side: DockSide; group: DockGroupState } | null {
+  for (const side of DOCK_SIDES) {
+    const group = groupOfPanel(s.dockGroups[side], panelId);
+    if (group) return { side, group };
+  }
+  return null;
+}
+
+/** The side and group with this id. */
+function locateGroup(s: LayoutStore, groupId: string): { side: DockSide; group: DockGroupState; index: number } | null {
+  for (const side of DOCK_SIDES) {
+    const index = s.dockGroups[side].findIndex((g) => g.id === groupId);
+    if (index >= 0) return { side, group: s.dockGroups[side][index]!, index };
+  }
+  return null;
+}
+
+/**
+ * Show a docked panel: in front of its group, the group open, the side open
+ * and the panel the side's focus — what Window ▸ <panel>, a shortcut or a tab
+ * click all mean.
+ */
+function bringForward(s: LayoutStore, panelId: string): void {
+  const at = locate(s, panelId);
+  if (!at) return;
+  at.group.active = panelId;
+  at.group.collapsed = false;
+  s.activePanelByRegion[at.side] = panelId;
+  s.regions[at.side].collapsed = false;
+}
+
+/** Take a panel out of whichever group holds it (both sides re-synced by the caller). */
+function detach(s: LayoutStore, panelId: string): DockSide | null {
+  const at = locate(s, panelId);
+  if (!at) return null;
+  at.group.panels = at.group.panels.filter((id) => id !== panelId);
+  if (at.group.active === panelId) at.group.active = at.group.panels[0] ?? null;
+  s.dockGroups[at.side] = s.dockGroups[at.side].filter((g) => g.panels.length > 0);
+  return at.side;
+}
 
 export const useLayoutStore = create<LayoutStore & LayoutActions>()(
   immer((set, get) => ({
@@ -351,8 +524,7 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
     leftSidebarPosition: _persisted?.leftSidebarPosition ?? 'left',
     rightInspectorPosition: _persisted?.rightInspectorPosition ?? 'right',
     timelinePosition: _persisted?.timelinePosition ?? 'bottom',
-    leftSidebarSplit: _persisted?.leftSidebarSplit ?? false,
-    rightInspectorSplit: _persisted?.rightInspectorSplit ?? false,
+    dockGroups: initialDockGroups(_persisted),
 
     registerPanel: (panel) =>
       set((s) => {
@@ -374,19 +546,22 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
           region,
           placement: panel.placement ?? 'docked',
         };
-        
-        // Strip this id from all regions first to guarantee no cross-dock duplicates
+
+        // No cross-dock duplicates: the id stays only where the persisted
+        // layout had it — at its persisted place, so a saved order and the
+        // saved groups survive registration — or is appended to its home.
         for (const rKey of Object.keys(s.panelOrder) as RegionId[]) {
-          if (s.panelOrder[rKey]) {
+          if (rKey !== region && s.panelOrder[rKey]?.includes(panel.id)) {
             s.panelOrder[rKey] = s.panelOrder[rKey].filter((id) => id !== panel.id);
           }
         }
-        
         if (!s.panelOrder[region]) s.panelOrder[region] = [];
-        s.panelOrder[region].push(panel.id);
+        if (!s.panelOrder[region].includes(panel.id)) s.panelOrder[region].push(panel.id);
         if (!s.activePanelByRegion[region]) {
           s.activePanelByRegion[region] = panel.id;
         }
+        const side = sideOfRegion(region);
+        if (side) syncSide(s, side);
         getEventBus().emit('PanelOpened', { panelId: panel.id });
       }),
 
@@ -402,6 +577,8 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
         if (s.activePanelByRegion[p.region] === panelId) {
           s.activePanelByRegion[p.region] = s.panelOrder[p.region]?.[0];
         }
+        const side = sideOfRegion(p.region);
+        if (side) syncSide(s, side);
         getEventBus().emit('PanelClosed', { panelId });
       }),
 
@@ -409,13 +586,23 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
       set((s) => {
         const p = s.panels[panelId];
         if (!p) return;
-        const mainRegion = p.region.startsWith('leftSidebar') ? 'leftSidebar' : p.region.startsWith('rightInspector') ? 'rightInspector' : p.region;
-        s.regions[mainRegion].collapsed = false;
-        if (!s.panelOrder[p.region]) s.panelOrder[p.region] = [];
-        if (!s.panelOrder[p.region].includes(panelId)) {
-          s.panelOrder[p.region].push(panelId);
+        const side = sideOfRegion(p.region);
+        if (!side) {
+          // Not a sidebar panel (nothing registers one today): the old behaviour.
+          s.regions[p.region].collapsed = false;
+          if (!s.panelOrder[p.region]) s.panelOrder[p.region] = [];
+          if (!s.panelOrder[p.region].includes(panelId)) s.panelOrder[p.region].push(panelId);
+          s.activePanelByRegion[p.region] = panelId;
+          getEventBus().emit('PanelOpened', { panelId });
+          return;
         }
-        s.activePanelByRegion[p.region] = panelId;
+        if (!sideMembers(s, side).includes(panelId)) {
+          s.panelOrder[side] = [...(s.panelOrder[side] ?? []), panelId];
+        }
+        syncSide(s, side);
+        // Opened = shown: in front of its group, the group expanded (a newly
+        // placed group starts collapsed on the right), the side its focus.
+        bringForward(s, panelId);
         getEventBus().emit('PanelOpened', { panelId });
       }),
 
@@ -429,6 +616,13 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
         s.externalPanels = s.externalPanels.filter((id) => id !== panelId);
         if (s.activePanelByRegion[p.region] === panelId) {
           s.activePanelByRegion[p.region] = s.panelOrder[p.region]?.[0];
+        }
+        const side = sideOfRegion(p.region);
+        if (side) {
+          // Its group loses the tab (and goes, if that was its only one); the
+          // side's focus passes to whatever is open there now.
+          if (s.activePanelByRegion[side] === panelId) delete s.activePanelByRegion[side];
+          syncSide(s, side);
         }
         getEventBus().emit('PanelClosed', { panelId });
       }),
@@ -445,15 +639,13 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
 
     reorderPanel: (panelId: string, toIndex: number) => {
       set((s) => {
-        const panel = s.panels[panelId];
-        if (!panel || !s.panelOrder[panel.region]) return;
-        const order = [...s.panelOrder[panel.region]];
-        const fromIndex = order.indexOf(panelId);
-        if (fromIndex === -1) return;
-
-        order.splice(fromIndex, 1);
-        order.splice(toIndex, 0, panelId);
-        s.panelOrder[panel.region] = order;
+        for (const side of DOCK_SIDES) syncSide(s, side);
+        const at = locate(s, panelId);
+        if (!at) return;
+        const panels = at.group.panels.filter((id) => id !== panelId);
+        panels.splice(clamp(toIndex, 0, panels.length), 0, panelId);
+        at.group.panels = panels;
+        commitGroups(s, at.side);
       });
       getEventBus().emit('LayoutChanged', undefined);
     },
@@ -462,43 +654,151 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
       set((s) => {
         const panel = s.panels[panelId];
         if (!panel) return;
-        
-        const fromRegion = panel.region;
+        const toSide = sideOfRegion(toRegion);
+        // Only the two sidebars host docked panels (see PanelHeader's targets).
+        if (!toSide) return;
         panel.placement = 'docked';
         s.externalPanels = s.externalPanels.filter((id) => id !== panelId);
+        for (const side of DOCK_SIDES) syncSide(s, side);
 
-        if (fromRegion === toRegion) {
-          const order = [...(s.panelOrder[fromRegion] || [])];
-          const fromIndex = order.indexOf(panelId);
-          if (fromIndex === -1) return;
-          order.splice(fromIndex, 1);
-          order.splice(toIndex, 0, panelId);
-          s.panelOrder[fromRegion] = order;
-        } else {
-          // Remove from ALL regions completely so no duplicate version remains
-          for (const rKey of Object.keys(s.panelOrder) as RegionId[]) {
-            if (!s.panelOrder[rKey]) continue;
-            const oldLen = s.panelOrder[rKey].length;
-            s.panelOrder[rKey] = s.panelOrder[rKey].filter((id) => id !== panelId);
-            if (s.panelOrder[rKey].length !== oldLen && s.activePanelByRegion[rKey] === panelId) {
-              s.activePanelByRegion[rKey] = s.panelOrder[rKey].length > 0 ? s.panelOrder[rKey][0] : undefined;
-            }
-          }
-          
-          panel.region = toRegion;
-          if (!s.panelOrder[toRegion]) s.panelOrder[toRegion] = [];
-          const toOrder = [...s.panelOrder[toRegion]];
-          toOrder.splice(toIndex, 0, panelId);
-          s.panelOrder[toRegion] = toOrder;
-          s.activePanelByRegion[toRegion] = panelId;
-
-          // Auto-activate split flag if moving to a bottom dock
-          if (toRegion === 'leftSidebar_bottom') s.leftSidebarSplit = true;
-          if (toRegion === 'rightInspector_bottom') s.rightInspectorSplit = true;
+        const at = locate(s, panelId);
+        const toBottom = toRegion === bottomRegionOf(toSide);
+        if (at && at.side === toSide && !toBottom) {
+          // Same side: a reorder inside its own group.
+          const panels = at.group.panels.filter((id) => id !== panelId);
+          panels.splice(clamp(toIndex, 0, panels.length), 0, panelId);
+          at.group.panels = panels;
+          commitGroups(s, toSide);
+          return;
         }
+        const fromSide = detach(s, panelId);
+        if (fromSide) commitGroups(s, fromSide);
+        if (toBottom) {
+          // The old split's lower pane: a group of its own at the bottom.
+          const groups = s.dockGroups[toSide];
+          groups.push({ id: uniqueGroupId(groups, panelId), panels: [panelId], active: panelId, collapsed: false, weight: 1 });
+          commitGroups(s, toSide);
+        } else {
+          s.panelOrder[toSide] = [...(s.panelOrder[toSide] ?? []), panelId];
+          syncSide(s, toSide);
+        }
+        bringForward(s, panelId);
       });
       getEventBus().emit('LayoutChanged', undefined);
     },
+
+    movePanelToGroup: (panelId, groupId, index) => {
+      set((s) => {
+        const panel = s.panels[panelId];
+        if (!panel) return;
+        for (const side of DOCK_SIDES) syncSide(s, side);
+        const target = locateGroup(s, groupId);
+        if (!target) return;
+        panel.placement = 'docked';
+        s.externalPanels = s.externalPanels.filter((id) => id !== panelId);
+        const fromSide = detach(s, panelId);
+        // The target group survives a detach unless the panel was its only tab
+        // (dropping a lone tab back onto its own strip), which is then a no-op.
+        const into = s.dockGroups[target.side].find((g) => g.id === groupId);
+        if (into) {
+          const panels = [...into.panels];
+          panels.splice(clamp(index ?? panels.length, 0, panels.length), 0, panelId);
+          into.panels = panels;
+          into.active = panelId;
+          into.collapsed = false;
+        } else {
+          s.dockGroups[target.side].splice(target.index, 0, { ...target.group, panels: [panelId], active: panelId, collapsed: false });
+        }
+        if (fromSide && fromSide !== target.side) commitGroups(s, fromSide);
+        commitGroups(s, target.side);
+        s.activePanelByRegion[target.side] = panelId;
+        s.regions[target.side].collapsed = false;
+      });
+      getEventBus().emit('LayoutChanged', undefined);
+    },
+
+    movePanelToNewGroup: (panelId, side, index) => {
+      set((s) => {
+        const panel = s.panels[panelId];
+        if (!panel) return;
+        for (const sd of DOCK_SIDES) syncSide(s, sd);
+        panel.placement = 'docked';
+        s.externalPanels = s.externalPanels.filter((id) => id !== panelId);
+        // The insertion index is a position BETWEEN the column's groups as the
+        // user saw them, so it is counted before the panel's own group can
+        // vanish (a lone tab dragged to a gap elsewhere).
+        const before = s.dockGroups[side].slice(0, Math.max(0, index));
+        const lostAbove = before.filter((g) => g.panels.length === 1 && g.panels[0] === panelId).length;
+        const fromSide = detach(s, panelId);
+        const groups = s.dockGroups[side];
+        const at = clamp(index - lostAbove, 0, groups.length);
+        groups.splice(at, 0, { id: uniqueGroupId(groups, panelId), panels: [panelId], active: panelId, collapsed: false, weight: 1 });
+        if (fromSide && fromSide !== side) commitGroups(s, fromSide);
+        commitGroups(s, side);
+        s.activePanelByRegion[side] = panelId;
+        s.regions[side].collapsed = false;
+      });
+      getEventBus().emit('LayoutChanged', undefined);
+    },
+
+    setGroupActive: (groupId, panelId) =>
+      set((s) => {
+        const at = locateGroup(s, groupId);
+        if (!at || !at.group.panels.includes(panelId)) return;
+        at.group.active = panelId;
+        at.group.collapsed = false;
+        s.activePanelByRegion[at.side] = panelId;
+        s.regions[at.side].collapsed = false;
+      }),
+
+    setGroupCollapsed: (groupId, collapsed) =>
+      set((s) => {
+        const at = locateGroup(s, groupId);
+        if (!at) return;
+        at.group.collapsed = collapsed;
+      }),
+
+    toggleGroupCollapsed: (groupId) =>
+      set((s) => {
+        const at = locateGroup(s, groupId);
+        if (!at) return;
+        at.group.collapsed = !at.group.collapsed;
+      }),
+
+    closeGroup: (groupId) =>
+      set((s) => {
+        const at = locateGroup(s, groupId);
+        if (!at) return;
+        const closing = at.group.panels.filter((id) => s.panels[id]?.closable !== false);
+        if (closing.length === 0) return;
+        s.panelOrder[at.side] = (s.panelOrder[at.side] ?? []).filter((id) => !closing.includes(id));
+        s.externalPanels = s.externalPanels.filter((id) => !closing.includes(id));
+        if (closing.includes(s.activePanelByRegion[at.side] ?? '')) delete s.activePanelByRegion[at.side];
+        syncSide(s, at.side);
+        for (const panelId of closing) getEventBus().emit('PanelClosed', { panelId });
+      }),
+
+    mergeGroupUp: (groupId) =>
+      set((s) => {
+        const at = locateGroup(s, groupId);
+        if (!at || at.index === 0) return;
+        const groups = s.dockGroups[at.side];
+        const above = groups[at.index - 1]!;
+        above.panels = [...above.panels, ...at.group.panels];
+        above.active = at.group.active ?? above.active;
+        above.collapsed = above.collapsed && at.group.collapsed;
+        groups.splice(at.index, 1);
+        commitGroups(s, at.side);
+      }),
+
+    setGroupWeights: (side, weights) =>
+      set((s) => {
+        for (const g of s.dockGroups[side]) {
+          const w = weights[g.id];
+          if (typeof w === 'number' && Number.isFinite(w) && w > 0) g.weight = w;
+        }
+        normalizeWeights(s.dockGroups[side]);
+      }),
 
     dockPanel: (panelId, toRegion) =>
       set((s) => {
@@ -506,13 +806,29 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
         if (!panel) return;
         const targetRegion = toRegion ?? panel.homeRegion ?? 'leftSidebar';
         panel.placement = 'docked';
-        panel.region = targetRegion;
         s.externalPanels = s.externalPanels.filter((id) => id !== panelId);
-        if (!s.panelOrder[targetRegion]) s.panelOrder[targetRegion] = [];
-        if (!s.panelOrder[targetRegion].includes(panelId)) {
-          s.panelOrder[targetRegion].push(panelId);
+        const toSide = sideOfRegion(targetRegion);
+        if (!toSide) {
+          panel.region = targetRegion;
+          if (!s.panelOrder[targetRegion]) s.panelOrder[targetRegion] = [];
+          if (!s.panelOrder[targetRegion].includes(panelId)) s.panelOrder[targetRegion].push(panelId);
+          s.activePanelByRegion[targetRegion] = panelId;
+          getEventBus().emit('LayoutChanged', undefined);
+          return;
         }
-        s.activePanelByRegion[targetRegion] = panelId;
+        // Docked on the other side already: it moves, it is not duplicated.
+        for (const side of DOCK_SIDES) {
+          if (side === toSide) continue;
+          if (sideMembers(s, side).includes(panelId)) {
+            s.panelOrder[side] = (s.panelOrder[side] ?? []).filter((id) => id !== panelId);
+            s.panelOrder[bottomRegionOf(side)] = (s.panelOrder[bottomRegionOf(side)] ?? []).filter((id) => id !== panelId);
+            syncSide(s, side);
+          }
+        }
+        panel.region = toSide;
+        if (!sideMembers(s, toSide).includes(panelId)) s.panelOrder[toSide] = [...(s.panelOrder[toSide] ?? []), panelId];
+        syncSide(s, toSide);
+        bringForward(s, panelId);
         getEventBus().emit('LayoutChanged', undefined);
       }),
 
@@ -589,68 +905,6 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
         }
       }),
 
-    splitSidebar: (side) =>
-      set((s) => {
-        const topRegion: RegionId = side === 'left' ? 'leftSidebar' : 'rightInspector';
-        const bottomRegion: RegionId = side === 'left' ? 'leftSidebar_bottom' : 'rightInspector_bottom';
-        if (side === 'left') s.leftSidebarSplit = true;
-        else s.rightInspectorSplit = true;
-
-        if (!s.panelOrder[topRegion]) s.panelOrder[topRegion] = [];
-        if (!s.panelOrder[bottomRegion]) s.panelOrder[bottomRegion] = [];
-
-        const topOrder = [...s.panelOrder[topRegion]];
-        const bottomOrder = [...s.panelOrder[bottomRegion]];
-
-        // If bottom dock is empty and top dock has at least 2 panels, move the second half down
-        if (bottomOrder.length === 0 && topOrder.length >= 2) {
-          const splitIdx = Math.ceil(topOrder.length / 2);
-          const movingDown = topOrder.slice(splitIdx);
-          s.panelOrder[topRegion] = topOrder.slice(0, splitIdx);
-          s.panelOrder[bottomRegion] = movingDown;
-          for (const id of movingDown) {
-            if (s.panels[id]) s.panels[id].region = bottomRegion;
-          }
-          if (!s.activePanelByRegion[bottomRegion] && movingDown.length > 0) {
-            s.activePanelByRegion[bottomRegion] = movingDown[0];
-          }
-          if (s.activePanelByRegion[topRegion] && movingDown.includes(s.activePanelByRegion[topRegion]!)) {
-            s.activePanelByRegion[topRegion] = s.panelOrder[topRegion][0];
-          }
-        } else if (bottomOrder.length > 0 && !s.activePanelByRegion[bottomRegion]) {
-          s.activePanelByRegion[bottomRegion] = bottomOrder[0];
-        }
-        getEventBus().emit('LayoutChanged', undefined);
-      }),
-
-    unsplitSidebar: (side) =>
-      set((s) => {
-        const topRegion: RegionId = side === 'left' ? 'leftSidebar' : 'rightInspector';
-        const bottomRegion: RegionId = side === 'left' ? 'leftSidebar_bottom' : 'rightInspector_bottom';
-        if (side === 'left') s.leftSidebarSplit = false;
-        else s.rightInspectorSplit = false;
-
-        const bottomOrder = s.panelOrder[bottomRegion] || [];
-        if (bottomOrder.length > 0) {
-          const newTopOrder = [...(s.panelOrder[topRegion] || []), ...bottomOrder];
-          s.panelOrder[topRegion] = [...new Set(newTopOrder)];
-          s.panelOrder[bottomRegion] = [];
-          for (const id of bottomOrder) {
-            if (s.panels[id]) s.panels[id].region = topRegion;
-          }
-        }
-        getEventBus().emit('LayoutChanged', undefined);
-      }),
-
-    toggleSidebarSplit: (side) => {
-      const isSplit = side === 'left' ? get().leftSidebarSplit : get().rightInspectorSplit;
-      if (isSplit) {
-        get().unsplitSidebar(side);
-      } else {
-        get().splitSidebar(side);
-      }
-    },
-
     applyWorkspaceLayout: (layout) =>
       set((s) => {
         for (const key of Object.keys(layout.regions) as RegionId[]) {
@@ -689,11 +943,38 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
           }
         }
 
+        // The groups: the workspace's own when it saved them; otherwise the
+        // default grouping for its lists (a saved `_bottom` list — the old
+        // split — becomes a group of its own), with the group of the
+        // workspace's active panel open, so Color still opens on Scopes.
+        if (layout.panelOrder || layout.dockGroups) {
+          for (const side of DOCK_SIDES) {
+            const given = layout.dockGroups?.[side] ? sanitizeGroupList(layout.dockGroups[side]) : null;
+            if (given) {
+              s.dockGroups[side] = given;
+              if (!layout.panelOrder) s.panelOrder[side] = flattenGroups(given);
+              syncSide(s, side);
+              continue;
+            }
+            if (!layout.panelOrder) continue;
+            s.dockGroups[side] = legacySplitGroups(
+              side,
+              [...new Set(s.panelOrder[side] ?? [])],
+              [...new Set(s.panelOrder[bottomRegionOf(side)] ?? [])],
+            );
+            syncSide(s, side);
+            const front = layout.activePanelByRegion?.[side];
+            const g = front ? groupOfPanel(s.dockGroups[side], front) : undefined;
+            if (g && front) {
+              g.active = front;
+              g.collapsed = false;
+            }
+          }
+        }
+
         if (layout.leftSidebarPosition) s.leftSidebarPosition = layout.leftSidebarPosition;
         if (layout.rightInspectorPosition) s.rightInspectorPosition = layout.rightInspectorPosition;
         if (layout.timelinePosition) s.timelinePosition = layout.timelinePosition;
-        if (layout.leftSidebarSplit !== undefined) s.leftSidebarSplit = layout.leftSidebarSplit;
-        if (layout.rightInspectorSplit !== undefined) s.rightInspectorSplit = layout.rightInspectorSplit;
 
         getEventBus().emit('LayoutChanged', undefined);
       }),
@@ -705,8 +986,10 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
         s.leftSidebarPosition = 'left';
         s.rightInspectorPosition = 'right';
         s.timelinePosition = 'bottom';
-        s.leftSidebarSplit = false;
-        s.rightInspectorSplit = false;
+        // Fresh-session groups: the policy rebuilds them as the panels are
+        // re-docked below, with nothing carried over from the old stack.
+        s.dockGroups = emptyDockGroups();
+        _legacyExpanded = new Set();
         s.panelOrder = {
           leftSidebar: [],
           leftSidebar_bottom: [],
@@ -729,6 +1012,7 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
             s.activePanelByRegion[home] = p.id;
           }
         }
+        for (const side of DOCK_SIDES) syncSide(s, side);
         try {
           localStorage.removeItem(LAYOUT_PERSIST_KEY);
           // MUST stay lazy. A static import evaluates coreServices at module scope,
@@ -778,7 +1062,7 @@ useLayoutStore.subscribe((state) => {
   }
 });
 
-// Persist the full layout (regions, panelOrder, activePanelByRegion, split states) to
+// Persist the full layout (regions, panelOrder, activePanelByRegion, dock groups) to
 // localStorage so the workspace survives page refresh / Electron restart.
 let _lastLayoutSig = '';
 let _saveLayoutTimer: ReturnType<typeof setTimeout> | null = null;
@@ -793,8 +1077,7 @@ useLayoutStore.subscribe((state) => {
     leftPos: state.leftSidebarPosition,
     rightPos: state.rightInspectorPosition,
     timePos: state.timelinePosition,
-    leftSplit: state.leftSidebarSplit,
-    rightSplit: state.rightInspectorSplit,
+    g: state.dockGroups,
   });
   if (sig === _lastLayoutSig) return;
   _lastLayoutSig = sig;
@@ -808,8 +1091,7 @@ useLayoutStore.subscribe((state) => {
       state.leftSidebarPosition,
       state.rightInspectorPosition,
       state.timelinePosition,
-      state.leftSidebarSplit,
-      state.rightInspectorSplit,
+      state.dockGroups,
     );
   }, 250);
 });

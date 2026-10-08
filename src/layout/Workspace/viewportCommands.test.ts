@@ -13,6 +13,7 @@
 import { buildViewportCommands, VIEWPORT_COMMAND_IDS, transportChordsActive } from './viewportCommands';
 import { __resetCompositionShuttle, getCompositionShuttle } from '@core/timeline/transportController';
 import { useCompareStore } from '@stores/compareStore';
+import type { CommandContext } from '@core/commands/Command';
 
 function byId(id: string) {
   return buildViewportCommands().find((c) => String(c.id) === id);
@@ -90,6 +91,20 @@ describe('viewportCommands', () => {
         view: { scale: 1, offsetX: 0, offsetY: 0 },
       });
       expect(toggle.enabled?.()).toBe(true);
+    });
+
+    it('Take Snapshot stores the frame without freezing the view on it', () => {
+      // AE: Take Snapshot only stores; Show Snapshot displays. Showing it on
+      // capture left the viewport frozen on the still while layers moved.
+      useCompareStore.getState().addSnapshot({
+        label: 's', time: 0, bitmap: {} as HTMLCanvasElement, width: 1, height: 1,
+        view: { scale: 1, offsetX: 0, offsetY: 0 },
+      });
+      expect(useCompareStore.getState().visible).toBe(false);
+      void byId(VIEWPORT_COMMAND_IDS.compareToggle)!.execute({} as CommandContext);
+      expect(useCompareStore.getState().visible).toBe(true);
+      void byId(VIEWPORT_COMMAND_IDS.compareToggle)!.execute({} as CommandContext);
+      expect(useCompareStore.getState().visible).toBe(false);
     });
 
     it('J, K and L share one rule — all three are live while nothing is focused', () => {

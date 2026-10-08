@@ -1,8 +1,10 @@
 /**
  * Snapshot / A-B / wipe compare for the viewport.
  *
- * `F5` freezes what the content canvas is showing into an ImageBitmap; `Shift+F5`
- * shows or hides the comparison. Four ways to look at it:
+ * `F5` freezes what the content canvas is showing into an ImageBitmap — and
+ * only stores it; the live picture stays on screen. `Shift+F5` (or the chip's
+ * close button / Esc while it is up) shows or hides the comparison. Four ways
+ * to look at it:
  *
  *   toggle        the snapshot replaces the live frame (press again to flip)
  *   side-by-side  snapshot left, live right, each half at half width
@@ -165,8 +167,8 @@ export const useCompareStore = create<CompareStore>((set, get) => ({
     const id = `snap_${++seq}`;
     const label = pending.label ?? `Snapshot ${get().snapshots.length + 1}`;
     // Insert a placeholder immediately with the 2D copy standing in for the
-    // bitmap, so the user sees the comparison on the very next frame; the
-    // real bitmap swaps in when it resolves.
+    // bitmap, so Show Snapshot works on the very next frame; the real bitmap
+    // swaps in when it resolves.
     const placeholder: CompareImage = copy;
     const snap: CompareSnapshot = {
       id, label, time, takenAt: Date.now(), bitmap: placeholder,
@@ -178,7 +180,11 @@ export const useCompareStore = create<CompareStore>((set, get) => ({
         const dropped = next.shift();
         if (dropped) releaseBitmap(dropped.bitmap);
       }
-      return { snapshots: next, activeId: id, visible: true };
+      // Taking a snapshot does NOT show it (AE: Take Snapshot only stores;
+      // Show Snapshot displays). Turning the comparison on here froze the
+      // viewport on the still — objects dragged underneath looked stuck, and
+      // the next F5 just froze it again on a newer frame.
+      return { snapshots: next, activeId: id };
     });
     void bitmapOf(copy).then((bitmap) => {
       if (bitmap === placeholder) return;
@@ -197,7 +203,7 @@ export const useCompareStore = create<CompareStore>((set, get) => ({
         const dropped = next.shift();
         if (dropped) releaseBitmap(dropped.bitmap);
       }
-      return { snapshots: next, activeId: id, visible: true };
+      return { snapshots: next, activeId: id };
     });
     return id;
   },

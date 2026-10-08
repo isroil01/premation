@@ -8,10 +8,10 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  /* The panel `subgroup` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-subgroup);
   color: var(--color-text-tertiary);
   margin-bottom: 8px;
 }
@@ -22,7 +22,10 @@
   color: var(--color-text-secondary);
   border-radius: 4px;
   padding: 2px 8px;
-  font-size: var(--font-size-xs);
+  /* The panel `button` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-button);
   cursor: pointer;
 }
 .saveBtn:hover {
@@ -54,7 +57,10 @@
 }
 
 .label {
-  font-size: var(--font-size-sm);
+  /* The panel `label` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
   color: var(--color-text-secondary);
   white-space: nowrap;
   overflow: hidden;
@@ -62,7 +68,11 @@
 }
 
 .sub {
-  font-size: var(--font-size-micro);
+  /* The panel `help` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  line-height: var(--panel-line-height-help);
   color: var(--color-text-tertiary);
 }
 
@@ -76,7 +86,10 @@
   color: var(--color-text-secondary);
   border-radius: 4px;
   padding: 2px 8px;
-  font-size: var(--font-size-xs);
+  /* The panel `button` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-button);
   cursor: pointer;
   flex-shrink: 0;
 }
@@ -85,7 +98,11 @@
 }
 
 .empty {
-  font-size: var(--font-size-xs);
+  /* The panel `help` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  line-height: var(--panel-line-height-help);
   color: var(--color-text-tertiary);
   padding: 8px 0;
 }

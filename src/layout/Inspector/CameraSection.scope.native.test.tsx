@@ -78,7 +78,7 @@ describe('Make all 3D is scoped to the active composition', () => {
   it('leaves layers in other comps 2D', async () => {
     render(<CameraSection nodeId={CAMERA} />);
     const before = (await h.doc());
-    fireEvent.click(screen.getByRole('button', { name: 'Make all 3D' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Make All 3D' }));
     await idle(); // an engine command (B3)
 
     expect((await is3D(LAYER_A))).toBe(true);
@@ -96,7 +96,7 @@ describe('Make all 3D is scoped to the active composition', () => {
     // One 3D-capable layer in comp A (the camera is not one), none of it 3D yet.
     expect(screen.getByText(/No 3D layers/)).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Make all 3D' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Make All 3D' }));
     await idle();
     expect(screen.getByText('1 of 1 layers are 3D')).toBeInTheDocument();
   });

@@ -84,10 +84,41 @@
   color: var(--color-overlay-text);
   font-size: var(--font-size-xs);
   white-space: nowrap;
+  /* The close button takes the pointer; the rest of the layer does not. */
+  pointer-events: auto;
+}
+
+.chipText {
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .chipSide {
   opacity: 0.7;
+}
+
+.chipClose {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin-right: -4px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.8;
+}
+
+.chipClose:hover {
+  opacity: 1;
+  background: var(--color-overlay-panel-border);
+}
+
+.chipClose:focus-visible {
+  outline: 1px solid var(--color-primary);
 }

@@ -29,6 +29,7 @@ import { ScopesPanel } from '@layout/Scopes';
 // commands on load. See `layout/Transcript/index.ts`.
 import { TranscriptPanel } from '@layout/Transcript';
 import { CharacterPanel } from '@layout/Inspector/CharacterPanel';
+import { ParagraphPanel } from '@layout/Inspector/ParagraphPanel';
 import { AlignPanel } from '@layout/Inspector/AlignPanel';
 import { InfoAudioPanel } from '@layout/Inspector/InfoAudioPanel';
 import { AudioPanel } from '@layout/Inspector/AudioPanel';
@@ -57,10 +58,12 @@ import { LibraryPanel } from './LibraryPanel';
  * panelOrder ids that no longer register, so persisted layouts and saved
  * workspaces holding the old ids simply lose the dead tabs.
  *
- * `paragraph` is gone for the same reason (2026-09-15): it had no def, so
- * nothing registered or opened it, and `ParagraphPanel` is a deprecated
- * re-export of `CharacterPanel` — registering it would have added a second
- * "Text" panel, not a Paragraph one.
+ * `paragraph` is back (2026-10) as a REAL Paragraph panel, AE's: it renders
+ * only the paragraph rows (alignment, indents, spacing, direction) of the
+ * shared `TextSettingsBody`, and Character only the character rows. From
+ * 2026-09-15 it was absent — it had no def, and `ParagraphPanel` was then a
+ * re-export of `CharacterPanel`, so registering it would have added a second
+ * "Text" panel rather than a Paragraph one.
  */
 export const PANEL_COMPONENTS: Readonly<Record<string, ComponentType>> = {
   scene: ScenePanel,
@@ -69,6 +72,7 @@ export const PANEL_COMPONENTS: Readonly<Record<string, ComponentType>> = {
   presets: MotionPresetsPanel,
   properties: PropertiesPanel,
   character: CharacterPanel,
+  paragraph: ParagraphPanel,
   align: AlignPanel,
   swatches: SwatchesPanel,
   info: InfoAudioPanel,

@@ -1,7 +1,7 @@
 /*
  * SelectionHeader — the identity row at the top of the Properties body: label
- * colour, kind glyph, name (double-click to rename) and the muted kind text.
- * The layer switches are rows in the panel's ⋯ menu, not buttons here.
+ * colour, kind glyph, name (double-click to rename) and the kind chip. The
+ * layer switches are rows in the panel's ≡ menu, not buttons here.
  */
 .header {
   display: flex;
@@ -49,17 +49,26 @@
   color: var(--color-text-tertiary);
 }
 
+/* The layer's name is its renamable VALUE, not a heading: the panel `value`
+   role's weight in the text face (the panel's only title is its tab). It is
+   what gives way in a narrow panel; the kind chip after it does not. */
 .name {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-semibold);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-value);
   color: var(--color-text-primary);
   cursor: default;
   user-select: none;
+}
+
+/* "3 layers" is short and is the point; the breakdown chip yields instead. */
+.nameCount {
+  flex: 1 0 auto;
 }
 
 .name:focus-visible {
@@ -78,20 +87,42 @@
   background: var(--color-surface-0);
   color: var(--color-text-primary);
   font: inherit;
-  font-size: var(--font-size-sm);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-value);
 }
 
 .nameInput:focus {
   outline: none;
 }
 
-/* Muted and allowed to shrink first: the name is what you came to read. */
-.kind {
+/*
+ * The kind, as a small bordered chip in the panel `label` role (2026-10-08).
+ * As muted text at the row's end it was the first thing cut off, and read like
+ * a second title. `flex: none`: it never truncates — the name gives way.
+ */
+.kindChip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: var(--control-height-2xs);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
+  line-height: 1;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+/* A multi-selection's breakdown can run long; that chip alone may yield. */
+.kindChipShrink {
   flex: 0 1 auto;
-  max-width: 45%;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--font-size-xs);
-  color: var(--color-text-tertiary);
+  display: inline-block;
+  line-height: calc(var(--control-height-2xs) - 2px);
 }

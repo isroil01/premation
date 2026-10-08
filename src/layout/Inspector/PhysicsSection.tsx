@@ -20,6 +20,7 @@ import type { BodyKind, ColliderShape, PhysicsBodyConfig } from '@core/simulatio
 import { runPhysicsBake } from './bakeEdits';
 import { BakeDialog } from './BakeDialog';
 import panel from '@layout/Effects/EffectsPanel.module.css';
+import tStyles from './TransformSection.module.css';
 
 const PHYSICS_PATH = 'layer/physics';
 const EDIT_LABEL = 'Edit Physics';
@@ -146,7 +147,7 @@ export function PhysicsSection({ nodeId }: { nodeId: string }): JSX.Element | nu
                     onChange={(e) => write({ rotate: e.target.checked })}
                     aria-label="Allow rotation"
                   />
-                  <span style={{ fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)' }}>
+                  <span className={tStyles.helpLine}>
                     {cfg.rotate ? 'Tumbles & rolls' : 'Translates only'}
                   </span>
                 </div>
@@ -208,7 +209,7 @@ export function PhysicsSection({ nodeId }: { nodeId: string }): JSX.Element | nu
                       onChange={(e) => w.set({ useCompBounds: e.target.checked })}
                       aria-label="Use composition bounds"
                     />
-                    <span style={{ fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)' }}>
+                    <span className={tStyles.helpLine}>
                       {w.useCompBounds ? 'Comp edges' : 'Open (leaves frame)'}
                     </span>
                   </div>

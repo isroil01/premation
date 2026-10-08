@@ -233,6 +233,6 @@
   "media": [],
   "tolerance": null,
   "fidelityOnly": false,
-  "description": "The same frame with the light AIMED THE OTHER WAY — the wall must go dark, the front face must not."
+  "description": "The same frame with the light AIMED THE OTHER WAY (-x, arriving from the right) — the visible wall now faces the light and lights up; the front face does not change."
  }
 }

@@ -25,6 +25,7 @@ import {
   type FalloffSource,
 } from '@core/scene/cloner';
 import panel from '@layout/Effects/EffectsPanel.module.css';
+import tStyles from './TransformSection.module.css';
 
 const MODES: ReadonlyArray<{ value: ClonerMode; label: string }> = [
   { value: 'linear', label: 'Linear' },
@@ -194,7 +195,7 @@ export function ClonerSection({ nodeId }: { nodeId: string }): JSX.Element | nul
               <PropertyRow label="Follow" compact>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%' }}>
                   <Checkbox checked={cfg.alignToRadius} onChange={(e) => write({ alignToRadius: e.target.checked })} aria-label="Follow path tangent" />
-                  <span style={{ fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)' }}>
+                  <span className={tStyles.helpLine}>
                     {cfg.alignToRadius ? 'Faces path' : 'Keep rotation'}
                   </span>
                 </div>

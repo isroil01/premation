@@ -37,6 +37,7 @@ import { isLayer } from '@core/mirror/docFacts';
 import { useEngineEdit, type EngineEdit } from './useEngineEdit';
 import styles from './ParentControl.module.css';
 import ta from './TextAnimatorControls.module.css';
+import tStyles from './TransformSection.module.css';
 
 const TYPES = Object.keys(AUDIO_EFFECT_DEFS) as AudioEffectType[];
 
@@ -101,10 +102,15 @@ export function AudioEffectsSection({ nodeId }: { nodeId: string }): JSX.Element
   return (
     <>
       <div className={styles.row}>
-        <span className={styles.label}>Audio Effects</span>
+        <span
+          className={styles.label}
+          title="Effects apply before the layer level, in order, and are included in exported audio."
+        >
+          Audio Effects
+        </span>
         <select
           className={styles.select}
-          style={{ width: 140, fontSize: 'var(--font-size-xs)' }}
+          style={{ width: 140 }}
           value=""
           onChange={(e) => { if (e.currentTarget.value) add(e.currentTarget.value as AudioEffectType); }}
           aria-label="Add audio effect"
@@ -115,9 +121,7 @@ export function AudioEffectsSection({ nodeId }: { nodeId: string }): JSX.Element
       </div>
 
       {chain.length === 0 && (
-        <p style={{ margin: '2px 0 6px', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
-          Effects apply before the layer level, in order, and are included in exported audio.
-        </p>
+        <p className={tStyles.helpLine}>No audio effects. They apply before the layer level, in order, and export with the audio.</p>
       )}
 
       {chain.map((e, i) => (

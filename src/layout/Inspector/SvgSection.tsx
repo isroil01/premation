@@ -12,48 +12,25 @@ import { useSvgDocument } from '@hooks/useSvgDocument';
 import { svgCapabilityWarnings } from '@core/svg/svgCapabilities';
 import { confirmAndConvertSvg, svgLayerDataOf } from './svgLayerActions';
 import { Icon } from '@components/Icon';
+import { Button } from '@components/Button';
 import styles from './TransformSection.module.css';
 
+/** A capability the conversion will lose — a real warning, so it stays on screen (panel `help` role). */
 function Warning({ text }: { text: string }): JSX.Element {
   return (
-    <div
-      style={{
-        display: 'flex',
-        gap: 6,
-        alignItems: 'flex-start',
-        fontSize: 'var(--font-size-micro)',
-        lineHeight: 1.45,
-        color: '#ffb703',
-        background: 'rgba(255, 183, 3, 0.08)',
-        border: '1px solid rgba(255, 183, 3, 0.2)',
-        borderRadius: 4,
-        padding: '6px 8px',
-      }}
-    >
-      <Icon name="warning" size="sm" style={{ flexShrink: 0, marginTop: 1 }} />
+    <div className={styles.warningBox} role="note">
+      <Icon name="warning" size="sm" />
       <span>{text}</span>
     </div>
   );
 }
 
+/** A read-only fact about the file: label, then the value as a readout. */
 function Row({ label, value }: { label: string; value: string }): JSX.Element {
   return (
     <div className={styles.popoverRow}>
       <span className={styles.popoverLabel}>{label}</span>
-      <span
-        style={{
-          fontSize: 'var(--font-size-xs)',
-          color: 'var(--color-text-secondary)',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-          maxWidth: 150,
-          textAlign: 'right',
-        }}
-        title={value}
-      >
-        {value}
-      </span>
+      <span className={styles.readout} title={value}>{value}</span>
     </div>
   );
 }
@@ -81,43 +58,23 @@ export function SvgSection({ nodeId }: { nodeId: string }): JSX.Element | null {
         <Row label="Playback" value={data.livePlayback ? 'Live SVG (time-scrubbed)' : 'Static texture'} />
       </div>
 
-      {warnings.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 10 }}>
-          {warnings.map((w) => (
-            <Warning key={w} text={w} />
-          ))}
-        </div>
-      )}
-
-      <p
-        style={{
-          margin: '12px 0 8px',
-          fontSize: 'var(--font-size-micro)',
-          lineHeight: 1.5,
-          color: 'var(--color-text-tertiary)',
-        }}
-      >
-        {data.livePlayback
-          ? 'This animated SVG plays with the timeline. Convert to Editable Shapes only when you need per-path keyframes — gradients, masks and filters may flatten.'
-          : 'The original file is stored intact and rendered as authored. Convert it to edit individual paths — gradients, masks and filters are flattened when you do.'}
-      </p>
-
-      <button
-        type="button"
-        onClick={() => void confirmAndConvertSvg(nodeId)}
-        style={{
-          width: '100%',
-          background: 'var(--color-surface-3)',
-          border: '1px solid var(--color-border)',
-          color: 'var(--color-text-primary)',
-          fontSize: 'var(--font-size-xs)',
-          padding: '6px',
-          borderRadius: 4,
-          cursor: 'pointer',
-        }}
-      >
-        Convert to Editable Shapes
-      </button>
+      <div className={styles.stackAfter}>
+        {warnings.map((w) => (
+          <Warning key={w} text={w} />
+        ))}
+        {/* What converting costs is the button's tooltip, not a paragraph in the list. */}
+        <Button
+          size="sm"
+          variant="secondary"
+          fullWidth
+          title={data.livePlayback
+            ? 'This animated SVG plays with the timeline. Convert only when you need per-path keyframes — gradients, masks and filters may flatten.'
+            : 'The original file is stored intact and rendered as authored. Convert it to edit individual paths — gradients, masks and filters are flattened when you do.'}
+          onClick={() => void confirmAndConvertSvg(nodeId)}
+        >
+          Convert to Editable Shapes
+        </Button>
+      </div>
     </div>
   );
 }
@@ -131,26 +88,16 @@ export function SvgSection({ nodeId }: { nodeId: string }): JSX.Element | null {
  */
 export function RevertSvgRow({ onRevert }: { onRevert: () => void }): JSX.Element {
   return (
-    <div style={{ marginTop: 10 }}>
-      <p style={{ margin: '0 0 6px', fontSize: 'var(--font-size-micro)', lineHeight: 1.5, color: 'var(--color-text-tertiary)' }}>
-        Converted from an SVG. The original file is still stored on this group.
-      </p>
-      <button
-        type="button"
+    <div className={styles.stackAfter}>
+      <Button
+        size="sm"
+        variant="secondary"
+        fullWidth
+        title="Converted from an SVG. The original file is still stored on this group."
         onClick={onRevert}
-        style={{
-          width: '100%',
-          background: 'var(--color-surface-3)',
-          border: '1px solid var(--color-border)',
-          color: 'var(--color-text-primary)',
-          fontSize: 'var(--font-size-xs)',
-          padding: '6px',
-          borderRadius: 4,
-          cursor: 'pointer',
-        }}
       >
         Revert to Original SVG
-      </button>
+      </Button>
     </div>
   );
 }

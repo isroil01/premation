@@ -41,6 +41,7 @@ import {
   smartMaskInterpolationEdit,
 } from '@layout/Effects/effectEdits';
 import styles from '@layout/Effects/EffectsPanel.module.css';
+import tStyles from './TransformSection.module.css';
 
 const MASK_MODES: ReadonlyArray<{ mode: MaskMode; label: string }> = [
   { mode: 'none', label: 'None' },
@@ -138,15 +139,7 @@ function MaskCard({
               if (ev.key === 'Enter') ev.currentTarget.blur();
               else if (ev.key === 'Escape') { setDraft(null); ev.currentTarget.blur(); }
             }}
-            style={{
-              width: '100%',
-              fontSize: 'var(--font-size-xs)',
-              padding: '2px 6px',
-              borderRadius: 4,
-              border: '1px solid var(--color-border, #333)',
-              background: 'var(--color-surface, #1e1e1e)',
-              color: 'inherit',
-            }}
+            className={tStyles.textInput}
           />
         </PropertyRow>
         {/* One PropertyRow per value, so a mask's Feather sits in the
@@ -320,7 +313,7 @@ export function MasksSection({ nodeId }: { nodeId: string }): JSX.Element {
         )}
       </div>
       {masks.length === 0 && (
-        <p className={styles.hint} style={{ margin: '4px 0', fontSize: 'var(--font-size-xs)', color: 'var(--color-text-tertiary)' }}>
+        <p className={styles.hint} style={{ margin: '4px 0' }}>
           No masks. Add one above or draw with Mask Rectangle / Ellipse / Pen.
         </p>
       )}

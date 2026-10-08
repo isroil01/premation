@@ -42,7 +42,7 @@ import { useGuidesStore, CAMERA_ORTHO_VIEWS, type Camera3dMode } from '@stores/g
 import { CUSTOM_VIEW_IDS, CUSTOM_VIEW_LABEL } from '@core/workspace/customViews';
 import { effectiveViewMode, useCompCameraViews } from '@layout/TopNav/ViewControls';
 import type { RenderView } from '@core/workspace/renderView';
-import { EnginePaneSurface } from '@components/EngineSurface/EnginePaneSurface';
+import { EnginePaneSurface, type PaneDrawnView } from '@components/EngineSurface/EnginePaneSurface';
 import { paintWireframeOverlay } from './wireframeOverlay';
 import { usePaneWorkspace } from './usePaneWorkspace';
 import { paneViewTransform } from './useSceneRefGeometry';
@@ -124,6 +124,20 @@ export function SecondaryViewPane({ mode: modeProp, onModeChange, style, classNa
   }, []);
   const viewTransform = paneViewTransform(paneBox.width, paneBox.height, compWidth, compHeight);
 
+  /**
+   * The view this pane's frame on screen was DRAWN with (EnginePaneSurface).
+   * The pane's camera (`getRenderView`) moves the moment a wheel or a
+   * middle-drag moves it; the pixels follow once the engine has drawn the new
+   * framing. Every piece of chrome below draws through the drawn view, so it
+   * moves with the pixels, not ahead of them. Reported once per applied
+   * viewport — one render each, never per frame; `rev` counts them.
+   */
+  const [drawn, setDrawn] = useState<{ view: PaneDrawnView; rev: number } | null>(null);
+  const onDrawnView = useCallback((view: PaneDrawnView) => setDrawn((p) => ({ view, rev: (p?.rev ?? 0) + 1 })), []);
+  const drawnRef = useRef(drawn);
+  drawnRef.current = drawn;
+  const drawnCustom = drawn?.view.view === 'custom' ? drawn.view.customView : null;
+
   // Interaction: this pane's own engine, hit-testing through THIS pane's view.
   const setActive = useGuidesStore((s) => s.setActiveViewPane);
   const activePane = useGuidesStore((s) => s.activeViewPane);
@@ -135,6 +149,7 @@ export function SecondaryViewPane({ mode: modeProp, onModeChange, style, classNa
     compWidth,
     compHeight,
     onActivate,
+    drawnCustomView: drawnCustom,
   });
   /**
    * ONE view for every piece of this pane's chrome.
@@ -152,7 +167,16 @@ export function SecondaryViewPane({ mode: modeProp, onModeChange, style, classNa
     (): RenderView => getRenderView() ?? fallbackViewRef.current,
     [getRenderView],
   );
-  const chromeTransform = getPaneView();
+  /** The chrome's view: the drawn frame's, else (no engine frame yet) the live camera's. */
+  const getShownView = useCallback(
+    (): RenderView => drawnRef.current?.view.render ?? getPaneView(),
+    [getPaneView],
+  );
+  const chromeTransform = getShownView();
+  // The chrome hooks re-read their view when the pane's camera moves or a frame
+  // drawn with another view lands (both counters only grow, so their sum changes
+  // whenever either does).
+  const chromeRev = framingRev + (drawn?.rev ?? 0);
 
   /**
    * This pane's 3D chrome, resolved through ITS mode and ITS transform.
@@ -163,7 +187,7 @@ export function SecondaryViewPane({ mode: modeProp, onModeChange, style, classNa
    * Selection, the axis mode and the write path stay global: dragging a handle
    * here is the same undoable command it is in the main viewport.
    */
-  const gizmo3d = useGizmo3d(containerRef, { mode, getView: getPaneView, viewRev: framingRev });
+  const gizmo3d = useGizmo3d(containerRef, { mode, getView: getShownView, viewRev: chromeRev, drawnCustomView: drawnCustom });
 
   // Render LAST, so it sees this pass's framing. `framingRev` rides in on the
   // revision because panning is not a scene change and nothing else would
@@ -179,8 +203,8 @@ export function SecondaryViewPane({ mode: modeProp, onModeChange, style, classNa
   // the page's geometry through the pane's view, each time anything moved.
   const wireframePaintedRef = useRef(false);
   useEffect(() => {
-    paintWireframeOverlay(wireframeOverlay, wireframeCanvasRef.current, getRenderView(), { width: compWidth, height: compHeight }, wireframePaintedRef);
-  }, [wireframeOverlay, getRenderView, compWidth, compHeight, sceneRev, framingRev, time, mode, paneBox.width, paneBox.height]);
+    paintWireframeOverlay(wireframeOverlay, wireframeCanvasRef.current, drawn?.view.render ?? getRenderView(), { width: compWidth, height: compHeight }, wireframePaintedRef);
+  }, [wireframeOverlay, getRenderView, compWidth, compHeight, sceneRev, framingRev, drawn, time, mode, paneBox.width, paneBox.height]);
   const selectedIds = useSelectionStore((s) => s.ids);
   // Selection outline from the PANE's own projection — the main viewport's
   // corners describe a different view and would draw the box in the wrong place.
@@ -225,6 +249,7 @@ export function SecondaryViewPane({ mode: modeProp, onModeChange, style, classNa
         mode={mode}
         getView={getPaneView}
         framingRev={framingRev}
+        onDrawnView={onDrawnView}
         style={{
           display: 'block',
           position: 'absolute',
@@ -273,9 +298,10 @@ export function SecondaryViewPane({ mode: modeProp, onModeChange, style, classNa
           {...gizmo3d}
           nodeId={gizmo3d.singleId ?? null}
           showGizmo={gizmo3d.is3D && !!gizmo3d.singleId}
-          // The LIVE pane transform, so the handles, the wireframes and the
-          // selection outline above are all positioned from the same numbers in
-          // the same render. (The hook's own copy is a rAF-coalesced mirror.)
+          // The pane transform of the frame on screen, so the handles, the
+          // wireframes and the selection outline above are all positioned from
+          // the same numbers in the same render. (The hook's own copy is a
+          // coalesced mirror.)
           viewTransform={chromeTransform}
         />
       )}
@@ -283,7 +309,7 @@ export function SecondaryViewPane({ mode: modeProp, onModeChange, style, classNa
           in the ortho panes and suppresses itself in the Active Camera one —
           exactly where pulling focus by hand does and does not make sense. */}
       {paneBox.width > 0 && (
-        <FocusPlaneOverlay mode={mode} getView={getPaneView} viewRev={framingRev} />
+        <FocusPlaneOverlay mode={mode} getView={getShownView} viewRev={chromeRev} drawnCustomView={drawnCustom} />
       )}
       <select
         value={shownMode}

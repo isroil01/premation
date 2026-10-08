@@ -327,8 +327,8 @@ function MographCard({ item }: { item: MographItem }): JSX.Element {
         <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ width: 3, height: 22, borderRadius: 2, background: item.color, flexShrink: 0 }} />
           <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: 1 }}>
-            <span style={{ fontSize: '0.78rem', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.name}</span>
-            <span style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', fontFamily: 'var(--font-family-mono)' }}>
+            <span className={styles.libCardName}>{item.name}</span>
+            <span className={styles.libCardMeta}>
               {item.cat} · {item.loop ? '∞ loop' : `${mographDuration(item).toFixed(1)}s`}
             </span>
           </span>
@@ -406,8 +406,8 @@ function TransitionCard({ item, onApply }: { item: TransitionItem; onApply: () =
         <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ width: 3, height: 22, borderRadius: 2, background: item.a, flexShrink: 0 }} />
           <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: 1 }}>
-            <span style={{ fontSize: '0.78rem', fontWeight: 600 }}>{item.name}</span>
-            <span style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', fontFamily: 'var(--font-family-mono)' }}>
+            <span className={styles.libCardName}>{item.name}</span>
+            <span className={styles.libCardMeta}>
               {item.cat} · {item.duration.toFixed(1)}s{item.solidOnly ? ' · solid' : ''}
             </span>
           </span>
@@ -539,8 +539,8 @@ function SfxCard({ item, busy, onInsert }: { item: SfxItem; busy: string | null;
           ))}
         </span>
         <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: 1 }}>
-          <span style={{ fontSize: '0.78rem', fontWeight: 600 }}>{busy === item.id ? 'Rendering…' : item.name}</span>
-          <span style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', fontFamily: 'var(--font-family-mono)' }}>
+          <span className={styles.libCardName}>{busy === item.id ? 'Rendering…' : item.name}</span>
+          <span className={styles.libCardMeta}>
             {item.cat} · {item.duration.toFixed(2)}s
           </span>
         </span>
@@ -651,7 +651,7 @@ function LottieContent(): JSX.Element {
 
   const importButton = (
     <div style={{ padding: '6px 8px 2px' }}>
-      <Button size="sm" variant="secondary" style={{ width: '100%', fontWeight: 600 }}
+      <Button size="sm" variant="secondary" style={{ width: '100%' }}
         leftIcon={<Icon name="download" size="sm" />}
         onClick={() => fileRef.current?.click()}>
         Import .json / .lottie File…
@@ -691,8 +691,7 @@ function LottieContent(): JSX.Element {
               <span className={styles.libChipThumb}
                 style={{ background: `radial-gradient(circle at 50% 45%, ${item.color}22 0%, transparent 70%), #09090b`, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <LottieCardPreview doc={item.doc} playing={hovered === item.id} />
-                <span style={{ position: 'absolute', bottom: 2, right: 3, fontSize: '0.52rem', fontWeight: 800,
-                  color: 'rgba(255,255,255,0.4)', letterSpacing: '0.04em' }}>LOTTIE</span>
+                <span className={styles.libThumbBadge}>Lottie</span>
                 <span className={styles.libChipStar}>
                   <FavoriteStar id={item.id} label={item.name} />
                 </span>

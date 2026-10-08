@@ -25,6 +25,7 @@ import { PropertyRow } from '@components/PropertyRow';
 import { ValueField } from '@components/ValueField';
 import { useActiveMirrorComp } from '@hooks/useMirror';
 import { DEFAULT_PARTICLE_BAKE_CAP, mirrorBakeRange, type BakeRange } from './bakeEdits';
+import tStyles from './TransformSection.module.css';
 
 export interface BakeDialogProps {
   open: boolean;
@@ -101,7 +102,7 @@ export function BakeDialog({
             <ValueField value={cap} min={1} precision={0} onChange={setCap} aria-label="Maximum particle layers" />
           </PropertyRow>
         )}
-        <p style={{ margin: '8px 0 0', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)' }}>
+        <p className={tStyles.helpLine}>
           {`${frames} frames in range → about ${sampled} keyframes per track before simplification.`}
           {withParticleCap
             ? ' The emitter is hidden and the baked layers are parented under a new null.'

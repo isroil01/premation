@@ -62,7 +62,17 @@ fn shadowTerm(worldIn : vec3<f32>, n : vec3<f32>, mtx : mat4x4<f32>, axis : vec4
   let cosN = abs(dot(n, axis.xyz));
   let slope = sqrt(max(0.0, 1.0 - cosN * cosN)) / max(cosN, 0.05);
   let bias = params.y * (1.0 + min(slope, 4.0) * 1.5);
-  let world = worldIn + n * (params.y / max(axis.w, 1e-9));
+  // The offset steps TOWARD the light. A layer is two-sided and its normal
+  // (the quad's +z) faces away from a light on the camera's side: stepped
+  // along it, the lookup sat behind its own surface and the layer shadowed
+  // itself (black lit head-on, a striped band at a grazing angle). A
+  // parallel light arrives back along the axis (an orthographic map: its w
+  // row is 0, 0, 0, 1); a point / spot light from origin, its position (a
+  // perspective map: its w row is the axis).
+  let persp = abs(mtx[0][3]) + abs(mtx[1][3]) + abs(mtx[2][3]) > 0.5;
+  let toLight = select(-axis.xyz, origin.xyz - worldIn, persp);
+  let nl = select(n, -n, dot(n, toLight) < 0.0);
+  let world = worldIn + nl * (params.y / max(axis.w, 1e-9));
   let clip = mtx * vec4<f32>(world, 1.0);
   if (clip.w <= 1e-6) { return 1.0; }
   var uv = (clip.xy / clip.w) * 0.5 + vec2<f32>(0.5);

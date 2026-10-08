@@ -25,8 +25,10 @@
 }
 
 .title {
-  font-size: var(--font-size-md);
-  font-weight: 700;
+  /* The panel `group` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-group);
   color: var(--color-text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -34,9 +36,12 @@
 }
 
 .subtitle {
-  font-size: var(--font-size-xs);
+  /* The panel `help` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  line-height: var(--panel-line-height-help);
   color: var(--color-text-secondary);
-  font-family: var(--font-family-mono);
   margin-top: 2px;
 }
 
@@ -47,10 +52,10 @@
 }
 
 .groupLabel {
-  font-size: var(--font-size-xs);
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  /* The panel `subgroup` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-subgroup);
   color: var(--color-text-secondary);
 }
 
@@ -61,6 +66,9 @@
 }
 
 .fieldLabel {
-  font-size: var(--font-size-sm);
+  /* The panel `label` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
   color: var(--color-text-secondary);
 }

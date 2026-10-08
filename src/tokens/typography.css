@@ -71,6 +71,40 @@
   --letter-spacing-normal:  -0.011em;
   --letter-spacing-wide:    0.02em;
   --letter-spacing-uppercase: 0.06em;
+
+  /* ── Panel type roles (2026-10) ──────────────────────────────────────
+     Every docked panel (Properties, Effects & Presets, Info, Audio, Preview,
+     Align, Character, Effect Controls, Project …) draws its text with these
+     roles and nothing else, so a title, a group, a label, a value and a button
+     can never be mistaken for one another:
+
+       tab       the panel's ONLY title — its tab. Never repeated inside.
+       group     a twirl row that opens and closes (an accordion section, a
+                 twirl-down). Never holds a checkbox or a button.
+       subgroup  a twirl row nested inside a group.
+       label     a property's name, a field's caption.
+       value     a property's value (scrubbable / editable) — numerals in mono.
+       button    a bordered verb.
+       help      a hint or an empty-state line. Never a paragraph in a list.
+
+     All one family and one size (Caption, 12px) except help (Tiny, 11px):
+     hierarchy comes from weight and colour, never from a size jump inside a
+     narrow column. Colours are in colors.css (`--color-text-*`). */
+  --panel-font-family: var(--font-family-sans);
+  --panel-font-family-value: var(--font-family-mono);
+  --panel-font-size: var(--font-size-sm);
+  --panel-line-height: var(--line-height-sm);
+  --panel-font-size-help: var(--font-size-xs);
+  --panel-line-height-help: var(--line-height-xs);
+
+  --panel-weight-tab: var(--font-weight-regular);
+  --panel-weight-tab-active: var(--font-weight-medium);
+  --panel-weight-group: var(--font-weight-semibold);
+  --panel-weight-subgroup: var(--font-weight-medium);
+  --panel-weight-label: var(--font-weight-regular);
+  --panel-weight-value: var(--font-weight-medium);
+  --panel-weight-button: var(--font-weight-medium);
+  --panel-weight-help: var(--font-weight-regular);
 }
 
 /* Simplified Chinese UI (set by core/i18n/localeRuntime via <html lang>).

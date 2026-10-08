@@ -39,7 +39,7 @@ describe('track-header column model', () => {
     name: 190,
     switches: 256,
     mode: 70,
-    matte: 58,
+    matte: 100,
     parent: 120,
   };
 
@@ -73,8 +73,8 @@ describe('TRACK_HEADER_MIN_WIDTH', () => {
 describe('headerWidthFor', () => {
   it('fits the mode columns in the default view', () => {
     // padding 8 + (97 + 16 rule) + 4 + 190
-    //         + 4 + (70 + 16) + 4 + (58 + 16) + 4 + (120 + 16)
-    expect(headerWidthFor('modes')).toBe(623);
+    //         + 4 + (70 + 16) + 4 + (100 + 16) + 4 + (120 + 16)
+    expect(headerWidthFor('modes')).toBe(665);
   });
 
   it('fits the switch column on its own', () => {

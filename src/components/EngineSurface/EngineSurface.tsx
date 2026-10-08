@@ -42,7 +42,8 @@ import { useViewportDisplayStore, viewportHudStats } from '@stores/viewportDispl
 import { useOnionSkinStore } from '@stores/onionSkinStore';
 import { useViewerLutStore } from '@stores/viewerLutStore';
 import { toStoredLut } from '@core/effects/cubeLut';
-import { publishFrameGeometry, setEngineDrivenViewport } from '@stores/overlayGeometry';
+import type { RenderView } from '@core/workspace/renderView';
+import { publishFrameGeometry, publishFrameView, setEngineDrivenViewport } from '@stores/overlayGeometry';
 import { captureLiveFrame, needsLiveFrame, useCompareStore } from '@stores/compareStore';
 import { publishFrame } from '@core/engine/frameTap';
 import { notePresented } from '@core/engine/presentedFrames';
@@ -107,6 +108,13 @@ export interface EngineSurfaceStats {
   viewportsSent: number;
   lastViewport: {
     width: number; height: number; dpr: number; zoom: number; panX: number; panY: number;
+    /**
+     * The page camera (WorkspaceController.getView: comp → stage CSS px) the
+     * zoom and pan were computed from — the comp → stage transform of every
+     * frame drawn with this viewport, which the overlays over the picture use
+     * (overlayGeometry `OverlayFrameView`; this object is one).
+     */
+    render: RenderView;
     /** setViewport `view`: the 3D view this surface renders ('active', an axis view, `camera:<id>`, 'custom'). */
     view: string;
     /** The custom view's orbit when `view` is 'custom' (customViews.ts), else null. */
@@ -121,7 +129,13 @@ export interface EngineSurfaceStats {
   errors: string[];
 }
 
-type Pending = { frame: VideoFrame; meta: EngineFrameMeta; release: () => void };
+type Pending = {
+  frame: VideoFrame;
+  meta: EngineFrameMeta;
+  release: () => void;
+  /** The viewport the engine had applied when the frame arrived — the view it was drawn with (null: none acknowledged yet). */
+  view: NonNullable<EngineSurfaceStats['lastViewport']> | null;
+};
 
 const CHANNEL: Record<string, ChannelView> = { rgb: 'rgb', red: 'red', green: 'green', blue: 'blue', alpha: 'alpha' };
 const RESOLUTION: Record<PreviewResolution, EnginePreviewResolution> = { 1: 'full', 2: 'half', 3: 'third', 4: 'quarter' };
@@ -203,21 +217,26 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
     const blitter = createFrameBlitter(canvas, () => { if (pending) schedule(); }, fail);
 
     /**
-     * The pasteboard uniform for a w×h frame: the comp rect under the camera the
-     * engine last applied, when that camera is the one this frame was drawn with
-     * (same aspect — a frame from before a resize shows as it is), the view is
-     * the 2D Active Camera (a custom 3D view is not a rectangle) and the theme
-     * colour parsed. Otherwise off: the frame shows unchanged.
+     * The pasteboard uniform for a w×h frame: the comp rect under `cam`, the
+     * camera this frame was drawn with (the viewport the engine had applied when
+     * it arrived), when its aspect is the frame's (a frame from before a resize
+     * shows as it is) and the theme colour parsed. Otherwise off: the frame
+     * shows unchanged.
+     *
+     * Every 3D view too (Front / Top / Custom View …): the engine scissors each
+     * view to the same on-screen comp rectangle (native_scene `frame_clip`), so
+     * the surround is clear-black there as well. Gating this on Active Camera
+     * left custom views one black field — the comp's window and the area
+     * outside it indistinguishable.
      */
-    const writeBoard = (w: number, h: number): void => {
+    const writeBoard = (w: number, h: number, cam: NonNullable<EngineSurfaceStats['lastViewport']> | null): void => {
       const now = performance.now();
       if (now - boardColorAt > 1000) {
         boardColorAt = now;
         boardRgb = parseCssRgb(getComputedStyle(canvas).color);
       }
-      const cam = applied;
       const size = compSizeRef.current;
-      const rect = cam && boardRgb && useGuidesStore.getState().camera3dMode === 'active'
+      const rect = cam && boardRgb
         && Math.abs(w / Math.max(1, h) - cam.width / Math.max(1, cam.height)) < 0.02
         ? compUvRect(cam, size.width, size.height)
         : null;
@@ -243,7 +262,10 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
       try {
         const w = p.frame.displayWidth;
         const h = p.frame.displayHeight;
-        writeBoard(w, h);
+        // The view this frame was drawn with: the viewport applied when it
+        // arrived (a frame that beat every acknowledgement: the latest one).
+        const drawnWith = p.view ?? applied;
+        writeBoard(w, h, drawnWith);
         // The scopes (frameTap) and a snapshot compare read THIS frame — the
         // engine's VideoFrame, drawn into a 2D copy now, before `release`
         // closes it. The tap returns on a size / clock check when nobody listens.
@@ -260,10 +282,15 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
           return;
         }
         const now = performance.now();
-        // B4 round 2: the overlays read THIS frame's geometry (the records it carried) from now on.
+        // B4 round 2: the overlays read THIS frame's geometry (the records it carried) from now on —
+        // and project it through the view the frame was drawn with, not the page's live view
+        // (core/workspace/displayedView.ts). `drawnWith` is one object per applied viewport:
+        // handing it over every frame allocates nothing.
         if (p.meta.geometry || p.meta.geometryViews) {
           // Filed under the window's LOCAL id: the overlays read viewport 1 in every window (windowViewport.ts).
-          publishFrameGeometry(ENGINE_SURFACE_VIEWPORT, p.meta.time, p.meta.revision, p.meta.geometry ?? [], p.meta.geometryViews);
+          publishFrameGeometry(ENGINE_SURFACE_VIEWPORT, p.meta.time, p.meta.revision, p.meta.geometry ?? [], p.meta.geometryViews, drawnWith);
+        } else if (drawnWith) {
+          publishFrameView(ENGINE_SURFACE_VIEWPORT, drawnWith);
         }
         stats.drawn += 1;
         stats.lastRevision = p.meta.revision;
@@ -315,7 +342,9 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
         stats.superseded += 1;
         pending.release();  // newest wins; the older slot goes straight back
       }
-      pending = { frame: frame as VideoFrame, meta, release };
+      // The viewport applied NOW is the one this frame was drawn with: a frame
+      // that arrives before a setViewport's acknowledgement was drawn before it.
+      pending = { frame: frame as VideoFrame, meta, release, view: applied };
       schedule();
     };
 
@@ -358,6 +387,8 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
         width, height, dpr, zoom,
         panX: zoom > 0 ? (r.width / 2 - v.offsetX) / zoom : 0,
         panY: zoom > 0 ? (r.height / 2 - v.offsetY) / zoom : 0,
+        // Kept (not copied): the frames of this viewport are drawn at exactly this comp → stage transform.
+        render: v,
         view, customView, onion,
         exposure: display.exposure,
         transparencyGrid: display.transparencyGrid,

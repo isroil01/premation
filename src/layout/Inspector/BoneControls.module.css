@@ -21,8 +21,10 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: var(--font-size-xs);
-  font-weight: 600;
+  /* A card's name: the panel `subgroup` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-subgroup);
   color: var(--color-text-primary);
   min-width: 0;
   white-space: nowrap;
@@ -32,8 +34,11 @@
 
 .badge {
   padding: 1px 5px;
-  font-size: var(--font-size-micro);
-  font-weight: 600;
+  /* A count beside a name: the panel `label` role, tinted. */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
+  line-height: 1.2;
   border-radius: 4px;
   background: rgba(43, 126, 255, 0.15);
   color: var(--color-primary);
@@ -69,8 +74,9 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: var(--font-size-xs);
-  font-weight: 600;
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-subgroup);
   color: var(--color-text-primary);
   min-width: 0;
   white-space: nowrap;
@@ -78,10 +84,13 @@
   text-overflow: ellipsis;
 }
 
+/* A hint under a card: the panel `help` role. */
 .subText {
-  font-size: var(--font-size-micro);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  line-height: var(--panel-line-height-help);
   color: var(--color-text-tertiary);
-  font-weight: 400;
   flex-shrink: 0;
 }
 
@@ -95,7 +104,10 @@
 }
 
 .paramLabel {
-  font-size: var(--font-size-xs);
+  /* A property's name: the panel `label` role. */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
   color: var(--color-text-secondary);
   white-space: nowrap;
   overflow: hidden;
@@ -121,9 +133,11 @@
   flex: 1;
   height: 24px;
   padding: 2px 8px;
-  font-size: var(--font-size-micro);
+  /* A bordered verb: the panel `button` role. */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-button);
   line-height: 1;
-  font-weight: 500;
   border-radius: 4px;
   background: var(--color-surface-2);
   color: var(--color-text-secondary);
@@ -156,9 +170,11 @@
   border-radius: 6px;
   background: rgba(43, 126, 255, 0.08);
   border: 1px solid rgba(43, 126, 255, 0.2);
-  font-size: var(--font-size-micro);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  line-height: var(--panel-line-height-help);
   color: var(--color-text-secondary);
-  line-height: 1.4;
 }
 
 .tipCard strong {
@@ -172,7 +188,9 @@
   gap: 4px;
   padding: 2px 7px;
   height: 22px;
-  font-size: var(--font-size-micro);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-button);
   line-height: 1;
   vertical-align: middle;
   border-radius: 4px;
@@ -195,9 +213,11 @@
 }
 
 .warningBox {
-  font-size: var(--font-size-micro);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
   color: var(--color-text-tertiary);
-  line-height: 1.4;
+  line-height: var(--panel-line-height-help);
   padding: 6px 8px;
   background: var(--color-surface-2);
   border-radius: 4px;
@@ -206,4 +226,43 @@
   display: block;
 }
 
+/* The rig's selects (was an inline style object shared by five of them): the
+   value a select shows is in the panel `value` role's size and weight. */
+.select {
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: var(--color-surface-1);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-field-border);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-value);
+}
 
+/* A bone's name in the hierarchy list. */
+.boneName {
+  flex: 1;
+  line-height: 1;
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
+}
+
+/* The selected bone's editable name: a value until focused, then a field. */
+.nameInput {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 4px;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-text-primary);
+  border: 1px solid transparent;
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-value);
+}
+
+.nameInput:focus {
+  outline: none;
+  border-color: var(--color-field-border);
+}

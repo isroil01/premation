@@ -233,6 +233,6 @@
   "media": [],
   "tolerance": null,
   "fidelityOnly": false,
-  "description": "Extruded box under a parallel light aimed +x — the visible wall faces the light."
+  "description": "Extruded box under a parallel light aimed +x (it arrives from the left) — the visible wall faces +x, away from the light, and stays dark; the two-sided front face is lit."
  }
 }

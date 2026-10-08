@@ -23,6 +23,7 @@ function reshapePath(nodeId: string, mode: 'smooth' | 'straighten'): void {
   void motionPathCommands(nodeId, mode).then((cmds) => edit(mode === 'smooth' ? 'Smooth motion path' : 'Straighten motion path', cmds));
 }
 import styles from './ParentControl.module.css';
+import tStyles from './TransformSection.module.css';
 
 export function MotionControls({ nodeId }: { nodeId: string }): JSX.Element | null {
   const layer = useMirrorLayer(nodeId);
@@ -59,12 +60,12 @@ export function MotionControls({ nodeId }: { nodeId: string }): JSX.Element | nu
           <span className={styles.label}>
             Auto-Orient
             {autoOrient === 'path' && !animated && (
-              <span style={{ opacity: 0.5, fontWeight: 400 }}> · needs position keys</span>
+              <span className={tStyles.labelNote}> · needs position keys</span>
             )}
           </span>
           <select
             className={styles.select}
-            style={{ width: 128, fontSize: 'var(--font-size-xs)' }}
+            style={{ width: 128 }}
             value={autoOrient}
             onChange={(e) => { void setLayersSwitch([nodeId], { autoOrient: API_AUTO_ORIENT[e.currentTarget.value as AutoOrientMode] }, 'Auto-Orient'); }}
             aria-label="Auto-orient"
@@ -84,7 +85,7 @@ export function MotionControls({ nodeId }: { nodeId: string }): JSX.Element | nu
       <div className={styles.row}>
         <span className={styles.label}>
           Motion Path
-          {!animated && <span style={{ opacity: 0.5, fontWeight: 400 }}> · needs position keys</span>}
+          {!animated && <span className={tStyles.labelNote}> · needs position keys</span>}
         </span>
         <span style={{ display: 'inline-flex', gap: 6 }}>
           <button

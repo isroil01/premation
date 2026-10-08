@@ -25,7 +25,8 @@ import { compHas3DContent } from '@core/mirror/compLayers';
 import { settingsWorld } from '@core/mirror/compFacts';
 import { sceneGizmosFrom, sceneLayersOf, viewCameraOf } from '@core/mirror/viewGeometry';
 import { isSceneCameraView, orthoViewOf } from '@core/scene/cameraViewMode';
-import { isCustomViewId } from '@core/workspace/customViews';
+import { isCustomViewId, type CustomViewParams } from '@core/workspace/customViews';
+import { drawnCustomView } from '@core/workspace/displayedView';
 import type { Camera3dMode } from '@stores/guidesStore';
 import type { Camera3D, OrthoView } from '@motion/scene';
 import type { SceneGizmo } from '@motion/workspace';
@@ -69,7 +70,22 @@ export interface SceneRefGeometry {
   geometryTick: number;
 }
 
-export function useSceneRefGeometry(mode: Camera3dMode): SceneRefGeometry {
+export interface SceneRefOptions {
+  /**
+   * This is the MAIN viewport's view (its picture is EngineSurface's): a custom
+   * view's camera is the orbit its frame on screen was drawn with
+   * (displayedView.ts), not the stored one that runs ahead of the picture while
+   * the view is navigated. A pane draws its own frames — leave it off.
+   */
+  mainViewport?: boolean;
+  /**
+   * A pane's own: the custom orbit ITS frame on screen was drawn with
+   * (EnginePaneSurface `PaneDrawnView`), null/absent = the stored one.
+   */
+  drawnCustomView?: CustomViewParams | null;
+}
+
+export function useSceneRefGeometry(mode: Camera3dMode, options?: SceneRefOptions): SceneRefGeometry {
   const selectedIds = useSelectionStore((s) => s.ids);
   const customViews = useGuidesStore((s) => s.customViews);
   const groundGridSetting = useGuidesStore((s) => s.groundGridVisible);
@@ -131,8 +147,10 @@ export function useSceneRefGeometry(mode: Camera3dMode): SceneRefGeometry {
   const geometryTick = useOverlayRequest('sceneRef', sceneLayers, SCENE_REF_KINDS, isCustomViewId(mode) ? [] : [mode]);
   const at = secondsToFlicks(time);
   const view = isCustomViewId(mode) ? undefined : overlayView(MAIN_VIEWPORT, mode, at);
-  // Custom views build their camera from their STORED params (the scene camera ignored).
-  const camera: Camera3D = viewCameraOf(mode, view, customViews, compWidth, compHeight);
+  // Custom views build their camera from their own params (the scene camera
+  // ignored): in the main viewport, those of the frame on screen — re-read here
+  // as each frame lands (`geometryTick`).
+  const camera: Camera3D = viewCameraOf(mode, view, customViews, compWidth, compHeight, options?.mainViewport ? drawnCustomView(mode) : options?.drawnCustomView ?? null);
   const activeCameraId: string | null = isCustomViewId(mode) ? null : view?.camera || null;
   const recordOf = useMemo(
     () => (id: string): OverlayLayer | undefined => overlayLayer(MAIN_VIEWPORT, id, at),

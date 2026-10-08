@@ -7,20 +7,27 @@
  * evaluated at the frame's own time — the parent chain and ANIMATED values
  * included, exactly what the renderer drew), composed with the viewport
  * camera's comp → screen. A 3D layer's matrix is its world 4×4; it is seen
- * through the view camera the push resolves (`OverlayView`, the `active` view),
- * so layer → comp is a plane-to-plane PROJECTION — a homography, exact for a
- * pinhole camera — and comp → layer its inverse (the ray met on the layer's own
- * plane, as After Effects resolves `fromComp`).
+ * through the view on screen — the current view mode's projection
+ * (core/workspace/displayedView.ts `mainViewProjector`: an axis view's
+ * orthographic one, a `camera:<id>` view's own camera, a custom view's orbit
+ * as drawn, else the camera the push resolves) — so layer → comp is a
+ * plane-to-plane PROJECTION — a homography, exact for a pinhole camera and
+ * affine for an axis view — and comp → layer its inverse (the ray met on the
+ * layer's own plane, as After Effects resolves `fromComp`).
+ *
+ * It used to project through the ACTIVE camera in every view, so in Top / Left
+ * / a custom view / another camera's view the pins and handles of a 3D layer
+ * sat where the active camera would have drawn it, not on the layer.
  *
  * `useLayerScreenMapping` (src/hooks) subscribes the layer to the push and
  * rebuilds the mapping when a frame lands.
  */
 
-import { secondsToFlicks, type OverlayView } from '@motion/engine-api';
-import { Project3D } from '@motion/scene';
-import { MAIN_VIEWPORT, overlayLayer, overlayView, type OverlayLayer } from '@stores/overlayGeometry';
+import { secondsToFlicks } from '@motion/engine-api';
+import type { Vec3 } from '@motion/scene';
+import { MAIN_VIEWPORT, overlayLayer, type OverlayLayer } from '@stores/overlayGeometry';
 import { documentMirror } from '@stores/documentMirror';
-import { viewCameraOf } from '@core/mirror/viewGeometry';
+import { mainViewProjector } from '@core/workspace/displayedView';
 import type { Camera2DLike } from './cameraTypes';
 
 export interface LayerScreenMapping {
@@ -80,12 +87,18 @@ export function homography(src: ReadonlyArray<{ x: number; y: number }>, dst: Re
   return [h[0]!, h[1]!, h[2]!, h[3]!, h[4]!, h[5]!, h[6]!, h[7]!, 1];
 }
 
-/** Layer-local → comp as a 3×3 (row-major) from a pushed record, or null without a matrix. */
+/** World → comp px of the view a 3D layer is seen through (viewGeometry `projectorOf`). */
+export type ViewProjector = (p: Vec3) => { x: number; y: number };
+
+/**
+ * Layer-local → comp as a 3×3 (row-major) from a pushed record, or null without
+ * a matrix (or for a 3D layer seen edge-on, whose plane has no inverse). A 3D
+ * layer's plane goes through `project`, the view on screen.
+ */
 export function layerToComp(
   record: OverlayLayer | undefined,
   threeD: boolean,
-  view: OverlayView | undefined,
-  comp: { width: number; height: number },
+  project: ViewProjector,
 ): H | null {
   const m = record?.matrix;
   if (!m || m.length < 16) return null;
@@ -93,17 +106,16 @@ export function layerToComp(
     // The 2D chain as a column-major 4×4: x' = m0·x + m4·y + m12, y' = m1·x + m5·y + m13.
     return [m[0]!, m[4]!, m[12]!, m[1]!, m[5]!, m[13]!, 0, 0, 1];
   }
-  const camera = viewCameraOf('active', view, {}, comp.width, comp.height);
   const local = [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }];
   const projected = local.map((p) => {
-    const w = {
+    const o = project({
       x: m[0]! * p.x + m[4]! * p.y + m[12]!,
       y: m[1]! * p.x + m[5]! * p.y + m[13]!,
       z: m[2]! * p.x + m[6]! * p.y + m[14]!,
-    };
-    const o = Project3D.projectPoint(w, camera);
+    });
     return { x: o.x, y: o.y };
   });
+  if (!projected.every((p) => Number.isFinite(p.x) && Number.isFinite(p.y))) return null;
   return homography(local, projected);
 }
 
@@ -111,11 +123,10 @@ export function layerToComp(
 export function layerScreenMappingFrom(
   record: OverlayLayer | undefined,
   threeD: boolean,
-  view: OverlayView | undefined,
-  comp: { width: number; height: number },
+  project: ViewProjector,
   camera: Camera2DLike,
 ): LayerScreenMapping | null {
-  const h = layerToComp(record, threeD, view, comp);
+  const h = layerToComp(record, threeD, project);
   if (!h) return null;
   const inv = invert3(h);
   return {
@@ -133,11 +144,15 @@ function isThreeD(nodeId: string): boolean {
   return l?.switches.threeD === true || l?.kind === 'camera' || l?.kind === 'light';
 }
 
+/** A 2D layer's mapping never projects (its chain is already comp px). */
+const FLAT: ViewProjector = (p) => p;
+
 /**
  * The mapping for `nodeId` at comp `time` (seconds) from the main viewport's
- * push — the caller has subscribed the layer with kind `transform` and the
- * `active` view (`useLayerScreenMapping`, or its own request). Null before the
- * first record.
+ * push, through the main viewport's current view — the caller has subscribed
+ * the layer with kind `transform` (`useLayerScreenMapping`, or its own request;
+ * the view mode's camera rides the frames for the viewport's lifetime,
+ * viewNav.ts `requestMainViewCamera`). Null before the first record.
  */
 export function layerScreenMapping(
   nodeId: string,
@@ -146,5 +161,8 @@ export function layerScreenMapping(
   camera: Camera2DLike,
 ): LayerScreenMapping | null {
   const at = secondsToFlicks(time);
-  return layerScreenMappingFrom(overlayLayer(MAIN_VIEWPORT, nodeId, at), isThreeD(nodeId), overlayView(MAIN_VIEWPORT, 'active', at), comp, camera);
+  const record = overlayLayer(MAIN_VIEWPORT, nodeId, at);
+  if (!record) return null;
+  const threeD = isThreeD(nodeId);
+  return layerScreenMappingFrom(record, threeD, threeD ? mainViewProjector(comp.width, comp.height, at) : FLAT, camera);
 }

@@ -22,7 +22,10 @@
   background: transparent;
   color: var(--color-text-primary);
   font: inherit;
-  font-size: var(--font-size-sm);
+  /* The panel `subgroup` role (typography.css): a twirl-down inside a section. */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-subgroup);
   cursor: pointer;
 }
 
@@ -51,7 +54,8 @@
   white-space: nowrap;
   text-overflow: ellipsis;
   color: var(--color-text-tertiary);
-  font-size: var(--font-size-sm);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-label);
 }
 
 .trailing {

@@ -2,7 +2,9 @@ import { render, screen, fireEvent, act, cleanup } from '@testing-library/react'
 import { CharacterPanel } from '../CharacterPanel';
 import { ParagraphPanel } from '../ParagraphPanel';
 import { TooltipProvider } from '@components/Tooltip';
+import { DockPanel } from '@components/DockPanel';
 import { useSelectionStore } from '@stores/selectionStore';
+import { useLayoutStore } from '@stores/layoutStore';
 import { PANEL_DEFS, availablePanelDefs, panelDef } from '@layout/EditorLayout/panelDefs';
 import { PANEL_COMPONENTS } from '@layout/EditorLayout/panelRenderers';
 import { clearHistory, setupAppEngine, historyLabels } from '@core/engine/__testHelpers__/appEngine';
@@ -14,13 +16,23 @@ import { componentPropsCommands } from '../useComponentProp';
 import { componentOfType } from '@core/engine/propRefs';
 import { documentMirror } from '@stores/documentMirror';
 
-// The panel reads the document mirror and writes through the engine API
+// The panels read the document mirror and write through the engine API
 // (B3/B4): the fixture is the app's engine, the text layers are created through
-// it and seeded with the same command builders the panel writes with, and each
+// it and seeded with the same command builders the panels write with, and each
 // action is pinned as ONE undo entry that undo reverses.
+//
+// Since 2026-10 they are After Effects' TWO panels: Character draws the
+// character rows, Paragraph the paragraph rows — one body (`TextSettingsBody`),
+// two variants — and neither draws a heading (the tab is the title).
 jest.useFakeTimers();
 
-function renderPanel() {
+class StubResizeObserver {
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+}
+
+function renderCharacter() {
   return render(
     <TooltipProvider>
       <CharacterPanel />
@@ -28,10 +40,26 @@ function renderPanel() {
   );
 }
 
+function renderParagraph() {
+  return render(
+    <TooltipProvider>
+      <ParagraphPanel />
+    </TooltipProvider>,
+  );
+}
+
 const textComp = async (id: string) => (await docView()).getNode(id)?.components.find((c) => c.type === 'Text');
 
-describe('Unified Text Panel (Character + Paragraph)', () => {
+/** The paragraph rows: the seven alignment buttons, then indents and spacing. */
+const ALIGN_BUTTONS = ['Left Align', 'Center Align', 'Right Align', 'Justify Last Left', 'Justify Last Center', 'Justify Last Right', 'Justify All Lines'];
+const PARAGRAPH_FIELDS = ['Paragraph Spacing', 'First Line Indent', 'Left Indent', 'Right Indent', 'Space Before', 'Space After'];
+
+describe('Character and Paragraph panels', () => {
   let h: Harness;
+
+  beforeAll(() => {
+    (globalThis as { ResizeObserver?: unknown }).ResizeObserver = StubResizeObserver;
+  });
 
   beforeEach(async () => {
     h = await setupAppEngine();
@@ -62,15 +90,19 @@ describe('Unified Text Panel (Character + Paragraph)', () => {
   const settle = (): void => { act(() => { jest.advanceTimersByTime(2000); }); };
   const undo = async (): Promise<void> => { await act(async () => { await h.run({ type: 'undo' }); }); };
 
-  it('renders default text panel when no text node is selected', async () => {
-    renderPanel();
-    expect(screen.getByText('Text')).toBeInTheDocument();
-    expect(screen.getByText('Default Preset')).toBeInTheDocument();
-    expect(screen.getByText('Typography')).toBeInTheDocument();
-    expect(screen.getByText(/Paragraph/)).toBeInTheDocument();
+  it('Character with nothing selected: no "Text" heading, the character rows, none of the paragraph rows', async () => {
+    renderCharacter();
+    // The tab is the panel's only title.
+    expect(screen.queryByText('Text')).not.toBeInTheDocument();
+    expect(screen.queryByText('Typography')).not.toBeInTheDocument();
+    expect(screen.queryByText('Default Preset')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Font Size')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Faux Bold' })).toBeInTheDocument();
+    for (const name of ALIGN_BUTTONS) expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
+    for (const label of PARAGRAPH_FIELDS) expect(screen.queryByLabelText(label)).not.toBeInTheDocument();
   });
 
-  it('renders both character and paragraph controls for selected text layer', async () => {
+  it('Character renders the character controls for a selected text layer — and no paragraph rows', async () => {
     const textNode = await addTextNode('Headline Layer', {
       content: 'Hello World',
       fontSize: 48,
@@ -85,44 +117,48 @@ describe('Unified Text Panel (Character + Paragraph)', () => {
     });
 
     act(() => { useSelectionStore.setState({ ids: [textNode] }); });
-    renderPanel();
+    renderCharacter();
 
-    // Verify layer name in header badge
-    expect(screen.getByText('Headline Layer')).toBeInTheDocument();
-
-    // Verify content textarea
+    // The Source Text group.
     const textarea = screen.getByPlaceholderText('Type text content here...') as HTMLTextAreaElement;
-    expect(textarea).toBeInTheDocument();
     expect(textarea.value).toBe('Hello World');
 
-    // Verify typography controls
+    // Typography
     expect(screen.getByLabelText('Font Size')).toHaveValue(48);
     expect(screen.getByLabelText('Leading (Line Height)')).toHaveValue(1.3);
+    expect(screen.getByLabelText('Tracking (Letter Spacing)')).toBeInTheDocument();
 
-    // Verify character style buttons
     // AE's synthetic styles — independent of the weight menu and the font's italic.
-    expect(screen.getByRole('button', { name: 'Faux Bold' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Faux Italic' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'All Caps' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Small Caps' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Superscript' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Subscript' })).toBeInTheDocument();
+    for (const name of ['Faux Bold', 'Faux Italic', 'All Caps', 'Small Caps', 'Superscript', 'Subscript']) {
+      expect(screen.getByRole('button', { name })).toBeInTheDocument();
+    }
 
-    // Verify all 7 alignment buttons
-    expect(screen.getByRole('button', { name: 'Left Align' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Center Align' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Right Align' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Justify Last Left' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Justify Last Center' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Justify Last Right' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Justify All Lines' })).toBeInTheDocument();
+    // The app's extras are group rows that open and close, after AE's rows.
+    for (const name of ['Source Text', 'Text Box', 'Presets']) {
+      expect(screen.getByRole('button', { name })).toHaveAttribute('aria-expanded', 'true');
+    }
 
-    // Verify paragraph metrics
+    // The paragraph rows are the Paragraph panel's now.
+    for (const name of ALIGN_BUTTONS) expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
+    for (const label of PARAGRAPH_FIELDS) expect(screen.queryByLabelText(label)).not.toBeInTheDocument();
+  });
+
+  it('Paragraph renders the paragraph rows only — alignment, indents, spacing, direction', async () => {
+    const textNode = await addTextNode('Body Copy', { content: 'Paragraph content', paragraphSpacing: 12, align: 'left' });
+
+    act(() => { useSelectionStore.setState({ ids: [textNode] }); });
+    renderParagraph();
+
+    for (const name of ALIGN_BUTTONS) expect(screen.getByRole('button', { name })).toBeInTheDocument();
     expect(screen.getByLabelText('Paragraph Spacing')).toHaveValue(12);
-    expect(screen.getByLabelText('First Line Indent')).toBeInTheDocument();
-    expect(screen.getByLabelText('Left Indent')).toBeInTheDocument();
-    expect(screen.getByLabelText('Right Indent')).toBeInTheDocument();
-    expect(screen.getByLabelText('Space Before')).toBeInTheDocument();
+    for (const label of PARAGRAPH_FIELDS) expect(screen.getByLabelText(label)).toBeInTheDocument();
+    expect(screen.getByRole('radiogroup', { name: 'Text Direction' })).toBeInTheDocument();
+
+    // No character rows, no Source Text, no heading.
+    expect(screen.queryByLabelText('Font Size')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Faux Bold' })).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('Type text content here...')).not.toBeInTheDocument();
+    expect(screen.queryByText('Paragraph & Alignment')).not.toBeInTheDocument();
   });
 
   it('updates alignment when paragraph alignment buttons are clicked — one undo entry per click', async () => {
@@ -135,7 +171,7 @@ describe('Unified Text Panel (Character + Paragraph)', () => {
     act(() => {
       useSelectionStore.setState({ ids: [textNode] });
     });
-    renderPanel();
+    renderParagraph();
     const before = (await h.doc());
 
     fireEvent.click(screen.getByRole('button', { name: 'Center Align' }));
@@ -168,7 +204,7 @@ describe('Unified Text Panel (Character + Paragraph)', () => {
     act(() => {
       useSelectionStore.setState({ ids: [textNode] });
     });
-    renderPanel();
+    renderParagraph();
     const before = (await h.doc());
 
     const spacingInput = screen.getByLabelText('Paragraph Spacing');
@@ -185,11 +221,32 @@ describe('Unified Text Panel (Character + Paragraph)', () => {
     expect((await h.doc())).toBe(before);
   });
 
-  it('ParagraphPanel exports the unified component for backward compatibility', async () => {
-    expect(ParagraphPanel).toBe(CharacterPanel);
+  it('Character offers its text style presets in the dock ≡ menu, not as a header button', async () => {
+    const textNode = await addTextNode('Styled Layer', { content: 'Styled' });
+    act(() => {
+      const layout = useLayoutStore.getState();
+      layout.registerPanel({ id: 'character', title: 'Character', icon: 'type', region: 'rightInspector', closable: true } as never);
+      layout.openPanel('character');
+      useSelectionStore.setState({ ids: [textNode] });
+    });
+    render(
+      <TooltipProvider>
+        <DockPanel region="rightInspector" renderers={{ character: () => <CharacterPanel /> }} />
+      </TooltipProvider>,
+    );
+    await idle();
+    expect(screen.queryByRole('button', { name: 'Text style presets' })).not.toBeInTheDocument();
+
+    const menus = screen.getAllByRole('button', { name: 'Panel options' });
+    fireEvent.click(menus[menus.length - 1]!);
+    expect(screen.getByRole('menuitem', { name: 'Text Style Presets' })).toBeInTheDocument();
   });
 
-  describe('Panel Registry Consolidation', () => {
+  it('ParagraphPanel is its own panel now, not a re-export of CharacterPanel', async () => {
+    expect(ParagraphPanel).not.toBe(CharacterPanel);
+  });
+
+  describe('Panel registry', () => {
     it('character panel is titled "Character" (AE) with icon "type"', async () => {
       const def = panelDef('character');
       expect(def).toBeDefined();
@@ -198,20 +255,20 @@ describe('Unified Text Panel (Character + Paragraph)', () => {
       expect(def?.region).toBe('rightInspector');
     });
 
-    it('separate paragraph panel is removed from PANEL_DEFS to avoid duplicate tabs', async () => {
-      const paragraphDef = PANEL_DEFS.find((p) => p.id === 'paragraph');
-      expect(paragraphDef).toBeUndefined();
-
-      const availableIds = availablePanelDefs().map((p) => p.id);
-      expect(availableIds).toContain('character');
-      expect(availableIds).not.toContain('paragraph');
+    it('registers Paragraph right after Character, permanent and closable, with a glyph of its own', async () => {
+      const ids = PANEL_DEFS.map((p) => p.id);
+      expect(ids.indexOf('paragraph')).toBe(ids.indexOf('character') + 1);
+      const def = panelDef('paragraph');
+      expect(def).toMatchObject({ id: 'paragraph', title: 'Paragraph', icon: 'text-left', region: 'rightInspector', weight: 4.48, closable: true });
+      expect(def?.onDemand).toBeUndefined();
+      // Icons are distinct glyphs (panelDefs.ts): no other panel uses it.
+      expect(PANEL_DEFS.filter((p) => p.icon === def?.icon).map((p) => p.id)).toEqual(['paragraph']);
+      expect(availablePanelDefs().map((p) => p.id)).toContain('paragraph');
     });
 
-    it('PANEL_COMPONENTS maps character (and paragraph, while it is still mapped) to CharacterPanel', async () => {
+    it('PANEL_COMPONENTS maps character to CharacterPanel and paragraph to ParagraphPanel', async () => {
       expect(PANEL_COMPONENTS.character).toBe(CharacterPanel);
-      // `paragraph` had no def and was dropped from the renderer map; if it is
-      // ever mapped again it must be the same shared panel, never a copy.
-      expect([undefined, CharacterPanel]).toContain(PANEL_COMPONENTS.paragraph);
+      expect(PANEL_COMPONENTS.paragraph).toBe(ParagraphPanel);
     });
   });
 });

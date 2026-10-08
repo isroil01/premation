@@ -302,7 +302,7 @@ export function buildViewportCommands(): ReadonlyArray<Command> {
     {
       id: asCommandId(VIEWPORT_COMMAND_IDS.snapshot),
       label: 'Take Snapshot',
-      description: 'Freeze the frame on screen for A/B, wipe or difference comparison.',
+      description: 'Store the frame on screen for A/B, wipe or difference comparison. Show Snapshot (Shift+F5) displays it.',
       icon: 'camera',
       shortcut: { key: 'F5' },
       enabled: () => true,
@@ -311,6 +311,12 @@ export function buildViewportCommands(): ReadonlyArray<Command> {
         getWorkspaceController().requestRender();
         // The capture is taken from the next drawn frame: a still viewport draws none unless asked.
         refreshViewportPicture();
+        // The view does not change (the snapshot is stored, not shown), so say it happened.
+        useUIStore.getState().notify({
+          level: 'info',
+          message: 'Snapshot taken — Shift+F5 (Show Snapshot) to compare it with the live view.',
+          durationMs: 3000,
+        });
       },
     },
     {

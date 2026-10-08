@@ -28,14 +28,13 @@ import { compHas3DContent, flattenCompLayers } from '@core/mirror/compLayers';
 import { settingsWorld } from '@core/mirror/compFacts';
 import { uiKindOf } from '@core/mirror/layerKinds';
 import { isSceneCameraView } from '@core/scene/cameraViewMode';
+import { mainViewCamera, mainViewProjector } from '@core/workspace/displayedView';
 import {
   cameraOfLens,
   navTargetOf,
   navUnavailableMessage,
   orbitPivotFrom,
-  projectorOf,
   sceneLayersOf,
-  viewCameraOf,
   type PivotPlane,
 } from '@core/mirror/viewGeometry';
 
@@ -92,7 +91,7 @@ export function orbitPivotNow(cursor: { x: number; y: number } | null, compWidth
   const at = now();
   const view = overlayView(MAIN_VIEWPORT, mode, at);
   const live = view?.liveCamera ? overlayLayer(MAIN_VIEWPORT, view.liveCamera, at)?.scene : undefined;
-  const cam = (live?.role === 'camera' ? cameraOfLens(live.lens) : null) ?? viewCameraOf(mode, view, g.customViews, compWidth, compHeight);
+  const cam = (live?.role === 'camera' ? cameraOfLens(live.lens) : null) ?? mainViewCamera(compWidth, compHeight, at, mode);
   const m = documentMirror();
   const planes: PivotPlane[] = [];
   for (const id of sceneLayersOf(m, activeCompId())) {
@@ -108,10 +107,7 @@ export function orbitPivotNow(cursor: { x: number; y: number } | null, compWidth
 
 /** The main view's world → comp projector at comp seconds `time` (the frame on screen's camera). */
 export function viewProjectorNow(compWidth: number, compHeight: number, time: number): (p: Vec3) => { x: number; y: number } {
-  const g = useGuidesStore.getState();
-  const mode = g.camera3dMode;
-  const cam = viewCameraOf(mode, overlayView(MAIN_VIEWPORT, mode, secondsToFlicks(time)), g.customViews, compWidth, compHeight);
-  return projectorOf(mode, cam, compWidth, compHeight);
+  return mainViewProjector(compWidth, compHeight, secondsToFlicks(time));
 }
 
 /** Is `nodeId` the camera the main view looks through? */

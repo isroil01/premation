@@ -58,13 +58,16 @@
   padding: 0 var(--space-5);
   background: transparent;
   border: none;
-  color: var(--color-text-secondary);
+  color: var(--color-text-primary);
   font: inherit;
-  /* Sentence case at the row size, medium weight. A column of UPPERCASE
-     semibold headers read as a wall of labels shouting over the values; the
-     open or hovered header is lifted to primary instead. */
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
+  /* The panel `group` role (typography.css): sentence case at the row size,
+     semibold, primary. A section header has to read as a heading at a glance —
+     at medium weight in the label colour it was indistinguishable from the
+     property labels under it (2026-10 review). Still never UPPERCASE: a column
+     of capitals reads as a wall of labels shouting over the values. */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-group);
   text-align: left;
   cursor: pointer;
   transition:
@@ -110,8 +113,8 @@
   align-items: center;
   flex: none;
   color: var(--color-text-tertiary);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-regular);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
   text-transform: none;
   letter-spacing: 0;
 }

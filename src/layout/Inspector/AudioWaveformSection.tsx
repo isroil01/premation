@@ -11,6 +11,8 @@
  */
 
 import { ValueField } from '@components/ValueField';
+import { Button } from '@components/Button';
+import { cn } from '@utils/cn';
 import type { LayerInfo } from '@motion/engine-api';
 import { documentMirror } from '@stores/documentMirror';
 import { useMirrorKeys } from '@hooks/useMirror';
@@ -55,17 +57,18 @@ export function AudioWaveformSection({ nodeId }: { nodeId: string }): JSX.Elemen
 
   return (
     <div className={styles.section}>
-      <h4 className={styles.title}>Audio Waveform</h4>
+      {/* The section ("Audio waveform") already names this block; what it
+          draws is the Source row's tooltip, not a paragraph in the list. */}
       <div className={styles.inlineRows}>
-        <p style={{ margin: '0 0 4px', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
-          Draws the amplitude <strong>envelope</strong> of an audio layer (not a frequency spectrum).
-        </p>
-
         <div className={styles.popoverRow}>
-          <span className={styles.popoverLabel}>Source</span>
+          <span
+            className={styles.popoverLabel}
+            title="Draws the amplitude envelope of an audio layer (not a frequency spectrum), from the source's precomputed peaks — deterministic, so scrubbing is stable. Nothing draws until the audio has decoded."
+          >
+            Source
+          </span>
           <select
-            className={styles.select}
-            style={{ width: 130 }}
+            className={cn(styles.select, styles.rowSelect)}
             value={cfg.sourceLayerId}
             onChange={(e) => set('sourceLayerId', e.target.value)}
             aria-label="Source audio layer"
@@ -78,21 +81,16 @@ export function AudioWaveformSection({ nodeId }: { nodeId: string }): JSX.Elemen
         </div>
 
         {audioLayers.length === 0 && (
-          <p style={{ margin: '2px 0 4px', fontSize: 'var(--font-size-micro)', color: '#ffb703', lineHeight: 1.5 }}>
-            No audio layers in this scene — import an audio file first.
-          </p>
+          <p className={styles.helpWarning} role="note">No audio layers in this scene — import an audio file first.</p>
         )}
         {sourceMissing && (
-          <p style={{ margin: '2px 0 4px', fontSize: 'var(--font-size-micro)', color: '#ffb703', lineHeight: 1.5 }}>
-            The linked audio layer no longer exists — pick another source.
-          </p>
+          <p className={styles.helpWarning} role="note">The linked audio layer no longer exists — pick another source.</p>
         )}
 
         <div className={styles.popoverRow}>
           <span className={styles.popoverLabel}>Display</span>
           <select
-            className={styles.select}
-            style={{ width: 130 }}
+            className={cn(styles.select, styles.rowSelect)}
             value={cfg.mode}
             onChange={(e) => set('mode', e.target.value as AudioWaveformConfig['mode'])}
             aria-label="Waveform display mode"
@@ -126,21 +124,11 @@ export function AudioWaveformSection({ nodeId }: { nodeId: string }): JSX.Elemen
           <ValueField {...scrub} value={cfg.samples} min={2} onChange={(v) => set('samples', Math.max(2, Math.floor(Number(v))))} aria-label="Samples" />
         </div>
 
-        <button
-          type="button"
-          onClick={() => { void edit('Remove Audio Waveform', audioWaveformCommands(nodeId, null)); }}
-          style={{
-            marginTop: 6, height: 22, padding: '0 10px', fontSize: 'var(--font-size-micro)', fontWeight: 600,
-            background: 'var(--color-surface-3)', color: 'var(--color-text-secondary)',
-            border: '1px solid var(--color-border)', borderRadius: 4, cursor: 'pointer', alignSelf: 'flex-start',
-          }}
-        >
-          Remove Audio Waveform
-        </button>
-
-        <p style={{ margin: '6px 0 0', fontSize: 'var(--font-size-micro)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
-          Deterministic — driven by the source's precomputed peaks; scrubbing is stable. Nothing draws until the audio has decoded.
-        </p>
+        <div className={styles.actionRow}>
+          <Button size="sm" variant="secondary" onClick={() => { void edit('Remove Audio Waveform', audioWaveformCommands(nodeId, null)); }}>
+            Remove Audio Waveform
+          </Button>
+        </div>
       </div>
     </div>
   );

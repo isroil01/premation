@@ -46,6 +46,8 @@ jest.mock('@core/workspace/WorkspaceController', () => ({
       return () => { mockRenderListeners.delete(fn); };
     },
     requestRender: () => undefined,
+    // 1:1, unpanned — the comp → stage view the overlays map through (useDisplayedCamera2D).
+    getView: () => ({ scale: 1, offsetX: 0, offsetY: 0 }),
     ws: {
       camera: {
         zoom: 1,

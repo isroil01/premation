@@ -4766,11 +4766,11 @@ export interface OverlayScene3D {
 export interface OverlayView {
   /** The mode as subscribed. */
   mode: string;
-  /** The camera layer the view's chrome resolves (viewCameraNode: a live `camera:<id>` view's camera, else the composition's topmost enabled camera — no in/out test); empty = none (the default camera). Reported for the axis and custom views too. */
+  /** The camera layer the view looks through at the frame's time — the renderer's own pick (threed_port.cpp view_camera_node): a `camera:<id>` view's camera, else the composition's topmost enabled camera that is inside its in/out bar at the frame; empty = none (the default camera). The chrome, the gizmos and the camera tools all use it, so they sit on the frame drawn. Reported for the axis and custom views too. */
   camera: LayerId;
-  /** The camera the renderer's rule picks for this view (the same, plus the layer being inside its in/out bar at the frame) — what the camera tools drive; empty = none. */
+  /** The same layer as `camera` (kept for readers that asked for the renderer's pick by this name); empty = none. */
   liveCamera: LayerId;
-  /** The chrome camera resolved at the frame (cameraFromNode, parent-lifted; the default camera when none): position x, y, z, focalLength, principal x, y, yaw, pitch, roll. The axis views project without it; a custom view replaces it with its stored camera (editor state). */
+  /** `camera` resolved at the frame's time (cameraFromNode, parent-lifted; the default camera when none): position x, y, z, focalLength, principal x, y, yaw, pitch, roll. The axis views project without it; a custom view replaces it with its stored camera (editor state). */
   lens: number[];
   /** The composition size the view was resolved at. */
   compWidth: number;
