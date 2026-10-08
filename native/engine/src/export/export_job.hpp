@@ -90,6 +90,8 @@ struct JobSpec {
   std::vector<std::string> pluginPaths;
   std::vector<std::string> pluginDisabled;
   std::string pluginRevoked;
+  /// The Premation Cloud entitlement token file (plugins/entitlement.hpp); empty = none.
+  std::string pluginEntitlement;
   /// Output bits per channel. 8 = the raw pipe's rgba (byte-compatible with the
   /// Chromium path); 16 = rgba64le read from a half-float surface (engine only:
   /// ~11 significant bits near white, more toward black — binary16's mantissa).

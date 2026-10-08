@@ -53,6 +53,26 @@ let user: { id?: string; email?: string } = {};
 let plan: string | null = null;
 let loaded = false;
 
+/**
+ * Told when an account signs in (a token pair carrying a user arrived) or the
+ * session ends. The plugin store refreshes the Premation Cloud entitlement on
+ * the first and drops it on the second (electron/ipc/nativePlugins.ts).
+ */
+type SessionListener = (event: 'signedIn' | 'signedOut') => void;
+const sessionListeners: SessionListener[] = [];
+export function onSessionChange(fn: SessionListener): void {
+  sessionListeners.push(fn);
+}
+function emitSession(event: 'signedIn' | 'signedOut'): void {
+  for (const fn of sessionListeners) {
+    try {
+      fn(event);
+    } catch {
+      // A listener's failure is its own; the session change already happened.
+    }
+  }
+}
+
 export interface AuthStatus {
   signedIn: boolean;
   userId?: string;
@@ -92,6 +112,7 @@ async function adopt(pair: TokenPair): Promise<void> {
   if (pair.user) {
     user = { id: pair.user.id ?? user.id, email: pair.user.email ?? user.email };
     if (pair.user.plan) plan = pair.user.plan;
+    emitSession('signedIn');
   }
   // An empty refresh token means the response carried only a bearer. Persisting
   // "" would leave a stored credential that fails on the next launch for no
@@ -113,6 +134,7 @@ export async function clearSession(): Promise<void> {
   user = {};
   plan = null;
   await clearStoredCredentials();
+  emitSession('signedOut');
 }
 
 export function accessTokenExpired(): boolean {

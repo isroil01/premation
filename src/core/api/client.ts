@@ -753,6 +753,8 @@ export interface StorePluginSummary {
   homepage?: string | null;
   latestVersion: string;
   kind: 'js' | 'native';
+  /** `cloud`: a Premation plugin included with Premation Cloud (download answers 402 `plan_required` without it). */
+  tier?: 'free' | 'cloud';
   sdk: { major: number; minor: number } | null;
   platforms: string[];
   effects: Array<{ matchName: string; name: string; category: string }>;
@@ -792,6 +794,7 @@ function storePluginFromWire<T extends StorePluginSummary>(p: T): T {
   return {
     ...p,
     kind: p.kind ?? 'js',
+    tier: p.tier === 'cloud' ? 'cloud' : 'free',
     sdk: p.sdk ?? null,
     platforms: Array.isArray(p.platforms) ? p.platforms : [],
     effects: Array.isArray(p.effects) ? p.effects : [],

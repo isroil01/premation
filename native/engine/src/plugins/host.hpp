@@ -39,6 +39,7 @@
 #include <variant>
 #include <vector>
 
+#include "entitlement.hpp"
 #include "guard.hpp"
 #include "native_effects.hpp"
 
@@ -78,7 +79,8 @@ struct EffectSpec {
   [[nodiscard]] bool has(std::uint32_t flag) const noexcept { return (outFlags & flag) != 0; }
 };
 
-enum class PluginStatus : std::uint8_t { loaded, disabled, failed, quarantined, revoked };
+/// `locked`: needs an entitlement (manifest `entitlement`) with no valid token — never loaded.
+enum class PluginStatus : std::uint8_t { loaded, disabled, failed, quarantined, revoked, locked };
 [[nodiscard]] std::string_view to_string(PluginStatus s) noexcept;
 
 /// What the host tells the world about one plugin (listPlugins).
@@ -192,6 +194,16 @@ struct HostOptions {
   /// (`--revoked <file>`): plugin id → reason. A revoked plugin is listed
   /// `revoked` and never loaded; setPluginEnabled cannot turn it on.
   std::map<std::string, std::string, std::less<>> revoked;
+  /// The Premation Cloud entitlement token file (`--entitlement`, written by
+  /// Electron main; entitlement.hpp). A bundle whose manifest requires an
+  /// entitlement loads only when this verifies and has not expired; otherwise
+  /// it is listed `locked` and its effects pass through.
+  std::filesystem::path entitlement;
+  /// The key the token must be signed with (tests substitute their own).
+  std::string operatorKey = std::string(kOperatorPublicKey);
+  /// Milliseconds since the epoch, for the token's expiry (tests pin it).
+  /// Read at load only — never during rendering.
+  std::function<std::int64_t()> nowMs;
 };
 
 /// `--revoked <file>`: `{"revoked":[{"id":"…","reason":"…"}]}` → id → reason.

@@ -1,5 +1,6 @@
 #include "native_effects.hpp"
 
+#include <algorithm>
 #include <array>
 #include <deque>
 #include <memory>
@@ -35,6 +36,8 @@ struct State {
   NativeEffects::ListFn list;
   NativeEffects::UiFn ui;
   NativeEffects::ListFn rescan;
+  /// Plugin ids listed `locked` (no entitlement).
+  std::vector<std::string> locked;
 };
 
 State& state() {
@@ -87,6 +90,21 @@ bool NativeEffects::available(std::string_view type) noexcept {
   const std::shared_lock lock(s.mutex);
   const auto it = s.byType.find(type);
   return it != s.byType.end() && it->second->available;
+}
+
+void NativeEffects::set_locked(std::string_view plugin, bool locked) {
+  State& s = state();
+  const std::unique_lock lock(s.mutex);
+  std::erase(s.locked, plugin);
+  if (locked) s.locked.emplace_back(plugin);
+}
+
+bool NativeEffects::locked(std::string_view type) noexcept {
+  State& s = state();
+  const std::shared_lock lock(s.mutex);
+  return std::ranges::any_of(s.locked, [&](const std::string& id) {
+    return type == id || (type.size() > id.size() + 1 && type.starts_with(id) && type[id.size()] == '.');
+  });
 }
 
 void NativeEffects::set_handlers(CreatedFn created, ActionFn action, EnabledFn enabled) {

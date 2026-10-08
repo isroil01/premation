@@ -135,6 +135,34 @@ describe('installed plugins with the store', () => {
   });
 });
 
+describe('a Premation Cloud plugin without the plan', () => {
+  afterEach(() => { delete (window as { motionEditor?: unknown }).motionEditor; });
+
+  it('is listed as requiring Premation Cloud, cannot be switched on, and "Check plan" refreshes the entitlement', async () => {
+    jest.mocked(engine).mockReturnValue({
+      query: jest.fn(async () => ({ ok: true, value: { type: 'listPlugins', plugins: [{ ...base, id: 'premation.saber', name: 'Saber', version: '1.0.0', status: 'locked', error: 'Requires Premation Cloud (no Premation Cloud sign-in on this computer)' }] }, revision: 1 })),
+      execute: jest.fn(),
+    } as never);
+    const state = { plugins: { 'premation.saber': { version: '1.0.0', publisherKey: 'k', enabled: true, installedAt: 1 } }, uninstall: [] as string[] };
+    const bridge = {
+      openNativeFolder: jest.fn(),
+      installed: jest.fn(async () => state),
+      refreshEntitlement: jest.fn(async () => ({ plan: 'pro', validUntil: Date.parse('2026-11-15T00:00:00Z') })),
+      host: { platform: 'linux', arch: 'x64' },
+    };
+    (window as { motionEditor?: unknown }).motionEditor = { plugins: bridge };
+    const { api } = await import('@core/api/client');
+    jest.spyOn(api, 'checkPluginUpdates').mockResolvedValue([]);
+
+    render(<NativePluginsPanel />);
+    expect(await screen.findByText('Requires Premation Cloud')).toBeInTheDocument();
+    expect(screen.queryByRole('switch', { name: 'Enable Saber' })).toBeNull();
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Check plan' })); });
+    expect(bridge.refreshEntitlement).toHaveBeenCalled();
+    expect(await screen.findByText(/Restart Premation to load its plugins/)).toBeInTheDocument();
+  });
+});
+
 describe('the plugin store page', () => {
   const originalFetch = global.fetch;
   afterEach(() => {
@@ -155,7 +183,7 @@ describe('the plugin store page', () => {
       plugins: { installed: jest.fn(async () => null), install: jest.fn(), host: { platform: 'linux', arch: 'x64' } },
     };
     const { PluginStoreBrowser } = await import('./PluginStore');
-    const store = { installed: null, updates: new Map(), busy: null, message: null, refresh: jest.fn(), install: jest.fn(), uninstall: jest.fn(), setEnabled: jest.fn(), clearMessage: jest.fn() };
+    const store = { installed: null, updates: new Map(), busy: null, message: null, refresh: jest.fn(), install: jest.fn(), uninstall: jest.fn(), setEnabled: jest.fn(), checkPlan: jest.fn(), clearMessage: jest.fn() };
 
     render(<PluginStoreBrowser store={store} />);
     expect(await screen.findByText('Acme Glow')).toBeInTheDocument();

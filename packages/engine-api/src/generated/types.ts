@@ -549,14 +549,18 @@ export type PropertyKind =
   | 'indexedGroup';
 export const PropertyKindValues = ['property', 'group', 'indexedGroup'] as const;
 
-/** `revoked`: on the registry's signed revocation list (Electron passes it with `--revoked`); its code never runs. */
+/**
+ * `revoked`: on the registry's signed revocation list (Electron passes it with `--revoked`); its code never runs.
+ * `locked`: its manifest requires an entitlement (`"entitlement": "premation-cloud"`) and no valid entitlement token was passed (`--entitlement`); its code never runs and its effects pass through, recorded on `layerErrors` (plan §3.2).
+ */
 export type PluginStatus =
   | 'loaded'
   | 'disabled'
   | 'failed'
   | 'quarantined'
-  | 'revoked';
-export const PluginStatusValues = ['loaded', 'disabled', 'failed', 'quarantined', 'revoked'] as const;
+  | 'revoked'
+  | 'locked';
+export const PluginStatusValues = ['loaded', 'disabled', 'failed', 'quarantined', 'revoked', 'locked'] as const;
 
 export type HitMode =
   | 'topmost'

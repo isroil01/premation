@@ -486,6 +486,7 @@ add_library(engine_plugins STATIC
   src/plugins/guard_ffi.cpp
   src/plugins/journal_ffi.cpp
   src/plugins/cpu_render.cpp
+  src/plugins/entitlement.cpp  # Premation Cloud: the operator-signed token checked before a bundle loads
 )
 target_include_directories(engine_plugins PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/plugins ${CMAKE_CURRENT_SOURCE_DIR}/../sdk/include)
 target_link_libraries(engine_plugins PUBLIC engine_core Threads::Threads PRIVATE ${CMAKE_DL_LIBS} motion::options)
@@ -609,7 +610,7 @@ endif()
 if(MOTION_BUILD_TESTS)
   # The host against the SDK's sample bundles (native/sdk): load, render at
   # 8/16/32 bpc, sequence data, checkouts, the journal, crash isolation.
-  add_executable(engine_plugins_tests tests/test_plugin_host.cpp tests/test_plugin_session.cpp)
+  add_executable(engine_plugins_tests tests/test_plugin_host.cpp tests/test_plugin_session.cpp tests/test_plugin_entitlement.cpp)
   target_link_libraries(engine_plugins_tests PRIVATE engine_plugins motion::options Catch2::Catch2WithMain)
   target_include_directories(engine_plugins_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
   target_compile_definitions(engine_plugins_tests PRIVATE

@@ -189,6 +189,28 @@ folders into `%ProgramData%\Premation\Plug-ins` (Windows),
 `--plugins` (and the export job too); main never writes it. The revocation
 list covers its bundles by id and version like installed ones.
 
+## 4b. Premation Cloud plugins (plan §3.2)
+
+- A manifest may say `"entitlement": "premation-cloud"`. Only the verified
+  `premation` publisher can publish such a package (403
+  `tier_not_allowed`); the plugin is `tier: "cloud"` in listings and its
+  download answers 402 `plan_required` unless the caller's plan includes
+  Premation plugins.
+- `GET /plugins/entitlement` (signed in) answers `{ plan, token, validUntil }`.
+  `token` is `{ payload, signature }`: `payload` is JSON `{ v: 1, userId,
+  plan: "pro", validUntil, issuedAt }` signed with the operator key (the
+  revocation list's key, pinned in the app and the engine); `validUntil` is
+  the paid period's end + 14 days.
+- Main refreshes it at start, at sign-in and every 24 h, verifies it, keeps
+  it as `<userData>/native-plugins/entitlement.json` and deletes it at
+  sign-out. A plan without Premation plugins keeps the token already here
+  (it runs to its own end); offline changes nothing.
+- The engine gets `--entitlement <file>` (export jobs: `pluginEntitlement`)
+  and checks the signature and `validUntil` before opening such a bundle.
+  Without a valid token the plugin is `locked`: never loaded, its effects
+  pass through with "requires Premation Cloud" on `layerErrors`, the project
+  keeps every value, and renewing (then restarting) brings it back.
+
 ## 5. Engine
 
 - `rescanPlugins` (command, `70_jobs.eapi`): rescans the plugin folders and

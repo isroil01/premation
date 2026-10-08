@@ -106,6 +106,13 @@ std::optional<Manifest> parse_manifest(std::string_view json, std::span<const st
     }
     m.effects.push_back(std::move(me));
   }
+  if (const js::Json& ent = j.at("entitlement"); !ent.is_undefined()) {
+    if (!ent.is_string() || ent.str().empty()) {
+      error = "\"entitlement\" must be a string";
+      return std::nullopt;
+    }
+    m.entitlement = ent.str();
+  }
   return m;
 }
 

@@ -679,6 +679,7 @@ enum class PluginStatus : std::uint32_t {
   failed = 2,
   quarantined = 3,
   revoked = 4,
+  locked = 5,
 };
 [[nodiscard]] std::string_view to_string(PluginStatus v) noexcept;
 [[nodiscard]] bool from_u32(std::uint32_t n, PluginStatus& out) noexcept;

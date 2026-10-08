@@ -9,6 +9,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, type StorePluginSummary, type StorePluginUpdate } from '@core/api/client';
 import { engine } from '@core/engine/engineInstance';
 import {
+  checkPremationCloud,
   installFromStore,
   installedPlugins,
   setPluginEnabled,
@@ -49,6 +50,8 @@ export interface InstalledState {
   install: (id: string, version: string, owner?: boolean) => Promise<void>;
   uninstall: (id: string) => Promise<void>;
   setEnabled: (id: string, enabled: boolean) => Promise<void>;
+  /** Premation Cloud: refresh the entitlement now (a locked plugin's "Check plan"). */
+  checkPlan: () => Promise<void>;
   clearMessage: () => void;
 }
 
@@ -118,6 +121,7 @@ export function useInstalledPlugins(onEngineChange?: () => void): InstalledState
       const err = await uninstallPlugin(engine(), id);
       return err ? { text: err, error: true } : { text: `${id} is disabled and will be removed when Premation restarts.`, error: false };
     }),
+    checkPlan: () => run('premation-cloud', checkPremationCloud),
     setEnabled: (id, enabled) => run(id, async () => {
       const err = await setPluginEnabled(engine(), id, enabled);
       return err ? { text: err, error: true } : { text: `${id} ${enabled ? 'enabled' : 'disabled'}.`, error: false };

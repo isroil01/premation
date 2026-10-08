@@ -157,3 +157,23 @@ export function hostPlatformKeys(): string[] | null {
 export function runsHere(platforms: readonly string[], here: readonly string[]): boolean {
   return platforms.some((p) => here.includes(p));
 }
+
+/**
+ * Premation Cloud (docs/PLUGIN_PLATFORM_PLAN.md §3.2): ask main to refresh the
+ * entitlement token now — after an upgrade — and say what happens next. A
+ * plugin locked at engine start loads at the next start. Never throws.
+ */
+export async function checkPremationCloud(): Promise<{ text: string; error: boolean }> {
+  const refresh = bridge()?.refreshEntitlement;
+  if (!refresh) return { text: 'Premation Cloud plugins need the desktop app.', error: true };
+  try {
+    const s = await refresh();
+    if (s.plan === 'pro' && s.validUntil !== null) {
+      return { text: 'Premation Cloud is active on this computer. Restart Premation to load its plugins.', error: false };
+    }
+    if (s.plan === 'free') return { text: 'This account\'s plan does not include Premation plugins. Upgrade in Account ▸ Billing.', error: true };
+    return { text: 'Could not check the plan. Sign in and try again.', error: true };
+  } catch {
+    return { text: 'Could not check the plan.', error: true };
+  }
+}

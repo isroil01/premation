@@ -23,7 +23,7 @@ import styles from './NativePlugins.module.css';
 
 function statusClass(status: NativePlugin['status']): string | undefined {
   if (status === 'loaded') return styles.statusLoaded;
-  if (status === 'failed' || status === 'quarantined' || status === 'revoked') return styles.statusFailed;
+  if (status === 'failed' || status === 'quarantined' || status === 'revoked' || status === 'locked') return styles.statusFailed;
   return styles.status;
 }
 
@@ -41,7 +41,12 @@ function RowActions({ plugin, store }: { plugin: NativePlugin; store: InstalledS
           Update to {update.latestVersion}
         </Button>
       ) : null}
-      {plugin.status !== 'revoked' ? (
+      {plugin.status === 'locked' ? (
+        <Button size="sm" variant="secondary" disabled={busy} onClick={() => void store.checkPlan()}>
+          Check plan
+        </Button>
+      ) : null}
+      {plugin.status !== 'revoked' && plugin.status !== 'locked' ? (
         <Switch
           checked={plugin.status !== 'disabled'}
           disabled={busy || plugin.status === 'failed'}

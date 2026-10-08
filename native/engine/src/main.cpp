@@ -16,6 +16,7 @@
 //                    [--plugin-journal F]  the plugin crash journal (quarantines a plugin that killed the engine)
 //                    [--plugin-disabled ID] a plugin the user disabled: listed, not loaded (repeatable)
 //                    [--revoked F]         the verified revocation list: listed plugins never load
+//                    [--entitlement F]     the Premation Cloud entitlement token (plugins/entitlement.hpp)
 //                    [--version]
 //   premation-engine --export JOB.json     F1: render one export job and exit (export/export_job.hpp)
 //   premation-engine --job JOB.json        an engine job's crash-isolated half (jobs/child_job.hpp)
@@ -139,6 +140,9 @@ int run(int argc, char** argv) {
       ok = !v.empty();
     } else if (k == "--revoked") {
       o.pluginRevoked = std::string(v);
+      ok = !v.empty();
+    } else if (k == "--entitlement") {
+      o.pluginEntitlement = std::string(v);
       ok = !v.empty();
     } else if (k == "--log-level") {
       if (v == "debug") o.logLevel = premation::log::Level::debug;

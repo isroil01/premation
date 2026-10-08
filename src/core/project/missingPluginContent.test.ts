@@ -11,13 +11,13 @@ function doc(nodes: unknown[]): Uint8Array {
   return new TextEncoder().encode(JSON.stringify({ version: 1, scene: { nodes } }));
 }
 
-function fakeClient(opts: { layers: Array<{ id: string; generator: string }>; nodes: unknown[]; failDoc?: boolean }) {
+function fakeClient(opts: { layers: Array<{ id: string; generator: string }>; nodes: unknown[]; failDoc?: boolean; plugins?: unknown[] }) {
   const writes: Array<{ label: string; commands: Command[] }> = [];
   const client = {
     query: async (q: { type: string }) => {
       switch (q.type) {
         case 'listEffects': return { ok: true, value: { effects: [{ matchName: 'blur' }, { matchName: 'glow' }] } };
-        case 'listPlugins': return { ok: true, value: { plugins: [{ id: 'com.native.fx', effects: ['com.native.fx.ripple'] }] } };
+        case 'listPlugins': return { ok: true, value: { plugins: opts.plugins ?? [{ id: 'com.native.fx', effects: ['com.native.fx.ripple'] }] } };
         case 'exportDocument':
           return opts.failDoc ? { ok: false, error: { code: 'internal', message: 'no' } } : { ok: true, value: { document: doc(opts.nodes) } };
         case 'getDocument': return { ok: true, value: { layers: opts.layers } };
@@ -52,6 +52,24 @@ describe('findMissingPluginContent', () => {
     expect(r!.message).toMatch(/^Missing plugins com\.vendor\.pack, studio\.acme\.lab\./);
     expect(r!.message).toMatch(/2 effects and 1 layer are kept/);
     expect(writes).toHaveLength(0);
+  });
+
+  it('★ names a locked Premation Cloud plugin as requiring the plan, not as missing', async () => {
+    const { client, writes } = fakeClient({
+      layers: [{ id: 'a', generator: '' }],
+      nodes: [fx('a', [{ id: 'fx1', type: 'premation.saber' }, { id: 'fx2', type: 'premation.saber' }, { id: 'fx3', type: 'com.vendor.pack.glowish' }])],
+      plugins: [{ id: 'premation.saber', status: 'locked', effects: ['premation.saber'] }],
+    });
+    const r = await findMissingPluginContent(client);
+    expect(r).toMatchObject({ effects: 1, lockedEffects: 2, lockedPlugins: ['premation.saber'], plugins: ['com.vendor.pack'] });
+    expect(r!.message).toMatch(/premation\.saber requires Premation Cloud\. 2 effects keep every setting and pass through until the plan is active again\./);
+    expect(writes).toHaveLength(0);
+    const only = fakeClient({
+      layers: [{ id: 'a', generator: '' }],
+      nodes: [fx('a', [{ id: 'fx1', type: 'premation.saber' }])],
+      plugins: [{ id: 'premation.saber', status: 'locked', effects: ['premation.saber'] }],
+    });
+    expect((await findMissingPluginContent(only.client))!.message).toBe('premation.saber requires Premation Cloud. 1 effect keeps every setting and passes through until the plan is active again.');
   });
 
   it('leaves a project with no missing plugin alone', async () => {

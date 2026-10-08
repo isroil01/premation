@@ -434,6 +434,70 @@ export async function bundlesIn(root: string): Promise<Array<{ id: string; versi
   return out;
 }
 
+// ── Premation Cloud entitlement (plan §3.2) ──────────────────────────────
+
+/** Where main keeps the token the engine reads (`--entitlement`), next to state.json. */
+export const ENTITLEMENT_FILE = 'entitlement.json';
+
+/** The registry's token: `payload` (JSON) signed with the operator key. */
+export interface EntitlementToken {
+  payload: string;
+  signature: string;
+}
+
+/** What a verified token says. */
+export interface EntitlementInfo {
+  plan: string;
+  userId: string;
+  /** Epoch ms. */
+  validUntil: number;
+}
+
+/**
+ * Verify a token with the pinned operator key and read it; null when it does
+ * not verify or is malformed. The engine checks it again before loading a
+ * plugin that needs it (native/engine/src/plugins/entitlement.cpp).
+ */
+export function verifyEntitlement(token: unknown, operatorKey = OPERATOR_PUBLIC_KEY): EntitlementInfo | null {
+  const t = token as Partial<EntitlementToken> | null;
+  if (!t || typeof t.payload !== 'string' || typeof t.signature !== 'string') return null;
+  if (!verifySignature(new TextEncoder().encode(t.payload), t.signature, operatorKey)) return null;
+  try {
+    const p = JSON.parse(t.payload) as { plan?: unknown; userId?: unknown; validUntil?: unknown };
+    const until = typeof p.validUntil === 'string' ? Date.parse(p.validUntil) : NaN;
+    if (typeof p.plan !== 'string' || !Number.isFinite(until)) return null;
+    return { plan: p.plan, userId: typeof p.userId === 'string' ? p.userId : '', validUntil: until };
+  } catch {
+    return null;
+  }
+}
+
+/** The kept token, verified; null when there is none (or it no longer verifies). */
+export async function readEntitlement(dir: string, operatorKey = OPERATOR_PUBLIC_KEY): Promise<EntitlementInfo | null> {
+  try {
+    return verifyEntitlement(JSON.parse(await readFile(path.join(dir, ENTITLEMENT_FILE), 'utf8')), operatorKey);
+  } catch {
+    return null;
+  }
+}
+
+/** Keep a verified token for the engine (temp + rename). Refuses one that does not verify. */
+export async function writeEntitlement(dir: string, token: EntitlementToken, operatorKey = OPERATOR_PUBLIC_KEY): Promise<EntitlementInfo | null> {
+  const info = verifyEntitlement(token, operatorKey);
+  if (!info) return null;
+  await mkdir(dir, { recursive: true });
+  const file = path.join(dir, ENTITLEMENT_FILE);
+  const tmp = `${file}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
+  await writeFile(tmp, JSON.stringify({ payload: token.payload, signature: token.signature }));
+  await rename(tmp, file);
+  return info;
+}
+
+/** Signed out: this machine no longer holds that account's entitlement. */
+export async function removeEntitlement(dir: string): Promise<void> {
+  await rm(path.join(dir, ENTITLEMENT_FILE), { force: true });
+}
+
 /** One revocation entry (the registry's signed list). */
 export interface RevocationEntry {
   id: string;
@@ -477,9 +541,13 @@ export function revokedInstalled(
   });
 }
 
-/** The engine's arguments for the installed set: `--plugin-disabled` per disabled plugin, `--revoked <file>`. */
+/**
+ * The engine's arguments for the installed set: `--plugin-disabled` per
+ * disabled plugin, `--revoked <file>`, and `--entitlement <file>` (always: a
+ * missing file just leaves Premation Cloud plugins locked).
+ */
 export async function engineArgsFor(dir: string, state: PluginStoreState, revoked: readonly RevocationEntry[]): Promise<string[]> {
-  const args: string[] = [];
+  const args: string[] = ['--entitlement', path.join(dir, ENTITLEMENT_FILE)];
   for (const [id, p] of Object.entries(state.plugins)) if (!p.enabled) args.push('--plugin-disabled', id);
   if (revoked.length > 0) {
     const file = path.join(dir, '.revoked.json');

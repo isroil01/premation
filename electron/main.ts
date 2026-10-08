@@ -27,7 +27,10 @@ import { registerThumbIpc } from './thumbCache';
 import { registerRevealIpc } from './ipc/reveal';
 import {
   pluginLaunchArgs,
+  forgetEntitlement,
+  refreshEntitlement,
   refreshRevocations,
+  registerEntitlementIpc,
   registerNativePluginIpc,
   registerPluginFileIpc,
   registerPluginStoreIpc,
@@ -42,6 +45,7 @@ import { faceModelUserDir, registerFaceModelIpc } from './faceModel';
 import { registerMediaKeyIpc } from './mediaKeyVault';
 import { registerAiMediaProxyIpc } from './aiMediaProxy';
 import { registerApiProxyIpc, abortAllApiStreams, sendWithAuth } from './apiProxy';
+import { hasSession, onSessionChange } from './apiSession';
 import { apiBaseUrl } from './apiBase';
 import { aiEnabled, assertRendererEditionMatches } from './edition';
 import { parseProbeJson, type ProbeJson } from './mediaProbeParse';
@@ -1199,6 +1203,18 @@ app.whenReady().then(() => {
   // The signed revocation list, refreshed at start (public, no session); the
   // engine reads the kept copy at every launch (pluginLaunchArgs).
   void refreshRevocations({ dir: nativePluginDirPath, apiBase: apiBaseUrl, authedFetch: sendWithAuth });
+  // Premation Cloud plugins (plan §3.2): the entitlement token the engine checks
+  // before loading one — at start, at every sign-in, and every 24 h; dropped at sign-out.
+  const entitlementDeps = { dir: nativePluginDirPath, apiBase: apiBaseUrl, authedFetch: sendWithAuth };
+  registerEntitlementIpc(entitlementDeps);
+  if (hasSession()) void refreshEntitlement(entitlementDeps, { force: true });
+  onSessionChange((event) => {
+    if (event === 'signedIn') void refreshEntitlement(entitlementDeps);
+    else void forgetEntitlement(entitlementDeps);
+  });
+  setInterval(() => {
+    if (hasSession()) void refreshEntitlement(entitlementDeps, { force: true });
+  }, 24 * 3600_000).unref();
   registerRenderIpc();
   // Desktop export as a main-owned queue, each job in its own
   // `premation-engine --export` process (electron/exportProcess.ts). The queue

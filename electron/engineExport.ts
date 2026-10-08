@@ -211,6 +211,8 @@ export interface ExportPluginJob {
   plugins: string[];
   pluginDisabled: string[];
   pluginRevoked?: string;
+  /** The Premation Cloud entitlement token file (plan §3.2). */
+  pluginEntitlement?: string;
 }
 
 /** The job file the engine reads (export_job.hpp `parse_job`). */
@@ -220,6 +222,7 @@ export function engineJobFile(spec: EngineExportSpec, workDir: string, plugins?:
     job.plugins = plugins.plugins;
     if (plugins.pluginDisabled.length > 0) job.pluginDisabled = plugins.pluginDisabled;
     if (plugins.pluginRevoked) job.pluginRevoked = plugins.pluginRevoked;
+    if (plugins.pluginEntitlement) job.pluginEntitlement = plugins.pluginEntitlement;
   }
   if (spec.comp) job.comp = spec.comp;
   for (const k of ['startFrame', 'endFrame', 'fps', 'width', 'height', 'scale'] as const) {

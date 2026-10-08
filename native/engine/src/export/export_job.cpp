@@ -638,6 +638,7 @@ bool parse_job(const Json& j, JobSpec& out, std::string& error) {
   if (!j.at("comp").is_undefined() && !str("comp", out.comp, false)) return false;
   if (!j.at("fontsManifest").is_undefined() && !str("fontsManifest", out.fontsManifest, false)) return false;
   if (!j.at("pluginRevoked").is_undefined() && !str("pluginRevoked", out.pluginRevoked, false)) return false;
+  if (!j.at("pluginEntitlement").is_undefined() && !str("pluginEntitlement", out.pluginEntitlement, false)) return false;
   for (const auto& [k, dst] : {std::pair<const char*, std::vector<std::string>*>{"plugins", &out.pluginPaths}, {"pluginDisabled", &out.pluginDisabled}}) {
     const Json& v = j.at(k);
     if (v.is_undefined()) continue;
@@ -809,6 +810,7 @@ int run_export(const std::string& jobPath) {
       ho.searchPaths = std::move(paths);
       ho.disabled = job.pluginDisabled;
       if (!job.pluginRevoked.empty()) ho.revoked = plugins::read_revoked_file(job.pluginRevoked);
+      ho.entitlement = job.pluginEntitlement;
       pluginHost = std::make_unique<plugins::PluginHost>(std::move(ho));
       const auto recs = pluginHost->scan();
       PREMATION_LOG(info, "export_plugins").kv("count", static_cast<std::uint64_t>(recs.size()));

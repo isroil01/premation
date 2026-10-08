@@ -84,6 +84,7 @@ GET /api/metrics
 GET /api/plugins
 GET /api/plugins/admin/storage
 GET /api/plugins/categories
+GET /api/plugins/entitlement
 GET /api/plugins/installed
 GET /api/plugins/media/{mediaId}
 GET /api/plugins/mine/list

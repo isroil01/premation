@@ -385,6 +385,8 @@ struct PluginHost::Impl {
 
   // ── discovery + loading ──
   void load_bundle(const fs::path& dir);
+  /// Why a bundle requiring an entitlement may not load ('' when it may, or needs none).
+  [[nodiscard]] std::string entitlement_lock(const Manifest& man) const;
   bool setup_effect(Plugin& p, EffectSpec& e);
   void register_document(const Plugin& p);
   // ── instances ──
@@ -720,6 +722,7 @@ std::string_view to_string(PluginStatus s) noexcept {
     case PluginStatus::disabled: return "disabled";
     case PluginStatus::quarantined: return "quarantined";
     case PluginStatus::revoked: return "revoked";
+    case PluginStatus::locked: return "locked";
     default: return "failed";
   }
 }
@@ -768,6 +771,17 @@ std::vector<PluginRecord> PluginHost::scan() {
   return plugins();
 }
 
+std::string PluginHost::Impl::entitlement_lock(const Manifest& man) const {
+  if (man.entitlement.empty()) return {};
+  std::string why;
+  const std::optional<Entitlement> e = read_entitlement(options.entitlement, options.operatorKey, why);
+  const std::int64_t now = options.nowMs ? options.nowMs()
+                                         : std::chrono::duration_cast<std::chrono::milliseconds>(
+                                               std::chrono::system_clock::now().time_since_epoch())
+                                               .count();
+  return entitlement_problem(e, why, man.entitlement, now);
+}
+
 void PluginHost::Impl::load_bundle(const fs::path& dir) {
   auto p = std::make_unique<Plugin>();
   p->dir = dir;
@@ -800,6 +814,13 @@ void PluginHost::Impl::load_bundle(const fs::path& dir) {
   } else if (const auto rv = options.revoked.find(id); rv != options.revoked.end()) {
     p->status = PluginStatus::revoked;
     p->error = rv->second.empty() ? std::string("revoked by the plugin registry") : "revoked: " + rv->second;
+  } else if (std::string locked = entitlement_lock(p->manifest); !locked.empty()) {
+    // Premation Cloud: no valid entitlement token — listed, never loaded. Its
+    // effects stay unregistered, so a project using them takes the
+    // missing-plugin path (values kept, pass-through, a layerErrors entry).
+    p->status = PluginStatus::locked;
+    p->error = std::move(locked);
+    if (options.attachToDocument) doc::NativeEffects::set_locked(id, true);
   } else if (std::ranges::find(options.disabled, id) != options.disabled.end()) {
     // Disabled by the user: listed, not loaded (no code of it runs).
     p->status = PluginStatus::disabled;
@@ -1097,6 +1118,7 @@ bool PluginHost::set_enabled(std::string_view pluginId, bool enabled) {
   }
   if (p == nullptr) return false;
   if (p->status == PluginStatus::revoked) return true;  // listed revoked; never runs
+  if (p->status == PluginStatus::locked) return true;   // needs an entitlement; a new token takes a restart
   if (!enabled) {
     p->userDisabled = true;
     if (p->status == PluginStatus::loaded) p->status = PluginStatus::disabled;
@@ -1871,6 +1893,7 @@ std::vector<api::PluginInfo> PluginHost::plugin_infos() const {
       case PluginStatus::disabled: i.status = api::PluginStatus::disabled; break;
       case PluginStatus::quarantined: i.status = api::PluginStatus::quarantined; break;
       case PluginStatus::revoked: i.status = api::PluginStatus::revoked; break;
+      case PluginStatus::locked: i.status = api::PluginStatus::locked; break;
       default: i.status = api::PluginStatus::failed; break;
     }
     i.error = std::move(r.error);

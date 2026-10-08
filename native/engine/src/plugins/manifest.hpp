@@ -33,6 +33,9 @@ struct Manifest {
   /// The `binary` key it came from (e.g. `macos-universal`).
   std::string binaryKey;
   std::vector<ManifestEffect> effects;
+  /// `"entitlement"`: the bundle loads only with a valid token for it
+  /// (entitlement.hpp; today only `premation-cloud`). Empty = free.
+  std::string entitlement;
 };
 
 /// Parse + validate. `platforms` are the `binary` keys to try, most specific

@@ -35,6 +35,10 @@ import {
   revokedInstalled,
   setEnabled,
   verifyRevocationList,
+  readEntitlement,
+  removeEntitlement,
+  writeEntitlement,
+  type EntitlementInfo,
   type DownloadRecord,
   type InstallOutcome,
   type PluginStoreState,
@@ -169,7 +173,9 @@ export async function pluginLaunchArgs(deps: Pick<StoreDeps, 'dir' | 'machineDir
  * plugins folder, the disabled set, and the revoked installed plugins.
  * Pending installs are NOT applied here — the editor's engine is running.
  */
-export async function exportPluginJob(deps: Pick<StoreDeps, 'dir' | 'machineDir'>): Promise<{ plugins: string[]; pluginDisabled: string[]; pluginRevoked?: string }> {
+export async function exportPluginJob(
+  deps: Pick<StoreDeps, 'dir' | 'machineDir'>,
+): Promise<{ plugins: string[]; pluginDisabled: string[]; pluginRevoked?: string; pluginEntitlement?: string }> {
   const dir = deps.dir();
   const machine = deps.machineDir?.();
   const state = await readState(dir);
@@ -177,11 +183,18 @@ export async function exportPluginJob(deps: Pick<StoreDeps, 'dir' | 'machineDir'
   const args = await engineArgsFor(dir, state, revoked);
   const disabled: string[] = [];
   let revokedFile: string | undefined;
+  let entitlementFile: string | undefined;
   for (let i = 0; i < args.length; i += 2) {
     if (args[i] === '--plugin-disabled' && args[i + 1]) disabled.push(args[i + 1]!);
     if (args[i] === '--revoked' && args[i + 1]) revokedFile = args[i + 1];
+    if (args[i] === '--entitlement' && args[i + 1]) entitlementFile = args[i + 1];
   }
-  return { plugins: machine ? [dir, machine] : [dir], pluginDisabled: disabled, ...(revokedFile ? { pluginRevoked: revokedFile } : {}) };
+  return {
+    plugins: machine ? [dir, machine] : [dir],
+    pluginDisabled: disabled,
+    ...(revokedFile ? { pluginRevoked: revokedFile } : {}),
+    ...(entitlementFile ? { pluginEntitlement: entitlementFile } : {}),
+  };
 }
 
 /** The handler bodies, exported for the test. */
@@ -259,6 +272,63 @@ export function registerPluginStoreIpc(deps: StoreDeps): void {
   handle('plugins:setEnabled', (_e, req: unknown) => h.setEnabled(req));
   /** The installed set (versions, pinned keys, enabled, pending). */
   handle('plugins:installed', () => h.state());
+}
+
+// ── Premation Cloud entitlement (plan §3.2) ──────────────────────────────
+
+export interface EntitlementStatus {
+  /** The account's plan as the registry answered ('unknown' offline or signed out). */
+  plan: 'pro' | 'free' | 'unknown';
+  /** The kept token's end, epoch ms; null when there is none. */
+  validUntil: number | null;
+}
+
+let lastEntitlementRefresh = 0;
+
+/**
+ * Fetch the account's entitlement token, verify it with the pinned operator
+ * key and keep it for the engine (`--entitlement`). At sign-in, at start and
+ * every 24 h (main.ts). A plan without Premation plugins keeps whatever token
+ * is already here: it runs to its own `validUntil` (the paid period + 14
+ * days), so lapsing is never sudden. Offline changes nothing. Never throws.
+ */
+export async function refreshEntitlement(deps: StoreDeps, opts: { force?: boolean; now?: () => number } = {}): Promise<EntitlementStatus> {
+  const now = (opts.now ?? Date.now)();
+  const dir = deps.dir();
+  const kept = await readEntitlement(dir);
+  // Token refreshes re-announce the sign-in every hour; the entitlement needs far less.
+  if (!opts.force && now - lastEntitlementRefresh < 10 * 60_000) return statusOf('unknown', kept);
+  lastEntitlementRefresh = now;
+  try {
+    const signal = typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(8000) : undefined;
+    const res = await deps.authedFetch(`${deps.apiBase()}/plugins/entitlement`, { method: 'GET', ...(signal ? { signal } : {}) });
+    if (!res.ok) return statusOf('unknown', kept);
+    const body = (await res.json()) as { plan?: unknown; token?: unknown };
+    if (body.plan === 'pro' && body.token) {
+      const info = await writeEntitlement(dir, body.token as { payload: string; signature: string });
+      return statusOf('pro', info ?? kept);
+    }
+    return statusOf(body.plan === 'free' ? 'free' : 'unknown', kept);
+  } catch {
+    return statusOf('unknown', kept);
+  }
+}
+
+function statusOf(plan: EntitlementStatus['plan'], info: EntitlementInfo | null): EntitlementStatus {
+  return { plan, validUntil: info?.validUntil ?? null };
+}
+
+/** Signed out: drop the token (another account may use this machine next). */
+export async function forgetEntitlement(deps: Pick<StoreDeps, 'dir'>): Promise<void> {
+  lastEntitlementRefresh = 0;
+  await removeEntitlement(deps.dir()).catch(() => undefined);
+}
+
+export function registerEntitlementIpc(deps: StoreDeps): void {
+  /** Refresh now (the page asks after an upgrade); answers the status. */
+  handle('plugins:refreshEntitlement', () => refreshEntitlement(deps, { force: true }));
+  /** The kept token's status, without asking the registry. */
+  handle('plugins:entitlement', async () => statusOf('unknown', await readEntitlement(deps.dir())));
 }
 
 // ── Install from a file (plan P2) ────────────────────────────────────────

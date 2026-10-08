@@ -43,6 +43,8 @@ export function nativePluginStatusLabel(status: NativePlugin['status']): string 
     case 'failed': return 'Failed';
     case 'quarantined': return 'Quarantined';
     case 'revoked': return 'Revoked';
+    // Premation Cloud plugin without an active plan (plan §3.2): its effects pass through, nothing is lost.
+    case 'locked': return 'Requires Premation Cloud';
   }
 }
 

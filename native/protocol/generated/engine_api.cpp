@@ -1296,6 +1296,7 @@ std::string_view to_string(PluginStatus v) noexcept {
     case PluginStatus::failed: return "failed";
     case PluginStatus::quarantined: return "quarantined";
     case PluginStatus::revoked: return "revoked";
+    case PluginStatus::locked: return "locked";
   }
   return {};
 }
@@ -1306,6 +1307,7 @@ bool from_u32(std::uint32_t n, PluginStatus& out) noexcept {
     case 2: out = PluginStatus::failed; return true;
     case 3: out = PluginStatus::quarantined; return true;
     case 4: out = PluginStatus::revoked; return true;
+    case 5: out = PluginStatus::locked; return true;
     default: return false;
   }
 }

@@ -61,6 +61,8 @@ struct EngineOptions {
   std::vector<std::string> pluginDisabled;
   /// The verified revocation list as a file (`{"revoked":[{"id","reason"}]}`); empty = none.
   std::string pluginRevoked;
+  /// The Premation Cloud entitlement token file (`--entitlement`); empty = none (entitled plugins are locked).
+  std::string pluginEntitlement;
 };
 
 inline constexpr int kExitOk = 0;

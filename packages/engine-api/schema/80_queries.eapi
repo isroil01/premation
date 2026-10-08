@@ -420,7 +420,8 @@ query listPlugins = 1086 {} -> PluginList;
 query getEffectUi = 1087 { layer: LayerId = 1; effect: PropPath = 2; time?: Time = 3; } -> EffectUi;
 
 /// `revoked`: on the registry's signed revocation list (Electron passes it with `--revoked`); its code never runs.
-enum PluginStatus { loaded = 0; disabled = 1; failed = 2; quarantined = 3; revoked = 4; }
+/// `locked`: its manifest requires an entitlement (`"entitlement": "premation-cloud"`) and no valid entitlement token was passed (`--entitlement`); its code never runs and its effects pass through, recorded on `layerErrors` (plan §3.2).
+enum PluginStatus { loaded = 0; disabled = 1; failed = 2; quarantined = 3; revoked = 4; locked = 5; }
 
 struct PluginInfo {
   id: string = 1;

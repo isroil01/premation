@@ -27,6 +27,13 @@ export interface MissingPluginContent {
   layers: number;
   /** The plugins the content belongs to (an effect type's namespace), sorted. */
   plugins: string[];
+  /**
+   * Effects of Premation Cloud plugins that are installed but `locked` (no
+   * active plan, docs/PLUGIN_PLATFORM_PLAN.md §3.2), and those plugins' ids.
+   * Kept and passed through exactly like missing ones; renewing brings them back.
+   */
+  lockedEffects: number;
+  lockedPlugins: string[];
   /** The one notice to show. */
   message: string;
 }
@@ -88,6 +95,7 @@ export async function findMissingPluginContent(client: EngineClient): Promise<Mi
     const known = new Set(effectsRes.value.effects.map((e) => e.matchName));
     const nativePlugins = pluginsRes.ok ? pluginsRes.value.plugins : [];
     const nativeIds = new Set(nativePlugins.map((p) => p.id));
+    const lockedIds = new Set(nativePlugins.filter((p) => p.status === 'locked').map((p) => p.id));
     for (const p of nativePlugins) for (const m of p.effects) known.add(m);
     const layerIds = new Set(layersRes.value.layers.map((l) => l.id));
     const pluginLayers = layersRes.value.layers.filter((l) => l.generator !== '');
@@ -100,15 +108,22 @@ export async function findMissingPluginContent(client: EngineClient): Promise<Mi
       return null;
     }
     let effects = 0;
+    let lockedEffects = 0;
+    const lockedPlugins = new Set<string>();
     for (const { id, node } of nodesOf(doc)) {
       if (!layerIds.has(id)) continue;
       for (const e of effectsOf(node)) {
+        if (belongsToNativePlugin(e.type, lockedIds)) {
+          lockedEffects += 1;
+          for (const lid of lockedIds) if (e.type === lid || e.type.startsWith(`${lid}.`)) lockedPlugins.add(lid);
+          continue;
+        }
         if (known.has(e.type) || belongsToNativePlugin(e.type, nativeIds)) continue;
         effects += 1;
         plugins.add(pluginOfType(e.type));
       }
     }
-    if (effects === 0 && pluginLayers.length === 0) return null;
+    if (effects === 0 && pluginLayers.length === 0 && lockedEffects === 0) return null;
 
     const names = [...plugins].sort();
     const parts = [
@@ -116,12 +131,22 @@ export async function findMissingPluginContent(client: EngineClient): Promise<Mi
       pluginLayers.length > 0 ? `${pluginLayers.length} layer${pluginLayers.length === 1 ? '' : 's'}` : '',
     ].filter(Boolean);
     const shown = names.length > 3 ? `${names.slice(0, 3).join(', ')} and ${names.length - 3} more` : names.join(', ');
+    const lockedNames = [...lockedPlugins].sort();
+    const missingLine = effects + pluginLayers.length > 0
+      ? `Missing plugin${names.length === 1 ? '' : 's'} ${shown}. `
+        + `${parts.join(' and ')} ${effects + pluginLayers.length === 1 ? 'is' : 'are'} kept in the project and pass through until the plugin is installed.`
+      : '';
+    const lockedLine = lockedEffects > 0
+      ? `${lockedNames.join(', ')} ${lockedNames.length === 1 ? 'requires' : 'require'} Premation Cloud. `
+        + `${lockedEffects} effect${lockedEffects === 1 ? '' : 's'} keep${lockedEffects === 1 ? 's' : ''} every setting and pass${lockedEffects === 1 ? 'es' : ''} through until the plan is active again.`
+      : '';
     return {
       effects,
       layers: pluginLayers.length,
       plugins: names,
-      message: `Missing plugin${names.length === 1 ? '' : 's'} ${shown}. `
-        + `${parts.join(' and ')} ${effects + pluginLayers.length === 1 ? 'is' : 'are'} kept in the project and pass through until the plugin is installed.`,
+      lockedEffects,
+      lockedPlugins: lockedNames,
+      message: [missingLine, lockedLine].filter(Boolean).join(' '),
     };
   } catch {
     return null;

@@ -130,7 +130,7 @@ describe('uninstall and start-up', () => {
     await install(bytes, record(bytes, key));
     const queued = await queueUninstall(dir, 'com.acme.glow');
     expect(queued.uninstall).toEqual(['com.acme.glow']);
-    expect(await engineArgsFor(dir, queued, [])).toEqual(['--plugin-disabled', 'com.acme.glow']);
+    expect(await engineArgsFor(dir, queued, [])).toEqual(['--entitlement', path.join(dir, 'entitlement.json'), '--plugin-disabled', 'com.acme.glow']);
     const after = await applyPendingAtStart(dir);
     expect(existsSync(path.join(dir, 'com.acme.glow'))).toBe(false);
     expect(after.plugins).toEqual({});
@@ -155,8 +155,8 @@ describe('revocation', () => {
     const hit = revokedInstalled(state, list!.entries);
     expect(hit.map((e) => e.id)).toEqual(['com.acme.glow']);
     const args = await engineArgsFor(dir, state, hit);
-    expect(args[0]).toBe('--revoked');
-    expect(JSON.parse(await readFile(args[1]!, 'utf8'))).toEqual({ revoked: [{ id: 'com.acme.glow', reason: 'stole projects' }] });
+    expect(args[2]).toBe('--revoked');
+    expect(JSON.parse(await readFile(args[3]!, 'utf8'))).toEqual({ revoked: [{ id: 'com.acme.glow', reason: 'stole projects' }] });
   });
 });
 

@@ -162,6 +162,30 @@ the WGSL compiled with naga. Everything below did not run.
       one "Missing plugin …" notice, renders the layer unaffected, keeps the
       effect after a save and reopen.
 
+## Plugin platform P3 — Premation Cloud plugins (2026-10-08, docs/PLUGIN_STORE.md §4b)
+
+Run in the cloud session: motion-back tier / 402 / token specs; the headless
+engine's `engine_plugins_tests` (the hand-written P-256 verifier against
+node:crypto signatures, the token file, a bundle locked without a valid
+token and loaded with one); the editor's token, notice and locked-row tests.
+Not run:
+
+- [ ] Build `windows-clang-cl-engine` and `macos-clang-engine`:
+      `plugins/entitlement.cpp` under clang-cl / -Werror, and
+      `export/export_job.cpp` (`pluginEntitlement`) needs Dawn and was only
+      read, not compiled, here.
+- [ ] With `MOTION_REVOCATION_KEY` set to the real operator key, sign in as a
+      Pro account: `<userData>/native-plugins/entitlement.json` appears; a
+      Premation plugin installs from the Store and loads. Sign in as a free
+      account: the Store's Install answers "Included with Premation Cloud —
+      Upgrade" (402).
+- [ ] Remove `entitlement.json` (or sign out) and restart: the plugin is
+      listed "Requires Premation Cloud", a project using it opens with the
+      notice, renders the layer unaffected and keeps the effect after a save.
+      "Check plan" after signing back in, then restart, brings it back.
+- [ ] Export a comp with a Premation plugin effect: it renders with a valid
+      token and passes through without one.
+
 ## Plugin platform P2 — install from a file (2026-10-08, docs/PLUGIN_STORE.md §4a)
 
 Run in the cloud session: `electron/pluginFileInstall.test.ts` (trust

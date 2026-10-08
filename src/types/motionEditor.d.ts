@@ -594,6 +594,9 @@ export interface MotionEditorApi {
     installPackageFile?(req: { token: string; allowUnknown?: boolean }): Promise<NativePluginInstallOutcome>;
     /** Packages opened by double-click since the last call. */
     takeOpenedPackages?(): Promise<NativePluginPackageInspect[]>;
+    /** Premation Cloud entitlement (electron/ipc/nativePlugins.ts): refresh now / the kept token's status. */
+    refreshEntitlement?(): Promise<{ plan: 'pro' | 'free' | 'unknown'; validUntil: number | null }>;
+    entitlement?(): Promise<{ plan: 'pro' | 'free' | 'unknown'; validUntil: number | null }>;
     /** Main opened a package (call `takeOpenedPackages`). Returns the unsubscribe. */
     onPackageOpened?(handler: () => void): () => void;
     host?: { platform: string; arch: string };

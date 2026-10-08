@@ -181,6 +181,7 @@ int run_engine(const EngineOptions& options) {
       ho.journal = options.pluginJournal;
       ho.disabled = options.pluginDisabled;
       if (!options.pluginRevoked.empty()) ho.revoked = plugins::read_revoked_file(options.pluginRevoked);
+      ho.entitlement = options.pluginEntitlement;
       pluginHost = std::make_unique<plugins::PluginHost>(std::move(ho));
       const std::vector<plugins::PluginRecord> recs = pluginHost->scan();
       PREMATION_LOG(info, "plugins_scanned").kv("count", static_cast<std::uint64_t>(recs.size()));

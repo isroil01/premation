@@ -51,6 +51,9 @@ function PublisherLine({ plugin }: { plugin: StorePluginSummary }): JSX.Element 
         <Badge variant="success" size="sm" className={styles.inlineBadge}>Verified</Badge>
       ) : null}
       {plugin.visibility === 'private' ? <Badge variant="neutral" size="sm" className={styles.inlineBadge}>Private</Badge> : null}
+      {plugin.tier === 'cloud' ? (
+        <Badge variant="accent" size="sm" className={styles.inlineBadge}>Included with Premation Cloud</Badge>
+      ) : null}
     </span>
   );
 }

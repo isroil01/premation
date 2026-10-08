@@ -273,6 +273,9 @@ const bridge = {
     pickPackageFile: () => ipcRenderer.invoke('plugins:pickPackageFile'),
     installPackageFile: (req: { token: string; allowUnknown?: boolean }) => ipcRenderer.invoke('plugins:installPackageFile', req),
     takeOpenedPackages: () => ipcRenderer.invoke('plugins:takeOpenedPackages'),
+    // Premation Cloud: refresh the entitlement token now (after an upgrade), or read its status.
+    refreshEntitlement: () => ipcRenderer.invoke('plugins:refreshEntitlement'),
+    entitlement: () => ipcRenderer.invoke('plugins:entitlement'),
     onPackageOpened: (handler: () => void) => {
       const listener = (): void => handler();
       ipcRenderer.on('plugins:packageOpened', listener);

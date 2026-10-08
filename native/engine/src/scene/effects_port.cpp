@@ -16,6 +16,7 @@
 #include "jsmath.hpp"
 #include "kernels.hpp"
 #include "lut_port.hpp"
+#include "native_effects.hpp"
 #include "scene_math.hpp"
 
 namespace premation::scene {
@@ -313,6 +314,8 @@ const char* effect_unported_reason(const Json& e) {
   // An effect type the engine does not know: a native plugin that is not
   // installed (or failed to load), or an old JS / WGSL plugin (G2). The effect
   // stays in the document untouched and passes its input through.
+  // A Premation Cloud plugin found but locked (plugins/entitlement.hpp): say why, not "missing".
+  if (doc::NativeEffects::locked(t)) return "requires Premation Cloud — the effect passes through until the plan is active";
   if (doc::registry().effect(t) == nullptr) return "missing plugin — the effect passes through until it is installed";
   // A baked layer's chain runs in the raster (bake_chain.cpp): what it cannot
   // draw is reported there, per effect, with the raster.

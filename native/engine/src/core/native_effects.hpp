@@ -94,6 +94,12 @@ class NativeEffects {
   /// documents that use them keep resolving (a disabled / failed / removed plugin).
   static void set_available(std::string_view provider, bool available);
   [[nodiscard]] static bool available(std::string_view type) noexcept;
+  /// Premation Cloud (plugins/entitlement.hpp): a plugin found but `locked`
+  /// for want of an entitlement. Its effects are not registered; `locked`
+  /// lets the frame name the reason ("requires Premation Cloud") rather than
+  /// report a missing plugin. `type` is an effect match name (`<id>` or `<id>.<name>`).
+  static void set_locked(std::string_view plugin, bool locked);
+  [[nodiscard]] static bool locked(std::string_view type) noexcept;
 
   using CreatedFn = std::function<std::optional<std::vector<std::uint8_t>>(std::string_view type)>;
   using ActionFn = std::function<std::variant<NativeEdit, NativeFailure>(const NativeActionRequest&)>;

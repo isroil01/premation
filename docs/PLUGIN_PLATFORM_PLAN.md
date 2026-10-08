@@ -115,6 +115,16 @@ folder in the engine and export arguments, and a signature embedded by
 
 ### P3 — Paid plan: Premation plugins
 
+**Status (2026-10-08):** built — registry (`Plugin.tier` from the manifest's
+`entitlement`, verified `premation` publisher only; 402 `plan_required`;
+`GET /plugins/entitlement` signed with the operator key), Electron main
+(token refresh at start / sign-in / 24 h, verified with the pinned key, kept
+as `native-plugins/entitlement.json`, dropped at sign-out, passed as
+`--entitlement` and the export job's `pluginEntitlement`), the engine
+(`plugins/entitlement.cpp`: a self-contained ECDSA P-256 check before the
+bundle loads; `locked` status; the frame says "requires Premation Cloud"),
+and the editor (store badge, locked rows with "Check plan", the open notice).
+
 See §3 for the design. In order:
 - backend tier + download gating;
 - entitlement token;

@@ -248,8 +248,8 @@ const PropertyKind_TO_NUM: Record<string, number> = { 'property': 0, 'group': 1,
 const PropertyKind_FROM_NUM: readonly (T.PropertyKind | undefined)[] = ['property', 'group', 'indexedGroup'];
 function enc_PropertyKind(v: T.PropertyKind): number { const n = PropertyKind_TO_NUM[v]; if (n === undefined) throw new RangeError('PropertyKind: invalid value ' + String(v)); return n; }
 function dec_PropertyKind(n: number): T.PropertyKind { const v = PropertyKind_FROM_NUM[n]; if (v === undefined) throw new DecodeError('PropertyKind: unknown value ' + n, 'badEnum'); return v; }
-const PluginStatus_TO_NUM: Record<string, number> = { 'loaded': 0, 'disabled': 1, 'failed': 2, 'quarantined': 3, 'revoked': 4 };
-const PluginStatus_FROM_NUM: readonly (T.PluginStatus | undefined)[] = ['loaded', 'disabled', 'failed', 'quarantined', 'revoked'];
+const PluginStatus_TO_NUM: Record<string, number> = { 'loaded': 0, 'disabled': 1, 'failed': 2, 'quarantined': 3, 'revoked': 4, 'locked': 5 };
+const PluginStatus_FROM_NUM: readonly (T.PluginStatus | undefined)[] = ['loaded', 'disabled', 'failed', 'quarantined', 'revoked', 'locked'];
 function enc_PluginStatus(v: T.PluginStatus): number { const n = PluginStatus_TO_NUM[v]; if (n === undefined) throw new RangeError('PluginStatus: invalid value ' + String(v)); return n; }
 function dec_PluginStatus(n: number): T.PluginStatus { const v = PluginStatus_FROM_NUM[n]; if (v === undefined) throw new DecodeError('PluginStatus: unknown value ' + n, 'badEnum'); return v; }
 const HitMode_TO_NUM: Record<string, number> = { 'topmost': 0, 'all': 1 };
