@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "color_wgsl.hpp"
+#include "texture_upload.hpp"
 
 namespace premation::rg {
 namespace {
@@ -273,13 +274,18 @@ TexRef Device::make_texture(std::string_view hash, std::uint32_t w, std::uint32_
   // (a layer with no texture draws nothing) and the frame goes on.
   const std::uint32_t bpp = bytes_per_texel(format);
   const std::uint64_t bytes = std::uint64_t{w} * h * bpp;
-  // Likewise past the device's buffer limit: WriteTexture stages the pixels in
-  // one buffer, and a larger one is a validation error with the same reach.
-  if (w > maxTexture2D_ || h > maxTexture2D_ || (!pixels.empty() && bytes > maxBufferSize_)) {
+  // Pixels past the device's buffer limit are no reason to refuse: they go up
+  // in bands (texture_upload.hpp), never staged in one buffer.
+  if (w > maxTexture2D_ || h > maxTexture2D_) {
     ++stats_.texturesRefused;
     return {};
   }
   const std::uint64_t charged = levels > 1 ? bytes + bytes / 3 : bytes;  // gpuMemory.ts mipChainBytes ≈ 4/3
+  // A raster uploaded in bands (texture_upload.hpp) is a render target too: the
+  // first band covers part of the texture, so Dawn zero-fills it first, and a
+  // texture it cannot render to is cleared from a staging buffer of its WHOLE
+  // size — over maxBufferSize again. A render target is cleared by a pass.
+  const bool banded = bytes > kUploadBandBytes;
   return textures_.acquire(
       hash, frame_,
       [&] {
@@ -290,17 +296,12 @@ TexRef Device::make_texture(std::string_view hash, std::uint32_t w, std::uint32_
         // CopySrc: mip_texture copies a single-level texture's pixels into its
         // mipmapped replacement on the GPU.
         td.usage = wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::CopyDst | wgpu::TextureUsage::CopySrc |
-                   (levels > 1 ? wgpu::TextureUsage::RenderAttachment : wgpu::TextureUsage::None);
+                   (levels > 1 || banded ? wgpu::TextureUsage::RenderAttachment : wgpu::TextureUsage::None);
         wgpu::Texture tex = device_.CreateTexture(&td);
         std::uint32_t built = 1;
         if (pixels.size() >= bytes && bytes > 0) {
-          wgpu::TexelCopyTextureInfo dst{};
-          dst.texture = tex;
-          wgpu::TexelCopyBufferLayout layout{};
-          layout.bytesPerRow = w * bpp;
-          layout.rowsPerImage = h;
-          const wgpu::Extent3D size{w, h, 1};
-          queue_.WriteTexture(&dst, pixels.data(), bytes, &layout, &size);
+          // In bands: one write of a big raster overflows Dawn's staging buffer (texture_upload.hpp).
+          write_texture_rows(queue_, tex, pixels, w * bpp, w * bpp, w, h);
           if (levels > 1 && build) {
             generate_mips(tex, format, w, h, 1, levels);
             built = levels;

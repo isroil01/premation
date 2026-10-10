@@ -1442,4 +1442,58 @@ TEST_CASE("stream D L5: a Displacement Map entry with only an amount renders as 
   REQUIRE(renderer->render(file, &b, sb, err));
   CHECK(sb.diagnostics.empty());
   CHECK(a.rgba == b.rgba);
+TEST_CASE("a raster bigger than Dawn's upload staging buffer still lands, every band in its place") {
+  // 2026-10-10: a stacked-repeater lattice rasterised to a 644 MB texture, inside
+  // the 2D limit, but one WriteTexture stages its whole data in a buffer capped
+  // at maxBufferSize (256 MB); the write failed and the layer drew nothing.
+  // Device::texture now uploads in bands (texture_upload.hpp). The rows carry a
+  // top-to-bottom ramp in green, so a lost or shifted band shows in the frame.
+  std::string err;
+  auto renderer = SceneRenderer::create({}, err);
+  if (!renderer) return;
+  constexpr std::uint32_t w = 8192;
+  constexpr std::uint32_t h = 8200;  // 8192 × 8200 × 4 > 268435456
+  if (renderer->device().max_texture_dimension() < h) return;
+  auto file = solid_scene(1, 0.5, 0);
+  file.scene.renderables.clear();
+  api::RenderBlob blob;
+  blob.hash = "hash:big";
+  blob.width = w;
+  blob.height = h;
+  blob.format = api::RenderTextureFormat::rgba8unorm;
+  blob.pixels.resize(std::size_t{w} * h * 4);
+  for (std::uint32_t y = 0; y < h; ++y) {
+    const auto g = static_cast<std::uint8_t>(std::lround(y * 255.0 / (h - 1)));
+    for (std::size_t i = std::size_t{y} * w * 4; i < (std::size_t{y} + 1) * w * 4; i += 4) {
+      blob.pixels[i + 1] = g;
+      blob.pixels[i + 3] = 255;
+    }
+  }
+  REQUIRE(blob.pixels.size() > (std::size_t{256} << 20U));
+  file.blobs.push_back(std::move(blob));
+  api::RenderTextureRef ref;
+  ref.key = "shape:big";
+  ref.hash = "hash:big";
+  ref.ready = true;
+  file.textures.push_back(ref);
+  api::Renderable big;
+  big.id = "big";
+  big.kind = api::RenderableKind::image;
+  big.model_matrix = {64, 0, 0, 0, 48, 0, 0, 0, 1};  // covers the frame
+  big.bounds = {0, 0, 64, 48};
+  big.opacity = 1;
+  big.texture_key = "shape:big";
+  file.scene.renderables.push_back(big);
+
+  Frame frame;
+  FrameStats s;
+  REQUIRE(renderer->render(file, &frame, s, err));
+  CHECK(s.gpuError == std::string());
+  const auto px = [&](std::uint32_t x, std::uint32_t y, std::size_t c) { return frame.rgba.at((std::size_t{y} * 64 + x) * 4 + c); };
+  for (std::uint32_t y = 1; y < 48; y += 4) {
+    const double want = (y + 0.5) / 48 * 255;
+    INFO("row " << y);
+    CHECK(px(32, y, 3) == 255);
+    CHECK(std::abs(static_cast<double>(px(32, y, 1)) - want) <= 4);
+  }
 }
