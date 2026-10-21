@@ -14,8 +14,10 @@
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreText/CoreText.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <memory>
 #include <type_traits>
 #include <utility>
@@ -170,6 +172,29 @@ std::vector<CatalogFace> enumerate_system_fonts() {
     out.push_back(std::move(face));
   }
   return out;
+}
+
+std::uint64_t system_fonts_list_stamp() {
+  // Every available PostScript name (FNV-1a): one call to the font server, no
+  // descriptor or file read. Installing or removing a font adds or drops names.
+  // Sorted: the stamp must not move with the font server's listing order.
+  const Cf<CFArrayRef> names(CTFontManagerCopyAvailablePostScriptNames());
+  if (!names) return 0;
+  const CFIndex n = CFArrayGetCount(names.get());
+  std::vector<std::string> sorted;
+  sorted.reserve(static_cast<std::size_t>(n));
+  for (CFIndex i = 0; i < n; ++i) sorted.push_back(utf8(static_cast<CFStringRef>(CFArrayGetValueAtIndex(names.get(), i))));
+  std::ranges::sort(sorted);
+  std::uint64_t h = 0xcbf29ce484222325ULL;
+  for (const std::string& name : sorted) {
+    for (const char c : name) {
+      h ^= static_cast<unsigned char>(c);
+      h *= 0x100000001b3ULL;
+    }
+    h ^= 0xFFU;  // a separator no name byte equals
+    h *= 0x100000001b3ULL;
+  }
+  return h;
 }
 
 }  // namespace premation::raster::detail

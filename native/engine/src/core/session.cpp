@@ -1136,6 +1136,18 @@ struct ControlVisitor {
     if (!list) fail(ErrorCode::unsupported, "this engine was started without a plugin folder (--plugins)");
     return result_for<api::RescanPlugins>(api::PluginList{std::move(*list)});
   }
+  R operator()(const api::RefreshFonts&) const {
+    // The frame builder and the drawer follow the new list on their next frame
+    // (engine_frames.cpp Fonts::follow_installed_fonts); this redraws now.
+    const bool changed = !s.options_.testPorts && s.options_.refreshSystemFonts && s.options_.refreshSystemFonts();
+    if (changed) {
+      std::vector<api::Event> ev;
+      ev.push_back(make_event(api::FontsChangedEvent{}));
+      s.send_events(s.revision_, s.revision_, std::move(ev), std::nullopt, api::Origin::engine);
+      if (s.any_viewport_open()) s.request_render();
+    }
+    return result_for<api::RefreshFonts>(api::FontsRefreshed{changed});
+  }
 
   // ── transport (transport.ts semantics, the C2 clock underneath) ──
   R operator()(const api::SetActiveComposition& c) const {

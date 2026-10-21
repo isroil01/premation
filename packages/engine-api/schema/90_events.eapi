@@ -64,6 +64,7 @@ event projectSaved = 2060 [ephemeral] { path: string = 1; revision: Revision = 2
 enum AssetStatus { ready = 0; missing = 1; decoding = 2; offline = 3; failed = 4; }
 
 event assetStatusChanged = 2061 [ephemeral] { item: ItemId = 1; status: AssetStatus = 2; message: string = 3; }
+/// The installed fonts changed (refreshFonts found a font installed or removed): re-query `listFonts`.
 event fontsChanged = 2062 [ephemeral] {}
 /// An autosave / recovery file was written.
 event autosaved = 2063 [ephemeral] { path: string = 1; revision: Revision = 2; }

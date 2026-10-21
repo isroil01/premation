@@ -3691,6 +3691,13 @@ export interface PluginCommandResult {
   edits: number;
 }
 
+/** Re-read the fonts installed on this computer: a font installed or removed while the editor runs is drawn (or falls back) without a restart. A cheap check of the OS's font list first; only a change re-reads the faces, redraws the text and emits `fontsChanged` (the font menus re-query `listFonts`). The editor sends it when its window regains focus. `changed`: the installed fonts differed from the last read. */
+export interface RefreshFonts {}
+
+export interface FontsRefreshed {
+  changed: boolean;
+}
+
 /** A project item as the mirror holds it. */
 export interface ItemInfo {
   id: ItemId;
@@ -5047,6 +5054,7 @@ export interface AssetStatusChangedEvent {
   message: string;
 }
 
+/** The installed fonts changed (refreshFonts found a font installed or removed): re-query `listFonts`. */
 export interface FontsChangedEvent {}
 
 /** An autosave / recovery file was written. */
@@ -6114,6 +6122,7 @@ export type Command =
   | ({ type: 'rescanPlugins' } & RescanPlugins)
   | ({ type: 'setPluginData' } & SetPluginData)
   | ({ type: 'runPluginCommand' } & RunPluginCommand)
+  | ({ type: 'refreshFonts' } & RefreshFonts)
   | ({ type: 'startLiveInput' } & StartLiveInput)
   | ({ type: 'stopLiveInput' } & StopLiveInput);
 export type CommandType = Command['type'];
@@ -6294,6 +6303,7 @@ export type CommandResult =
   | ({ type: 'rescanPlugins' } & PluginList)
   | ({ type: 'setPluginData' } & Empty)
   | ({ type: 'runPluginCommand' } & PluginCommandResult)
+  | ({ type: 'refreshFonts' } & FontsRefreshed)
   | ({ type: 'startLiveInput' } & Empty)
   | ({ type: 'stopLiveInput' } & Empty);
 export type CommandResultType = CommandResult['type'];
@@ -6640,6 +6650,7 @@ export interface CommandArgs {
   rescanPlugins: RescanPlugins;
   setPluginData: SetPluginData;
   runPluginCommand: RunPluginCommand;
+  refreshFonts: RefreshFonts;
   startLiveInput: StartLiveInput;
   stopLiveInput: StopLiveInput;
 }
@@ -6820,6 +6831,7 @@ export interface CommandResults {
   rescanPlugins: PluginList;
   setPluginData: Empty;
   runPluginCommand: PluginCommandResult;
+  refreshFonts: FontsRefreshed;
   startLiveInput: Empty;
   stopLiveInput: Empty;
 }

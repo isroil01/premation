@@ -373,3 +373,9 @@ query listPluginCommands = 1092 {} -> PluginCommandList;
 command runPluginCommand = 873 { plugin: string = 1; command: string = 2; comp?: ItemId = 3; layers: LayerId[] = 4; time?: Time = 5; args?: string = 6; } -> PluginCommandResult;
 /// `message`: the plugin's note (PrCommandOut.return_msg). `edits`: how many edit commands it applied.
 struct PluginCommandResult { message: string = 1; edits: u32 = 2; }
+
+family "Fonts";
+
+/// Re-read the fonts installed on this computer: a font installed or removed while the editor runs is drawn (or falls back) without a restart. A cheap check of the OS's font list first; only a change re-reads the faces, redraws the text and emits `fontsChanged` (the font menus re-query `listFonts`). The editor sends it when its window regains focus. `changed`: the installed fonts differed from the last read.
+command refreshFonts = 874 [control] {} -> FontsRefreshed;
+struct FontsRefreshed { changed: bool = 1; }

@@ -463,6 +463,9 @@ int run_engine(const EngineOptions& options) {
     }
     return list;
   };
+  // refreshFonts: a font installed or removed while the engine runs (the cheap
+  // OS list check; the full re-read only on a change).
+  sessionOptions.refreshSystemFonts = [] { return raster::refresh_system_fonts(); };
   // importBytes caches bytes as files where main says (PREMATION_SESSION_FOOTAGE,
   // <userData>/session-footage): the engine's document never holds a blob: URL.
   sessionOptions.footageDir = os::env_var("PREMATION_SESSION_FOOTAGE").value_or("");

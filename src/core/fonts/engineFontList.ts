@@ -15,7 +15,7 @@
  */
 
 import type { FontInfo } from '@motion/engine-api';
-import { engine } from '@core/engine/engineInstance';
+import { engine, subscribeEngine } from '@core/engine/engineInstance';
 import bundledManifest from '../../../resources/fonts/fonts.json';
 import type { FvarAxis } from '@core/text/variableFontProbe';
 import type { LocalFace } from './localFontIndex';
@@ -156,11 +156,13 @@ let families: Map<string, FontFamilyInfo> | null = null;
 let bundledOnly: Map<string, FontFamilyInfo> | null = null;
 let pending: Promise<Map<string, FontFamilyInfo>> | null = null;
 const listeners = new Set<() => void>();
+const changeListeners = new Set<() => void>();
 
 /**
- * Load the list (once per session). Without an answer from the engine (not
- * started yet, a test host) the shipped families alone are returned and
- * nothing is cached, so the next call asks again.
+ * Load the list (once, and again after the installed fonts change — see
+ * watchInstalledFonts). Without an answer from the engine (not started yet, a
+ * test host) the shipped families alone are returned and nothing is cached,
+ * so the next call asks again.
  */
 export function loadEngineFontList(): Promise<Map<string, FontFamilyInfo>> {
   if (families) return Promise.resolve(families);
@@ -191,10 +193,57 @@ export function fontFamilyInfo(family: string): FontFamilyInfo | undefined {
   return (families ?? (bundledOnly ??= buildFamilies(bundledRecords()))).get(family);
 }
 
-/** Notified once the engine's list has loaded. */
+/** Notified each time the engine's list has loaded (the first time, and after the installed fonts changed). */
 export function onEngineFontListReady(listener: () => void): () => void {
   listeners.add(listener);
   return () => listeners.delete(listener);
+}
+
+/**
+ * Notified when a font was installed or removed on this computer while the
+ * editor runs — before the new list loads: what was derived from the old one
+ * (a menu's family list, a family's axes) is dropped here and asked again.
+ */
+export function onInstalledFontsChanged(listener: () => void): () => void {
+  changeListeners.add(listener);
+  return () => changeListeners.delete(listener);
+}
+
+/** The installed fonts changed: forget the list, tell the listeners, load it again. */
+function installedFontsChanged(): void {
+  families = null;
+  pending = null;
+  for (const l of changeListeners) l();
+  void loadEngineFontList();
+}
+
+/** At most one `refreshFonts` per this many ms (focus can fire in bursts). */
+const REFRESH_INTERVAL_MS = 1500;
+
+/**
+ * Follow fonts installed or removed while the editor runs (in a packaged app
+ * as in a checkout): each time the window regains focus — the user comes back
+ * from installing one — the engine re-reads the installed fonts
+ * (`refreshFonts`, a cheap check unless something changed), redraws the text
+ * that changed, and announces `fontsChanged`; the list is then loaded again.
+ * Returns the uninstall.
+ */
+export function watchInstalledFonts(): () => void {
+  let last = 0;
+  const onFocus = (): void => {
+    const now = Date.now();
+    if (now - last < REFRESH_INTERVAL_MS) return;
+    last = now;
+    void engine().execute({ type: 'refreshFonts' }).catch(() => { /* no engine: nothing to follow */ });
+  };
+  const off = subscribeEngine((batch) => {
+    if (batch.events.some((e) => e.type === 'fontsChanged')) installedFontsChanged();
+  });
+  window.addEventListener('focus', onFocus);
+  return () => {
+    off();
+    window.removeEventListener('focus', onFocus);
+  };
 }
 
 /** Test seam. */

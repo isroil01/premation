@@ -438,10 +438,11 @@ function TextSettingsBodyInner({ nodeId, nodeIds, variant = 'character' }: TextS
   const currentSpaceAfter = hasTarget ? Number(spaceAfter ?? 0) : fallbackSpaceAfter;
 
   // The weights the engine really draws for this family; the list arrives
-  // once per session (the shipped families answer before it does).
-  const [, setFontListReady] = useState(false);
+  // once, and again when a font is installed or removed (the shipped families
+  // answer before it does).
+  const [, setFontListLoads] = useState(0);
   useEffect(() => {
-    const off = onEngineFontListReady(() => setFontListReady(true));
+    const off = onEngineFontListReady(() => setFontListLoads((n) => n + 1));
     void loadEngineFontList();
     return off;
   }, []);

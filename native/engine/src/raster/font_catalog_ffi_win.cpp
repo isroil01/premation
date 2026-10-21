@@ -21,7 +21,9 @@
 #include <wrl/client.h>
 
 #include <array>
+#include <cstdint>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -122,17 +124,52 @@ void axes_of(IDWriteFontFace* face, CatalogFace& out) {
   }
 }
 
-}  // namespace
-
-std::vector<CatalogFace> enumerate_system_fonts() {
-  std::vector<CatalogFace> out;
+/// The shared factory's system collection, checked against the installed fonts
+/// now (checkForUpdates): the collection is the process's one (Skia's
+/// DirectWrite font manager in fonts_ffi.cpp reads it too), so once updated
+/// here, a font installed or removed since is what the rasterizer sees.
+ComPtr<IDWriteFontCollection> current_system_collection() {
   ComPtr<IDWriteFactory> factory;
   if (FAILED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
                                  reinterpret_cast<IUnknown**>(factory.GetAddressOf())))) {  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast): COM out-parameter typed IUnknown**
-    return out;
+    return nullptr;
   }
   ComPtr<IDWriteFontCollection> collection;
-  if (FAILED(factory->GetSystemFontCollection(&collection, FALSE))) return out;
+  if (FAILED(factory->GetSystemFontCollection(&collection, TRUE))) return nullptr;
+  return collection;
+}
+
+}  // namespace
+
+std::uint64_t system_fonts_list_stamp() {
+  // Every family's name and font count (FNV-1a): a few milliseconds, no font
+  // file opened. Installing or removing a font adds, drops or recounts a family.
+  std::uint64_t h = 0xcbf29ce484222325ULL;
+  const auto mix = [&h](std::string_view bytes) {
+    for (const char c : bytes) {
+      h ^= static_cast<unsigned char>(c);
+      h *= 0x100000001b3ULL;
+    }
+  };
+  const ComPtr<IDWriteFontCollection> collection = current_system_collection();
+  if (!collection) return 0;
+  const UINT32 families = collection->GetFontFamilyCount();
+  for (UINT32 fi = 0; fi < families; ++fi) {
+    ComPtr<IDWriteFontFamily> family;
+    if (FAILED(collection->GetFontFamily(fi, &family))) continue;
+    ComPtr<IDWriteLocalizedStrings> names;
+    if (FAILED(family->GetFamilyNames(&names))) continue;
+    mix(pick(names.Get()));
+    mix(std::to_string(family->GetFontCount()));
+    mix("\n");
+  }
+  return h;
+}
+
+std::vector<CatalogFace> enumerate_system_fonts() {
+  std::vector<CatalogFace> out;
+  const ComPtr<IDWriteFontCollection> collection = current_system_collection();
+  if (!collection) return out;
   const UINT32 families = collection->GetFontFamilyCount();
   for (UINT32 fi = 0; fi < families; ++fi) {
     ComPtr<IDWriteFontFamily> family;

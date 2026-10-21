@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -325,6 +326,41 @@ std::vector<CatalogFace> unlisted_family_faces(std::string_view /*family*/) {
   return {};  // FcFontList lists every installed family
 }
 
+std::uint64_t system_fonts_list_stamp() {
+  // fontconfig rescans its font directories when they changed
+  // (FcInitBringUptoDate), then every scalable file and index is hashed
+  // (FNV-1a over the sorted list: fontconfig's order is not promised).
+  std::vector<std::string> files;
+  {
+    const std::lock_guard lock(fc_mutex());
+    if (FcInitBringUptoDate() == FcFalse && FcInit() == FcFalse) return 0;
+    const Pattern pattern(FcPatternCreate());
+    if (!pattern) return 0;
+    FcPatternAddBool(pattern.get(), FC_SCALABLE, FcTrue);
+    const ObjectSet objects(FcObjectSetBuild(FC_FILE, FC_INDEX, nullptr));
+    const FontSetPtr set(FcFontList(nullptr, pattern.get(), objects.get()));
+    if (!set) return 0;
+    for (int i = 0; i < set->nfont; ++i) {
+      FcPattern* p = set->fonts[i];  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+      const char* file = string_of(p, FC_FILE);
+      int index = 0;
+      (void)FcPatternGetInteger(p, FC_INDEX, 0, &index);
+      if (file != nullptr) files.push_back(std::string(file) + '#' + std::to_string(index));
+    }
+  }
+  std::ranges::sort(files);
+  std::uint64_t h = 0xcbf29ce484222325ULL;
+  for (const std::string& f : files) {
+    for (const char c : f) {
+      h ^= static_cast<unsigned char>(c);
+      h *= 0x100000001b3ULL;
+    }
+    h ^= 0xFFU;
+    h *= 0x100000001b3ULL;
+  }
+  return h;
+}
+
 }  // namespace detail
 #endif
 
@@ -339,6 +375,7 @@ namespace detail {
 // Linux without fontconfig: nothing to list (macOS and Windows have their own files).
 std::vector<CatalogFace> enumerate_system_fonts() { return {}; }
 std::vector<CatalogFace> unlisted_family_faces(std::string_view /*family*/) { return {}; }
+std::uint64_t system_fonts_list_stamp() { return 0; }
 }  // namespace detail
 #endif
 

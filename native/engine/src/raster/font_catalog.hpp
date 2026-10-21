@@ -13,6 +13,8 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -57,10 +59,26 @@ inline constexpr std::array<ScriptSample, 16> kScriptSamples{{
     {"Ethi", U'ሀ'},
 }};
 
-/// Every installed face, enumerated once per process (thread-safe) and sorted
+/// Every installed face, enumerated on first use (thread-safe) and sorted
 /// (family, weight, italic, style, postScriptName) so the order never depends
-/// on the OS's enumeration order.
-[[nodiscard]] const std::vector<CatalogFace>& system_font_catalog();
+/// on the OS's enumeration order. A snapshot: refresh_system_fonts swaps in a
+/// new one, and a caller keeps the one it holds.
+[[nodiscard]] std::shared_ptr<const std::vector<CatalogFace>> system_font_catalog();
+
+/// Re-read the installed fonts when the OS's font list changed since it was
+/// last read (a font installed or removed while the engine runs): the cheap
+/// check (detail::system_fonts_list_stamp) every call, the full enumeration
+/// only on a change. True when the list changed — system_fonts_generation()
+/// moved, and font sets filled before it must register their families again.
+bool refresh_system_fonts();
+
+/// Bumped by every refresh_system_fonts that found a change (0 at start).
+[[nodiscard]] std::uint64_t system_fonts_generation() noexcept;
+
+/// A hash of the OS's installed-font list as last read — stable across runs,
+/// different once a font is installed or removed. The disk frame cache salts
+/// its keys with it: a frame drawn before the change is never served after.
+[[nodiscard]] std::uint64_t system_fonts_stamp();
 
 /// `listFonts{query}`: the listed (non-hidden) faces whose family, style or
 /// PostScript name contains `query`, case-insensitively; "" = all.
@@ -105,6 +123,15 @@ void sort_catalog(std::vector<CatalogFace>& faces);
 namespace detail {
 /// The OS enumeration (one *_ffi file per OS). Unsorted; may be empty.
 [[nodiscard]] std::vector<CatalogFace> enumerate_system_fonts();
+/// A hash of the OS's font list that is cheap to take (names and counts, no
+/// font files read): equal while nothing was installed or removed. The OS's
+/// own font list is brought up to date first (DirectWrite checkForUpdates,
+/// fontconfig FcInitBringUptoDate), so the rasterizer's lookups see it too.
+[[nodiscard]] std::uint64_t system_fonts_list_stamp();
+/// Tests: the enumeration and the stamp from these instead of the OS (both
+/// empty = the OS again). Drops the catalogue read so far.
+void set_system_fonts_source_for_test(std::function<std::vector<CatalogFace>()> enumerate,
+                                      std::function<std::uint64_t()> stamp);
 /// The faces of one family the enumeration leaves out, looked up by name
 /// (macOS hides Times, Courier and the '.'-prefixed system UI family from
 /// every font list but resolves them). Returned faces are `hidden`. Empty

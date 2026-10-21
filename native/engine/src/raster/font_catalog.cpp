@@ -4,6 +4,7 @@
 #include "font_catalog.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <fstream>
 #include <map>
@@ -75,33 +76,106 @@ void sort_catalog(std::vector<CatalogFace>& faces) {
   faces.erase(dups.begin(), dups.end());
 }
 
-const std::vector<CatalogFace>& system_font_catalog() {
-  // Enumerating every installed face costs tens of milliseconds to seconds
-  // (CoreText / DirectWrite / fontconfig); fonts installed while the engine
-  // runs appear after a restart, as they do in the page.
-  static std::once_flag once;
-  static std::vector<CatalogFace> catalog;
-  std::call_once(once, [] {
-    catalog = detail::enumerate_system_fonts();
-    sort_catalog(catalog);
-  });
-  return catalog;
+namespace {
+
+/// The catalogue as last read, and the OS list stamp it was read at. Enumerating
+/// every installed face costs tens of milliseconds to seconds (CoreText /
+/// DirectWrite / fontconfig), so it is read on first use and again only when
+/// refresh_system_fonts sees the stamp move.
+struct CatalogState {
+  std::mutex m;
+  std::shared_ptr<const std::vector<CatalogFace>> faces;
+  std::optional<std::uint64_t> stamp;
+  std::function<std::vector<CatalogFace>()> testEnumerate;
+  std::function<std::uint64_t()> testStamp;
+  /// detail::unlisted_family_faces per family (lower case), as resolution asked for them.
+  std::map<std::string, std::vector<CatalogFace>, std::less<>> unlisted;
+};
+
+CatalogState& catalog_state() {
+  static CatalogState s;  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables): the process's one font list, guarded by its mutex
+  return s;
+}
+
+std::atomic<std::uint64_t> gGeneration{0};  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables): refresh_system_fonts' change counter
+
+std::uint64_t list_stamp_locked(const CatalogState& s) {
+  return s.testStamp ? s.testStamp() : detail::system_fonts_list_stamp();
+}
+
+void read_faces_locked(CatalogState& s) {
+  std::vector<CatalogFace> faces = s.testEnumerate ? s.testEnumerate() : detail::enumerate_system_fonts();
+  sort_catalog(faces);
+  s.faces = std::make_shared<const std::vector<CatalogFace>>(std::move(faces));
+}
+
+}  // namespace
+
+std::shared_ptr<const std::vector<CatalogFace>> system_font_catalog() {
+  CatalogState& s = catalog_state();
+  const std::scoped_lock lock(s.m);
+  if (!s.faces) {
+    // The stamp first: a font installed during the enumeration moves the stamp
+    // past this one, and the next refresh reads the list again.
+    if (!s.stamp) s.stamp = list_stamp_locked(s);
+    read_faces_locked(s);
+  }
+  return s.faces;
+}
+
+bool refresh_system_fonts() {
+  CatalogState& s = catalog_state();
+  const std::scoped_lock lock(s.m);
+  const std::uint64_t now = list_stamp_locked(s);
+  if (!s.stamp) {
+    s.stamp = now;  // the first look: nothing was drawn from an older list
+    return false;
+  }
+  if (now == *s.stamp) return false;
+  s.stamp = now;
+  s.unlisted.clear();
+  if (s.faces) read_faces_locked(s);  // a catalogue never read stays lazy
+  gGeneration.fetch_add(1, std::memory_order_acq_rel);
+  return true;
+}
+
+std::uint64_t system_fonts_generation() noexcept { return gGeneration.load(std::memory_order_acquire); }
+
+std::uint64_t system_fonts_stamp() {
+  CatalogState& s = catalog_state();
+  const std::scoped_lock lock(s.m);
+  if (!s.stamp) s.stamp = list_stamp_locked(s);
+  return *s.stamp;
+}
+
+void detail::set_system_fonts_source_for_test(std::function<std::vector<CatalogFace>()> enumerate,
+                                              std::function<std::uint64_t()> stamp) {
+  CatalogState& s = catalog_state();
+  const std::scoped_lock lock(s.m);
+  s.testEnumerate = std::move(enumerate);
+  s.testStamp = std::move(stamp);
+  s.faces.reset();
+  s.stamp.reset();
+  s.unlisted.clear();
 }
 
 #if defined(_WIN32) || defined(__APPLE__)
 namespace {
-/// detail::unlisted_family_faces, remembered per family (resolution runs per text layer).
-const std::vector<CatalogFace>& unlisted_faces(const std::string& family) {
-  // A node-based map: a reference handed out stays valid while others are added.
-  static std::mutex m;
-  static std::map<std::string, std::vector<CatalogFace>, std::less<>> cache;
+/// detail::unlisted_family_faces, remembered per family (resolution runs per
+/// text layer) until the installed fonts change. A copy: a refresh clears the cache.
+std::vector<CatalogFace> unlisted_faces(const std::string& family) {
+  CatalogState& s = catalog_state();
   const std::string key = lower(family);
-  const std::scoped_lock lock(m);
-  if (const auto it = cache.find(key); it != cache.end()) return it->second;
+  {
+    const std::scoped_lock lock(s.m);
+    if (const auto it = s.unlisted.find(key); it != s.unlisted.end()) return it->second;
+  }
+  // Asked of the OS outside the lock (a CoreText lookup per family name).
   std::vector<CatalogFace> faces = detail::unlisted_family_faces(family);
   for (CatalogFace& f : faces) f.hidden = true;
   sort_catalog(faces);
-  return cache.emplace(key, std::move(faces)).first->second;
+  const std::scoped_lock lock(s.m);
+  return s.unlisted.try_emplace(key, std::move(faces)).first->second;
 }
 }  // namespace
 #endif
@@ -117,7 +191,7 @@ std::vector<CatalogFace> filter_fonts(const std::vector<CatalogFace>& faces, std
 }
 
 std::vector<CatalogFace> find_system_fonts(std::string_view query) {
-  return filter_fonts(system_font_catalog(), query);
+  return filter_fonts(*system_font_catalog(), query);
 }
 
 std::optional<CatalogFace> match_face(const std::vector<CatalogFace>& faces, std::string_view family, int weight,
@@ -146,7 +220,8 @@ std::optional<CatalogFace> match_face(const std::vector<CatalogFace>& faces, std
 std::vector<CatalogFace> system_family_faces(std::string_view installedFamily) {
   const std::string fam = lower(installedFamily);
   std::vector<CatalogFace> out;
-  for (const CatalogFace& f : system_font_catalog()) {
+  const std::shared_ptr<const std::vector<CatalogFace>> held = system_font_catalog();
+  for (const CatalogFace& f : *held) {
     if (lower(f.family) == fam) out.push_back(f);
   }
 #if defined(_WIN32) || defined(__APPLE__)
@@ -265,7 +340,8 @@ std::string generic_family_default(std::string_view family) {
 }
 
 std::optional<CatalogFace> resolve_system_font(std::string_view family, int weight, bool italic) {
-  const std::vector<CatalogFace>& faces = system_font_catalog();
+  const std::shared_ptr<const std::vector<CatalogFace>> held = system_font_catalog();
+  const std::vector<CatalogFace>& faces = *held;
 #if !defined(_WIN32) && !defined(__APPLE__)
   // Linux: fontconfig decides which installed family a name means, exactly as
   // Chromium's font service does (system_fonts_ffi.cpp); then CSS matching

@@ -62,6 +62,7 @@ import { getShortcutManager } from '@core/commands/ShortcutManager';
 import { getEventBus } from '@core/events/EventBus';
 import { getThemeManager, getProjectManager, getLoadingManager, getSettingsManager, getFileManager } from '@core/services/coreServices';
 import { bootEngine, engine, shutdownEngine } from '@core/engine/engineInstance';
+import { watchInstalledFonts } from '@core/fonts/engineFontList';
 import { engineOwnsDocumentNow, setEngineOwnsDocument } from '@core/engine/engineOwnership';
 import { processEngineOwnsDocument } from '@core/engine/process/processEngine';
 import { installEngineMirrorViews, installEngineOwnedSession } from './engineOwnedSession';
@@ -3117,6 +3118,8 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
         try {
           bootEngine({ ownsDocument: ownsDocument || mirrorsEngine });
           track(() => { void shutdownEngine(); });
+          // Fonts installed or removed while the editor runs: re-read on focus.
+          track(watchInstalledFonts());
           // B5 automation (record/replay a session, run a script) on window.
           // Not tracked: it holds no resources and always targets the CURRENT
           // engine, so a boot re-run (StrictMode) must not leave it uninstalled.

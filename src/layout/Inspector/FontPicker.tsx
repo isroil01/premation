@@ -28,7 +28,7 @@ import { cn } from '@utils/cn';
 import { t } from '@core/i18n';
 import styles from './FontPicker.module.css';
 import type { LocalFace } from '@core/fonts/localFontIndex';
-import { cachedEngineFontList, fontFamilyInfo, loadEngineFontList } from '@core/fonts/engineFontList';
+import { cachedEngineFontList, fontFamilyInfo, loadEngineFontList, onInstalledFontsChanged } from '@core/fonts/engineFontList';
 import {
   getFavouriteFonts,
   getRecentFonts,
@@ -44,6 +44,12 @@ let fontListPromise: Promise<string[]> | null = null;
 /** Which families are VARIABLE fonts (AE 26.3's font-list filter) — from the engine's axes. */
 let variableCache: Set<string> | null = null;
 const variableListeners = new Set<(v: Set<string>) => void>();
+
+// A font installed or removed while the editor runs: the next open lists the new set.
+onInstalledFontsChanged(() => {
+  fontListCache = null;
+  fontListPromise = null;
+});
 
 function loadFontList(): Promise<string[]> {
   if (fontListCache) return Promise.resolve(fontListCache);

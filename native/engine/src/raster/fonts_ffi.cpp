@@ -460,17 +460,28 @@ hb_position_t h_advance(hb_font_t* /*font*/, void* data, hb_codepoint_t glyph, v
 
 }  // namespace
 
-FontSet::FontSet(FontOptions opts) : opts_(opts), impl_(std::make_unique<Impl>()) {
+namespace {
+/// An empty set's state: the font manager the options ask for and the HarfBuzz callbacks.
+std::unique_ptr<FontSet::Impl> empty_impl(const FontOptions& opts) {
+  auto impl = std::make_unique<FontSet::Impl>();
 #if defined(_WIN32)
-  if (opts_.backend == GlyphBackend::platform) impl_->mgr = SkFontMgr_New_DirectWrite();
+  if (opts.backend == GlyphBackend::platform) impl->mgr = SkFontMgr_New_DirectWrite();
+#else
+  (void)opts;
 #endif
-  if (!impl_->mgr) impl_->mgr = SkFontMgr_New_Custom_Empty();
-  impl_->funcs.reset(hb_font_funcs_create());
-  hb_font_funcs_set_glyph_h_advance_func(impl_->funcs.get(), h_advance, nullptr, nullptr);
-  hb_font_funcs_make_immutable(impl_->funcs.get());
+  if (!impl->mgr) impl->mgr = SkFontMgr_New_Custom_Empty();
+  impl->funcs.reset(hb_font_funcs_create());
+  hb_font_funcs_set_glyph_h_advance_func(impl->funcs.get(), h_advance, nullptr, nullptr);
+  hb_font_funcs_make_immutable(impl->funcs.get());
+  return impl;
 }
+}  // namespace
+
+FontSet::FontSet(FontOptions opts) : opts_(opts), impl_(empty_impl(opts_)) {}
 
 FontSet::~FontSet() = default;
+
+void FontSet::reset() { impl_ = empty_impl(opts_); }
 
 std::size_t FontSet::face_count() const noexcept { return impl_->faces.size(); }
 

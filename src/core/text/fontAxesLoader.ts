@@ -15,7 +15,7 @@
  */
 
 import { loadLocalFontIndex, cachedLocalFontIndex } from '@core/fonts/localFontIndex';
-import { fontFamilyInfo, loadEngineFontList } from '@core/fonts/engineFontList';
+import { fontFamilyInfo, loadEngineFontList, onInstalledFontsChanged } from '@core/fonts/engineFontList';
 import { parseFvarAxes, type FvarAxis } from './variableFontProbe';
 import { REGISTERED_AXES } from './fontAxes';
 
@@ -26,6 +26,8 @@ export interface FamilyAxes {
 }
 
 const cache = new Map<string, Promise<FamilyAxes>>();
+// A font installed or removed while the editor runs: a family's axes are read again.
+onInstalledFontsChanged(() => cache.clear());
 
 /** The registered axes as `fvar`-shaped records. */
 export function registeredAxisFallback(): FamilyAxes {

@@ -157,6 +157,12 @@ class FontSet {
   FontSet(FontSet&&) = delete;
   FontSet& operator=(FontSet&&) = delete;
 
+  /// Empty the set (faces, aliases, fallbacks) as if just constructed, keeping
+  /// the object: canvases hold a pointer to it. For the installed fonts
+  /// changing (raster::refresh_system_fonts) — called between frames, never
+  /// while anything shapes or draws with it.
+  void reset();
+
   /// Register a face from font bytes (WOFF2 is decoded). False + message on failure.
   bool add_face(const FaceInfo& info, std::span<const std::uint8_t> bytes, std::string& error);
   /// Load `fonts.json` ({"faces": [{family, weight, style, file, unicodeRange}]}),

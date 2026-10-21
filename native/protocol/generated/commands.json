@@ -870,6 +870,11 @@
     "type": "runPluginCommand"
   },
   {
+    "id": 874,
+    "kind": "control",
+    "type": "refreshFonts"
+  },
+  {
     "id": 1948,
     "kind": "control",
     "type": "startLiveInput"

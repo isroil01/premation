@@ -29,6 +29,7 @@
 #include "svg_shapes.hpp"
 #include "text_outlines.hpp"
 #include "fonts.hpp"
+#include "font_catalog.hpp"
 #include "frame_hit.hpp"
 #include "item_facts.hpp"
 #include "layer_faces.hpp"
@@ -102,19 +103,41 @@ struct Fonts {
   std::unique_ptr<raster::FontSet> set;
   raster::CanvasOptions canvas;
   std::set<std::string, std::less<>> families;
+  std::string manifest;
+  /// The installed-font list this set was filled from (raster::system_fonts_generation).
+  std::uint64_t generation = 0;
 
-  explicit Fonts(const EngineFramesOptions& o) {
+  explicit Fonts(const EngineFramesOptions& o) : manifest(o.fontsManifest) {
     set = std::make_unique<raster::FontSet>(o.chromiumProfile ? raster::FontOptions::chromium_windows()
                                                                : raster::FontOptions{});
-    if (!o.fontsManifest.empty()) {
+    fill();
+    canvas.fonts = set.get();
+    canvas.lcdGeometry = o.chromiumProfile;
+  }
+
+  /// A font was installed or removed since the set was filled
+  /// (raster::refresh_system_fonts): start it over — the bundled faces and the
+  /// defaults now, the frames' families again as they name them. The set stays
+  /// the same object (canvases point at it). Returns whether it started over.
+  bool follow_installed_fonts() {
+    if (raster::system_fonts_generation() == generation) return false;
+    set->reset();
+    families.clear();
+    fallbacks.clear();
+    looked.clear();
+    fill();
+    return true;
+  }
+
+  void fill() {
+    generation = raster::system_fonts_generation();  // first: a change during the fill is seen next time
+    if (!manifest.empty()) {
       std::string err;
-      if (!set->load_manifest(o.fontsManifest, err)) {
+      if (!set->load_manifest(manifest, err)) {
         PREMATION_LOG(warn, "fonts_manifest").kv("error", err);
       }
     }
     for (const char* g : {"Inter", "system-ui", "sans-serif", "serif", "monospace"}) add(g);
-    canvas.fonts = set.get();
-    canvas.lcdGeometry = o.chromiumProfile;
   }
   /// Register a family once (a no-op for families already seen).
   bool add(std::string_view family) {
@@ -724,8 +747,17 @@ class EngineFrameBuilder final : public FrameBuilder, public TextQueries, public
   }
 
  private:
+  /// A font installed or removed since the set was filled: the set starts over
+  /// and text is measured again (a new measurer, no remembered sizes).
+  void follow_installed_fonts() {
+    if (!fonts_.follow_installed_fonts()) return;
+    lastText_.clear();
+    measurer_ = make_canvas_measurer(fonts_.canvas);
+  }
+
   /// The families one text node names (document_families for a node), registered before measuring it.
   void register_families(const doc::Node& n) {
+    follow_installed_fonts();
     std::vector<std::string> fams;
     for (const doc::Component& c : n.components) {
       const Json& f = c.props.at("fontFamily");
@@ -745,6 +777,7 @@ class EngineFrameBuilder final : public FrameBuilder, public TextQueries, public
   /// Register the document's font families before measuring text (the
   /// measurer is rebuilt when the FontSet grew); returns them.
   std::vector<std::string> register_fonts(const doc::Document& d) {
+    follow_installed_fonts();
     std::vector<std::string> families = document_families(d);
     bool added = false;
     for (const std::string& f : families) added = fonts_.add(f) || added;
@@ -1131,15 +1164,19 @@ class ViewportDrawer final : public render::BuiltFrameDrawer {
     h.u64(frame.contentHash ? *frame.contentHash : frame_content_hash(frame, keyWriter_));
     h.u64(width);
     h.u64(height);
+    // The frame names its font families, not the faces they found: a font
+    // installed or removed since draws the same frame differently.
+    h.u64(raster::system_fonts_generation());
     return h.value();
   }
 
   /// The disk cache's key (render/disk_cache.hpp): content_key, salted with
   /// what a file on disk outlives and content_key cannot see — this engine
   /// build (the executable's stamp), the loaded plugins (id, version, status,
-  /// bundle stamp), and every footage file's size and modification time. A
-  /// rebuilt engine, an updated plugin or a replaced file is a miss, never a
-  /// stale frame. Stamps are re-read at most every kStampRecheck.
+  /// bundle stamp), the installed fonts, and every footage file's size and
+  /// modification time. A rebuilt engine, an updated plugin, a font installed
+  /// or removed or a replaced file is a miss, never a stale frame. Stamps are
+  /// re-read at most every kStampRecheck.
   [[nodiscard]] std::optional<std::uint64_t> disk_key(const BuiltFrame& frame, std::uint32_t width,
                                                       std::uint32_t height) override {
     const std::optional<std::uint64_t> key = content_key(frame, width, height);
@@ -1181,8 +1218,9 @@ class ViewportDrawer final : public render::BuiltFrameDrawer {
   /// prepared (rasters, footage) — what every draw of it starts from.
   const api::RenderFrameFile& prepare(BuiltFrame& frame, std::uint32_t width, std::uint32_t height, bool still = false) {
     // New families: the FontSet grows between frames (never while rasterising),
-    // and cached rasters drawn without the face are dropped.
-    bool added = false;
+    // and cached rasters drawn without the face are dropped. A font installed
+    // or removed starts the set over, and every raster drawn from the old list goes.
+    bool added = fonts_.follow_installed_fonts();
     for (const std::string& f : frame.fontFamilies) {
       added = (!f.empty() && f.front() == Fonts::kFallbackMark ? fonts_.add_marked(f) : fonts_.add(f)) || added;
     }
@@ -1284,6 +1322,9 @@ class ViewportDrawer final : public render::BuiltFrameDrawer {
         h.u64(file_stamp(utf8_path(p.path)));
       }
     }
+    // The installed fonts as last read: a frame cached before a font was
+    // installed or removed — in this run or an earlier one — is a miss.
+    h.u64(raster::system_fonts_stamp());
     return h.value();
   }
 

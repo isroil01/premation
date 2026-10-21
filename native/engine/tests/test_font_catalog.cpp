@@ -4,6 +4,8 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -85,7 +87,10 @@ TEST_CASE("font catalogue: OpenType tags", "[fonts]") {
 }
 
 TEST_CASE("font catalogue: the OS enumeration", "[fonts][system]") {
-  const std::vector<CatalogFace>& all = system_font_catalog();
+  const std::shared_ptr<const std::vector<CatalogFace>> held = system_font_catalog();
+  const std::vector<CatalogFace>& all = *held;
+  // Nothing installed or removed during the test: the cheap check sees no change.
+  CHECK(system_fonts_stamp() == detail::system_fonts_list_stamp());
 #if defined(_WIN32) || defined(__APPLE__)
   REQUIRE_FALSE(all.empty());
 #else
@@ -120,4 +125,50 @@ TEST_CASE("font catalogue: the OS enumeration", "[fonts][system]") {
   CHECK(std::find(arial->scripts.begin(), arial->scripts.end(), "Latn") != arial->scripts.end());
 #endif
   CHECK_FALSE(resolve_system_font("No Such Family 7f3a", 400, false).has_value());
+}
+
+TEST_CASE("font catalogue: a font installed or removed while running", "[fonts]") {
+  // The OS stands in: its face list and the cheap stamp of it.
+  std::vector<CatalogFace> installed{face("Arial", 400, false, "ArialMT")};
+  std::uint64_t stamp = 1;
+  int enumerations = 0;
+  detail::set_system_fonts_source_for_test(
+      [&] {
+        ++enumerations;
+        return installed;
+      },
+      [&] { return stamp; });
+  struct Restore {
+    ~Restore() { detail::set_system_fonts_source_for_test({}, {}); }
+  } restore;
+
+  CHECK(find_system_fonts("premation test face").empty());
+  REQUIRE(enumerations == 1);
+  const std::uint64_t generation = system_fonts_generation();
+  // Nothing changed: the cheap check alone, no enumeration, no new generation.
+  CHECK_FALSE(refresh_system_fonts());
+  CHECK(enumerations == 1);
+  CHECK(system_fonts_generation() == generation);
+
+  // Installed: the next refresh reads the list again and the family resolves.
+  const std::shared_ptr<const std::vector<CatalogFace>> before = system_font_catalog();
+  installed.push_back(face("Premation Test Face 7f3a", 400, false, "PremationTestFace-Regular"));
+  stamp = 2;
+  CHECK(refresh_system_fonts());
+  CHECK(enumerations == 2);
+  CHECK(system_fonts_generation() == generation + 1);
+  CHECK(system_fonts_stamp() == 2);
+#if defined(_WIN32) || defined(__APPLE__)  // Linux resolves a name through fontconfig itself
+  CHECK(ps_of(resolve_system_font("Premation Test Face 7f3a", 400, false)) == "PremationTestFace-Regular");
+#endif
+  CHECK(find_system_fonts("premation test face").size() == 1);
+  CHECK(before->size() == 1);  // a snapshot held across the refresh is left as it was
+
+  // Removed again: it no longer resolves.
+  installed.pop_back();
+  stamp = 3;
+  CHECK(refresh_system_fonts());
+  CHECK(system_fonts_generation() == generation + 2);
+  CHECK(find_system_fonts("premation test face").empty());
+  CHECK(system_family_faces("Premation Test Face 7f3a").empty());
 }

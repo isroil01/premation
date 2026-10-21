@@ -189,6 +189,7 @@ export const COMMANDS: Readonly<Record<CommandType, CommandInfo>> = {
   rescanPlugins: { id: 872, kind: 'control', coalesce: false, family: "Plugins", result: "PluginList", doc: "AE parity 2.7 — rescan the plugin folders (`--plugins`, PREMATION_PLUGIN_PATH) after an install: new bundles load and their effects become available without a restart; plugins already loaded stay loaded until the engine restarts (a loaded module cannot be swapped under live instances). Returns every plugin afterwards, like listPlugins." },
   setPluginData: { id: 871, kind: 'edit', coalesce: false, family: "Plugins", result: "Empty", doc: "Store plugin data in the DOCUMENT (AE sequence data / arbitrary-data params). Undoable, saved with the project." },
   runPluginCommand: { id: 873, kind: 'edit', coalesce: false, family: "Plugins", result: "PluginCommandResult", doc: "P7a — run a native plugin's command in the engine (core thread, crash-guarded, under the watchdog). `comp`, `layers` and `time` are what the user had (the active composition, the selected layers top first, the playhead; absent comp / time = the engine's active composition and playhead); `args` is JSON handed to the plugin. Every edit the plugin makes through `engine_command` is ONE undo entry labelled with the command's name, and the log holds those edits (a replay never runs the plugin). `notFound`: no such command or its plugin is not loaded; the plugin's error or a crash: `internal`, nothing changed (a crash disables the command until setPluginEnabled(true))." },
+  refreshFonts: { id: 874, kind: 'control', coalesce: false, family: "Fonts", result: "FontsRefreshed", doc: "Re-read the fonts installed on this computer: a font installed or removed while the editor runs is drawn (or falls back) without a restart. A cheap check of the OS's font list first; only a change re-reads the faces, redraws the text and emits `fontsChanged` (the font menus re-query `listFonts`). The editor sends it when its window regains focus. `changed`: the installed fonts differed from the last read." },
   startLiveInput: { id: 1948, kind: 'control', coalesce: false, family: "LiveInput", result: "Empty", doc: "Start live hand input. Restarts it when already running (another camera, other models). `camera`: a CameraInfo id, '' = the first colour camera. `modelDir`: the folder holding `palm_detection.onnx` and `hand_landmark.onnx`, '' = the installed models (PREMATION_HAND_USER_DIR, else the bundled PREMATION_HAND_DIR). The answer comes as `liveInput` events: `starting`, then `running` with hands, or `failed` with the reason." },
   stopLiveInput: { id: 1949, kind: 'control', coalesce: false, family: "LiveInput", result: "Empty", doc: "Stop live input and release the camera. No-op when stopped." },
 };
@@ -288,10 +289,10 @@ export const EVENTS: Readonly<Record<EventType, EventInfo>> = {
   jobFinished: { id: 2059, ephemeral: true, family: "StatusEvents", doc: "" },
   projectSaved: { id: 2060, ephemeral: true, family: "StatusEvents", doc: "" },
   assetStatusChanged: { id: 2061, ephemeral: true, family: "StatusEvents", doc: "" },
-  fontsChanged: { id: 2062, ephemeral: true, family: "StatusEvents", doc: "" },
+  fontsChanged: { id: 2062, ephemeral: true, family: "StatusEvents", doc: "The installed fonts changed (refreshFonts found a font installed or removed): re-query `listFonts`." },
   autosaved: { id: 2063, ephemeral: true, family: "StatusEvents", doc: "An autosave / recovery file was written." },
   liveInput: { id: 2064, ephemeral: true, family: "LiveInput", doc: "Live input's state and, while running, every tracked frame (≈ the camera's rate)." },
 };
 
 /** Size of the schema, for docs and tests. */
-export const SCHEMA_COUNTS = {"enums":95,"structs":564,"unions":11,"commands":176,"queries":60,"events":34} as const;
+export const SCHEMA_COUNTS = {"enums":95,"structs":566,"unions":11,"commands":177,"queries":60,"events":34} as const;

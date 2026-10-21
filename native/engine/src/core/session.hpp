@@ -86,6 +86,10 @@ struct SessionOptions {
   /// `listFonts`: the installed fonts matching a query (the engine process
   /// passes its font catalogue). Unset, or with testPorts: an empty list.
   std::function<api::FontList(const std::string&)> systemFonts;
+  /// `refreshFonts`: re-read the installed fonts; true when they changed (the
+  /// engine process passes raster::refresh_system_fonts). Unset, or with
+  /// testPorts: never a change.
+  std::function<bool()> refreshSystemFonts;
   /// importFiles / importBytes / relinkItem's probe (FilePorts::MediaProbe):
   /// the engine process passes its decoders' probe (jobs::probe_media). Unset:
   /// both imports answer `unsupported`. Ignored with testPorts.

@@ -10556,6 +10556,37 @@ function decS_PluginCommandResult(r: Reader, end: number, o: any): T.PluginComma
   o.edits = v_edits;
   return o;
 }
+function encS_RefreshFonts(w: Writer, v: T.RefreshFonts): void {
+  void w; void v;
+}
+function decS_RefreshFonts(r: Reader, end: number, o: any): T.RefreshFonts {
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  return o;
+}
+function encS_FontsRefreshed(w: Writer, v: T.FontsRefreshed): void {
+  w.byte(8); w.bool(v.changed);
+}
+function decS_FontsRefreshed(r: Reader, end: number, o: any): T.FontsRefreshed {
+  let h_changed = false;
+  let v_changed: boolean | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 8: v_changed = r.bool(); h_changed = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_changed) throw new DecodeError('FontsRefreshed.changed: missing', 'missingField');
+  o.changed = v_changed;
+  return o;
+}
 function encS_ItemInfo(w: Writer, v: T.ItemInfo): void {
   w.byte(10); w.str(v.id);
   w.byte(16); w.varint(enc_ItemKind(v.kind));
@@ -19399,6 +19430,7 @@ function encU_Command(w: Writer, v: T.Command): void {
     case 'setPluginData': w.varint(6970); { const s = w.beginLd(); encS_SetPluginData(w, v); w.endLd(s); } return;
     case 'rescanPlugins': w.varint(6978); { const s = w.beginLd(); encS_RescanPlugins(w, v); w.endLd(s); } return;
     case 'runPluginCommand': w.varint(6986); { const s = w.beginLd(); encS_RunPluginCommand(w, v); w.endLd(s); } return;
+    case 'refreshFonts': w.varint(6994); { const s = w.beginLd(); encS_RefreshFonts(w, v); w.endLd(s); } return;
     case 'liftRange': w.varint(7770); { const s = w.beginLd(); encS_LiftRange(w, v); w.endLd(s); } return;
     case 'setOverlayGeometry': w.varint(14170); { const s = w.beginLd(); encS_SetOverlayGeometry(w, v); w.endLd(s); } return;
     case 'setContentAwareFill': w.varint(14818); { const s = w.beginLd(); encS_SetContentAwareFill(w, v); w.endLd(s); } return;
@@ -19584,6 +19616,7 @@ function decU_Command(r: Reader, end: number): T.Command {
       case 6970: out = decS_SetPluginData(r, r.ldEnd(), { type: 'setPluginData' }) as T.Command; break;
       case 6978: out = decS_RescanPlugins(r, r.ldEnd(), { type: 'rescanPlugins' }) as T.Command; break;
       case 6986: out = decS_RunPluginCommand(r, r.ldEnd(), { type: 'runPluginCommand' }) as T.Command; break;
+      case 6994: out = decS_RefreshFonts(r, r.ldEnd(), { type: 'refreshFonts' }) as T.Command; break;
       case 7770: out = decS_LiftRange(r, r.ldEnd(), { type: 'liftRange' }) as T.Command; break;
       case 14170: out = decS_SetOverlayGeometry(r, r.ldEnd(), { type: 'setOverlayGeometry' }) as T.Command; break;
       case 14818: out = decS_SetContentAwareFill(r, r.ldEnd(), { type: 'setContentAwareFill' }) as T.Command; break;
@@ -19769,6 +19802,7 @@ function encU_CommandResult(w: Writer, v: T.CommandResult): void {
     case 'setPluginData': w.varint(6970); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'rescanPlugins': w.varint(6978); { const s = w.beginLd(); encS_PluginList(w, v); w.endLd(s); } return;
     case 'runPluginCommand': w.varint(6986); { const s = w.beginLd(); encS_PluginCommandResult(w, v); w.endLd(s); } return;
+    case 'refreshFonts': w.varint(6994); { const s = w.beginLd(); encS_FontsRefreshed(w, v); w.endLd(s); } return;
     case 'liftRange': w.varint(7770); { const s = w.beginLd(); encS_TimeRangeEdit(w, v); w.endLd(s); } return;
     case 'setOverlayGeometry': w.varint(14170); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'setContentAwareFill': w.varint(14818); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
@@ -19954,6 +19988,7 @@ function decU_CommandResult(r: Reader, end: number): T.CommandResult {
       case 6970: out = decS_Empty(r, r.ldEnd(), { type: 'setPluginData' }) as T.CommandResult; break;
       case 6978: out = decS_PluginList(r, r.ldEnd(), { type: 'rescanPlugins' }) as T.CommandResult; break;
       case 6986: out = decS_PluginCommandResult(r, r.ldEnd(), { type: 'runPluginCommand' }) as T.CommandResult; break;
+      case 6994: out = decS_FontsRefreshed(r, r.ldEnd(), { type: 'refreshFonts' }) as T.CommandResult; break;
       case 7770: out = decS_TimeRangeEdit(r, r.ldEnd(), { type: 'liftRange' }) as T.CommandResult; break;
       case 14170: out = decS_Empty(r, r.ldEnd(), { type: 'setOverlayGeometry' }) as T.CommandResult; break;
       case 14818: out = decS_Empty(r, r.ldEnd(), { type: 'setContentAwareFill' }) as T.CommandResult; break;
@@ -20684,6 +20719,8 @@ export const codecs = {
   ListPluginCommands: mk<T.ListPluginCommands>(encS_ListPluginCommands, (r, e) => decS_ListPluginCommands(r, e, {})),
   RunPluginCommand: mk<T.RunPluginCommand>(encS_RunPluginCommand, (r, e) => decS_RunPluginCommand(r, e, {})),
   PluginCommandResult: mk<T.PluginCommandResult>(encS_PluginCommandResult, (r, e) => decS_PluginCommandResult(r, e, {})),
+  RefreshFonts: mk<T.RefreshFonts>(encS_RefreshFonts, (r, e) => decS_RefreshFonts(r, e, {})),
+  FontsRefreshed: mk<T.FontsRefreshed>(encS_FontsRefreshed, (r, e) => decS_FontsRefreshed(r, e, {})),
   ItemInfo: mk<T.ItemInfo>(encS_ItemInfo, (r, e) => decS_ItemInfo(r, e, {})),
   CompInfo: mk<T.CompInfo>(encS_CompInfo, (r, e) => decS_CompInfo(r, e, {})),
   LayerInfo: mk<T.LayerInfo>(encS_LayerInfo, (r, e) => decS_LayerInfo(r, e, {})),

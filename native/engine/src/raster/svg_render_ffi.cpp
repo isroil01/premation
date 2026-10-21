@@ -12,11 +12,13 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <map>
 #include <mutex>
 #include <numbers>
 #include <set>
 
+#include "font_catalog.hpp"
 #include "fonts.hpp"
 #include "skia_ffi.hpp"
 #include "svg_render.hpp"
@@ -118,11 +120,37 @@ struct SystemFonts {
   std::recursive_mutex m;
   std::unique_ptr<FontSet> set;
   std::set<std::string> loaded;
+  std::uint64_t generation = 0;  ///< the installed-font list `set` was filled from (system_fonts_generation)
+  int depth = 0;                 ///< SystemFontsUse scopes open (text drawing recurses)
 };
 SystemFonts& system_fonts() {
   static SystemFonts s;  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables) — a process-wide font registry, guarded by its mutex
   return s;
 }
+
+/// The registry locked for laying out or drawing SVG text. The outermost scope
+/// starts the set over when a font was installed or removed since it was
+/// filled (refresh_system_fonts); a nested one never does — the layout an
+/// outer scope holds indexes the set's faces.
+class SystemFontsUse {
+ public:
+  SystemFontsUse() : sf_(system_fonts()), lock_(sf_.m) {
+    if (sf_.depth++ == 0 && sf_.set && sf_.generation != system_fonts_generation()) {
+      sf_.generation = system_fonts_generation();
+      sf_.set->reset();
+      sf_.loaded.clear();
+    }
+  }
+  ~SystemFontsUse() { --sf_.depth; }
+  SystemFontsUse(const SystemFontsUse&) = delete;
+  SystemFontsUse& operator=(const SystemFontsUse&) = delete;
+  SystemFontsUse(SystemFontsUse&&) = delete;
+  SystemFontsUse& operator=(SystemFontsUse&&) = delete;
+
+ private:
+  SystemFonts& sf_;
+  std::scoped_lock<std::recursive_mutex> lock_;
+};
 
 class Painter {
  public:
@@ -1391,6 +1419,7 @@ class Painter {
     if (opts_->fonts != nullptr) return opts_->fonts;
     SystemFonts& sf = system_fonts();
     if (!sf.set) {
+      sf.generation = system_fonts_generation();
 #if defined(_WIN32)
       sf.set = std::make_unique<FontSet>(FontOptions::chromium_windows());
 #else
@@ -1547,7 +1576,7 @@ class Painter {
   }
 
   std::optional<SkRect> text_bbox(int i, const Vp& vp) {
-    const std::scoped_lock lock(system_fonts().m);
+    const SystemFontsUse use;
     const TextLayout lay = layout_text(i, vp);
     if (lay.bounds.isEmpty()) return std::nullopt;
     return lay.bounds;
@@ -1601,7 +1630,7 @@ class Painter {
 
   // NOLINTNEXTLINE(misc-no-recursion)
   void draw_text(SkCanvas* c, int i, const Vp& vp, int depth, bool clipMode) {
-    const std::scoped_lock lock(system_fonts().m);
+    const SystemFontsUse use;
     const TextLayout lay = layout_text(i, vp);
     if (lay.runs.empty()) return;
     const FontSet* fonts = fonts_for(style(i));
