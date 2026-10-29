@@ -5,6 +5,10 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <vector>
+#include <fstream>
+#include <cstring>
+#include <cmath>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -653,4 +657,93 @@ TEST_CASE("MediaSystem: decoder pool — never more open decoders than the cap; 
   for (const Clip& c : clips) ms.close(c.id);
   CHECK(ms.open_decoders() == 0);
   CHECK(ms.cache_stats().frames == 0);
+}
+
+namespace {
+
+/// A scanline OpenEXR file, NONE compression, FLOAT channels A B G R (the file's
+/// alphabetical order), every pixel the given straight colour — what a render
+/// of a light source looks like: values past 1.0.
+std::string write_float_exr(const fs::path& p, int w, int h, float r, float g, float b, float a) {
+  std::vector<std::uint8_t> o;
+  const auto bytes = [&](const void* v, std::size_t n) {
+    const auto* c = static_cast<const std::uint8_t*>(v);
+    o.insert(o.end(), c, c + n);  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+  };
+  const auto i32 = [&](std::int32_t v) { bytes(&v, 4); };
+  const auto f32 = [&](float v) { bytes(&v, 4); };
+  const auto str = [&](const std::string& s) { bytes(s.c_str(), s.size() + 1); };
+  const auto attr = [&](const std::string& name, const std::string& type, std::int32_t size) {
+    str(name);
+    str(type);
+    i32(size);
+  };
+  const std::uint8_t magic[] = {0x76, 0x2f, 0x31, 0x01, 2, 0, 0, 0};
+  bytes(magic, sizeof magic);
+  attr("channels", "chlist", 4 * 18 + 1);
+  for (const char* c : {"A", "B", "G", "R"}) {
+    str(c);
+    i32(2);  // FLOAT
+    const std::uint8_t lin[4] = {0, 0, 0, 0};
+    bytes(lin, 4);
+    i32(1);
+    i32(1);
+  }
+  o.push_back(0);
+  attr("compression", "compression", 1);
+  o.push_back(0);
+  attr("dataWindow", "box2i", 16);
+  i32(0); i32(0); i32(w - 1); i32(h - 1);
+  attr("displayWindow", "box2i", 16);
+  i32(0); i32(0); i32(w - 1); i32(h - 1);
+  attr("lineOrder", "lineOrder", 1);
+  o.push_back(0);
+  attr("pixelAspectRatio", "float", 4);
+  f32(1);
+  attr("screenWindowCenter", "v2f", 8);
+  f32(0); f32(0);
+  attr("screenWindowWidth", "float", 4);
+  f32(1);
+  o.push_back(0);
+  const std::size_t tableAt = o.size();
+  o.resize(o.size() + static_cast<std::size_t>(h) * 8);
+  for (int y = 0; y < h; ++y) {
+    const std::uint64_t at = o.size();
+    std::memcpy(o.data() + tableAt + static_cast<std::size_t>(y) * 8, &at, 8);
+    i32(y);
+    i32(w * 4 * 4);
+    for (const float v : {a, b, g, r}) {
+      for (int x = 0; x < w; ++x) f32(v);
+    }
+  }
+  std::ofstream(p, std::ios::binary).write(reinterpret_cast<const char*>(o.data()), static_cast<std::streamsize>(o.size()));
+  return p.string();
+}
+
+float half_at(const DecodedFrame& f, std::uint32_t x, std::uint32_t y, int c) {
+  const Plane& pl = f.planes[0];
+  std::uint16_t h = 0;
+  std::memcpy(&h, pl.data + y * pl.stride + (std::size_t{x} * 4 + static_cast<std::size_t>(c)) * 2, 2);  // NOLINT
+  const std::uint32_t e = (h >> 10U) & 0x1FU;
+  const std::uint32_t m = h & 0x3FFU;
+  return std::ldexp(static_cast<float>(e == 0 ? m : (m | 0x400U)), static_cast<int>(e == 0 ? 1 : e) - 25);
+}
+
+}  // namespace
+
+TEST_CASE("float EXR keeps values past 1.0: half-float packed RGBA, not a clamped integer conversion", "[media][decode][exr]") {
+  const std::string p = write_float_exr(fixture_dir() / "light.exr", 8, 4, 4.0F, 0.25F, 1.5F, 0.5F);
+  DecoderOptions opt;
+  opt.hw = HwPolicy::softwareOnly;
+  std::string error;
+  auto d = VideoDecoder::open(p, opt, error);
+  INFO(error);
+  REQUIRE(d);
+  const FramePtr f = decode_frame(*d, 0);
+  CHECK(f->format.layout == Layout::packedRgbaHalf);
+  CHECK(f->format.hasAlpha);
+  CHECK(half_at(*f, 3, 2, 0) == 4.0F);
+  CHECK(half_at(*f, 3, 2, 1) == 0.25F);
+  CHECK(half_at(*f, 3, 2, 2) == 1.5F);
+  CHECK(half_at(*f, 3, 2, 3) == 0.5F);
 }

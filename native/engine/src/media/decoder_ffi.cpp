@@ -1,5 +1,6 @@
 // ffmpeg behind VideoDecoder / HwContext — the only file that includes libav*.
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstring>
 #include <utility>
@@ -117,6 +118,31 @@ bool vp9_alpha(const AVStream* st) {
 }
 
 /// A pix_fmt's texel layout, when the GPU conversion can take its planes as they are.
+/// IEEE binary32 → binary16, round to nearest even; overflow to ±inf, NaN kept.
+std::uint16_t half_of(float v) noexcept {
+  const std::uint32_t x = std::bit_cast<std::uint32_t>(v);
+  const std::uint32_t sign = (x >> 16U) & 0x8000U;
+  const std::uint32_t exp = (x >> 23U) & 0xFFU;
+  std::uint32_t man = x & 0x7FFFFFU;
+  if (exp == 0xFFU) return static_cast<std::uint16_t>(sign | 0x7C00U | (man != 0 ? 0x200U : 0U));
+  const int e = static_cast<int>(exp) - 127 + 15;
+  if (e >= 31) return static_cast<std::uint16_t>(sign | 0x7C00U);
+  if (e <= 0) {
+    if (e < -10) return static_cast<std::uint16_t>(sign);
+    man |= 0x800000U;
+    const auto shift = static_cast<std::uint32_t>(14 - e);
+    std::uint32_t h = man >> shift;
+    const std::uint32_t rem = man & ((1U << shift) - 1U);
+    const std::uint32_t mid = 1U << (shift - 1U);
+    if (rem > mid || (rem == mid && (h & 1U) != 0)) ++h;
+    return static_cast<std::uint16_t>(sign | h);
+  }
+  std::uint32_t h = (static_cast<std::uint32_t>(e) << 10U) | (man >> 13U);
+  const std::uint32_t rem = man & 0x1FFFU;
+  if (rem > 0x1000U || (rem == 0x1000U && (h & 1U) != 0)) ++h;  // may carry into the exponent: still correct
+  return static_cast<std::uint16_t>(sign | h);
+}
+
 bool frame_format_of(AVPixelFormat pf, FrameFormat& f) {
   const AVPixFmtDescriptor* d = av_pix_fmt_desc_get(pf);
   if (d == nullptr) return false;
@@ -756,7 +782,7 @@ bool FfmpegDecoder::wrap(AvFramePtr f, FramePtr& out, std::string& error) {
   d->frame = std::move(f);
   if (!to_cpu_planes(*d, error)) return false;
   d->format.matrix = d->format.matrix == Matrix::rgb ? Matrix::rgb : m;
-  if (d->format.layout == Layout::packedRgba) {
+  if (d->format.layout == Layout::packedRgba || d->format.layout == Layout::packedRgbaHalf) {
     d->format.matrix = Matrix::rgb;
     d->format.range = Range::full;
   } else {
@@ -766,11 +792,90 @@ bool FfmpegDecoder::wrap(AvFramePtr f, FramePtr& out, std::string& error) {
   return true;
 }
 
+/// Float footage (EXR's gbr(a)pf32 / grayf32, any float RGB(A) or gray layout):
+/// one packed RGBA plane of half floats, so values past 1.0 — highlights, light
+/// sources — reach the frame converter instead of being clamped by an integer
+/// conversion. False with no error when the frame is not float.
+bool float_to_half_rgba(AvDecodedFrame& d, std::string& error) {
+  const AVFrame* f = d.frame.get();
+  const auto pf = static_cast<AVPixelFormat>(f->format);
+  const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(pf);
+  if (desc == nullptr || !has_flag(desc->flags, AV_PIX_FMT_FLAG_FLOAT) || has_flag(desc->flags, AV_PIX_FMT_FLAG_HWACCEL)) return false;
+  const int n = desc->nb_components;
+  const int depth = desc->comp[0].depth;
+  if ((depth != 32 && depth != 16) || n < 1 || n > 4) return false;
+  const bool be = has_flag(desc->flags, AV_PIX_FMT_FLAG_BE);
+  const bool gray = n <= 2;
+  const bool alpha = has_flag(desc->flags, AV_PIX_FMT_FLAG_ALPHA);
+  AvFramePtr out(av_frame_alloc());
+  out->format = AV_PIX_FMT_RGBA64LE;  // storage only: 8 bytes a texel, filled with half bits
+  out->width = f->width;
+  out->height = f->height;
+  if (av_frame_get_buffer(out.get(), 0) < 0) {
+    error = "frame buffer";
+    return true;
+  }
+  const auto read = [&](int comp, int x, int y) -> float {
+    const AVComponentDescriptor& c = desc->comp[comp];  // NOLINT(cppcoreguidelines-pro-bounds-constant-array-index)
+    const std::uint8_t* row = f->data[c.plane] + static_cast<std::ptrdiff_t>(y) * f->linesize[c.plane];  // NOLINT
+    const std::uint8_t* p = row + static_cast<std::ptrdiff_t>(x) * c.step + c.offset;  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+    if (depth == 32) {
+      std::uint32_t bits = 0;
+      std::memcpy(&bits, p, 4);
+      if (be) bits = (bits >> 24U) | ((bits >> 8U) & 0xFF00U) | ((bits << 8U) & 0xFF0000U) | (bits << 24U);
+      return std::bit_cast<float>(bits);
+    }
+    std::uint16_t h = 0;
+    std::memcpy(&h, p, 2);
+    if (be) h = static_cast<std::uint16_t>((h >> 8U) | (h << 8U));
+    // Already half: widen exactly (the store narrows back to the same bits).
+    const std::uint32_t sign = (h & 0x8000U) << 16U;
+    const std::uint32_t e = (h >> 10U) & 0x1FU;
+    const std::uint32_t m = h & 0x3FFU;
+    if (e == 0) return (sign != 0 ? -1.0F : 1.0F) * std::ldexp(static_cast<float>(m), -24);
+    if (e == 31) return std::bit_cast<float>(sign | 0x7F800000U | (m << 13U));
+    return std::bit_cast<float>(sign | ((e + 112U) << 23U) | (m << 13U));
+  };
+  const std::uint16_t one = half_of(1.0F);
+  for (int y = 0; y < f->height; ++y) {
+    auto* dst = reinterpret_cast<std::uint16_t*>(out->data[0] + static_cast<std::ptrdiff_t>(y) * out->linesize[0]);  // NOLINT
+    for (int x = 0; x < f->width; ++x) {
+      const float r = read(0, x, y);
+      const float g = gray ? r : read(1, x, y);
+      const float b = gray ? r : read(2, x, y);
+      const float a = alpha ? read(n - 1, x, y) : 1.0F;
+      const auto i = static_cast<std::size_t>(x) * 4;
+      dst[i] = half_of(r);  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+      dst[i + 1] = half_of(g);  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+      dst[i + 2] = half_of(b);  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+      dst[i + 3] = alpha ? half_of(a) : one;  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+    }
+  }
+  av_frame_copy_props(out.get(), f);
+  d.frame = std::move(out);
+  FrameFormat ff;
+  ff.layout = Layout::packedRgbaHalf;
+  ff.bitDepth = 16;
+  ff.bytesPerSample = 2;
+  ff.chromaShiftX = 0;
+  ff.chromaShiftY = 0;
+  ff.hasAlpha = alpha;
+  ff.matrix = Matrix::rgb;
+  ff.range = Range::full;
+  d.format = ff;
+  return true;
+}
+
 bool FfmpegDecoder::to_cpu_planes(AvDecodedFrame& d, std::string& error) {
   AVFrame* f = d.frame.get();
   const auto pf = static_cast<AVPixelFormat>(f->format);
   FrameFormat ff;
-  if (!frame_format_of(pf, ff)) {
+  if (float_to_half_rgba(d, error)) {
+    f = d.frame.get();
+    ff = d.format;
+  } else if (!error.empty()) {
+    return false;
+  } else if (!frame_format_of(pf, ff)) {
     // Anything the shader does not read directly: swscale to RGBA (8-bit) / RGBA64 (deeper).
     const AVPixFmtDescriptor* desc = av_pix_fmt_desc_get(pf);
     const bool deep = desc != nullptr && desc->comp[0].depth > 8;
@@ -818,6 +923,7 @@ bool FfmpegDecoder::to_cpu_planes(AvDecodedFrame& d, std::string& error) {
   bool ok = true;
   switch (ff.layout) {
     case Layout::packedRgba:
+    case Layout::packedRgbaHalf:
       ok = plane(0, 0, w, h, 4);
       d.planeCount = 1;
       break;

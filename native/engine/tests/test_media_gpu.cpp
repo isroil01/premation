@@ -360,3 +360,45 @@ TEST_CASE("GPU deinterlace keeps one field and rebuilds the other (deinterlace.t
   }
   conv.recycle(std::move(src));
 }
+
+TEST_CASE("GPU conversion of float footage keeps values past 1.0 (packed half-float RGBA)", "[media][gpu][exr]") {
+  const auto g = make_gpu();
+  if (!g) SKIP("no GPU adapter");
+  // 4 x 2 pixels: (4.0, 0.25, 1.5, a 0.5), NaN / negative red guarded to 0.
+  const auto half = [](float v) -> std::uint16_t {
+    if (v == 4.0F) return 0x4400;
+    if (v == 0.25F) return 0x3400;
+    if (v == 1.5F) return 0x3E00;
+    if (v == 0.5F) return 0x3800;
+    if (v == -2.0F) return 0xC000;
+    return 0x7E00;  // NaN
+  };
+  std::vector<std::uint16_t> texels;
+  for (int i = 0; i < 8; ++i) {
+    const float r = i == 6 ? -2.0F : i == 7 ? std::nanf("") : 4.0F;
+    for (const float v : {r, 0.25F, 1.5F, 0.5F}) texels.push_back(half(v));
+  }
+  auto f = std::make_shared<DecodedFrame>();
+  f->width = 4;
+  f->height = 2;
+  f->format.layout = Layout::packedRgbaHalf;
+  f->format.bitDepth = 16;
+  f->format.bytesPerSample = 2;
+  f->format.hasAlpha = true;
+  f->format.matrix = Matrix::rgb;
+  f->format.range = Range::full;
+  f->planes[0] = {reinterpret_cast<const std::uint8_t*>(texels.data()), 4 * 8, 4, 2, 4};
+  f->planeCount = 1;
+  FrameConverter conv(g->device);
+  ConvertedFrame out;
+  std::string error;
+  REQUIRE(conv.convert(*f, AlphaMode::straight, out, error));
+  const auto px = read_back(*g, out);
+  // Straight alpha 0.5 premultiplied once: 4.0 → 2.0, 0.25 → 0.125, 1.5 → 0.75.
+  CHECK(px[0] == Catch::Approx(2.0).margin(1e-3));
+  CHECK(px[1] == Catch::Approx(0.125).margin(1e-3));
+  CHECK(px[2] == Catch::Approx(0.75).margin(1e-3));
+  CHECK(px[3] == Catch::Approx(0.5).margin(1e-3));
+  CHECK(px[(4 + 2) * 4] == Catch::Approx(0.0).margin(1e-6));  // negative red
+  CHECK(px[(4 + 3) * 4] == Catch::Approx(0.0).margin(1e-6));  // NaN red
+}

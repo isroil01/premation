@@ -74,6 +74,7 @@ enum class Layout : std::uint8_t {
   semiPlanarYuv, // Y + interleaved UV — nv12, p010, p016, p210, p410, nv16, nv24
   planarRgb,     // G, B, R (+ A) planes — gbrp*, gbrap*
   packedRgba,    // one RGBA plane (after a swscale conversion)
+  packedRgbaHalf,  // one RGBA plane of IEEE half floats (float footage: EXR) — values past 1.0 kept
 };
 
 /// Alpha interpretation (Interpret Footage ▸ Alpha, sourceInfo.ts). Textures

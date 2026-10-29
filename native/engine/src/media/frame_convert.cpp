@@ -21,7 +21,7 @@ struct P {
   m0: vec4f, m1: vec4f, m2: vec4f,
   // alphaScale, premultiply (0/1), sampleScale (float planes), hasAlpha (0/1)
   a: vec4f,
-  // kind (0 planar yuv, 1 semi-planar, 2 planar rgb, 3 packed rgba), chroma shift x, chroma shift y, storage shift
+  // kind (0 planar yuv, 1 semi-planar, 2 planar rgb, 3 packed rgba, 4 packed half-float rgba), chroma shift x, chroma shift y, storage shift
   l: vec4f,
 };
 @group(0) @binding(0) var<uniform> u: P;
@@ -39,6 +39,13 @@ fn ld(t: TEX, c: vec2i) -> vec4f {
   let d = vec2i(textureDimensions(t));
   let q = clamp(c, vec2i(0), d - vec2i(1));
   LOAD
+}
+
+// Packed half floats (float footage): the bits, unpacked — nothing scaled or clamped.
+fn ldh(t: TEX, c: vec2i) -> vec4f {
+  let d = vec2i(textureDimensions(t));
+  let q = clamp(c, vec2i(0), d - vec2i(1));
+  HALF
 }
 
 fn chroma(t: TEX, p: vec2i) -> vec4f {
@@ -63,6 +70,15 @@ fn chroma(t: TEX, p: vec2i) -> vec4f {
 @fragment fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
   let p = vec2i(pos.xy);
   let kind = u32(u.l.x);
+  if (kind == 4u) {
+    // Scene-referred float: negative light is not light, over-white is kept for the working space.
+    let h = ldh(t0, p);
+    var rgbH = max(select(h.xyz, vec3f(0.0), h.xyz != h.xyz), vec3f(0.0));
+    var alphaH = 1.0;
+    if (u.a.w != 0.0) { alphaH = clamp(h.w, 0.0, 1.0); }
+    if (u.a.y != 0.0) { rgbH = rgbH * alphaH; }
+    return vec4f(rgbH, alphaH);
+  }
   var c = vec4f(0.0);
   if (kind == 0u) {
     c = vec4f(ld(t0, p).x, chroma(t1, p).x, chroma(t2, p).x, ld(t3, p).x);
@@ -130,6 +146,9 @@ std::string variant(bool floatPlanes) {
   replace_all("TEX", floatPlanes ? "texture_2d<f32>" : "texture_2d<u32>");
   replace_all("LOAD", floatPlanes ? "return textureLoad(t, q, 0) * u.a.z;"
                                   : "return vec4f(textureLoad(t, q, 0) >> vec4u(u32(u.l.w)));");
+  replace_all("HALF", floatPlanes ? "return textureLoad(t, q, 0);"
+                                  : "let b = textureLoad(t, q, 0); return vec4f(unpack2x16float(b.x).x, unpack2x16float(b.y).x, "
+                                    "unpack2x16float(b.z).x, unpack2x16float(b.w).x);");
   return s;
 }
 
@@ -206,7 +225,11 @@ std::vector<float> pack_uniforms(const FrameFormat& ff, bool premultiply, float 
   u[13] = premultiply ? 1.0F : 0.0F;
   u[14] = sampleScale;
   u[15] = ff.hasAlpha ? 1.0F : 0.0F;
-  u[16] = static_cast<float>(ff.layout == Layout::planarYuv ? 0 : ff.layout == Layout::semiPlanarYuv ? 1 : ff.layout == Layout::planarRgb ? 2 : 3);
+  u[16] = static_cast<float>(ff.layout == Layout::planarYuv        ? 0
+                             : ff.layout == Layout::semiPlanarYuv  ? 1
+                             : ff.layout == Layout::planarRgb      ? 2
+                             : ff.layout == Layout::packedRgbaHalf ? 4
+                                                                   : 3);
   u[17] = static_cast<float>(ff.chromaShiftX);
   u[18] = static_cast<float>(ff.chromaShiftY);
   u[19] = static_cast<float>(ff.storageShift);
