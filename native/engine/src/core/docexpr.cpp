@@ -323,6 +323,56 @@ std::optional<ex::SourceTextSample> DocExprEnv::source_text(std::string_view nod
   return s;
 }
 
+std::optional<PathAt> DocExprEnv::path(std::string_view node, bool mask, const std::string* name, double t) const {
+  const Node* n = d_.node(node);
+  if (n == nullptr) return std::nullopt;
+  if (mask) {
+    // The mask as it is at t (readers.cpp read_node_mask_at): its shape keyframes, else the static mask.
+    const std::vector<Json> anim = read_node_mask_anim(*n);
+    std::optional<Json> m = anim.empty() ? read_node_mask(*n) : interpolate_mask(anim, t);
+    if (!m || !m->at("paths").is_array()) return std::nullopt;
+    const auto& paths = m->at("paths").arr();
+    // mask("Mask 1") by name, mask(1) by 1-based index, no argument = the first.
+    const Json* hit = nullptr;
+    for (std::size_t i = 0; i < paths.size() && hit == nullptr; ++i) {
+      const Json& p = paths[i];
+      if (name == nullptr) {
+        hit = &p;
+        break;
+      }
+      const std::string own = p.at("name").is_string() ? p.at("name").str() : "Mask " + std::to_string(i + 1);
+      if (own == *name || (p.at("id").is_string() && p.at("id").str() == *name)) hit = &p;
+    }
+    if (hit == nullptr && name != nullptr) {
+      char* end = nullptr;
+      const double idx = std::strtod(name->c_str(), &end);
+      if (end != name->c_str() && *end == '\0' && idx >= 1 && idx <= static_cast<double>(paths.size()) &&
+          idx == std::floor(idx)) {
+        hit = &paths[static_cast<std::size_t>(idx) - 1];
+      }
+    }
+    if (hit == nullptr || !hit->at("id").is_string()) return std::nullopt;
+    const bool closed = !hit->at("closed").is_bool() || hit->at("closed").b();
+    return PathAt{path_sample_of_points(hit->at("points"), closed), "mask." + hit->at("id").str() + ".path"};
+  }
+  // A shape's Path: its animated outline, else the static points (a Premation shape draws one path).
+  const Component* g = n->comp("Geometry");
+  const bool closed = shape_closed(*n);
+  if (const DataTrack* tr = anim_data_track(d_, node, std::string(kShapePathTrack))) {
+    if (auto v = sample_data_track(*tr, t); v && v->is_array() && !v->arr().empty()) {
+      return PathAt{path_sample_of_points(*v, closed), std::string(kShapePathTrack)};
+    }
+  }
+  if (g == nullptr) return std::nullopt;
+  const Json& pts = g->props.at("points");
+  if (pts.is_array() && !pts.arr().empty()) return PathAt{path_sample_of_points(pts, closed), std::string(kShapePathTrack)};
+  const Json& sub = g->props.at("subpaths");
+  if (sub.is_array() && !sub.arr().empty()) {
+    return PathAt{path_sample_of_points(sub.arr()[0].at("points"), closed), std::string(kShapePathTrack)};
+  }
+  return std::nullopt;
+}
+
 // ── AE-style rigs (docs/EXPRESSION_LANGUAGE.md) ──────────────────────────
 
 namespace {

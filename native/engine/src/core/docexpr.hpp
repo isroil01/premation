@@ -42,6 +42,8 @@ class DocExprEnv final : public ExprEnv {
                                                     motion::expr::SpaceOp op, std::array<double, 3> p) const override;
   [[nodiscard]] std::optional<motion::expr::SourceTextSample> source_text(std::string_view node,
                                                                           double t) const override;
+  [[nodiscard]] std::optional<PathAt> path(std::string_view node, bool mask, const std::string* name,
+                                           double t) const override;
   [[nodiscard]] std::optional<double> prop_default(std::string_view node, std::string_view prop) const override;
   [[nodiscard]] std::optional<std::array<double, 4>> color_at(std::string_view node, std::string_view prop,
                                                              double t) const override;

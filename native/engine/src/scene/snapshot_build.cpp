@@ -266,6 +266,40 @@ Json live_path_points(const Document& d, std::string_view id, double t) {
   return out;
 }
 
+/// Mask Path expressions (AE path properties): each path of `mask` whose
+/// `mask.<id>.path` expression is on, replaced by what it returns at layer time `t`.
+Json apply_mask_path_expressions(const Document& d, const doc::ExprEnv& env, doc::ExprCache& cache,
+                                 std::string_view node, Json mask, double t) {
+  if (mask.is_undefined() || !mask.at("paths").is_array()) return mask;
+  const doc::NodeAnim* na = d.anim(node);
+  if (na == nullptr || na->exprs.empty()) return mask;
+  bool changed = false;
+  Json paths = Json::array();
+  for (const Json& p : mask.at("paths").arr()) {
+    const Json& id = p.at("id");
+    const std::string key = id.is_string() ? "mask." + id.str() + ".path" : std::string();
+    if (key.empty() || !na->exprs.contains(key)) {
+      paths.arr_mut().push_back(p);
+      continue;
+    }
+    const bool closed = !p.at("closed").is_bool() || p.at("closed").b();
+    const motion::expr::PathSample base = doc::path_sample_of_points(p.at("points"), closed);
+    const auto out = doc::anim_evaluate_path(d, env, cache, node, key, base, t);
+    if (!out) {
+      paths.arr_mut().push_back(p);
+      continue;
+    }
+    Json q = p;
+    q.set("points", doc::points_of_path_sample(*out, &p.at("points")));
+    q.set("closed", Json::boolean(out->closed));
+    paths.arr_mut().push_back(std::move(q));
+    changed = true;
+  }
+  if (!changed) return mask;
+  mask.set("paths", std::move(paths));
+  return mask;
+}
+
 /// motionBlurSampleTimes.
 std::vector<double> motion_blur_sample_times(double t, double fps, double shutterAngle, double samples,
                                              double shutterPhase, double limit) {
@@ -850,7 +884,9 @@ RLayer Walk::precomp_container(const doc::Node& group, std::optional<NestedComp>
   const std::optional<std::string> ref = doc::read_comp_ref(group);
   const std::optional<std::pair<double, double>> refSize = ref ? comp_size_of(d_, *ref) : std::nullopt;
   const bool isInstance = refSize.has_value();
-  const Json authored = apply_mask_property_tracks(read_node_mask_at(group, remap(group.id, t_, false)), gv);
+  const double groupTime = remap(group.id, t_, false);
+  const Json authored = apply_mask_path_expressions(d_, c_.expr, c_.cache, sid(group.id),
+                                                    apply_mask_property_tracks(read_node_mask_at(group, groupTime), gv), groupTime);
   l.mask = isInstance ? instance_frame_mask(authored, group.id, refSize->first, refSize->second) : authored;
   l.blend = read_node_blend(group);
   l.preserveTransparency = read_node_preserve_transparency(group);
@@ -1066,7 +1102,10 @@ void Walk::mask_motion_samples(Json& mask, const doc::Node& n) {
   if (!std::ranges::any_of(mask.at("paths").arr(), wants)) return;
   const MotionBlurCfg& cfg = *mb_;
   const double limit = cfg.adaptiveSampleLimit;
-  const auto pathsAt = [&](double tc) { return read_node_mask_at(n, remap(n.id, tc, true)); };
+  const auto pathsAt = [&](double tc) {
+    const double lt = remap(n.id, tc, true);
+    return apply_mask_path_expressions(d_, c_.expr, c_.cache, sid(n.id), read_node_mask_at(n, lt), lt);
+  };
   const auto findPath = [](const Json& m, const Json& id) -> const Json* {
     if (m.is_undefined() || !m.at("paths").is_array() || !id.is_string()) return nullptr;
     for (const Json& q : m.at("paths").arr()) {
@@ -1436,7 +1475,15 @@ void Walk::build_node(const doc::Node& n) {
       pathPoints = std::move(moved);
     }
   }
-  const bool pathOpen = geom != nullptr && geom->props.at("open").is_bool() && geom->props.at("open").b();
+  bool pathOpen = geom != nullptr && geom->props.at("open").is_bool() && geom->props.at("open").b();
+  // The shape Path's expression (AE path properties): what it returns is the outline drawn.
+  if (pathPoints.is_array() && !pathPoints.arr().empty()) {
+    const motion::expr::PathSample authoredPath = doc::path_sample_of_points(pathPoints, !pathOpen);
+    if (const auto out = doc::anim_evaluate_path(d_, c_.expr, c_.cache, sid(n.id), doc::kShapePathTrack, authoredPath, layerTimeNow)) {
+      pathPoints = doc::points_of_path_sample(*out, &pathPoints);
+      pathOpen = !out->closed;
+    }
+  }
   const std::optional<std::string> shapeType = jstr(doc::transform_props(n).at("shapeType"));
 
   // Size: measured text, the authored box, or the kind's default.
@@ -1717,7 +1764,8 @@ void Walk::build_node(const doc::Node& n) {
                            sampleCorner("cornerRadiusTR", base.cornerRadiusTR), sampleCorner("cornerRadiusBR", base.cornerRadiusBR),
                            sampleCorner("cornerRadiusBL", base.cornerRadiusBL)));
   const double resolvedCornerRadius = std::max({radii[0], radii[1], radii[2], radii[3]});
-  Json mask = apply_mask_property_tracks(read_node_mask_at(n, layerTimeNow), a);
+  Json mask = apply_mask_path_expressions(d_, c_.expr, c_.cache, sid(n.id),
+                                          apply_mask_property_tracks(read_node_mask_at(n, layerTimeNow), a), layerTimeNow);
   mask_motion_samples(mask, n);
   if ((layerKind == LayerKind::image || layerKind == LayerKind::video) && resolvedCornerRadius > 0.5 && layerW > 0 && layerH > 0) {
     Json round = rounded_rect_mask(layerW, layerH, radii, n.id + "::corners");

@@ -24,6 +24,23 @@
 
 namespace premation::doc {
 
+/// A layer's path as an expression reads it (AE path properties): the
+/// pre-expression path, and the expression key it is stored under —
+/// `mask.<id>.path` for a Mask Path, `path.points` for a shape's Path.
+struct PathAt {
+  motion::expr::PathSample sample;
+  std::string prop;
+};
+
+/// Is `prop` an expression key that holds a PATH (not a number)?
+[[nodiscard]] bool is_path_expr_prop(std::string_view prop) noexcept;
+/// Stored bezier points (`{x, y, inX, inY, outX, outY}`, absolute handles) as
+/// an expression path (tangents relative to their vertex).
+[[nodiscard]] motion::expr::PathSample path_sample_of_points(const Json& points, bool closed);
+/// The path back as stored points. `prev` (the points it came from) keeps each
+/// vertex's other fields (feather, broken, tension) when the count is unchanged.
+[[nodiscard]] Json points_of_path_sample(const motion::expr::PathSample& s, const Json* prev);
+
 // ── tracks (AnimationEngine track API) ───────────────────────────────────
 
 [[nodiscard]] const std::vector<Key>* anim_track(const Document& d, std::string_view node, std::string_view prop);
@@ -123,6 +140,12 @@ class ExprEnv {
   [[nodiscard]] virtual std::optional<std::string> active_camera(double /*t*/) const { return std::nullopt; }
   [[nodiscard]] virtual std::optional<motion::expr::SourceTextSample> source_text(std::string_view node,
                                                                                   double t) const = 0;
+  /// A layer's pre-expression path at `t`: a mask (`name`: its name, its
+  /// 1-based index as text, or null = the first) or the shape's own Path.
+  [[nodiscard]] virtual std::optional<PathAt> path(std::string_view /*node*/, bool /*mask*/,
+                                                   const std::string* /*name*/, double /*t*/) const {
+    return std::nullopt;
+  }
 
   // AE-style rigs (docs/EXPRESSION_LANGUAGE.md).
   /// inPoint / outPoint / index / parent / enabled of a layer; nullopt = not a layer.
@@ -325,6 +348,15 @@ struct ExprDiagnostic {
 [[nodiscard]] motion::expr::TextResult anim_preview_source_text(const Document& d, const ExprEnv& env,
                                                                 ExprCache& cache, std::string_view node,
                                                                 const std::string& src, double t);
+
+/// A path property's expression (`mask.<id>.path`, `path.points`) run over
+/// `base`, the path the frame would draw without it. Null when there is no
+/// enabled expression or it errors (the error is noted; the path stays).
+[[nodiscard]] std::optional<motion::expr::PathSample> anim_evaluate_path(const Document& d, const ExprEnv& env,
+                                                                         ExprCache& cache, std::string_view node,
+                                                                         std::string_view prop,
+                                                                         const motion::expr::PathSample& base,
+                                                                         double t);
 
 /// `componentIndexOf(prop)`.
 [[nodiscard]] std::size_t component_index_of(std::string_view prop) noexcept;

@@ -9,6 +9,7 @@ add_executable(motion_tests
   test_jsmath.cpp
   test_expr.cpp
   test_expr_lang.cpp
+  test_expr_path.cpp
   test_transform.cpp
 )
 

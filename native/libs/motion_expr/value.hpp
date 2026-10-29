@@ -69,6 +69,7 @@ enum class Global : std::int8_t {
   kLoopOutDuration, kLoopInDuration,
   // AE's data footage: footage("name").sourceData / dataValue (2026-10-29)
   kFootage,
+  kCreatePath, kMask, kContent,
   kCount_
 };
 
@@ -93,6 +94,9 @@ enum class Fn : std::uint8_t {
   kDegreesToRadians, kRadiansToDegrees, kHslToRgb, kRgbToHsl, kSmooth, kTemporalWiggle, kComp, kCompByNameLayer,
   kTimeToTimecode, kTimeToCurrentFormat, kLoopOutDuration, kLoopInDuration,
   kFootage, kFootageDataValue, kFootageDataKeyCount,
+  // AE path properties (path.cpp): createPath, a path's methods, layer.mask() / layer.content()
+  kCreatePath, kPathPoints, kPathInTangents, kPathOutTangents, kPathIsClosed, kPathPointOnPath, kPathTangentOnPath,
+  kPathNormalOnPath, kLayerMask, kLayerContent,
   kPropValueAtTime, kPropVelocityAtTime, kPropKey, kPropNearestKey, kPropSmooth,
   // sourceText.ts
   kGetStyleAt, kStyleSetter, kStyleSetText,
@@ -186,7 +190,9 @@ enum class Lazy : std::uint8_t {
   // `thisComp.name` (Host::comp_facts)
   kCompName,
   // footage("name").sourceData: parsed on first read (data.cpp)
-  kFootageSourceData
+  kFootageSourceData,
+  // mask("M").maskPath / content("Path 1").path: the layer's path, read on first use (path.cpp)
+  kPathOf
 };
 
 struct Prop {

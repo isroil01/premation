@@ -404,6 +404,39 @@ struct Q {
         else if (value.kind() == VK::vec2) value = v_vec2(n[0], n.size() > 1 ? n[1] : 0);
         else if (value.kind() == VK::vec3) value = v_vec3(n[0], n.size() > 1 ? n[1] : 0, n.size() > 2 ? n[2] : 0);
       }
+      // A Mask Path / shape Path expression (AE path properties): the path it returns.
+      if (q.evaluated && value.kind() == VK::path) {
+        const std::string key = b.special == Special::maskPath && b.maskId ? "mask." + *b.maskId + ".path"
+                                : b.dataTrack && is_path_expr_prop(*b.dataTrack) ? *b.dataTrack
+                                                                                 : std::string();
+        if (!key.empty() && anim_expr_enabled(d, p.layer, key)) {
+          api::BezierPath bp = get<VK::path>(value);
+          motion::expr::PathSample base;
+          base.closed = bp.closed;
+          for (std::size_t i = 0; i + 1 < bp.vertices.size(); i += 2) {
+            base.points.push_back({bp.vertices[i], bp.vertices[i + 1]});
+            base.in_tangents.push_back({i + 1 < bp.in_tangents.size() ? bp.in_tangents[i] : 0, i + 1 < bp.in_tangents.size() ? bp.in_tangents[i + 1] : 0});
+            base.out_tangents.push_back({i + 1 < bp.out_tangents.size() ? bp.out_tangents[i] : 0, i + 1 < bp.out_tangents.size() ? bp.out_tangents[i + 1] : 0});
+          }
+          if (const auto r = anim_evaluate_path(d, pc.expr, pc.cache, p.layer, key, base, t)) {
+            // Per-vertex feather / editing state belong to the vertices they name: kept only when the count is.
+            if (r->points.size() != base.points.size()) {
+              bp.feather_points.clear();
+              bp.vertex_states.clear();
+            }
+            bp.vertices.clear();
+            bp.in_tangents.clear();
+            bp.out_tangents.clear();
+            for (std::size_t i = 0; i < r->points.size(); ++i) {
+              bp.vertices.insert(bp.vertices.end(), {r->points[i][0], r->points[i][1]});
+              bp.in_tangents.insert(bp.in_tangents.end(), {r->in_tangents[i][0], r->in_tangents[i][1]});
+              bp.out_tangents.insert(bp.out_tangents.end(), {r->out_tangents[i][0], r->out_tangents[i][1]});
+            }
+            bp.closed = r->closed;
+            value = v_path(std::move(bp));
+          }
+        }
+      }
       out.values.push_back(api::PropertyValue{p, std::move(value)});
     }
     return query_result_for<api::GetPropertyValues>(std::move(out));

@@ -1268,6 +1268,11 @@ export const NATIVE_EXPRESSION_API: { insert: string; label: string; hint: strin
   { insert: 'footage("data.json").sourceData', label: 'footage()', hint: 'a .json / .csv / .tsv item: .sourceData .dataValue([…]) .dataKeyCount([…]) .sourceText' },
   { insert: "loopOutDuration('cycle', 1)", label: 'loopOutDuration()', hint: 'repeat the last seconds of keyframes' },
   { insert: "loopInDuration('cycle', 1)", label: 'loopInDuration()', hint: 'repeat the first seconds of keyframes' },
+  { insert: 'createPath(points(), inTangents(), outTangents(), isClosed())', label: 'createPath()', hint: 'a path from [x, y] points and relative tangents — the result of a Mask Path or shape Path expression' },
+  { insert: 'mask("Mask 1").maskPath', label: 'mask()', hint: 'a mask by name or index: .maskPath .points() .pointOnPath(0.5)' },
+  { insert: 'content("Shape 1").content("Path 1").path', label: 'content()', hint: 'a shape layer’s Path: .points() .inTangents() .isClosed() .tangentOnPath(p)' },
+  { insert: 'value.pointOnPath(0.5)', label: 'pointOnPath()', hint: 'the [x, y] at a fraction (0–1) of a path’s length; also tangentOnPath() normalOnPath()' },
+  { insert: 'value.points()', label: 'points()', hint: 'a path’s vertices as [x, y] arrays; also inTangents() outTangents() isClosed()' },
 ];
 
 /** Everything the expression editor highlights, completes and lists. */

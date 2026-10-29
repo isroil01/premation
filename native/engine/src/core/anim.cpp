@@ -605,6 +605,9 @@ class ContextHost final : public ex::Host {
   std::optional<ex::Host::FootageText> footage_text(std::u16string_view name) override;
   std::optional<std::u16string> comp_layer_ref(const std::u16string& comp, const std::u16string* name,
                                                double index) override;
+  // AE path properties (2026-10-29)
+  std::optional<ex::PathSample> path_at(const std::u16string* layer, bool mask, const std::u16string* name,
+                                        double t) override;
 
   double time = 0;
 
@@ -697,6 +700,50 @@ class Sampler {
     after.text = tr.result->text;
     after.style = ex::detail::resolve_style(base->style, tr.result->style);
     return {std::move(after), tr.result};
+  }
+
+  /// A path property's post-expression path (`base` is the pre-expression one),
+  /// and whether an expression produced it. Same cycle / depth rules as
+  /// `internal`; an expression error keeps `base` (and is noted).
+  std::pair<ex::PathSample, bool> path_internal(const std::string& node, const std::string& prop,
+                                                const ex::PathSample& base, double t, int depth) {
+    const ExprState* entry = anim_expr(d_, node, prop);
+    if (entry == nullptr || !entry->enabled) return {base, false};
+    const std::string key = node + ":" + prop;
+    if (visited_.contains(key)) {
+      throw ex::HostError{u"Cycle detected across expression evaluation (" + ex::utf8_to_utf16(key) + u")"};
+    }
+    if (depth > 16) {
+      throw ex::HostError{u"Maximum cross-layer evaluation depth (16) exceeded (" + ex::utf8_to_utf16(key) + u")"};
+    }
+    visited_.insert(key);
+    struct Erase {
+      std::set<std::string>& v;
+      const std::string& k;
+      ~Erase() { v.erase(k); }
+    } const erase{visited_, key};
+    cache_.count_run();
+    ContextHost host(*this, node, prop, depth);
+    host.time = t;
+    ex::Context c;
+    c.time = t;
+    c.audio = env_.audio_level();
+    c.comp = env_.comp_info();
+    c.layer_info = env_.layer_info(node);
+    c.prop_seed = ex::string_seed(ex::utf8_to_utf16(key));
+    c.path_value = &base;
+    c.host = &host;
+    ex::PathResult r = cache_.get(entry->src).run_path(c);
+    if (r.error) {
+      const std::u16string& m = *r.error;
+      cache_.note_runtime_error(node, prop, m, r.line, r.column);
+      if (m.find(u"Cycle detected") != std::u16string::npos || m.find(u"Maximum cross-layer") != std::u16string::npos) {
+        throw ex::HostError{m};
+      }
+      return {base, false};
+    }
+    if (!r.result) return {base, false};
+    return {std::move(*r.result), true};
   }
 
   /// `sourceTextFor`: own Source Text on the Source Text property is the
@@ -1031,6 +1078,23 @@ std::optional<std::u16string> ContextHost::comp_layer_ref(const std::u16string& 
   return u"#" + ex::utf8_to_utf16(*id);
 }
 
+std::optional<ex::PathSample> ContextHost::path_at(const std::u16string* layer, bool mask, const std::u16string* name,
+                                                   double t) {
+  std::string target = node_;
+  if (layer != nullptr) {
+    const auto r = s_.resolve(*layer);
+    if (!r) return std::nullopt;
+    target = *r;
+  }
+  std::optional<std::string> n;
+  if (name != nullptr) n = ex::utf16_to_utf8(*name);
+  const std::optional<PathAt> at = s_.env_.path(target, mask, n ? &*n : nullptr, t);
+  if (!at) return std::nullopt;
+  // Its own path, read from inside its own expression, is the pre-expression one (as `value` is).
+  if (target == node_ && at->prop == prop_) return at->sample;
+  return s_.path_internal(target, at->prop, at->sample, t, depth_ + 1).first;
+}
+
 }  // namespace
 
 std::optional<double> anim_sample(const Document& d, const ExprEnv& env, ExprCache& cache, std::string_view node,
@@ -1038,6 +1102,8 @@ std::optional<double> anim_sample(const Document& d, const ExprEnv& env, ExprCac
   if (prop == "text.source") return std::nullopt;
   const ExprState* entry = anim_expr(d, node, prop);
   Sampler s(d, env, cache);
+  // A path's expression returns a path: anim_evaluate_path runs it, never as a number.
+  if (is_path_expr_prop(prop)) return s.plain(node, prop, t);
   if (entry == nullptr || !entry->enabled) return s.plain(node, prop, t);
   try {
     return s.internal(std::string(node), std::string(prop), t, 0);
@@ -1068,6 +1134,60 @@ std::optional<ex::SourceTextResult> anim_evaluate_source_text(const Document& d,
   } catch (const ex::HostError&) {
     return std::nullopt;
   }
+}
+
+std::optional<ex::PathSample> anim_evaluate_path(const Document& d, const ExprEnv& env, ExprCache& cache,
+                                                 std::string_view node, std::string_view prop,
+                                                 const ex::PathSample& base, double t) {
+  const ExprState* entry = anim_expr(d, node, prop);
+  if (entry == nullptr || !entry->enabled) return std::nullopt;
+  try {
+    Sampler s(d, env, cache);
+    auto [path, ran] = s.path_internal(std::string(node), std::string(prop), base, t, 0);
+    if (!ran) return std::nullopt;
+    return std::move(path);
+  } catch (const ex::HostError&) {
+    return std::nullopt;
+  }
+}
+
+bool is_path_expr_prop(std::string_view prop) noexcept {
+  if (prop == "path.points") return true;
+  return prop.starts_with("mask.") && prop.ends_with(".path");
+}
+
+ex::PathSample path_sample_of_points(const Json& points, bool closed) {
+  ex::PathSample s;
+  s.closed = closed;
+  if (!points.is_array()) return s;
+  const auto num = [](const Json& v, double fallback) { return v.is_number() ? v.num() : fallback; };
+  for (const Json& p : points.arr()) {
+    const double x = num(p.at("x"), 0);
+    const double y = num(p.at("y"), 0);
+    s.points.push_back({x, y});
+    s.in_tangents.push_back({num(p.at("inX"), x) - x, num(p.at("inY"), y) - y});
+    s.out_tangents.push_back({num(p.at("outX"), x) - x, num(p.at("outY"), y) - y});
+  }
+  return s;
+}
+
+Json points_of_path_sample(const ex::PathSample& s, const Json* prev) {
+  const bool keep = prev != nullptr && prev->is_array() && prev->arr().size() == s.points.size();
+  Json out = Json::array();
+  for (std::size_t i = 0; i < s.points.size(); ++i) {
+    Json q = keep && prev->arr()[i].is_object() ? prev->arr()[i] : Json::object();
+    const auto [x, y] = s.points[i];
+    const std::array<double, 2> in = i < s.in_tangents.size() ? s.in_tangents[i] : std::array<double, 2>{0, 0};
+    const std::array<double, 2> o = i < s.out_tangents.size() ? s.out_tangents[i] : std::array<double, 2>{0, 0};
+    q.set("x", Json::number(x));
+    q.set("y", Json::number(y));
+    q.set("inX", Json::number(x + in[0]));
+    q.set("inY", Json::number(y + in[1]));
+    q.set("outX", Json::number(x + o[0]));
+    q.set("outY", Json::number(y + o[1]));
+    out.arr_mut().push_back(std::move(q));
+  }
+  return out;
 }
 
 ex::TextResult anim_preview_source_text(const Document& d, const ExprEnv& env, ExprCache& cache, std::string_view node,

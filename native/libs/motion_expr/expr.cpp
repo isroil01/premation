@@ -218,6 +218,30 @@ TextResult Expression::run_text(const Context& ctx) const {
   return tr;
 }
 
+PathResult Expression::run_path(const Context& ctx) const {
+  PathResult r;
+  if (compile_error_) {
+    r.error = compile_error_;
+    r.line = error_line_;
+    r.column = error_column_;
+    return r;
+  }
+  if (!program_) return r;
+  detail::Arena arena;
+  RawOut raw = evaluate_raw(*program_, ctx, arena);
+  if (raw.error) {
+    r.error = std::move(raw.error);
+    locate(raw.pos, r.line, r.column);
+    return r;
+  }
+  r.result = detail::path_sample_of(raw.out);
+  if (!r.result) {
+    r.error = Str(u"A path expression must return a path (value, createPath(...), or another mask / shape path).");
+    locate(completion_pos(*program_), r.line, r.column);
+  }
+  return r;
+}
+
 double string_seed(std::u16string_view s) noexcept {
   std::int32_t h = 0;
   for (const char16_t c : s) {

@@ -88,3 +88,7 @@ K(orientation) K(inPoint) K(outPoint) K(parent) K(hasParent) K(effect) K(param) 
 K(startTime)
 // AE property objects and the language additions (2026-10-21)
 K(smooth) K(temporalWiggle) K(message) K(wiggle)
+
+// AE path properties (path.cpp)
+K(createPath) K(points) K(inTangents) K(outTangents) K(isClosed) K(pointOnPath) K(tangentOnPath) K(normalOnPath)
+K(mask) K(maskPath) K(content) K(path)

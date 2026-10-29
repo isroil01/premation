@@ -1213,7 +1213,7 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
   if(MOTION_BUILD_TESTS)
     add_executable(engine_scene_tests tests/test_pdf_footage.cpp tests/test_scene_color.cpp tests/test_text_port_parity.cpp tests/test_bake_chain.cpp
                                       tests/test_threed_models.cpp tests/test_time_comp_parity.cpp tests/test_particle_parity.cpp
-                                      tests/test_polygon_clipping_parity.cpp tests/test_cover_crop.cpp tests/test_source_text.cpp
+                                      tests/test_polygon_clipping_parity.cpp tests/test_cover_crop.cpp tests/test_source_text.cpp tests/test_path_expression_scene.cpp
                                       tests/test_rig_coverage.cpp tests/test_gpu_effect_route.cpp tests/test_media_reload.cpp
                                       tests/test_text_outlines.cpp tests/test_svg_shapes.cpp
                                       tests/test_b4_round5_text_glyphs.cpp  # B4 round 5: getTextLayout.glyphs over the harness fonts

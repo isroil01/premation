@@ -975,6 +975,12 @@ Value Interp::read_member(const Value& obj, const Value& key, KeyId kid) {
             p.lazy = Lazy::kNone;
             return v;
           }
+          case Lazy::kPathOf: {
+            const Value v = path_of(o);
+            p.value = v;
+            p.lazy = Lazy::kNone;
+            return v;
+          }
         }
       }
       break;
@@ -1061,6 +1067,12 @@ Value Interp::global(const Node& n) {
       return fn_value(Fn::kLoopInDuration);
     case Global::kFootage:
       return fn_value(Fn::kFootage);
+    case Global::kCreatePath:
+      return fn_value(Fn::kCreatePath);
+    case Global::kMask:
+      return bound_fn(Fn::kLayerMask, Value::null());
+    case Global::kContent:
+      return bound_fn(Fn::kLayerContent, Value::null());
     case Global::kThisComp:
       return this_comp();
     case Global::kThisLayer:
@@ -1162,8 +1174,9 @@ Value Interp::global(const Node& n) {
 Value Interp::property_value() {
   if (!property_value_built_) {
     property_value_built_ = true;
-    property_value_ = ctx_.text_value != nullptr ? make_source_text_value(*ctx_.text_value, false)
-                                                 : Value::number(ctx_.value);
+    property_value_ = ctx_.text_value != nullptr   ? make_source_text_value(*ctx_.text_value, false)
+                      : ctx_.path_value != nullptr ? make_path(*ctx_.path_value, Value::null(), 0, Value{})
+                                                   : Value::number(ctx_.value);
   }
   return property_value_;
 }
@@ -1401,6 +1414,9 @@ void Interp::add_layer_members(std::vector<Prop>& props, const Value& bound) {
     props.push_back({.key = k, .value = {}, .lazy = Lazy::kLayerFact});
   }
   props.push_back({.key = KeyId::k_effect, .value = bound_fn(Fn::kEffect, bound), .lazy = Lazy::kNone});
+  // AE path properties: layer.mask("Mask 1").maskPath, layer.content("Path 1").path (path.cpp).
+  props.push_back({.key = KeyId::k_mask, .value = bound_fn(Fn::kLayerMask, bound), .lazy = Lazy::kNone});
+  props.push_back({.key = KeyId::k_content, .value = bound_fn(Fn::kLayerContent, bound), .lazy = Lazy::kNone});
 }
 
 Value Interp::plain_bound(std::vector<Prop> props, const Value& bound) {
@@ -2014,6 +2030,20 @@ Value Interp::call_api(const Obj& f, Args a) {
       return footage_data_value(*f.bound.o, a[0]);
     case Fn::kFootageDataKeyCount:
       return footage_data_key_count(*f.bound.o, a[0]);
+    case Fn::kCreatePath:
+      return create_path(a);
+    case Fn::kPathPoints:
+    case Fn::kPathInTangents:
+    case Fn::kPathOutTangents:
+    case Fn::kPathIsClosed:
+    case Fn::kPathPointOnPath:
+    case Fn::kPathTangentOnPath:
+    case Fn::kPathNormalOnPath:
+      return path_method(f.fn, *f.bound.o, a);
+    case Fn::kLayerMask:
+      return layer_mask(f.bound, a[0]);
+    case Fn::kLayerContent:
+      return layer_content(f.bound, a[0]);
     case Fn::kSourceRectAtTime:
       return source_rect(a);
     case Fn::kToComp:

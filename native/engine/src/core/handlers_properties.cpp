@@ -372,6 +372,8 @@ std::vector<std::string> expr_members(const PropBinding& b, std::optional<std::u
   }
   if (!b.members.empty()) return b.members;
   if (b.dataTrack) return {*b.dataTrack};
+  // AE path expressions: a Mask Path's expression (anim_evaluate_path; the shape Path's is its data track).
+  if (b.special == Special::maskPath && b.maskId) return {"mask." + *b.maskId + ".path"};
   fail(ErrorCode::not_animatable, "'" + b.path + "' cannot carry an expression", {.path = b.path});
 }
 

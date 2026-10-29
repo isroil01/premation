@@ -132,6 +132,13 @@ class Interp {
   Value footage_source_data(Obj& f);
   Value footage_data_value(Obj& f, const Value& path);
   Value footage_data_key_count(Obj& f, const Value& path);
+  // AE path properties (path.cpp)
+  Value make_path(PathSample sample, const Value& layer, std::uint8_t source, const Value& name);
+  Value create_path(Args a);
+  Value path_method(Fn fn, Obj& self, Args a);
+  Value layer_mask(const Value& layer, const Value& name);
+  Value layer_content(const Value& layer, const Value& name);
+  Value path_of(Obj& holder);
   /// loopOut / loopIn (limit = numKeyframes) and loopOutDuration / loopInDuration (limit = seconds).
   Value loop(bool out, const Value& mode, const Value& limit, bool by_duration);
   Value layer_at(const Value& name, const Value& prop, const Value& t);
@@ -265,6 +272,8 @@ inline constexpr std::size_t kMaxArrayLength = 1U << 20U;
 // Helpers shared by the builtins.
 [[nodiscard]] double integer_or_infinity(double d) noexcept;  // ToIntegerOrInfinity
 [[noreturn]] void throw_eval(Str message);
+/// path.cpp: a returned value as a path (nullopt when it is not a path object).
+[[nodiscard]] std::optional<PathSample> path_sample_of(const Value& v);
 /// A budget error: not catchable by the language's `try`.
 [[noreturn]] void throw_fatal(Str message);
 /// JS hash01 / smoothNoise (expressions.ts), on motion::js::sin.

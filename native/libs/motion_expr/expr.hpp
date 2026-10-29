@@ -227,6 +227,15 @@ struct HostError : std::exception {
   std::u16string message;
 };
 
+/// A bezier path as AE expressions see it: vertices, and each vertex's in /
+/// out tangent RELATIVE to it; `closed` joins the last vertex to the first.
+struct PathSample {
+  std::vector<std::array<double, 2>> points;
+  std::vector<std::array<double, 2>> in_tangents;
+  std::vector<std::array<double, 2>> out_tangents;
+  bool closed = true;
+};
+
 /// The engine's side of an evaluation. Every provider is OPTIONAL, mirroring
 /// the optional fields of the TypeScript `ExprContext`: `has_x()` false means
 /// "provider absent", which several builtins treat differently from a
@@ -353,10 +362,21 @@ class Host {
     std::string text;
   };
   virtual std::optional<FootageText> footage_text(std::u16string_view /*name*/) { return std::nullopt; }
+  /// AE path properties (path.cpp): a layer's mask path (`mask` true; `name`
+  /// the mask's name, nullptr = its first) or its shape path (`mask` false) at
+  /// `t`, after its own expression. `layer` nullptr = this layer; nullopt =
+  /// no such layer / mask / path.
+  virtual std::optional<PathSample> path_at(const std::u16string* /*layer*/, bool /*mask*/, const std::u16string* /*name*/,
+                                            double /*t*/) {
+    return std::nullopt;
+  }
 };
 
 /// One evaluation's inputs (`ExprContext`).
 struct Context {
+  /// Present only when the expression is ON a path property (a mask's Mask Path,
+  /// a shape's Path): `value` is this path.
+  const PathSample* path_value = nullptr;
   double time = 0;
   double value = 0;
   std::optional<double> audio;
@@ -383,6 +403,15 @@ struct Result {
   /// Never part of the message text.
   std::uint32_t line = 0;
   std::uint32_t column = 0;
+};
+
+/// `runPath(ctx)`: the path a path property's expression returned (`value`, a
+/// changed copy, `createPath(...)`, another layer's mask / shape path).
+struct PathResult {
+  std::optional<PathSample> result;
+  std::optional<std::u16string> error;
+  std::uint32_t line = 0;    // as Result::line
+  std::uint32_t column = 0;  // as Result::column
 };
 
 struct TextResult {
@@ -426,6 +455,8 @@ class Expression {
   [[nodiscard]] Result run(const Context& ctx) const;
   /// `runText(ctx)` — Source Text evaluation.
   [[nodiscard]] TextResult run_text(const Context& ctx) const;
+  /// Path evaluation (a Mask Path / shape Path expression).
+  [[nodiscard]] PathResult run_path(const Context& ctx) const;
 
  private:
   Expression() = default;

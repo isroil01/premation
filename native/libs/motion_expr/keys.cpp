@@ -50,6 +50,7 @@ constexpr std::array<std::u16string_view, static_cast<std::size_t>(Global::kCoun
     u"comp",          u"timeToTimecode", u"timeToCurrentFormat",
     u"loopOutDuration", u"loopInDuration",
     u"footage",
+    u"createPath",    u"mask",        u"content",
 };
 
 }  // namespace

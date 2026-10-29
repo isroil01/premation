@@ -5,6 +5,7 @@
 
 add_library(motion_expr STATIC
   data.cpp
+  path.cpp
   expr.cpp
   interp.cpp
   keys.cpp
