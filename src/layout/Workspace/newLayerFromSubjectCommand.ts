@@ -9,6 +9,8 @@ import { documentMirror } from '@stores/documentMirror';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
 import { t } from '@core/i18n';
+import { layerSubjects } from '@core/workspace/subjects';
+import { activeSubjectId } from '@stores/subjectStore';
 import { hasSubject, newLayerFromSubjectEdit, subjectPartsOf } from './newLayerFromSubject';
 
 /** Whether `layer` has a subject to lift out, from what the mirror holds now (menus build synchronously). */
@@ -19,8 +21,11 @@ export function canMakeLayerFromSubject(layer: string | undefined): boolean {
 }
 
 /** Run it on `layer` and select the result. */
-export async function newLayerFromSubject(layer: string): Promise<boolean> {
-  const res = await newLayerFromSubjectEdit(layer, playheadSeconds());
+export async function newLayerFromSubject(
+  layer: string,
+  subject: string | null = layerSubjects(layer).length > 0 ? activeSubjectId(layer) : null,
+): Promise<boolean> {
+  const res = await newLayerFromSubjectEdit(layer, playheadSeconds(), subject);
   if (res.ok) {
     useSelectionStore.getState().set([res.layer]);
     return true;

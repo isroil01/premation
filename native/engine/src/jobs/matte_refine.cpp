@@ -436,6 +436,7 @@ std::vector<float> snap_edge(std::span<const float> alpha, std::span<const std::
       const std::array<double, 3> I = colour(l);
       double best = std::numeric_limits<double>::infinity();
       double bestAlpha = pc[l];
+      double bestContrast = 0;
       for (const auto& F : fs)
         for (const auto& B : bs) {
           double dd = 0;
@@ -454,9 +455,16 @@ std::vector<float> snap_edge(std::span<const float> alpha, std::span<const std::
           if (err < best) {
             best = err;
             bestAlpha = a;
+            bestContrast = std::sqrt(dd / 3);
           }
         }
-      if (best <= kMaxResidual) est[l] = static_cast<float>(bestAlpha);
+      if (best > kMaxResidual) continue;
+      // How far the colours can be trusted over the model: two sides ~20 levels apart (dark jeans
+      // on a wall in shadow) are noise-level — the model's edge stays; ~60 levels apart and more,
+      // the picture's own edge wins. Between, a blend: no holes where the colours say little.
+      const double trust = std::clamp((bestContrast * 255 - 20) / 40, 0.0, 1.0);
+      const double tw = trust * trust * (3 - 2 * trust);
+      est[l] = static_cast<float>(pc[l] + tw * (bestAlpha - pc[l]));
     }
   // A light colour guided filter of the estimate: texture noise in the projection smoothed, the
   // picture's edge kept.

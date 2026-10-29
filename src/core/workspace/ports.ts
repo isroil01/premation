@@ -1422,20 +1422,46 @@ function cutCommands(ids: readonly string[], payload: CutPathsPayload): Command[
  *   shows Front — without it every pane's drag would be interpreted through the
  *   main viewport's view and move the layer along the wrong axis.
  */
+type TransformStartListener = (ids: readonly string[], kind: 'move' | 'resize' | 'rotate') => void;
+const transformStartListeners = new Set<TransformStartListener>();
+
+/**
+ * Told when a viewport drag starts moving, resizing or rotating layers (once
+ * per drag; each nudge burst counts as one) — the editor offers to separate a
+ * subject when it is the whole clip that would move
+ * (layout/Workspace/subjectTransformHint.ts). Returns the unsubscribe.
+ */
+export function onLayerTransformStart(listener: TransformStartListener): () => void {
+  transformStartListeners.add(listener);
+  return () => { transformStartListeners.delete(listener); };
+}
+
+function transformStarted(ids: readonly string[], kind: 'move' | 'resize' | 'rotate'): void {
+  if (transformStartListeners.size === 0 || ids.length === 0) return;
+  const txn = currentToolTransaction();
+  // The drag's transaction remembers it told; without one (a lone message) every message is a start.
+  if (txn && txn.memo('transform-start-told', () => ({ told: false })).told) return;
+  if (txn) txn.memo('transform-start-told', () => ({ told: false })).told = true;
+  for (const l of transformStartListeners) l(ids, kind);
+}
+
 export function createCommandPort(viewOf?: () => Camera3dMode): CommandPort {
   return {
     execute(command: WorkspaceCommand): void {
       switch (command.type) {
         case WorkspaceCommandType.MoveNodes:
+          transformStarted((command.payload as MoveNodesPayload).ids, 'move');
           moveNodes(command.payload as MoveNodesPayload, viewOf);
           break;
         case WorkspaceCommandType.CreateNode:
           createNode(command.payload as CreateNodePayload);
           break;
         case WorkspaceCommandType.ResizeNode:
+          transformStarted([(command.payload as ResizeNodePayload).id], 'resize');
           resizeNode(command.payload as ResizeNodePayload);
           break;
         case WorkspaceCommandType.RotateNode:
+          transformStarted([(command.payload as RotateNodePayload).id], 'rotate');
           rotateNode(command.payload as RotateNodePayload);
           break;
         case WorkspaceCommandType.MultiResizeNodes:

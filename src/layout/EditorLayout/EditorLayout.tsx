@@ -32,6 +32,7 @@ import { EditorTabs } from '@layout/Tabs/EditorTabs';
 import { Icon } from '@components/Icon';
 import { useLayoutStore, COLLAPSED_SIDEBAR_SIZE, MIN_VIEWER_PX, type RegionId } from '@stores/layoutStore';
 import { installAutoTrack } from '@layout/Workspace/autoTrack';
+import { installSubjectTransformHint } from '@layout/Workspace/subjectTransformHint';
 import styles from './EditorLayout.module.css';
 import { t } from '@core/i18n';
 
@@ -71,6 +72,8 @@ export function EditorLayout({
 }: EditorLayoutProps): JSX.Element {
   // Subjects on moving footage track themselves after each edit (the Object Matte tool, brushes).
   useEffect(() => installAutoTrack(), []);
+  // Dragging a layer that has subjects moves the whole clip: say so, offer to separate the subject.
+  useEffect(() => installSubjectTransformHint(), []);
   const left = useLayoutStore((s) => s.regions.leftSidebar);
   const right = useLayoutStore((s) => s.regions.rightInspector);
   const bottom = useLayoutStore((s) => s.regions.bottomTimeline);

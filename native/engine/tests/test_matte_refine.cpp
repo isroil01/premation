@@ -200,3 +200,27 @@ TEST_CASE("edge snap at 1080p: the time it adds to a selection", "[.bench][matte
   WARN("snap_edge 1920x1080, radius 9: " << ms << " ms");
   CHECK(s.size() == coarse.size());
 }
+TEST_CASE("edge snap trusts the model where subject and ground are nearly the same colour", "[jobs][matte][subject]") {
+  // Dark jeans on a wall in shadow: both near-black, a few levels of noise — the colours cannot
+  // place the edge, so the model's matte must come through whole (no holes along the leg).
+  constexpr int W = 120;
+  constexpr int H = 40;
+  std::vector<std::uint8_t> rgba(static_cast<std::size_t>(W * H) * 4, 255);
+  std::vector<float> coarse(static_cast<std::size_t>(W * H));
+  std::uint32_t seed = 3;
+  for (int y = 0; y < H; ++y)
+    for (int x = 0; x < W; ++x) {
+      const std::size_t i = static_cast<std::size_t>(y * W + x);
+      seed = seed * 1664525u + 1013904223u;
+      const int noise = static_cast<int>(seed >> 29) * 3 - 9;  // ±9 levels
+      const int base = x < 60 ? 30 : 42;
+      for (std::size_t c = 0; c < 3; ++c) rgba[i * 4 + c] = static_cast<std::uint8_t>(std::clamp(base + noise, 0, 255));
+      coarse[i] = static_cast<float>(std::clamp((61.0 - x) / 6.0 + 0.5, 0.0, 1.0));
+    }
+  const std::vector<float> s = mt::snap_edge(coarse, rgba, W, H, 8);
+  for (int y = 2; y < H - 2; ++y)
+    for (int x = 50; x <= 57; ++x) {
+      const std::size_t i = static_cast<std::size_t>(y * W + x);
+      if (coarse[i] >= 0.99f) CHECK(s[i] > 0.85f);
+    }
+}

@@ -195,6 +195,17 @@ gpuSuite('subject view modes in the viewport', () => {
     expect(black(await pixelBecomes(240, black))).toBe(true);
   });
 
+  it('overlay: the subject tinted see-through, the rest as it is', async () => {
+    await view('overlay');
+    // The subject's colour mixed with the orange footage: neither the plain footage nor a flat tint.
+    const tinted = (c: Rgb): boolean => !orange(c) && c[2] > 80 && c[0] > 150;
+    const inside = await pixelBecomes(60, tinted);
+    expect(tinted(inside)).toBe(true);
+    expect(inside[2]).toBeLessThan(200);  // not the solid #ff3fd4 tint (b 212)
+    expect(orange(await pixelBecomes(240, orange))).toBe(true);
+    await view(null);
+  });
+
   it('a style over part of the shot shows only inside its span (Effect Opacity keys)', async () => {
     await view(null);
     const id = 'fx_span_test';

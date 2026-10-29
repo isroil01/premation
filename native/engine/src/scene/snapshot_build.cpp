@@ -1348,12 +1348,14 @@ void add_subject_view_effects(RLayer& l, const api::SubjectView& sv, const Json&
     if (e.at("color").is_string() && e.at("color").str().size() == 7) colour = e.at("color").str();
   }
   if (colour.empty()) colour = "#ff3fd4";
-  const auto add = [&](std::string_view type, std::string_view scope, Json params) {
+  const auto add = [&](std::string_view type, std::string_view scope, Json params, double opacity = 100) {
     Json fx = Json::object();
     fx.set("id", Json::string("subject-view:" + std::string(type) + ":" + std::string(scope)));
     fx.set("type", Json::string(std::string(type)));
     fx.set("enabled", Json::boolean(true));
     fx.set("params", std::move(params));
+    // Effect Opacity (the effect blended back over its input): the overlay's see-through tint.
+    if (opacity < 100) fx.set("opacity", Json::number(opacity));
     if (!scope.empty()) fx.set("subjectScope", Json::string(std::string(scope)));
     if (!sid.empty()) fx.set("subjectId", Json::string(sid));
     l.effects.push_back(std::move(fx));
@@ -1365,7 +1367,7 @@ void add_subject_view_effects(RLayer& l, const api::SubjectView& sv, const Json&
     return p;
   };
   if (sv.mode == "overlay") {
-    add("fill", "subject", fill(colour, 45));
+    add("fill", "subject", fill(colour, 100), 45);
   } else if (sv.mode == "black") {
     add("fill", "background", fill("#000000", 100));
   } else if (sv.mode == "white") {

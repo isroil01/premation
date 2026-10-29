@@ -27,7 +27,8 @@ import type { Command } from '@motion/engine-api';
 import { engine, engineIdle } from '@core/engine/engineInstance';
 import { reportEngineError } from '@core/engine/uiEdits';
 import { compTime, paths } from '@core/engine/propRefs';
-import { mirrorEffectHeaders, mirrorMaskHeaders } from '@core/mirror/effects';
+import { mirrorEffectHeaders, mirrorEffects, mirrorMaskHeaders } from '@core/mirror/effects';
+import { layerSubjects, subjectOutlines } from '@core/workspace/subjects';
 import { ROTO_FROZEN_NAME, ROTO_PATH_NAME } from '@core/workspace/rotoBrushTool';
 import { OBJECT_MATTE_EFFECT } from '@core/workspace/objectMatteEffect';
 import { effectCategoryOf } from '@layout/Effects/effectCategory';
@@ -141,12 +142,33 @@ async function anchorCommands(copy: string, seconds: number): Promise<Command[]>
  * Make the subject's own layer from `layer` (one undo entry). Resolves the new
  * layer's id, or why nothing was made (engine refusals are already reported).
  */
-export async function newLayerFromSubjectEdit(layer: string, seconds: number): Promise<NewLayerFromSubjectResult> {
+/**
+ * The effects that style `subject` on `layer` (they travel with it to its own
+ * layer): with several subjects, those reading it alone (compositing/subjectId);
+ * with one, every effect Applied To the subject or its background and the
+ * subject-reading ones (Matte Stroke, Selective Color AI). Never the card.
+ */
+export function subjectStyleIds(layer: string, subject: string | null): string[] {
+  const all = mirrorEffects(documentMirror().tree(layer));
+  const many = layerSubjects(layer).length > 1;
+  return all
+    .filter((e) => e.type !== OBJECT_MATTE_EFFECT)
+    .filter((e) => (many && subject
+      ? e.subjectId === subject
+      : !!e.subjectScope || e.type === 'matte-stroke' || e.type === 'selective-color-ai' || (subject !== null && e.subjectId === subject)))
+    .map((e) => e.id);
+}
+
+export async function newLayerFromSubjectEdit(layer: string, seconds: number, subject: string | null = null): Promise<NewLayerFromSubjectResult> {
   const m = documentMirror();
   const src = m.layer(layer);
   if (!src) return { ok: false, reason: 'noLayer', message: t('workspace.subjects.newLayerNoLayer', 'Select the layer the subject is on.') };
   await m.loadTrees([layer]);
   const parts = subjectPartsOf(m.tree(layer));
+  // Separating one of several subjects: the copy keeps that one; its styles move with it.
+  const subjects = layerSubjects(layer);
+  const lifted = subject ? subjects.find((s) => s.id === subject) ?? null : subjects.length === 1 ? subjects[0]! : null;
+  const movedStyles = lifted ? subjectStyleIds(layer, lifted.id) : [];
   if (!hasSubject(parts, m.tree(layer))) {
     return { ok: false, reason: 'noSubject', message: t('workspace.subjects.newLayerNeedsSubject', 'Select the subject first: Object Matte, Roto Brush or a mask.') };
   }
@@ -170,7 +192,26 @@ export async function newLayerFromSubjectEdit(layer: string, seconds: number): P
     await engineIdle();
     // The copy's own ids (a duplicate may re-id its groups): read from its tree, not the original's.
     await m.loadTrees([copy]);
-    const res = await client.batch(label, cleanupCommands(copy, subjectPartsOf(m.tree(copy)), src.name));
+    const copyParts = subjectPartsOf(m.tree(copy));
+    // The copy's own ids for the subject's styles (a duplicate may re-id its groups): kept, not dropped.
+    const copyStyles = new Set(lifted ? subjectStyleIds(copy, lifted.id) : []);
+    copyParts.dropEffects = copyParts.dropEffects.filter((id) => !copyStyles.has(id));
+    const cmds = cleanupCommands(copy, copyParts, lifted && subjects.length > 1 ? lifted.name : src.name);
+    if (lifted && subjects.length > 1) {
+      // The other subjects leave the copy: their frames and their outlines (their styles were dropped above).
+      const outlines = subjectOutlines(copy);
+      const otherMasks: Array<{ layer: string; path: string }> = [];
+      for (const s of subjects) {
+        if (s.id === lifted.id) continue;
+        cmds.push({ type: 'setLayerMatte', layer: copy, frames: [], merge: false, subject: s.id });
+        const mask = outlines.get(s.id);
+        if (mask) otherMasks.push({ layer: copy, path: paths.maskGroup(mask) });
+      }
+      if (otherMasks.length > 0) cmds.push({ type: 'removePropertyGroups', groups: otherMasks });
+    }
+    // The original no longer draws the subject's styles: they are on the copy now.
+    if (movedStyles.length > 0) cmds.push({ type: 'removePropertyGroups', groups: movedStyles.map((id) => ({ layer, path: paths.effectGroup(id) })) });
+    const res = await client.batch(label, cmds);
     if (!res.ok) {
       reportEngineError(label, res.error);
       return { ok: false, reason: 'engine', message: res.error.message };
