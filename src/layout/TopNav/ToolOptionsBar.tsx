@@ -27,6 +27,7 @@ import { Badge } from '@components/Badge';
 import { Popover } from '@components/Popover';
 import { useViewportDisplayStore } from '@stores/viewportDisplayStore';
 import { useRotoBrushStore } from '@stores/rotoBrushStore';
+import { activeSubjectId } from '@stores/subjectStore';
 import { propagateObjectMatte, propagateRotoForward, rotoFreezeEdit, rotoMattes } from '@core/workspace/rotoBrushTool';
 import { edit } from '@core/engine/uiEdits';
 import { useMirrorTree } from '@hooks/useMirror';
@@ -440,6 +441,7 @@ function RotoOptions({ objectMatteTool = false, brush }: { objectMatteTool?: boo
     const end = direction === 'backward' ? origin + 1 / settingsFps(settings) : wa ? wa.end : settingsDurationSeconds(settings);
     if (!(end > start)) {
       store.setStatus(t('topNav.roto.nothingInDirection', 'Nothing in that direction to propagate into.'));
+      subject: activeSubjectId(nodeId),
       return;
     }
     store.setBusy(true, 0);

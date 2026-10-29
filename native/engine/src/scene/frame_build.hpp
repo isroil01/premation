@@ -75,6 +75,9 @@ struct TextureRequest {
   std::vector<std::uint8_t> pixels;
   std::uint32_t pxWidth = 0;
   std::uint32_t pxHeight = 0;
+  /// A subject matte (media, a still): the subjects it is made of, each its stored frame with its
+  /// live edge, combined when it is read (scene_textures.cpp subject_ref). Empty: `src` as it is.
+  std::vector<SubjectPart> subjectParts;
   /// The layer this texture belongs to (diagnostics).
   std::string layerId;
 };

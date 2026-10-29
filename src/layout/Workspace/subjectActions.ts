@@ -17,11 +17,13 @@ import { propagateObjectMatte, rotoFreezeEdit, rotoMattes, ROTO_PATH_NAME } from
 import { activeCompSettingsNow } from '@hooks/useMirrorFrame';
 import { documentMirror } from '@stores/documentMirror';
 import { useRotoBrushStore } from '@stores/rotoBrushStore';
+import { activeSubjectId } from '@stores/subjectStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
 import type { ContextMenuItem } from '@stores/contextMenuStore';
 import { t } from '@core/i18n';
 import { objectMatteCard } from '@core/workspace/objectMatteEffect';
+import { layerSubjects } from '@core/workspace/subjects';
 import { newLayerFromSubject } from './newLayerFromSubjectCommand';
 import { runCreateSubjectTrack } from './placeBehindSubjectCommand';
 import { matteOutlineKeys } from './subjectTrack';
@@ -107,8 +109,8 @@ const notify = (message: string, level: 'info' | 'success' | 'warning' = 'succes
   useUIStore.getState().notify({ level, message, durationMs: 3200 });
 };
 
-/** Follow the subject through the work area, both ways, as a Tasks-panel job. */
-export async function followSubject(layer: string): Promise<void> {
+/** Follow a subject (default the active one) through the work area, both ways, as a Tasks-panel job. */
+export async function followSubject(layer: string, subject: string = activeSubjectId(layer)): Promise<void> {
   const settings = activeCompSettingsNow();
   const fps = settingsFps(settings);
   const wa = settingsSetWorkArea(settings);
@@ -121,7 +123,7 @@ export async function followSubject(layer: string): Promise<void> {
   store.setBusy(true, 0);
   try {
     const r = await propagateObjectMatte(layer, store.strokes, {
-      origin: playheadSeconds(), start, end, fps, direction: 'both', featherPx: store.featherPx, refine: store.refine, box: store.box,
+      origin: playheadSeconds(), start, end, fps, direction: 'both', featherPx: store.featherPx, refine: store.refine, box: store.box, subject,
     }, (f) => {
       useUIStore.getState().updateJob(jobId, { progress: f });
       useRotoBrushStore.getState().setBusy(true, f);
@@ -141,11 +143,17 @@ export async function followSubject(layer: string): Promise<void> {
 
 let fxSeq = 0;
 
-/** One effect on the layer, one undo entry; `scope` makes it Apply To the subject or the background. */
+/**
+ * One effect on the layer, one undo entry; `scope` makes it Apply To the subject or the background.
+ * With several subjects it reads the active one alone (Compositing Options ▸ subjectId).
+ */
 async function addEffect(layer: string, label: string, effect: string, params: PropertyInit[], scope?: 'subject' | 'background'): Promise<boolean> {
   const id = `fx_subject_${Date.now().toString(36)}_${(fxSeq++).toString(36)}`;
   const commands: Command[] = [{ type: 'addEffect', layers: [layer], effect, params, id }];
   if (scope) commands.push({ type: 'setProperty', prop: { layer, path: `effects/${id}/compositing/subject` }, value: values.string(scope) });
+  if (layerSubjects(layer).length > 1) {
+    commands.push({ type: 'setProperty', prop: { layer, path: `effects/${id}/compositing/subjectId` }, value: values.string(activeSubjectId(layer)) });
+  }
   const res = await edit(label, commands);
   if (res.ok) useSelectionStore.getState().set([layer]);
   return res.ok;

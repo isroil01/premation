@@ -23,6 +23,8 @@ import { createSubjectTrackEdit } from './subjectTrack';
 export interface PlaceBehindOptions {
   /** A point on the subject, footage px from the top-left, on the frame at the playhead. */
   point?: { x: number; y: number };
+  /** Which of the footage's subjects stand in front (absent = all): the text goes between them and the rest. */
+  inFront?: string[];
 }
 
 export type PlaceBehindOutcome =
@@ -40,7 +42,7 @@ export async function runPlaceBehindSubject(selection: readonly string[], opts: 
     notify(planned.message, 'warning');
     return planned;
   }
-  const made = await placeBehindSubjectEdit(planned.plan);
+  const made = await placeBehindSubjectEdit({ ...planned.plan, ...(opts.inFront ? { inFront: opts.inFront } : {}) });
   if (!made) return { ok: false, message: t('workspace.placeBehind.failed', 'Could not place the layers behind the subject.') };
   const { subject } = made;
   useSelectionStore.getState().set([subject]);

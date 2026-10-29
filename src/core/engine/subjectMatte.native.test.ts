@@ -175,5 +175,114 @@ suite('a subject is a selection other effects and layers read', () => {
     f = await frame(1.6);
     expect(isOrange(px(f, 60))).toBe(true);
     expect(isOrange(px(f, 260))).toBe(false);
+    await h.run({ type: 'removePropertyGroups', groups: [{ layer: video, path: 'effects/fx_inv2' }] } as Command);
   }, 180_000);
+
+  async function subjectsOf(): Promise<Array<{ id: string; name: string; color: string }>> {
+    const r = (await h.query({ type: 'getPropertyValues', props: [{ layer: video, path: 'layer/subjects' }], time: 0 } as never)) as {
+      values: Array<{ value: { kind: string; value?: string } }>;
+    };
+    const v = r.values[0]?.value;
+    return v?.kind === 'json' && v.value ? (JSON.parse(v.value) as Array<{ id: string; name: string; color: string }>) : [];
+  }
+  const setSubjects = (list: unknown): Promise<unknown> =>
+    h.run({ type: 'setProperty', prop: { layer: video, path: 'layer/subjects' }, value: { kind: 'json', value: JSON.stringify(list) } } as Command);
+
+  /**
+   * A cut-out at the LAYER's own size (its box may be larger than the comp: the
+   * test clip's layer is drawn 1:1 around the comp's centre), opaque where the
+   * comp column `inside(x)` — so a subject's region is exact in comp px.
+   */
+  async function layerMatte(name: string, inside: (compX: number) => boolean): Promise<string> {
+    const r = (await h.query({ type: 'getPropertyValues', props: [{ layer: video, path: 'layer/width' }, { layer: video, path: 'layer/height' }], time: 0, evaluated: true } as never)) as {
+      values: Array<{ value: { value?: number } }>;
+    };
+    const lw = Math.round(r.values[0]?.value.value ?? W);
+    const lh = Math.round(r.values[1]?.value.value ?? H);
+    const png = new PNG({ width: lw, height: lh });
+    for (let y = 0; y < lh; y++) {
+      for (let x = 0; x < lw; x++) {
+        const i = (y * lw + x) * 4;
+        png.data[i] = 208; png.data[i + 1] = 80; png.data[i + 2] = 42;
+        png.data[i + 3] = inside(x - lw / 2 + W / 2) ? 255 : 0;
+      }
+    }
+    const f = path.join(matteDir, name);
+    fs.writeFileSync(f, PNG.sync.write(png));
+    return f;
+  }
+
+  it('several subjects: each its own frames, name and colour; an effect reads one of them or all', async () => {
+    const left = await layerMatte('s1_left.png', (x) => x < 120);
+    const farRight = await layerMatte('s2_far_right.png', (x) => x >= 240);
+    // Subject 1 alone on the left (not merged: its other frames go); Subject 2 on the far right.
+    await h.run({ type: 'setLayerMatte', layer: video, frames: [{ time: sec(0), src: left }], merge: false, cut: false } as Command);
+    await h.run({ type: 'setLayerMatte', layer: video, frames: [{ time: sec(0), src: farRight }], merge: true, cut: false, subject: 's2' } as Command);
+    const list = await subjectsOf();
+    expect(list.map((s) => s.id)).toEqual(['s1', 's2']);
+    expect(list.map((s) => s.name)).toEqual(['Subject 1', 'Subject 2']);
+    expect(list[0]!.color).not.toBe(list[1]!.color);
+
+    await h.run({ type: 'addEffect', layers: [video], effect: 'invert', params: [], id: 'fx_s2' } as Command);
+    await h.run({ type: 'setProperty', prop: { layer: video, path: 'effects/fx_s2/compositing/subject' }, value: { kind: 'string', value: 'subject' } } as Command);
+    await h.run({ type: 'setProperty', prop: { layer: video, path: 'effects/fx_s2/compositing/subjectId' }, value: { kind: 'string', value: 's2' } } as Command);
+    let f = await frame();
+    expect(isOrange(px(f, 60))).toBe(true);    // Subject 1: not this effect's
+    expect(isOrange(px(f, 180))).toBe(true);   // neither subject
+    expect(isOrange(px(f, 280))).toBe(false);  // Subject 2
+    // All subjects: both regions.
+    await h.run({ type: 'setProperty', prop: { layer: video, path: 'effects/fx_s2/compositing/subjectId' }, value: { kind: 'string', value: '' } } as Command);
+    f = await frame();
+    expect(isOrange(px(f, 60))).toBe(false);
+    expect(isOrange(px(f, 180))).toBe(true);
+    expect(isOrange(px(f, 280))).toBe(false);
+    expect(await errors()).toEqual([]);
+  }, 240_000);
+
+  it('a subject\'s live edge and visibility change the matte at once', async () => {
+    const list = await subjectsOf();
+    // Subject 1 (x < 120) grown by 30 px: the invert (all subjects) reaches x = 150.
+    await setSubjects(list.map((s) => (s.id === 's1' ? { ...s, choke: -30 } : s)));
+    let f = await frame();
+    expect(isOrange(px(f, 135))).toBe(false);
+    expect(isOrange(px(f, 165))).toBe(true);
+    // Subject 2 hidden: it covers nothing.
+    await setSubjects(list.map((s) => (s.id === 's2' ? { ...s, hidden: true } : s)));
+    f = await frame();
+    expect(isOrange(px(f, 280))).toBe(true);
+    expect(isOrange(px(f, 60))).toBe(false);
+    await setSubjects(list);
+    expect(await errors()).toEqual([]);
+  }, 240_000);
+
+  it('Behind Subjects: a layer between the subjects — behind Subject 1 only', async () => {
+    await h.run({ type: 'removePropertyGroups', groups: [{ layer: video, path: 'effects/fx_s2' }] } as Command);
+    await runToolTurn('AI: card', [{ name: 'create_layer', args: { id: 'card2', kind: 'solid', name: 'Card2', x: W / 2, y: H / 2, width: W, height: H, fill: '#ffffff' } }]);
+    await settleEdits();
+    const comp = activeCompRootId() as string;
+    const card = (documentMirror().comp(comp)?.layers ?? []).find((id) => documentMirror().layer(id)?.name === 'Card2')!;
+    await h.run({ type: 'setProperty', prop: { layer: card, path: 'layer/behindSubject' }, value: { kind: 'string', value: video } } as Command);
+    await h.run({ type: 'setProperty', prop: { layer: card, path: 'layer/behindSubjects' }, value: { kind: 'json', value: JSON.stringify(['s1']) } } as Command);
+    const f = await frame();
+    expect(isOrange(px(f, 60))).toBe(true);        // Subject 1 in front of the card
+    expect(px(f, 280)[1]).toBeGreaterThan(240);    // Subject 2 is behind it
+    expect(px(f, 200)[1]).toBeGreaterThan(240);
+    await h.run({ type: 'deleteLayers', layers: [card] } as Command);
+    expect(await errors()).toEqual([]);
+  }, 240_000);
+
+  it('removing a subject keeps the others', async () => {
+    await h.run({ type: 'setLayerMatte', layer: video, frames: [], merge: false, subject: 's2' } as Command);
+    expect((await subjectsOf()).map((s) => s.id)).toEqual(['s1']);
+    await h.run({ type: 'addEffect', layers: [video], effect: 'invert', params: [], id: 'fx_left' } as Command);
+    await h.run({ type: 'setProperty', prop: { layer: video, path: 'effects/fx_left/compositing/subject' }, value: { kind: 'string', value: 'subject' } } as Command);
+    const f = await frame();
+    expect(isOrange(px(f, 60))).toBe(false);
+    expect(isOrange(px(f, 280))).toBe(true);
+    await h.run({ type: 'undo' } as Command);
+    await h.run({ type: 'undo' } as Command);
+    await h.run({ type: 'undo' } as Command);
+    expect((await subjectsOf()).map((s) => s.id)).toEqual(['s1', 's2']);
+    expect(await errors()).toEqual([]);
+  }, 240_000);
 });

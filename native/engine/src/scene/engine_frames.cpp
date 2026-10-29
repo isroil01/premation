@@ -336,6 +336,20 @@ std::uint64_t frame_content_hash(const BuiltFrame& frame, wire::Writer& scratch)
     // Builder-computed textures (TexKind::pixels: the colour-LUT strips).
     h.u64((std::uint64_t{t.pxWidth} << 32U) | t.pxHeight);
     h.bytes(t.pixels);
+    // A subject matte: which subjects, their frames and their live edge.
+    h.u64(t.subjectParts.size());
+    for (const SubjectPart& p : t.subjectParts) {
+      h.str(p.id);
+      h.str(p.src);
+      for (const auto& [src, w] : p.blend) {
+        h.str(src);
+        h.f64(w);
+      }
+      h.f64(p.feather);
+      h.f64(p.choke);
+      h.f64(p.contrast);
+      h.u64((p.invert ? 1U : 0U) | (p.hidden ? 2U : 0U));
+    }
   }
   for (const std::string& f : frame.fontFamilies) h.str(f);
   h.str(frame.mediaBase);

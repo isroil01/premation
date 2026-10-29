@@ -123,6 +123,24 @@ struct ExtrudedMeshData {
   std::vector<std::pair<std::string, std::string>> mapSources;
 };
 
+/// One of a layer's subjects at the layer's time (core/subjects.hpp): its stored matte frame
+/// and its live edge (layer/subjects), applied when the matte is read (scene_textures.cpp).
+struct SubjectPart {
+  std::string id;
+  std::string src;
+  /// Temporal smoothing: the neighbouring stored frames mixed in, with their weights (the
+  /// frame itself carries the rest).
+  std::vector<std::pair<std::string, double>> blend;
+  double feather = 0;   ///< px, a Gaussian of the edge
+  double choke = 0;     ///< px, + shrinks the subject, − grows it
+  double contrast = 0;  ///< 0–1, steepens the soft edge
+  bool invert = false;
+  /// Hidden in the Subjects panel, or outside the range it was tracked over: it covers nothing now.
+  bool hidden = false;
+  /// Neutral: the stored picture as it is.
+  [[nodiscard]] bool plain() const { return blend.empty() && feather <= 0 && choke == 0 && contrast <= 0 && !invert && !hidden; }
+};
+
 /// RenderLayer — the fields the port carries (see the header note).
 struct RLayer {
   std::string id;
@@ -231,10 +249,16 @@ struct RLayer {
   /// Another layer of the stack is Behind this layer's subject: the matte frame
   /// is requested as a texture (object_matte_key) for that layer's cut.
   bool subjectReferenced = false;
+  /// The layer's visible subjects now (hidden ones left out), in panel order.
+  std::vector<SubjectPart> subjects;
+  /// The subsets of `subjects` other layers are Behind (layer/behindSubjects; empty = all), each a texture.
+  std::vector<std::vector<std::string>> subjectSubsets;
   /// Behind Subject (layer/behindSubject): the footage layer whose subject this
   /// layer is hidden behind — it shows only outside that layer's subject matte.
   /// Cleared when that layer has no subject at this time.
   std::optional<std::string> behindSubject;
+  /// Which of that layer's subjects are in front of this one (layer/behindSubjects; empty = all of them).
+  std::vector<std::string> behindSubjects;
   /// Behind Subject's softness (layer/behindSubjectSoftness, px): the subject's edge feathered where it covers this layer.
   double behindSubjectSoftness = 0;
   std::optional<std::array<double, 4>> uvRect;

@@ -1567,7 +1567,7 @@ api::RenderEffect matte_stroke(const Params& P, Box b, const Ctx& c) {
   const bool subject = matte.empty() && c.l.objectMatteSrc.has_value();
   const bool own = matte.empty() && !subject;
   if (!matte.empty()) g.map(0, matte);
-  if (subject) g.mask(0, object_matte_key(c.l.id));
+  if (subject) g.mask(0, object_matte_key(c.l.id, effect_subject_ids(c.e)));
   const int src = own ? fxg::IN : subject ? fxg::MASK0 : fxg::MAP;
   const double w = std::max(0.0, P.n("width"));
   const double soft = std::max(0.0, P.n("softness"));
@@ -1610,7 +1610,7 @@ api::RenderEffect selective_color_ai(const Params& P, Box b, const Ctx& c) {
     g.map(0, matte);
     src = fxg::MAP;
   } else if (c.l.objectMatteSrc) {
-    g.mask(0, object_matte_key(c.l.id));
+    g.mask(0, object_matte_key(c.l.id, effect_subject_ids(c.e)));
     src = fxg::MASK0;
   }
   const double choke = P.n("matteChoke");
@@ -1638,7 +1638,7 @@ api::RenderEffect selective_color_ai(const Params& P, Box b, const Ctx& c) {
 void object_matte(const Params& P, Box b, const Ctx& c, Out& out) {
   if (!c.l.objectMatteSrc) return;
   Graph g("object-matte", b.lw, b.lh);
-  g.mask(0, object_matte_key(c.l.id));
+  g.mask(0, object_matte_key(c.l.id));  // every shown subject: the cut-out is all of them
   const int src = fxg::MASK0;
   const bool fine = P.on("fineTune");
   const double feather = fine ? std::max(0.0, P.n("feather")) : 0.0;
@@ -1729,10 +1729,10 @@ bool spatial_x_handles(std::string_view type) { return std::ranges::find(kHandle
 
 bool deep_effect_follows_clock(std::string_view type) { return std::ranges::find(kClock, type) != kClock.end(); }
 
-api::RenderEffect subject_fill_entry(const RLayer& l) {
+api::RenderEffect subject_fill_entry(const RLayer& l, std::span<const std::string> ids) {
   const Box b{std::max(1.0, l.width > 0 ? l.width : 1.0), std::max(1.0, l.height > 0 ? l.height : 1.0)};
   Graph g("subject-fill", b.lw, b.lh);
-  g.mask(0, object_matte_key(l.id));
+  g.mask(0, object_matte_key(l.id, ids));
   g.pass("fxx-sfill-pre", fxg::X0, {fxg::IN, fxg::MASK0, -1, -1}, Rows());
   // Wide enough to reach the background across a person's width (3 % of the layer's long side).
   g.blur(fxg::X1, fxg::X0, std::max(b.lw, b.lh) * 0.03, fxg::X2);
@@ -1767,13 +1767,24 @@ std::vector<DeepFxTexture> deep_effect_textures(const RLayer& l) {
     d.mask.set("paths", std::move(paths));
     out.push_back(std::move(d));
   };
+  // A subject matte (all the layer's shown subjects, or some): one texture per set, however many effects read it.
+  const auto addSubject = [&](std::span<const std::string> ids) {
+    std::string key = object_matte_key(l.id, ids);
+    if (std::ranges::any_of(out, [&](const DeepFxTexture& d) { return d.key == key; })) return;
+    std::vector<SubjectPart> parts = subject_parts(l, ids);
+    if (parts.empty()) return;
+    DeepFxTexture d;
+    d.key = std::move(key);
+    d.src = parts.front().src;
+    d.parts = std::move(parts);
+    out.push_back(std::move(d));
+  };
   for (const Json& e : l.effects) {
     if (!effect_enabled(e) || !e.at("type").is_string()) continue;
     const std::string_view t = e.at("type").str();
     if (subject_scope_of(e) != 0 && l.objectMatteSrc) {
       // Any effect applied to the Subject / Background reads the layer's Object Matte frame as its scope.
-      std::string key = object_matte_key(l.id);
-      if (std::ranges::none_of(out, [&](const DeepFxTexture& d) { return d.key == key; })) out.push_back({std::move(key), Json(), {}, *l.objectMatteSrc});
+      addSubject(effect_subject_ids(e));
     }
     if (!spatial_x_handles(t)) continue;
     const Json params = doc::params_of(e);
@@ -1783,24 +1794,23 @@ std::vector<DeepFxTexture> deep_effect_textures(const RLayer& l) {
       addMask(mask_path(l, P, "foregroundMask", true));
       addMask(mask_path(l, P, "backgroundMask", false));
     } else if (t == "energy-saber" && P.e("coreType") != 1) {
-      if (const Json* path = mask_path(l, P, "pathMask", true)) out.push_back({data_key(c, "path"), Json(), saber_path_data(*path), {}});
+      if (const Json* path = mask_path(l, P, "pathMask", true)) out.push_back({data_key(c, "path"), Json(), saber_path_data(*path), {}, {}});
     } else if (t == "ps-arbitrary-map") {
-      out.push_back({data_key(c, "map"), Json(), arbitrary_map_data(P), {}});
+      out.push_back({data_key(c, "map"), Json(), arbitrary_map_data(P), {}, {}});
     } else if (t == "particle-world") {
-      out.push_back({data_key(c, "particles"), Json(), particle_world_data(P, l), {}});
+      out.push_back({data_key(c, "particles"), Json(), particle_world_data(P, l), {}, {}});
     } else if (t == "stroke-3d") {
       if (const Json* path = mask_path(l, P, "pathMask", true)) {
         std::vector<float> d = stroke3d_data(P, l, *path);
-        if (!d.empty()) out.push_back({data_key(c, "stroke"), Json(), std::move(d), {}});
+        if (!d.empty()) out.push_back({data_key(c, "stroke"), Json(), std::move(d), {}, {}});
       }
     } else if (((t == "selective-color-ai" && P.layer("matteLayerId").empty()) || (t == "matte-stroke" && P.layer("matteLayerId").empty()) ||
                 t == "object-matte") &&
                l.objectMatteSrc) {
       // The layer's own Object Matte frame, read as a matte (one texture however many effects read it).
-      std::string key = object_matte_key(l.id);
-      if (std::ranges::none_of(out, [&](const DeepFxTexture& d) { return d.key == key; })) out.push_back({std::move(key), Json(), {}, *l.objectMatteSrc});
+      addSubject(t == "object-matte" ? std::vector<std::string>{} : effect_subject_ids(e));
     } else if (deep_effect_reads_scene(t)) {
-      out.push_back({data_key(c, "scene"), Json(), scene_data(P), {}});
+      out.push_back({data_key(c, "scene"), Json(), scene_data(P), {}, {}});
     }
   }
   return out;
@@ -1816,10 +1826,27 @@ bool reads_own_object_matte(const RLayer& l) {
   });
 }
 
-std::string object_matte_key(std::string_view layerId) {
+std::string object_matte_key(std::string_view layerId, std::span<const std::string> ids) {
   std::string k = "fxmatte:";
   k += layerId;
+  for (std::size_t i = 0; i < ids.size(); ++i) {
+    k += i == 0 ? '~' : '+';
+    k += ids[i];
+  }
   return k;
+}
+
+std::vector<SubjectPart> subject_parts(const RLayer& l, std::span<const std::string> ids) {
+  std::vector<SubjectPart> out;
+  for (const SubjectPart& p : l.subjects)
+    if (ids.empty() || std::ranges::find(ids, p.id) != ids.end()) out.push_back(p);
+  return out;
+}
+
+std::vector<std::string> effect_subject_ids(const Json& e) {
+  const Json& s = e.at("subjectId");
+  if (s.is_string() && !s.str().empty()) return {s.str()};
+  return {};
 }
 
 // ── the scene hand-off (deep_fx_scene.hpp) ────────────────────────────────────

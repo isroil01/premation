@@ -1256,7 +1256,7 @@ std::vector<api::RenderEffect> extract_gpu_route_effects(const RLayer& l) {
     const std::string t = type_of(e);
     // A blur Applied To the Background spreads from a picture with the subject painted out
     // (in its blend span, so the subject itself is still the input's where the blend keeps it).
-    if (subject_scope_of(e) == 2 && l.objectMatteSrc && t.find("blur") != std::string::npos) out.push_back(subject_fill_entry(l));
+    if (subject_scope_of(e) == 2 && l.objectMatteSrc && t.find("blur") != std::string::npos) out.push_back(subject_fill_entry(l, effect_subject_ids(e)));
     if (t == "write-on") {
       if (const auto stamp = stamp_for_effect(l, e)) {
         out.push_back(FxWriter("stamp-field")
@@ -1324,7 +1324,7 @@ std::vector<api::RenderEffect> extract_gpu_route_effects(const RLayer& l) {
       add_text(out[at], "scopeMaskKey", scope_mask_key(l.id, scope->at("id").str()));
       if (!a) add_param(out[at], "effectOpacity", 1);  // the scoped blend-back runs even at full opacity
     } else if (bySubject) {
-      add_text(out[at], "scopeMaskKey", object_matte_key(l.id));
+      add_text(out[at], "scopeMaskKey", object_matte_key(l.id, effect_subject_ids(e)));
       if (subject == 2) add_param(out[at], "scopeInvert", 1);
       if (!a) add_param(out[at], "effectOpacity", 1);
     }

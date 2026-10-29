@@ -29,6 +29,7 @@ import type { RotoBox, RotoStroke } from '@stores/rotoBrushStore';
 import { edit } from '@core/engine/uiEdits';
 import { paths } from '@core/engine/propRefs';
 import { objectMatteBake } from './objectMatteEffect';
+import { FIRST_SUBJECT, subjectLocked, subjectOfOutline, subjectOutlineName } from './subjects';
 import { t } from '@core/i18n';
 
 /** The name every path this tool writes carries, so a re-segment replaces it. */
@@ -52,7 +53,15 @@ function frozenMessage(nodeId: string): string {
     : t('workspace.rotoBrush.frozenMessage', 'Roto Brush is frozen on this layer. Unfreeze it to change the matte.');
 }
 
-/** The name of a subject's outline (the "Object Matte" mask the subject edits and Follow write). */
+/** An edit of `subject` is refused while it is locked, or while the layer's classic Roto Brush matte is frozen. */
+function refuseLocked(nodeId: string, subject: string): void {
+  if (rotoMattes(nodeId).frozen.length > 0) throw new Error(frozenMessage(nodeId));
+  if (subjectLocked(nodeId, subject)) {
+    throw new Error(t('workspace.subjects.lockedMessage', 'This subject is locked. Unlock it in Properties ▸ Subjects to change it.'));
+  }
+}
+
+/** The name of the first subject's outline (the "Object Matte" mask the subject edits and Follow write). */
 export const SUBJECT_OUTLINE_NAME = 'Object Matte';
 
 /**
@@ -67,7 +76,7 @@ export function rotoMattes(nodeId: string): { live: string[]; frozen: string[]; 
   for (const m of mirrorMaskHeaders(tree)) {
     if (m.name === ROTO_PATH_NAME) out.live.push(m.id);
     else if (m.name === ROTO_FROZEN_NAME) out.frozen.push(m.id);
-    else if (m.name === SUBJECT_OUTLINE_NAME) {
+    else if (subjectOfOutline(m.name) !== null) {
       const locked = plainValue(tree?.nodes.get(`masks/${m.id}/locked`)?.value) === true;
       (locked ? out.subjectFrozen : out.subject).push(m.id);
     }
@@ -396,6 +405,27 @@ export function objectAt(objects: readonly FoundObject[], p: { x: number; y: num
   return best;
 }
 
+/**
+ * Every found object under `p`, the whole first: a person, then the jacket on
+ * them, then its sleeve. The Object Matte tool steps through them (Tab) to
+ * pick a part rather than the whole.
+ */
+export function objectsAt(objects: readonly FoundObject[], p: { x: number; y: number }): FoundObject[] {
+  const hit: FoundObject[] = [];
+  for (const o of objects) {
+    const b = o.bounds;
+    if (p.x < b.x0 || p.x > b.x1 || p.y < b.y0 || p.y > b.y1) continue;
+    let inside = false;
+    const f = o.outline;
+    for (let i = 0, j = f.length - 2; i + 1 < f.length; j = i, i += 2) {
+      const xi = f[i]!, yi = f[i + 1]!, xj = f[j]!, yj = f[j + 1]!;
+      if ((yi > p.y) !== (yj > p.y) && p.x < ((xj - xi) * (p.y - yi)) / (yj - yi) + xi) inside = !inside;
+    }
+    if (inside) hit.push(o);
+  }
+  return hit.sort((a, b) => b.area - a.area);
+}
+
 /** How a subject edit changes the frame's matte (the Object Matte tool group). */
 export interface SubjectEditRequest {
   /** segment: the model from clicks / box / strokes; paint: the brush exactly; refine: soft alpha in the brush's band. */
@@ -425,8 +455,13 @@ export interface SubjectEditResult {
  * footage stays whole until Remove Background; effects read it through Apply
  * To and text through Behind Subject. Null when there was nothing to edit.
  */
-export async function runSubjectEdit(nodeId: string, timeSec: number, req: SubjectEditRequest): Promise<SubjectEditResult | null> {
-  if (isRotoFrozen(nodeId)) throw new Error(frozenMessage(nodeId));
+export async function runSubjectEdit(
+  nodeId: string,
+  timeSec: number,
+  req: SubjectEditRequest,
+  subject: string = FIRST_SUBJECT,
+): Promise<SubjectEditResult | null> {
+  refuseLocked(nodeId, subject);
   const size = await layerSize(nodeId);
   if (!size) return null;
   const toPx = (p: { x: number; y: number }) => ({ x: p.x + size.width / 2, y: p.y + size.height / 2 });
@@ -449,6 +484,7 @@ export async function runSubjectEdit(nodeId: string, timeSec: number, req: Subje
       ...(box ? { box } : {}),
       strokes: strokes.map((s) => ({ time: secondsToFlicks(timeSec), points: s.map(toPx), background: false })),
       edit: { tool: req.tool, op: req.op, radius: Math.max(0.5, req.radius ?? 10), cut: false },
+      subject,
     },
   }), 'Object Matte');
   if (out.status !== 'done') {
@@ -533,10 +569,13 @@ export async function propagateObjectMatte(
     refine: { edgeRadius: number; decontaminate: number; motionBlur: boolean; choke: number; reduceChatter: number };
     /** The Object Matte tool's marquee on the origin frame. */
     box?: RotoBox | null;
+    /** Which of the layer's subjects is followed (default the first). */
+    subject?: string;
   },
   onProgress?: (f: number) => boolean | void,
 ): Promise<RotoBrushResult> {
-  if (isRotoFrozen(nodeId)) throw new Error(frozenMessage(nodeId));
+  const subject = opts.subject ?? FIRST_SUBJECT;
+  refuseLocked(nodeId, subject);
   const size = await layerSize(nodeId);
   if (!size) throw new Error('Layer has no sized video source.');
   const here = strokesToPrompts(strokesAt(strokes, opts.origin, opts.fps), size);
@@ -544,7 +583,8 @@ export async function propagateObjectMatte(
   const rect = originBox ? boxToRect(originBox, size) : null;
   const box = rect && rect.width > 1 && rect.height > 1 ? rect : null;
   // No prompts here: the engine starts from the subject's stored matte (its frame nearest the origin).
-  const hasSubject = mirrorMaskHeaders(documentMirror().tree(nodeId)).some((m) => m.name === 'Object Matte');
+  const outline = subjectOutlineName(subject);
+  const hasSubject = mirrorMaskHeaders(documentMirror().tree(nodeId)).some((m) => m.name === outline);
   if (here.fg.length === 0 && !box && !hasSubject) throw new Error('Select the subject on this frame first: click it, or paint a foreground stroke.');
   const half = 0.5 / Math.max(1, opts.fps);
   const corrections = strokes
@@ -555,7 +595,7 @@ export async function propagateObjectMatte(
     })
     .filter((c) => c.points.length > 0);
   const replace = new Set<string>(rotoMattes(nodeId).live);
-  for (const m of mirrorMaskHeaders(documentMirror().tree(nodeId))) if (m.name === 'Object Matte') replace.add(m.id);
+  for (const m of mirrorMaskHeaders(documentMirror().tree(nodeId))) if (m.name === outline) replace.add(m.id);
   // The layer's Object Matte effect card holds the bake settings once it exists (objectMatteEffect.ts).
   const bake = objectMatteBake(nodeId, { ...opts.refine, featherPx: opts.featherPx });
   let cancel: (() => void) | null = null;
@@ -573,6 +613,7 @@ export async function propagateObjectMatte(
         ...(box ? { box } : {}),
         direction: opts.direction,
         origin: secondsToFlicks(opts.origin),
+        subject,
         strokes: corrections,
         matte: true,
         refine: {

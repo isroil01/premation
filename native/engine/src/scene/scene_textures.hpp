@@ -169,6 +169,9 @@ class SceneTextures final : public rg::ExternalTextureSource {
   void prepare_refs(const std::vector<TextureRequest>& reqs, std::vector<api::RenderTextureRef>& refs, PrepareStats& stats);
   std::string media_ref(const TextureRequest& r, PrepareStats& stats, std::optional<api::RenderColorSpace>& space);
   std::string image_ref(const TextureRequest& r, const std::filesystem::path& p, PrepareStats& stats);
+  /// A subject matte (r.subjectParts): each subject's stored frame decoded (image_ref), its live
+  /// edge applied and the subjects united (subject_matte.hpp), cached by the files and the settings.
+  std::string subject_ref(const TextureRequest& r, PrepareStats& stats);
   /// P7b: footage a native plugin importer reads (scene_textures_plugin.cpp).
   std::string plugin_image_ref(const TextureRequest& r, const std::filesystem::path& p, PrepareStats& stats);
   /// A still carried as a `data:image/…;base64,` URL (a content-aware fill frame).

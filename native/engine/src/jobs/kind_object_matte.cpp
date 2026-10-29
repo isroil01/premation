@@ -39,6 +39,7 @@
 //                    one replaces (removed in the same entry); the summary's
 //                    "mask" is the new mask's id.
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
@@ -77,6 +78,7 @@
 #include "sam_embed_cache.hpp"
 #include "fxstate.hpp"
 #include "subject_edit.hpp"
+#include "subjects.hpp"
 #include "vitmatte.hpp"
 #include "timeline.hpp"
 #include "values.hpp"
@@ -192,7 +194,7 @@ class ObjectMatteResult final : public JobResult {
 class SubjectEditResult final : public JobResult {
  public:
   SubjectEditResult(std::string layer, double compTime, std::string file, api::BezierPath outline, double coverage, bool cut,
-                    std::vector<std::string> replace, std::string provider, std::optional<Json> timings)
+                    std::vector<std::string> replace, std::string provider, std::optional<Json> timings, std::string subject)
       : layer_(std::move(layer)),
         compTime_(compTime),
         file_(std::move(file)),
@@ -201,7 +203,8 @@ class SubjectEditResult final : public JobResult {
         cut_(cut),
         replace_(std::move(replace)),
         provider_(std::move(provider)),
-        timings_(std::move(timings)) {}
+        timings_(std::move(timings)),
+        subject_(std::move(subject)) {}
 
   [[nodiscard]] std::string summary_json() const override {
     Json s = Json::object();
@@ -228,6 +231,7 @@ class SubjectEditResult final : public JobResult {
     m.layer = layer_;
     m.merge = true;
     m.cut = cut_;
+    m.subject = subject_;
     api::ContentAwareFillFrame fr;
     fr.time = flicks_of(compTime_);
     fr.src = file_;
@@ -240,14 +244,14 @@ class SubjectEditResult final : public JobResult {
       const Json mask = doc::get_node_mask(*node);
       if (mask.at("paths").is_array())
         for (const Json& p : mask.at("paths").arr())
-          if (p.at("id").is_string() && p.at("name").is_string() && p.at("name").str() == "Object Matte") group = "masks/" + p.at("id").str();
+          if (p.at("id").is_string() && p.at("name").is_string() && p.at("name").str() == doc::subject_outline_name(subject_)) group = "masks/" + p.at("id").str();
     }
     if (group.empty()) {
       api::AddMask add;
       add.layer = layer_;
       add.path = outline_;
       add.mode = api::MaskMode::none;
-      add.name = "Object Matte";
+      add.name = doc::subject_outline_name(subject_);
       group = mask_group_of(a.run(command(std::move(add))));
       // After Effects draws a selected subject's boundary in magenta.
       api::SetProperty colour;
@@ -282,6 +286,7 @@ class SubjectEditResult final : public JobResult {
   std::vector<std::string> replace_;
   std::string provider_;
   std::optional<Json> timings_;
+  std::string subject_;
   mutable std::string mask_;
 };
 
@@ -1492,9 +1497,9 @@ class ObjectMatteVideoResult final : public JobResult {
   };
 
   ObjectMatteVideoResult(std::string layer, std::vector<MatteFrame> frames, std::string status, bool storeMatte,
-                         std::vector<std::string> replace, Run run)
-      : layer_(std::move(layer)), frames_(std::move(frames)), status_(std::move(status)), storeMatte_(storeMatte), replace_(std::move(replace)),
-        run_(std::move(run)) {}
+                         std::vector<std::string> replace, Run run, std::string subject)
+      : layer_(std::move(layer)), frames_(std::move(frames)), status_(std::move(status)), storeMatte_(storeMatte), subject_(std::move(subject)),
+        replace_(std::move(replace)), run_(std::move(run)) {}
 
   [[nodiscard]] std::string summary_json() const override {
     Json s = Json::object();
@@ -1518,7 +1523,7 @@ class ObjectMatteVideoResult final : public JobResult {
       const Json mask = doc::get_node_mask(*node);
       if (mask.at("paths").is_array())
         for (const Json& p : mask.at("paths").arr())
-          if (p.at("id").is_string() && p.at("name").is_string() && p.at("name").str() == "Object Matte" &&
+          if (p.at("id").is_string() && p.at("name").is_string() && p.at("name").str() == doc::subject_outline_name(subject_) &&
               std::ranges::find(drop, p.at("id").str()) == drop.end()) {
             drop.push_back(p.at("id").str());
           }
@@ -1532,6 +1537,7 @@ class ObjectMatteVideoResult final : public JobResult {
       api::SetLayerMatte m;
       m.layer = layer_;
       m.cut = false;  // the subject is a selection: a new Object Matte card starts off (Remove Background turns it on)
+      m.subject = subject_;
       for (const MatteFrame& f : frames_) {
         api::ContentAwareFillFrame fr;
         fr.time = flicks_of(f.t);
@@ -1552,7 +1558,7 @@ class ObjectMatteVideoResult final : public JobResult {
     m.path = firstWithPath->path;
     // The cut is the matte; the outline is for editing and Track mask (an Add mask would cut twice).
     m.mode = storeMatte_ ? api::MaskMode::none : api::MaskMode::add;
-    m.name = "Object Matte";
+    m.name = doc::subject_outline_name(subject_);
     const std::string group = mask_group_of(a.run(command(std::move(m))));
     api::AddKeyframes keys;
     for (const MatteFrame& f : frames_) {
@@ -1573,6 +1579,7 @@ class ObjectMatteVideoResult final : public JobResult {
   std::vector<MatteFrame> frames_;
   std::string status_;
   bool storeMatte_;
+  std::string subject_;
   std::vector<std::string> replace_;
   Run run_;
   mutable std::string mask_;
@@ -1626,6 +1633,12 @@ PreparedJob prepare_object_matte(const api::ObjectMatteJob& spec, const JobDocCo
     }
   }
 
+  // Which of the layer's subjects this edit or walk reads and writes (core/subjects.hpp).
+  const std::string subject = spec.subject.value_or(std::string(doc::kFirstSubject));
+  if (subject.empty() || subject.size() > 32 ||
+      !std::ranges::all_of(subject, [](char ch) { return std::isalnum(static_cast<unsigned char>(ch)) != 0 || ch == '-' || ch == '_'; })) {
+    fail(ErrorCode::invalid_argument, "subject id takes 1–32 letters, digits, '-' or '_'", {.layer = spec.layer});
+  }
   // A walk starts from the subject's stored matte on its origin frame when there is one (the
   // selection the user made and refined), not from the prompts again.
   // With no prompts at all the walk starts from the stored frame nearest the origin, and that frame becomes the origin
@@ -1642,7 +1655,7 @@ PreparedJob prepare_object_matte(const api::ObjectMatteJob& spec, const JobDocCo
         const double kt = doc::comp_to_keyframe_time(ctx.doc, view, fl.layer, ot);
         const Json* nearest = nullptr;
         for (const Json& f : am.at("frames").arr()) {
-          if (!f.at("t").is_number() || !f.at("src").is_string()) continue;
+          if (!f.at("t").is_number() || !f.at("src").is_string() || doc::frame_subject(f) != subject) continue;
           if (std::abs(f.at("t").num() - kt) < 0.5 / fps) originMatte = f.at("src").str();
           if (nearest == nullptr || std::abs(f.at("t").num() - kt) < std::abs(nearest->at("t").num() - kt)) nearest = &f;
         }
@@ -1800,11 +1813,12 @@ PreparedJob prepare_object_matte(const api::ObjectMatteJob& spec, const JobDocCo
       folder = project.empty() ? std::filesystem::temp_directory_path() / "premation-object-matte" / spec.layer
                                : project.parent_path() / "Object Matte" / spec.layer;
     }
+    if (subject != doc::kFirstSubject) folder /= subject;  // each subject's frames of its own (matte_<frame>.png)
     input.set("folder", Json::string(folder.string()));
     PreparedJob job;
     job.kind = "objectMatte";
     job.work = [layer = fl.layer, inputJson = js::stringify(input), store = spec.matte.value_or(true),
-                replace = spec.replace_masks](JobControl& control) -> std::unique_ptr<JobResult> {
+                replace = spec.replace_masks, subject](JobControl& control) -> std::unique_ptr<JobResult> {
       // The walk runs in the same model process as the hover (the pair stays loaded); a cancel kills it at once.
       WorkerCall walkCall;
       walkCall.killOnCancel = true;
@@ -1839,7 +1853,7 @@ PreparedJob prepare_object_matte(const api::ObjectMatteJob& spec, const JobDocCo
       run.provider = r->at("provider").is_string() ? r->at("provider").str() : "";
       run.msPerFrame = num_or(*r, "msPerFrame", 0);
       if (r->at("stageMs").is_object()) run.stageMs = r->at("stageMs");
-      return std::make_unique<ObjectMatteVideoResult>(layer, std::move(frames), status, store, replace, std::move(run));
+      return std::make_unique<ObjectMatteVideoResult>(layer, std::move(frames), status, store, replace, std::move(run), subject);
     };
     return job;
   }
@@ -1913,14 +1927,8 @@ PreparedJob prepare_object_matte(const api::ObjectMatteJob& spec, const JobDocCo
     ej.set("strokes", std::move(strokes));
     // The frame's matte now — the stored frame the renderer shows at this time (the nearest one).
     if (const doc::Node* node = ctx.doc.node(fl.layer); node != nullptr) {
-      const Json& am = node->fx().at("alphaMatte");
-      if (am.is_object() && am.at("frames").is_array()) {
-        const double kt = doc::comp_to_keyframe_time(ctx.doc, doc::EditorView{fl.comp, 0}, fl.layer, t);
-        const Json* best = nullptr;
-        for (const Json& f : am.at("frames").arr())
-          if (f.at("t").is_number() && f.at("src").is_string() && (best == nullptr || std::abs(f.at("t").num() - kt) < std::abs(best->at("t").num() - kt))) best = &f;
-        if (best != nullptr) ej.set("base", best->at("src"));
-      }
+      const double kt = doc::comp_to_keyframe_time(ctx.doc, doc::EditorView{fl.comp, 0}, fl.layer, t);
+      if (const Json* best = doc::nearest_subject_frame(node->fx().at("alphaMatte"), subject, kt); best != nullptr) ej.set("base", best->at("src"));
     }
     std::filesystem::path folder(spec.output_folder.value_or(""));
     if (folder.empty()) {
@@ -1946,7 +1954,7 @@ PreparedJob prepare_object_matte(const api::ObjectMatteJob& spec, const JobDocCo
     input.set("edit", std::move(ej));
     PreparedJob job;
     job.kind = "objectMatte";
-    job.work = [layer = fl.layer, inputJson = js::stringify(input), t, cut = e.cut, replace = spec.replace_masks](JobControl& control) -> std::unique_ptr<JobResult> {
+    job.work = [layer = fl.layer, inputJson = js::stringify(input), t, cut = e.cut, replace = spec.replace_masks, subject](JobControl& control) -> std::unique_ptr<JobResult> {
       const std::optional<std::string> out = run_in_worker("objectMatte", inputJson, control, WorkerCall{});
       if (!out) return nullptr;
       const std::optional<Json> r = js::parse(*out);
@@ -1967,7 +1975,7 @@ PreparedJob prepare_object_matte(const api::ObjectMatteJob& spec, const JobDocCo
       path.out_tangents.assign(path.vertices.size(), 0.0);
       return std::make_unique<SubjectEditResult>(layer, t, r->at("file").str(), std::move(path), num_or(*r, "coverage", 0), cut, replace,
                                                  r->at("provider").is_string() ? r->at("provider").str() : std::string(),
-                                                 r->at("timings").is_object() ? std::optional<Json>(r->at("timings")) : std::nullopt);
+                                                 r->at("timings").is_object() ? std::optional<Json>(r->at("timings")) : std::nullopt, subject);
     };
     return job;
   }

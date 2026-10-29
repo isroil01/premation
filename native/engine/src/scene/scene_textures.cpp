@@ -26,6 +26,7 @@
 #include "native_effects.hpp"
 #include "particle_port.hpp"
 #include "raster_source.hpp"
+#include "subject_matte.hpp"
 #include "svg_layer.hpp"
 #include "thread_pool.hpp"
 
@@ -663,12 +664,81 @@ std::string SceneTextures::image_ref(const TextureRequest& r, const std::filesys
   return hash;
 }
 
+std::string SceneTextures::subject_ref(const TextureRequest& r, PrepareStats& stats) {
+  // Each file through image_ref (its own cache entry, keyed by path and last write), then the
+  // combination keyed by those entries and every part's settings.
+  const auto decoded = [&](const std::string& src) -> std::string {
+    if (src.empty() || src.starts_with("data:") || is_svg_src(src)) return {};
+    std::filesystem::path p = file_url_fs_path(src);
+    if (p.is_relative() && !opts_.mediaBase.empty()) p = opts_.mediaBase / p;
+    TextureRequest one;
+    one.key = r.key;
+    return image_ref(one, p, stats);
+  };
+  std::string spec;
+  std::vector<std::string> frames(r.subjectParts.size());
+  std::vector<std::vector<std::string>> blends(r.subjectParts.size());
+  for (std::size_t i = 0; i < r.subjectParts.size(); ++i) {
+    const SubjectPart& p = r.subjectParts[i];
+    frames[i] = decoded(p.src);
+    std::array<char, 160> s{};
+    std::snprintf(s.data(), s.size(), "|%s|%.6g|%.6g|%.6g|%d|%d", frames[i].c_str(), p.feather, p.choke, p.contrast, p.invert ? 1 : 0,  // NOLINT(cppcoreguidelines-pro-type-vararg)
+                  p.hidden ? 1 : 0);
+    spec += s.data();
+    for (const auto& [src, w] : p.blend) {
+      blends[i].push_back(decoded(src));
+      std::snprintf(s.data(), s.size(), "~%s*%.6g", blends[i].back().c_str(), w);  // NOLINT(cppcoreguidelines-pro-type-vararg)
+      spec += s.data();
+    }
+  }
+  if (std::ranges::all_of(frames, [](const std::string& f) { return f.empty(); })) return {};
+  std::string hash = "img:" + hex64(fnv1a(spec, fnv1a("subject-matte")));
+  if (find(hash)) return hash;
+  const auto t0 = std::chrono::steady_clock::now();
+  // The decoded entries stay alive while they are read.
+  std::vector<std::shared_ptr<const RasterEntry>> keep;
+  const auto picture = [&](const std::string& h) {
+    subject_matte::Picture pic;
+    if (h.empty()) return pic;
+    std::shared_ptr<const RasterEntry> e = find(h);
+    if (!e) return pic;
+    pic.width = e->width;
+    pic.height = e->height;
+    pic.rgba = std::span<const std::uint8_t>(e->rgba);
+    keep.push_back(std::move(e));
+    return pic;
+  };
+  std::vector<subject_matte::Part> parts;
+  for (std::size_t i = 0; i < r.subjectParts.size(); ++i) {
+    const SubjectPart& sp = r.subjectParts[i];
+    subject_matte::Part part;
+    part.frame = picture(frames[i]);
+    for (std::size_t j = 0; j < blends[i].size(); ++j)
+      if (const subject_matte::Picture n = picture(blends[i][j]); n.width > 0) part.blend.emplace_back(n, sp.blend[j].second);
+    part.feather = sp.feather;
+    part.choke = sp.choke;
+    part.contrast = sp.contrast;
+    part.invert = sp.invert;
+    part.hidden = sp.hidden;
+    parts.push_back(std::move(part));
+  }
+  auto e = std::make_shared<RasterEntry>();
+  e->rgba = subject_matte::combine(parts, e->width, e->height);
+  if (e->rgba.empty()) return {};
+  insert(hash, std::move(e));
+  ++stats.rasterMisses;
+  stats.rasterMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+  return hash;
+}
+
 std::string SceneTextures::media_ref(const TextureRequest& r, PrepareStats& stats,
                                      std::optional<api::RenderColorSpace>& space) {
   // Still footage decodes to sRGB-encoded RGBA8 (PNG / JPEG / WebP without a profile).
   space = api::RenderColorSpace::srgb;
   if (r.colorProfile) space = *r.colorProfile;
   if (r.src.empty()) return {};
+  // Several subjects, or one with a live edge: combined as read. One plain subject is its file.
+  if (!r.subjectParts.empty() && !(r.subjectParts.size() == 1 && r.subjectParts.front().plain())) return subject_ref(r, stats);
   // A still's CPU-baked effect chain runs on its decoded bitmap (setImage's bake).
   const auto baked_still = [&](std::string hash) {
     if (!r.bake || r.video || hash.empty()) return hash;

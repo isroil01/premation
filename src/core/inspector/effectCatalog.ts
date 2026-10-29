@@ -68,6 +68,8 @@ export interface Effect {
   maskId?: string;
   /** Compositing Options › Apply To: inside the layer's subject (its Object Matte selection) or outside it; absent = the whole layer. */
   subjectScope?: 'subject' | 'background';
+  /** Which of the layer's subjects it reads (Apply To, Matte Stroke, Selective Color (AI)); absent = all of them. */
+  subjectId?: string;
   /** @deprecated The pre-multi-param single scalar; still read, never written. */
   amount?: number;
 }

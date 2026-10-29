@@ -1,40 +1,37 @@
 /**
- * Subject chips — the subjects Object Matte has cut out in this composition,
- * as a row above the viewer while a roto tool is up (AE 26's Object Matte
- * keeps its selections as named entries; here they are layers whose matte
- * runs through the shot).
- *
- * A chip selects its layer; its menu does the next thing a subject is for:
- * put the selected layers behind it, make a null that follows it, or outline
- * / colour it (Matte Stroke / Selective Color (AI), which read the layer's own
- * matte when their matte layer is None).
+ * Subject chips — every subject of the composition's footage, as a row above
+ * the viewer while a roto tool is up (AE 26's Object Matte keeps its
+ * selections as named entries). One chip per subject, in its colour: a click
+ * selects its layer and makes it the active subject (what Shift / Alt clicks,
+ * the brushes and Follow edit); its menu does the next thing a subject is for
+ * (the same list as Properties ▸ Subjects and right-click ▸ Subject).
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import { useUIStore } from '@stores/uiStore';
 import { useSelectionStore } from '@stores/selectionStore';
+import { activeSubjectId, useSubjectStore } from '@stores/subjectStore';
 import { documentMirror } from '@stores/documentMirror';
 import { openContextMenu } from '@stores/contextMenuStore';
 import { useActiveCompRootId, useMirrorRevisionFrame } from '@hooks/useMirrorFrame';
-import { mirrorMaskHeaders } from '@core/mirror/effects';
+import { layerSubjects, subjectOutlines } from '@core/workspace/subjects';
 import { Icon } from '@components/Icon';
 import { t } from '@core/i18n';
 import { subjectMenuItems } from './subjectActions';
 import { openTextBehind } from './TextBehindDialog';
-import { matteOutlineKeys } from './subjectTrack';
 import styles from './SubjectChips.module.css';
 
-interface Subject {
+interface Chip {
   layer: string;
+  subject: string;
   name: string;
+  color: string;
   /** The matte runs through the shot (keyed outline), not one frame. */
   tracked: boolean;
 }
 
-const MATTE_NAMES = new Set(['Object Matte', 'Roto Brush', 'Roto Brush (Frozen)']);
-
-/** Footage layers of `comp` with a subject matte, front first. */
-async function subjectsOf(comp: string): Promise<Subject[]> {
+/** Every subject of the footage layers of `comp`, front layer first. */
+async function chipsOf(comp: string): Promise<Chip[]> {
   const m = documentMirror();
   const layers = (m.comp(comp)?.layers ?? []).filter((id) => {
     const src = m.layer(id)?.source;
@@ -42,10 +39,13 @@ async function subjectsOf(comp: string): Promise<Subject[]> {
     return type === 'video' || type === 'image';
   });
   await m.loadTrees(layers);
-  const out: Subject[] = [];
-  for (const id of layers) {
-    if (!mirrorMaskHeaders(m.tree(id)).some((x) => MATTE_NAMES.has(x.name))) continue;
-    out.push({ layer: id, name: m.layer(id)?.name ?? id, tracked: (await matteOutlineKeys(id)) !== null });
+  const out: Chip[] = [];
+  for (const layer of layers) {
+    const outlines = subjectOutlines(layer);
+    for (const s of layerSubjects(layer)) {
+      const mask = outlines.get(s.id);
+      out.push({ layer, subject: s.id, name: s.name, color: s.color, tracked: !!mask && m.keyframes(layer, `masks/${mask}/path`).length > 1 });
+    }
   }
   return out;
 }
@@ -60,49 +60,49 @@ function SubjectChipsActive(): JSX.Element | null {
   const comp = useActiveCompRootId();
   const rev = useMirrorRevisionFrame();
   const selected = useSelectionStore((s) => s.ids);
-  const [subjects, setSubjects] = useState<Subject[]>([]);
+  useSubjectStore((s) => s.active);
+  const [chips, setChips] = useState<Chip[]>([]);
   const on = tool === 'object-matte' || tool === 'roto';
 
   useEffect(() => {
     if (!on) return;
     let live = true;
-    void subjectsOf(comp).then((s) => { if (live) setSubjects(s); });
+    void chipsOf(comp).then((c) => { if (live) setChips(c); });
     return () => { live = false; };
   }, [on, comp, rev]);
 
-  if (!on || subjects.length === 0) return null;
-
-  const menu = (s: Subject, x: number, y: number): void => {
-    // The same actions as Properties ▸ Subject and right-click ▸ Subject.
-    openContextMenu(x, y, subjectMenuItems(s.layer, { openTextBehind }));
-  };
+  if (!on || chips.length === 0) return null;
 
   return (
     <div className={styles.row} role="toolbar" aria-label={t('workspace.subjects.aria', 'Subjects')}>
-      {subjects.map((s, i) => {
-        const label = t('workspace.subjects.chip', 'Subject {n}', { n: i + 1 });
-        const active = selected.includes(s.layer);
+      {chips.map((c) => {
+        const active = selected.includes(c.layer) && activeSubjectId(c.layer) === c.subject;
         return (
-          <span key={s.layer} className={active ? styles.chipActive : styles.chip}>
+          <span key={`${c.layer}:${c.subject}`} className={active ? styles.chipActive : styles.chip} style={{ '--subject-color': c.color } as CSSProperties}>
             <button
               type="button"
               className={styles.pick}
-              title={s.tracked
-                ? t('workspace.subjects.titleTracked', '{name}: matte through the shot', { name: s.name })
-                : t('workspace.subjects.titleFrame', '{name}: matte on one frame (Propagate to follow it)', { name: s.name })}
+              title={c.tracked
+                ? t('workspace.subjects.titleTracked', '{name}: matte through the shot', { name: c.name })
+                : t('workspace.subjects.titleFrame', '{name}: matte on one frame (Propagate to follow it)', { name: c.name })}
               aria-pressed={active}
-              onClick={() => useSelectionStore.getState().set([s.layer])}
+              onClick={() => {
+                useSelectionStore.getState().set([c.layer]);
+                useSubjectStore.getState().setActive(c.layer, c.subject);
+              }}
             >
-              <Icon name="object-matte" size="sm" />
-              {label}
+              <span className={styles.swatch} aria-hidden="true" />
+              {c.name}
+              {c.tracked && <Icon name="object-matte" size="sm" />}
             </button>
             <button
               type="button"
               className={styles.more}
-              aria-label={t('workspace.subjects.menu', '{label} actions', { label })}
+              aria-label={t('workspace.subjects.menu', '{label} actions', { label: c.name })}
               onClick={(e) => {
+                useSubjectStore.getState().setActive(c.layer, c.subject);
                 const r = e.currentTarget.getBoundingClientRect();
-                menu(s, r.left, r.bottom + 2);
+                openContextMenu(r.left, r.bottom + 2, subjectMenuItems(c.layer, { openTextBehind }));
               }}
             >
               <Icon name="chevron-down" size="sm" />

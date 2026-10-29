@@ -11484,6 +11484,7 @@ void encode(wire::Writer& w, const SetLayerMatte& v) {
   for (const auto& e : v.frames) { w.varint(18U); { const std::size_t s = w.begin_ld(); encode(w, e); w.end_ld(s); } }
   w.varint(24U); w.boolean(v.merge);
   if (v.cut.has_value()) { w.varint(32U); w.boolean(*v.cut); }
+  if (v.subject.has_value()) { w.varint(42U); w.str(*v.subject); }
 }
 
 Status decode(wire::Reader& r, SetLayerMatte& out) {
@@ -11512,6 +11513,12 @@ Status decode(wire::Reader& r, SetLayerMatte& out) {
         bool e = false;
         if (!r.boolean(e)) return Status::truncated;
         out.cut = std::move(e);
+        break;
+      }
+      case 42U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.subject = std::move(e);
         break;
       }
       default:
@@ -12103,6 +12110,7 @@ void encode(wire::Writer& w, const ObjectMatteJob& v) {
   if (v.origin.has_value()) { w.varint(5728U); w.svarint(*v.origin); }
   if (v.edit.has_value()) { w.varint(5738U); { const std::size_t s = w.begin_ld(); encode(w, *v.edit); w.end_ld(s); } }
   if (v.proposals.has_value()) { w.varint(5744U); w.boolean(*v.proposals); }
+  if (v.subject.has_value()) { w.varint(5754U); w.str(*v.subject); }
 }
 
 Status decode(wire::Reader& r, ObjectMatteJob& out) {
@@ -12218,6 +12226,12 @@ Status decode(wire::Reader& r, ObjectMatteJob& out) {
         bool e = false;
         if (!r.boolean(e)) return Status::truncated;
         out.proposals = std::move(e);
+        break;
+      }
+      case 5754U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.subject = std::move(e);
         break;
       }
       default:

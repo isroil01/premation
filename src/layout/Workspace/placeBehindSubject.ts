@@ -26,12 +26,14 @@ import { paths } from '@core/engine/propRefs';
 import { mirrorMaskHeaders } from '@core/mirror/effects';
 import { childOrderOf } from '@core/mirror/layerTree';
 import { ROTO_FROZEN_NAME, ROTO_PATH_NAME } from '@core/workspace/rotoBrushTool';
+import { subjectOfOutline, subjectOutlineName } from '@core/workspace/subjects';
 import { documentMirror } from '@stores/documentMirror';
 import { t } from '@core/i18n';
 import { reorderCommands } from './layerMenuEdits';
 
 /** The mask names a subject matte travels with (rotoBrushTool.ts / the objectMatte job). */
-const MATTE_MASK_NAMES = new Set([ROTO_PATH_NAME, ROTO_FROZEN_NAME, 'Object Matte']);
+const MATTE_MASK_NAMES = new Set([ROTO_PATH_NAME, ROTO_FROZEN_NAME]);
+const isMatteMask = (name: string): boolean => MATTE_MASK_NAMES.has(name) || subjectOfOutline(name) !== null;
 
 export interface SubjectPlan {
   /** The footage layer whose subject the layers go behind. */
@@ -41,6 +43,8 @@ export interface SubjectPlan {
   /** The composition / group the layers share (the reorder's parent). */
   comp: string;
   parent: string;
+  /** Which of the footage's subjects stand in front of them (absent / empty = all of them): text between two people. */
+  inFront?: string[];
 }
 
 export type PlanResult = { ok: true; plan: SubjectPlan } | { ok: false; message: string };
@@ -106,12 +110,18 @@ export interface PlaceBehindResult {
 export async function subjectBoundsInComp(
   footage: string,
   time: number,
+  subjects?: readonly string[],
 ): Promise<{ x0: number; y0: number; x1: number; y1: number; frame: { x0: number; x1: number } } | null> {
   const m = documentMirror();
   await m.loadTrees([footage]);
-  const outline = mirrorMasksAt(m, footage, secondsToFlicks(time)).find((x) => x.name === 'Object Matte');
-  if (!outline) return null;
-  const flat = maskPathPolyline(outline, 2);
+  // The named subjects' outlines together (default: every subject's).
+  const names = new Set(subjects?.map(subjectOutlineName));
+  const outlines = mirrorMasksAt(m, footage, secondsToFlicks(time)).filter((x) => {
+    const id = subjectOfOutline(x.name ?? '');
+    return id !== null && (names.size === 0 || names.has(x.name ?? ''));
+  });
+  if (outlines.length === 0) return null;
+  const flat = outlines.flatMap((o) => maskPathPolyline(o, 2));
   const record = overlayLayer(MAIN_VIEWPORT, footage, secondsToFlicks(time));
   const h = layerToComp(record, false, (p) => ({ x: p.x, y: p.y }));
   if (flat.length < 6 || !h) return null;
@@ -138,6 +148,12 @@ export function placeBehindCommands(plan: SubjectPlan): Command[] {
   const out: Command[] = plan.behind.map((id) => ({
     type: 'setProperty' as const, prop: { layer: id, path: paths.layerParam('behindSubject') }, value: { kind: 'string' as const, value: plan.footage },
   }));
+  for (const id of plan.behind) {
+    out.push({
+      type: 'setProperty', prop: { layer: id, path: 'layer/behindSubjects' },
+      value: plan.inFront && plan.inFront.length > 0 ? { kind: 'json', value: JSON.stringify(plan.inFront) } : { kind: 'json', value: 'null' },
+    });
+  }
   const kids = childOrderOf(m, plan.parent);
   const moving = new Set(plan.behind);
   const rest = kids.filter((id) => !moving.has(id));
@@ -151,7 +167,7 @@ export function placeBehindCommands(plan: SubjectPlan): Command[] {
 export async function placeBehindSubjectEdit(plan: SubjectPlan): Promise<PlaceBehindResult | null> {
   const m = documentMirror();
   await m.loadTrees([plan.footage]);
-  const hadMatte = mirrorMaskHeaders(m.tree(plan.footage)).some((x) => MATTE_MASK_NAMES.has(x.name));
+  const hadMatte = mirrorMaskHeaders(m.tree(plan.footage)).some((x) => isMatteMask(x.name));
   const label = t('workspace.placeBehind.label', 'Place Behind Subject');
   const res = await edit(label, placeBehindCommands(plan));
   return res.ok ? { subject: plan.footage, hadMatte } : null;

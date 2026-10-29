@@ -1348,6 +1348,41 @@
       }
     },
     {
+      "path": "layer/behindSubjects",
+      "key": "behindSubjects",
+      "label": "Behind Subjects",
+      "type": "json",
+      "default": null,
+      "clearAtDefault": true,
+      "store": {
+        "fx": "behindSubjects"
+      },
+      "when": {
+        "notKinds": [
+          "camera",
+          "light",
+          "audio"
+        ]
+      }
+    },
+    {
+      "path": "layer/subjects",
+      "key": "subjects",
+      "label": "Subjects",
+      "type": "json",
+      "default": null,
+      "clearAtDefault": true,
+      "store": {
+        "fx": "subjects"
+      },
+      "when": {
+        "kinds": [
+          "video",
+          "image"
+        ]
+      }
+    },
+    {
       "path": "layer/sequenceLoop",
       "key": "loop",
       "label": "Loop Sequence",
@@ -2513,6 +2548,13 @@
       "path": "compositing/subject",
       "key": "subjectScope",
       "label": "Apply To",
+      "type": "string",
+      "default": ""
+    },
+    {
+      "path": "compositing/subjectId",
+      "key": "subjectId",
+      "label": "Apply To Subject",
       "type": "string",
       "default": ""
     }

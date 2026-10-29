@@ -168,3 +168,261 @@
   outline: 2px solid var(--color-primary);
   outline-offset: 1px;
 }
+
+/* ── Subjects list ─────────────────────────────────────────────────────── */
+
+.listHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.listTitle {
+  color: var(--color-text-primary);
+  font-weight: var(--panel-weight-subgroup);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row,
+.rowActive {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-height: 32px;
+  padding: 2px var(--space-1);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+}
+
+.row:hover {
+  background: var(--color-surface-2);
+}
+
+.rowActive {
+  border-color: var(--color-primary);
+  background: var(--color-primary-subtle);
+}
+
+.swatch {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 3px;
+  background: var(--subject-color);
+  cursor: pointer;
+}
+
+.name {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: 4px 2px;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nameText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nameInput {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  padding: 0 var(--space-1);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-1);
+  color: var(--color-text-primary);
+  font: inherit;
+}
+
+.meta {
+  flex: none;
+  color: var(--color-text-tertiary);
+  font-size: var(--panel-font-size-help);
+  white-space: nowrap;
+}
+
+.icon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.icon:hover:not(:disabled) {
+  background: var(--color-surface-3);
+  color: var(--color-text-primary);
+}
+
+.icon:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.swatch:focus-visible,
+.name:focus-visible,
+.icon:focus-visible,
+.preset:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+/* ── The active subject's blocks: edge, use, styles ─────────────────────── */
+
+.block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border);
+}
+
+.blockHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.blockTitle {
+  flex: 1;
+  min-width: 0;
+  color: var(--color-text-primary);
+  font-weight: var(--panel-weight-subgroup);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--subject-color);
+}
+
+.edgeRow {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.edgeLabel {
+  color: var(--color-text-secondary);
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-text-secondary);
+}
+
+.styleList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.styleRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 28px;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+}
+
+.styleName {
+  flex: 1;
+  min-width: 0;
+  color: var(--color-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.presets {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-1);
+}
+
+.preset {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 32px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.preset:hover {
+  border-color: var(--color-primary-hover);
+  background: var(--color-surface-2);
+}
+
+/* A small mark per shelf: an outline ring, a glow, a dimmed field, a colour look. */
+.presetSwatch {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--color-text-secondary);
+}
+
+.preset[data-kind='glow'] .presetSwatch {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 6px var(--color-primary);
+}
+
+.preset[data-kind='background'] .presetSwatch {
+  border: 0;
+  background: var(--color-surface-3);
+  box-shadow: inset 0 0 0 4px var(--color-text-tertiary);
+}
+
+.preset[data-kind='look'] .presetSwatch {
+  border: 0;
+  background: var(--color-primary);
+}

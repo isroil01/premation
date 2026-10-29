@@ -8586,6 +8586,7 @@ function encS_ObjectMatteJob(w: Writer, v: T.ObjectMatteJob): void {
   if (v.origin !== undefined) { w.varint(5728); w.i64(v.origin); }
   if (v.edit !== undefined) { w.varint(5738); { const s = w.beginLd(); encS_SubjectEdit(w, v.edit); w.endLd(s); } }
   if (v.proposals !== undefined) { w.varint(5744); w.bool(v.proposals); }
+  if (v.subject !== undefined) { w.varint(5754); w.str(v.subject); }
 }
 function decS_ObjectMatteJob(r: Reader, end: number, o: any): T.ObjectMatteJob {
   const l_prompts: T.Vec2[] = [];
@@ -8611,6 +8612,7 @@ function decS_ObjectMatteJob(r: Reader, end: number, o: any): T.ObjectMatteJob {
   let v_origin: number | undefined;
   let v_edit: T.SubjectEdit | undefined;
   let v_proposals: boolean | undefined;
+  let v_subject: string | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -8633,6 +8635,7 @@ function decS_ObjectMatteJob(r: Reader, end: number, o: any): T.ObjectMatteJob {
       case 5728: v_origin = r.i64(); break;
       case 5738: v_edit = decS_SubjectEdit(r, r.ldEnd(), {}); break;
       case 5744: v_proposals = r.bool(); break;
+      case 5754: v_subject = r.str(); break;
       default: r.skip(key);
     }
   }
@@ -8660,6 +8663,7 @@ function decS_ObjectMatteJob(r: Reader, end: number, o: any): T.ObjectMatteJob {
   if (v_origin !== undefined) o.origin = v_origin;
   if (v_edit !== undefined) o.edit = v_edit;
   if (v_proposals !== undefined) o.proposals = v_proposals;
+  if (v_subject !== undefined) o.subject = v_subject;
   return o;
 }
 function encS_SubjectEdit(w: Writer, v: T.SubjectEdit): void {
@@ -9585,6 +9589,7 @@ function encS_SetLayerMatte(w: Writer, v: T.SetLayerMatte): void {
   { const a = v.frames; for (let i = 0; i < a.length; i++) { w.byte(18); { const s = w.beginLd(); encS_ContentAwareFillFrame(w, a[i]!); w.endLd(s); } } }
   w.byte(24); w.bool(v.merge);
   if (v.cut !== undefined) { w.byte(32); w.bool(v.cut); }
+  if (v.subject !== undefined) { w.byte(42); w.str(v.subject); }
 }
 function decS_SetLayerMatte(r: Reader, end: number, o: any): T.SetLayerMatte {
   const l_frames: T.ContentAwareFillFrame[] = [];
@@ -9593,6 +9598,7 @@ function decS_SetLayerMatte(r: Reader, end: number, o: any): T.SetLayerMatte {
   let v_layer: string | undefined;
   let v_merge: boolean | undefined;
   let v_cut: boolean | undefined;
+  let v_subject: string | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -9600,6 +9606,7 @@ function decS_SetLayerMatte(r: Reader, end: number, o: any): T.SetLayerMatte {
       case 18: l_frames.push(decS_ContentAwareFillFrame(r, r.ldEnd(), {})); break;
       case 24: v_merge = r.bool(); h_merge = true; break;
       case 32: v_cut = r.bool(); break;
+      case 42: v_subject = r.str(); break;
       default: r.skip(key);
     }
   }
@@ -9610,6 +9617,7 @@ function decS_SetLayerMatte(r: Reader, end: number, o: any): T.SetLayerMatte {
   o.frames = l_frames;
   o.merge = v_merge;
   if (v_cut !== undefined) o.cut = v_cut;
+  if (v_subject !== undefined) o.subject = v_subject;
   return o;
 }
 function encS_RotoBrushJob(w: Writer, v: T.RotoBrushJob): void {

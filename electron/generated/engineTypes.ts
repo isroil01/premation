@@ -3164,6 +3164,8 @@ export interface ObjectMatteJob {
   edit?: SubjectEdit;
   /** One frame, nothing written (start it with apply: false): every object the model finds in the frame at `range.start` — the Object Matte tool's hover lights them all. The summary is {"objects":[{"outline":[x,y…],"seed":[x,y],"iou":N,"area":N}]} in layer-centred px; a click at an object's `seed` selects that object. */
   proposals?: boolean;
+  /** Which of the layer's subjects (setLayerMatte `subject`) an edit or a walk reads and writes; absent = "s1", the first. A new id makes a new subject. */
+  subject?: string;
 }
 
 export interface SubjectEdit {
@@ -3404,12 +3406,14 @@ export interface GetCameraSolve {
 /**
  * A per-frame soft matte on a layer (AE parity 3.2; the video object matte job's result): each frame is the layer's CUT-OUT picture (straight RGBA: the refined, decontaminated subject over transparency), and the frame nearest the layer's time stands in for its footage, as Content-Aware Fill frames do. Empty `frames` clears it. Inverse: the previous record.
  * `merge`: `frames` replace only the stored frames at their times (the rest kept). `cut` (absent = true): a newly made Object Matte effect is enabled (the matte cuts the layer); false = it is made disabled (the matte is a selection other effects read).
+ * `subject`: which of the layer's subjects the frames belong to (absent = "s1"); a layer holds several, each its own frames (tagged `s`) and its entry in `layer/subjects` (name, colour, live edge), made here the first time an id is written. Empty `frames` with `subject` removes that subject alone.
  */
 export interface SetLayerMatte {
   layer: LayerId;
   frames: ContentAwareFillFrame[];
   merge: boolean;
   cut?: boolean;
+  subject?: string;
 }
 
 /**

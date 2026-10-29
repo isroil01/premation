@@ -3266,6 +3266,7 @@ struct SetLayerMatte {
   std::vector<ContentAwareFillFrame> frames;
   bool merge = false;
   std::optional<bool> cut;
+  std::optional<std::string> subject;
   bool operator==(const SetLayerMatte&) const = default;
 };
 
@@ -3378,6 +3379,7 @@ struct ObjectMatteJob {
   std::optional<Time> origin;
   std::optional<SubjectEdit> edit;
   std::optional<bool> proposals;
+  std::optional<std::string> subject;
   bool operator==(const ObjectMatteJob&) const = default;
 };
 

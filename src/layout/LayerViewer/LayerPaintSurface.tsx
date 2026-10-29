@@ -29,6 +29,7 @@ import { isPaintableLayer } from '@core/mirror/layerKinds';
 import { commitPaintDrag } from '@core/engine/paintEdits';
 import { ctrlDragBrush, penSample } from '@core/paint/paintCapture';
 import { runSubjectEdit, isRotoFrozen } from '@core/workspace/rotoBrushTool';
+import { activeSubjectId } from '@stores/subjectStore';
 import { drawToolOptions } from '@motion/workspace';
 import { useUIStore } from '@stores/uiStore';
 import { usePaintStore } from '@stores/paintStore';
@@ -132,7 +133,7 @@ export function LayerPaintSurface({
       op: done.kind === 'bg' ? 'subtract' : 'add',
       strokes: [done.points],
       radius: store.size / 2 / Math.max(1e-6, view.scale),
-    })
+    }, activeSubjectId(nodeId))
       .then((r) => {
         useRotoBrushStore.getState().setStatus(r && r.coverage > 0 ? null : t('layerViewer.paint.nothingToSegment', 'Nothing to segment there — paint over the subject.'));
         bumpScene();

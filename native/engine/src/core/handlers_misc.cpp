@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <string_view>
 #include <vector>
@@ -19,6 +20,7 @@
 #include "handlers_layers.hpp"
 #include "readmodel.hpp"
 #include "scene.hpp"
+#include "subjects.hpp"
 #include "time_conv.hpp"
 
 namespace premation::doc {
@@ -733,8 +735,16 @@ ResultOf<api::SetLayerMatte> handle(const api::SetLayerMatte& c, HCtx& x) {
   Document& d = x.d;
   const bool footage = require_layer(d, c.layer).kind() == "video";
   x.label = "Object Matte";
-  if (c.frames.empty()) {
+  // Which subject (core/subjects.hpp): frames are tagged with it, other subjects' frames stay.
+  const std::string sid = c.subject.value_or(std::string(kFirstSubject));
+  if (sid.empty() || sid.size() > 32 || !std::ranges::all_of(sid, [](char ch) { return std::isalnum(static_cast<unsigned char>(ch)) != 0 || ch == '-' || ch == '_'; })) {
+    fail(ErrorCode::invalid_argument, "subject id takes 1–32 letters, digits, '-' or '_'");
+  }
+  const Json& old = require_layer(d, c.layer).fx().at("alphaMatte");
+  const Json oldEntries = require_layer(d, c.layer).fx().at("subjects");
+  if (c.frames.empty() && !c.subject) {
     sg_set_fx(d, c.layer, "alphaMatte", Json());
+    sg_set_fx(d, c.layer, "subjects", Json());
     return {};
   }
   Json frames = Json::array();
@@ -744,21 +754,67 @@ ResultOf<api::SetLayerMatte> handle(const api::SetLayerMatte& c, HCtx& x) {
     Json fr = Json::object();
     fr.set("t", Json::number(comp_to_keyframe_time(d, x.view, c.layer, flicks_to_seconds(f.time))));
     fr.set("src", Json::string(f.src));
+    if (sid != kFirstSubject) fr.set("s", Json::string(sid));
     frames.arr_mut().push_back(std::move(fr));
   }
-  const Json& old = require_layer(d, c.layer).fx().at("alphaMatte");
-  if (c.merge && old.is_object() && old.at("frames").is_array()) {
-    // A one-frame subject edit: the stored frames at other times stay, sorted by time.
+  if (old.is_object() && old.at("frames").is_array()) {
+    // Other subjects' frames stay; a one-frame edit (merge) keeps this subject's frames at other times too.
     constexpr double kSameFrame = 1e-4;  // the same comp frame maps to the same keyframe time
     Json kept = Json::array();
     for (const Json& o : old.at("frames").arr()) {
       if (!o.at("t").is_number()) continue;
-      const bool replaced = std::ranges::any_of(frames.arr(), [&](const Json& n) { return std::abs(n.at("t").num() - o.at("t").num()) < kSameFrame; });
+      const bool mine = frame_subject(o) == sid;
+      const bool replaced = mine && (!c.merge || std::ranges::any_of(frames.arr(), [&](const Json& n) { return std::abs(n.at("t").num() - o.at("t").num()) < kSameFrame; }));
       if (!replaced) kept.arr_mut().push_back(o);
     }
     for (Json& n : frames.arr_mut()) kept.arr_mut().push_back(std::move(n));
     std::ranges::stable_sort(kept.arr_mut(), [](const Json& a, const Json& b) { return a.at("t").num() < b.at("t").num(); });
     frames = std::move(kept);
+  }
+  // The subjects' entries: this one's made the first time it is written (a name and a colour of
+  // its own), removed with its last frame; entries of subjects with no frames dropped.
+  Json entries = Json::array();
+  const std::vector<std::string> live = subject_ids([&] {
+    Json am = Json::object();
+    am.set("frames", frames);
+    return am;
+  }(), oldEntries);
+  static constexpr std::array<std::string_view, 8> kColours = {"#ff3fd4", "#ffb547", "#34d1bf", "#7fb2ff", "#a6e22e", "#ff6b6b", "#c792ea", "#f2f2f2"};
+  for (std::size_t i = 0; i < live.size(); ++i) {
+    const Json& had = subject_entry(oldEntries, live[i]);
+    if (had.is_object()) {
+      entries.arr_mut().push_back(had);
+      continue;
+    }
+    // The lowest "Subject N" no other entry uses, and the first colour no other entry uses.
+    int n = 1;
+    const auto used_name = [&](const std::string& name) {
+      return std::ranges::any_of(entries.arr(), [&](const Json& e) { return e.at("name").is_string() && e.at("name").str() == name; }) ||
+             std::ranges::any_of(live, [&](const std::string& id) {
+               const Json& o = subject_entry(oldEntries, id);
+               return o.at("name").is_string() && o.at("name").str() == name;
+             });
+    };
+    while (used_name("Subject " + std::to_string(n))) ++n;
+    std::string_view colour = kColours[i % kColours.size()];
+    for (std::string_view k : kColours) {
+      const auto taken = [&](const Json& e) { return e.at("color").is_string() && e.at("color").str() == k; };
+      if (std::ranges::none_of(entries.arr(), taken) &&
+          std::ranges::none_of(live, [&](const std::string& id) { return taken(subject_entry(oldEntries, id)); })) {
+        colour = k;
+        break;
+      }
+    }
+    Json e = Json::object();
+    e.set("id", Json::string(live[i]));
+    e.set("name", Json::string("Subject " + std::to_string(n)));
+    e.set("color", Json::string(std::string(colour)));
+    entries.arr_mut().push_back(std::move(e));
+  }
+  sg_set_fx(d, c.layer, "subjects", entries.arr().empty() ? Json() : std::move(entries));
+  if (frames.arr().empty()) {
+    sg_set_fx(d, c.layer, "alphaMatte", Json());
+    return {};
   }
   Json record = Json::object();
   record.set("frames", std::move(frames));

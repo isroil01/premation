@@ -1,6 +1,8 @@
 #include "fields.hpp"
 
+#include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <tuple>
 
@@ -528,6 +530,10 @@ void write_effect_field(Document& d, std::string_view layer, const PropBinding& 
   }
   if (!v.empty() && f.key == "subjectScope" && v != "subject" && v != "background") {
     fail(ErrorCode::invalid_argument, "'" + b.path + "' takes '', 'subject' or 'background'", {.path = b.path});
+  }
+  if (!v.empty() && f.key == "subjectId" &&
+      (v.size() > 32 || !std::ranges::all_of(v, [](char ch) { return std::isalnum(static_cast<unsigned char>(ch)) != 0 || ch == '-' || ch == '_'; }))) {
+    fail(ErrorCode::invalid_argument, "'" + b.path + "' takes a subject id (letters, digits, '-' or '_')", {.path = b.path});
   }
   if (!v.empty() && f.key == "labelColor") {
     bool ok = v.size() == 7 && v[0] == '#';

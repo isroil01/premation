@@ -1104,13 +1104,17 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
     // `<layer>#subject` (Behind Subject, effects_spatial.hpp kSubjectMapSuffix): that layer's subject
     // matte frame ("fxmatte:<layer>", requested by frame_build) drawn through its placement alone —
     // no effects, masks, matte or opacity: the subject's coverage where the layer sits.
+    // `<layer>#subject~<id>+<id>`: some of its subjects (their own texture, "fxmatte:<layer>~<id>+<id>").
     constexpr std::string_view kSubject = "#subject";
-    if (mapLayerId.size() > kSubject.size() && mapLayerId.ends_with(kSubject)) {
-      const std::string_view base = mapLayerId.substr(0, mapLayerId.size() - kSubject.size());
+    if (const std::size_t at = mapLayerId.rfind(kSubject);
+        at != std::string_view::npos && at > 0 &&
+        (at + kSubject.size() == mapLayerId.size() || mapLayerId[at + kSubject.size()] == '~')) {
+      const std::string_view base = mapLayerId.substr(0, at);
+      const std::string_view which = mapLayerId.substr(at + kSubject.size());
       const auto sit = byId.find(base);
       if (sit == byId.end() || base == selfId) return {};
       api::Renderable subject = *sit->second;
-      subject.texture_key = "fxmatte:" + std::string(base);
+      subject.texture_key = "fxmatte:" + std::string(base) + std::string(which);
       subject.kind = api::RenderableKind::image;  // a still, whatever the footage was
       subject.effects.clear();
       subject.mask_id.reset();

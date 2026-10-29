@@ -238,6 +238,8 @@
 
   /* A selected subject's boundary (Object Matte / brushes), AE's magenta. */
   --color-overlay-subject-boundary: #ff3fd4;
+  /* The active subject's name tag is filled with the subject's colour: dark text on it. */
+  --color-overlay-subject-tag-text: #141414;
 
   /* Camera / light wireframes drawn by SceneGeometryOverlay:
        -light  the lamp body, its cone, feather and radius rings

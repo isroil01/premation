@@ -41,6 +41,7 @@ import { useCurrentTime } from '@stores/playbackClockStore';
 import { useRotoBrushStore, type RotoStroke } from '@stores/rotoBrushStore';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import { runSubjectEdit } from '@core/workspace/rotoBrushTool';
+import { activeSubjectId } from '@stores/subjectStore';
 import { secondsToFlicks } from '@motion/engine-api';
 import { MAIN_VIEWPORT, overlayLayer } from '@stores/overlayGeometry';
 import { openLayerOnDoubleClick } from '@layout/LayerViewer/openLayer';
@@ -123,7 +124,7 @@ export function RotoBrushOverlay(): JSX.Element | null {
       op: stroke.kind === 'bg' ? 'subtract' : 'add',
       strokes: [stroke.points],
       radius,
-    })
+    }, activeSubjectId(nodeId))
       .then((r) => {
         const s = useRotoBrushStore.getState();
         s.setStatus(r && r.coverage > 0 ? null : t('workspace.rotoBrush.nothing', 'Nothing selected there — paint through the middle of the subject.'));

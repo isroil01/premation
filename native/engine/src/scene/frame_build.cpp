@@ -730,16 +730,23 @@ void Flattener::feed(const RLayer& l, double parentScale) {
       textures_.push_back(std::move(r));
     }
   }
-  // Behind Subject: a layer of the stack is hidden behind this one's subject — its matte frame, as a still.
-  if (l.subjectReferenced && l.subjectSrc && std::ranges::none_of(textures_, [&](const TextureRequest& t) { return t.key == object_matte_key(l.id); })) {
-    TextureRequest r;
-    r.key = object_matte_key(l.id);
-    r.layerId = l.id;
-    r.kind = TexKind::media;
-    r.src = *l.subjectSrc;
-    r.video = false;
-    r.compFps = fps_;
-    textures_.push_back(std::move(r));
+  // Behind Subject: a layer of the stack is hidden behind this one's subjects (all, or some) — their matte, as a still.
+  if (l.subjectReferenced && l.subjectSrc) {
+    for (const std::vector<std::string>& ids : l.subjectSubsets) {
+      std::string key = object_matte_key(l.id, ids);
+      if (std::ranges::any_of(textures_, [&](const TextureRequest& t) { return t.key == key; })) continue;
+      std::vector<SubjectPart> parts = subject_parts(l, ids);
+      if (parts.empty()) continue;
+      TextureRequest r;
+      r.key = std::move(key);
+      r.layerId = l.id;
+      r.kind = TexKind::media;
+      r.src = parts.front().src;
+      r.subjectParts = std::move(parts);
+      r.video = false;
+      r.compFps = fps_;
+      textures_.push_back(std::move(r));
+    }
   }
   // Program X: the deep effects' mask rasters and float tables (effects_spatial_x.cpp),
   // whichever route the layer's stack takes.
@@ -752,6 +759,7 @@ void Flattener::feed(const RLayer& l, double parentScale) {
       // A still (the layer's Object Matte frame), drawn by the graph through the layer's placement.
       r.kind = TexKind::media;
       r.src = std::move(d.src);
+      r.subjectParts = std::move(d.parts);
       r.video = false;
       r.compFps = fps_;
     } else if (d.mask.is_object()) {
@@ -916,7 +924,8 @@ api::Renderable Flattener::layer_to_renderable(const RLayer& l, const Mat3& pare
                             .flag("useLuminance", false)
                             .flag("invert", true)
                             .num("featherPx", l.behindSubjectSoftness)
-                            .text("matteLayerId", *l.behindSubject + std::string(kSubjectMapSuffix))
+                            .text("matteLayerId", *l.behindSubject + std::string(kSubjectMapSuffix) +
+                                                      object_matte_key("", l.behindSubjects).substr(std::string_view("fxmatte:").size()))
                             .done());
   }
   if (l.deformedMesh) r.deformed_mesh = deformed_mesh_wire(*l.deformedMesh, l.width, l.height, pad);

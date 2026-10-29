@@ -8,6 +8,7 @@
 #include <cmath>
 #include <exception>
 #include <functional>
+#include <limits>
 #include <map>
 #include <numbers>
 #include <ranges>
@@ -42,6 +43,7 @@
 #include "readmodel.hpp"
 #include "scene.hpp"
 #include "scene_math.hpp"
+#include "subjects.hpp"
 #include "corner_pin.hpp"
 #include "svg_layer.hpp"
 #include "temporal_ghosts.hpp"
@@ -1794,6 +1796,9 @@ void Walk::build_node(const doc::Node& n) {
   l.mask = std::move(mask);
   l.matte = read_matte_of(n);
   if (const Json& bs = n.fx().at("behindSubject"); bs.is_string() && !bs.str().empty()) l.behindSubject = bs.str();
+  if (const Json& ids = n.fx().at("behindSubjects"); ids.is_array())
+    for (const Json& id : ids.arr())
+      if (id.is_string() && !id.str().empty() && std::ranges::find(l.behindSubjects, id.str()) == l.behindSubjects.end()) l.behindSubjects.push_back(id.str());
   if (const Json& soft = n.fx().at("behindSubjectSoftness"); soft.is_number() && std::isfinite(soft.num())) l.behindSubjectSoftness = std::clamp(soft.num(), 0.0, 100.0);
   l.isAdjustment = read_node_adjustment(n);
   l.draft = read_node_quality_s(n) == "draft";
@@ -1826,16 +1831,54 @@ void Walk::build_node(const doc::Node& n) {
   // A per-frame soft matte (AE parity 3.2, setLayerMatte): each frame is the
   // layer's cut-out picture, so the nearest one stands in for the footage the
   // same way — and over a fill, since it was cut from the footage itself.
-  if (fx.at("alphaMatte").is_object() && fx.at("alphaMatte").at("frames").is_array() && !fx.at("alphaMatte").at("frames").arr().empty()) {
-    const Json::Array& frames = fx.at("alphaMatte").at("frames").arr();
-    const Json* best = &frames.front();
-    double bestD = std::abs(best->at("t").num() - layerTimeNow);
-    for (const Json& fr : frames) {
-      const double dd = std::abs(fr.at("t").num() - layerTimeNow);
-      if (dd < bestD) {
-        best = &fr;
-        bestD = dd;
+  if (const Json& am = fx.at("alphaMatte"); am.is_object() && am.at("frames").is_array() && !am.at("frames").arr().empty()) {
+    // Each visible subject (core/subjects.hpp): its frame nearest the layer's time, its live edge,
+    // and for Temporal Smooth its neighbouring frames (the stored frames either side, within 2.5 frames).
+    const Json& entries = fx.at("subjects");
+    const auto num = [](const Json& e, const char* k) { return e.at(k).is_number() && std::isfinite(e.at(k).num()) ? e.at(k).num() : 0.0; };
+    for (const std::string& sid : doc::subject_ids(am, entries)) {
+      const Json& en = doc::subject_entry(entries, sid);
+      const Json* best = doc::nearest_subject_frame(am, sid, layerTimeNow);
+      if (best == nullptr) continue;
+      SubjectPart p;
+      p.id = sid;
+      p.src = best->at("src").str();
+      p.hidden = en.at("hidden").is_bool() && en.at("hidden").b();
+      // A tracked subject (frames every frame or so, Follow's) is there over its frames' span (and a
+      // frame either side); one selected on a frame, or edited on a few far apart, holds everywhere.
+      {
+        double lo = std::numeric_limits<double>::infinity();
+        double hi = -lo;
+        int count = 0;
+        for (const Json& f : am.at("frames").arr())
+          if (f.at("t").is_number() && doc::frame_subject(f) == sid) {
+            lo = std::min(lo, f.at("t").num());
+            hi = std::max(hi, f.at("t").num());
+            ++count;
+          }
+        const double pad = 1.0 / std::max(1.0, fps_);
+        const bool tracked = count >= 3 && (hi - lo) / (count - 1) <= 1.5 * pad;
+        if (tracked && (layerTimeNow < lo - pad || layerTimeNow > hi + pad)) p.hidden = true;
       }
+      p.feather = std::clamp(num(en, "feather"), 0.0, 200.0);
+      p.choke = std::clamp(num(en, "choke"), -200.0, 200.0);
+      p.contrast = std::clamp(num(en, "contrast"), 0.0, 100.0) / 100;
+      p.invert = en.at("invert").is_bool() && en.at("invert").b();
+      if (const double smooth = std::clamp(num(en, "smooth"), 0.0, 100.0) / 100; smooth > 0) {
+        const double t0 = best->at("t").num();
+        const double reach = 2.5 / std::max(1.0, fps_);
+        const Json* before = nullptr;
+        const Json* after = nullptr;
+        for (const Json& f : am.at("frames").arr()) {
+          if (!f.at("t").is_number() || !f.at("src").is_string() || doc::frame_subject(f) != sid) continue;
+          const double dt = f.at("t").num() - t0;
+          if (dt < 0 && dt >= -reach && (before == nullptr || dt > before->at("t").num() - t0)) before = &f;
+          if (dt > 0 && dt <= reach && (after == nullptr || dt < after->at("t").num() - t0)) after = &f;
+        }
+        for (const Json* f : {before, after})
+          if (f != nullptr) p.blend.emplace_back(f->at("src").str(), smooth / 3);
+      }
+      l.subjects.push_back(std::move(p));
     }
     // Read as a matte by an effect (the Object Matte effect, which cuts the
     // layer with it live, or Selective Color (AI)), the frame is that effect's
@@ -1843,13 +1886,14 @@ void Walk::build_node(const doc::Node& n) {
     // Matte effect (`cutByEffect`, setLayerMatte) cuts only through it: that
     // effect disabled or removed, the layer shows uncut. A record from before
     // the effect existed still stands in for the footage.
-    if (best->at("src").is_string()) {
-      l.subjectSrc = best->at("src").str();
-      const Json& by = fx.at("alphaMatte").at("cutByEffect");
+    if (!l.subjects.empty()) {
+      const std::string& first = l.subjects.front().src;
+      l.subjectSrc = first;
+      const Json& by = am.at("cutByEffect");
       const bool byEffect = by.is_bool() && by.b();
       const bool hasCard = std::ranges::any_of(l.effects, [](const Json& e) { return e.at("type").is_string() && e.at("type").str() == "object-matte"; });
-      if (reads_own_object_matte(l)) l.objectMatteSrc = best->at("src").str();
-      else if (!byEffect && !hasCard) l.contentAwareFillSrc = best->at("src").str();
+      if (reads_own_object_matte(l)) l.objectMatteSrc = first;
+      else if (!byEffect && !hasCard) l.contentAwareFillSrc = first;
     }
   }
   l.sourceTime = retimed_source_at(n.id, t_);  // its own Speed % / Time Remap (retime_port.cpp)
@@ -2515,7 +2559,21 @@ Snapshot Walk::run() {
         l.behindSubject.reset();
         continue;
       }
-      layers_[it->second].subjectReferenced = true;
+      RLayer& owner = layers_[it->second];
+      if (!l.behindSubjects.empty()) {
+        // Only the named subjects that are shown now, in the owner's order (one texture per set).
+        std::vector<std::string> named;
+        for (const SubjectPart& p : owner.subjects)
+          if (std::ranges::find(l.behindSubjects, p.id) != l.behindSubjects.end()) named.push_back(p.id);
+        if (named.empty()) {  // every subject it is behind is hidden: nothing covers it
+          l.behindSubject.reset();
+          continue;
+        }
+        if (named.size() == owner.subjects.size()) named.clear();  // all of them: the whole subject's texture
+        l.behindSubjects = std::move(named);
+      }
+      owner.subjectReferenced = true;
+      if (std::ranges::find(owner.subjectSubsets, l.behindSubjects) == owner.subjectSubsets.end()) owner.subjectSubsets.push_back(l.behindSubjects);
     }
   }
 

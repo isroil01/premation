@@ -26,7 +26,17 @@
 }
 
 .chipActive {
-  border-color: var(--color-primary);
+  border-color: var(--subject-color, var(--color-primary));
+  box-shadow: 0 0 0 1px var(--subject-color, var(--color-primary)), var(--color-overlay-panel-shadow);
+}
+
+/* The subject's own colour, as on its outline. */
+.swatch {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--subject-color);
 }
 
 .pick,

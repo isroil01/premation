@@ -63,6 +63,7 @@ import { useMirrorTrackWatch, useMirrorTreeGroups } from '@hooks/useMirror';
 import { isTrackAnimated, readTrack, valueNumbersAt, trackRef as mirrorTrackRef } from '@core/mirror/selection';
 import { mirrorPropertyMeta } from '@core/mirror/metaFacts';
 import { mirrorEffects, mirrorMaskHeaders } from '@core/mirror/effects';
+import { layerSubjects } from '@core/workspace/subjects';
 import {
   effectDefFor,
   effectOpacityPath,
@@ -333,29 +334,56 @@ function EffectMaskRow({ nodeId, effect }: { nodeId: string; effect: Effect }): 
  * a subject, and wherever it is already set.
  */
 function ApplyToRow({ nodeId, effect }: { nodeId: string; effect: Effect }): JSX.Element | null {
-  const hasSubject = mirrorMaskHeaders(documentMirror().tree(nodeId)).some((p) => p.name === 'Object Matte');
-  if (!hasSubject && effect.subjectScope === undefined) return null;
+  const subjects = layerSubjects(nodeId);
+  if (subjects.length === 0 && effect.subjectScope === undefined && effect.subjectId === undefined) return null;
+  // Which subject: with several on the layer, one of them or all (Compositing Options ▸ subjectId).
+  const readsSubject = effect.subjectScope !== undefined || effect.type === 'matte-stroke' || effect.type === 'selective-color-ai';
   return (
-    <ParamLine>
-      <div className={row.paramRow}>
-        <div style={{ width: 14 }} />
-        <span className={row.paramLabel}>{t('effects.stack.applyTo', 'Apply To')}</span>
-        <select
-          value={effect.subjectScope ?? ''}
-          onChange={(ev) => {
-            const v = ev.currentTarget.value;
-            void setEffectSubjectScopeEdit(nodeId, effect.id, v === 'subject' || v === 'background' ? v : undefined);
-          }}
-          aria-label={t('effects.stack.applyToAria', '{type} applies to', { type: effect.type })}
-          title={t('effects.stack.applyToTitle', 'Where this effect lands: the whole layer, only the selected subject, or everything except the subject.')}
-          className={panel.paramSelect}
-        >
-          <option value="">{t('effects.stack.applyToLayer', 'Whole Layer')}</option>
-          <option value="subject">{t('effects.stack.applyToSubject', 'Subject')}</option>
-          <option value="background">{t('effects.stack.applyToBackground', 'Background')}</option>
-        </select>
-      </div>
-    </ParamLine>
+    <>
+      <ParamLine>
+        <div className={row.paramRow}>
+          <div style={{ width: 14 }} />
+          <span className={row.paramLabel}>{t('effects.stack.applyTo', 'Apply To')}</span>
+          <select
+            value={effect.subjectScope ?? ''}
+            onChange={(ev) => {
+              const v = ev.currentTarget.value;
+              void setEffectSubjectScopeEdit(nodeId, effect.id, v === 'subject' || v === 'background' ? v : undefined);
+            }}
+            aria-label={t('effects.stack.applyToAria', '{type} applies to', { type: effect.type })}
+            title={t('effects.stack.applyToTitle', 'Where this effect lands: the whole layer, only the selected subject, or everything except the subject.')}
+            className={panel.paramSelect}
+          >
+            <option value="">{t('effects.stack.applyToLayer', 'Whole Layer')}</option>
+            <option value="subject">{t('effects.stack.applyToSubject', 'Subject')}</option>
+            <option value="background">{t('effects.stack.applyToBackground', 'Background')}</option>
+          </select>
+        </div>
+      </ParamLine>
+      {readsSubject && (subjects.length > 1 || effect.subjectId !== undefined) && (
+        <ParamLine>
+          <div className={row.paramRow}>
+            <div style={{ width: 14 }} />
+            <span className={row.paramLabel}>{t('effects.stack.whichSubject', 'Subject')}</span>
+            <select
+              value={effect.subjectId ?? ''}
+              onChange={(ev) => {
+                const v = ev.currentTarget.value;
+                void edit(t('effects.stack.whichSubjectLabel', 'Effect Subject'), {
+                  type: 'setProperty', prop: { layer: nodeId, path: `effects/${effect.id}/compositing/subjectId` }, value: { kind: 'string', value: v },
+                });
+              }}
+              aria-label={t('effects.stack.whichSubjectAria', 'Which subject {type} reads', { type: effect.type })}
+              title={t('effects.stack.whichSubjectTitle', 'Which of the layer’s subjects this effect reads: one of them, or all of them together.')}
+              className={panel.paramSelect}
+            >
+              <option value="">{t('effects.stack.allSubjects', 'All subjects')}</option>
+              {subjects.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </div>
+        </ParamLine>
+      )}
+    </>
   );
 }
 
@@ -369,7 +397,7 @@ function ApplyToRow({ nodeId, effect }: { nodeId: string; effect: Effect }): JSX
  * does not hide the reason it looks the way it does behind a collapsed group.
  */
 function CompositingOptions({ nodeId, effect }: { nodeId: string; effect: Effect }): JSX.Element {
-  const inUse = effect.maskId !== undefined || effect.opacity !== undefined || effect.subjectScope !== undefined;
+  const inUse = effect.maskId !== undefined || effect.opacity !== undefined || effect.subjectScope !== undefined || effect.subjectId !== undefined;
   return (
     <ParamGroup name={t('effects.stack.compositingOptions', 'Compositing Options')} defaultOpen={inUse}>
       <EffectOpacityRow nodeId={nodeId} effect={effect} />

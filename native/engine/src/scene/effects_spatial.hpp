@@ -5,6 +5,7 @@
 // frameSceneExport.ts `effectToWire` encoding — see FxWriter).
 #pragma once
 
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -41,6 +42,8 @@ struct DeepFxTexture {
   Json mask;
   std::vector<float> floats;
   std::string src;
+  /// The layer's subjects this matte is made of (with their live edge), when `src` is a subject matte.
+  std::vector<SubjectPart> parts;
 };
 /// Program X batch 8: an enabled effect on the layer reads its own Object
 /// Matte (setLayerMatte's `alphaMatte`) AS A MATTE — Selective Color (AI) with
@@ -52,11 +55,16 @@ struct DeepFxTexture {
 /// Background fill: the subject's area painted with the background colour around it
 /// (normalized convolution through its Object Matte frame), put before a blur Applied To
 /// the Background so no subject colour bleeds into it. `l.objectMatteSrc` must be set.
-[[nodiscard]] api::RenderEffect subject_fill_entry(const RLayer& l);
-/// The texture key the layer's Object Matte frame is fed under.
-[[nodiscard]] std::string object_matte_key(std::string_view layerId);
-/// A map layer id `<layer>#subject`: that layer's subject matte frame (object_matte_key) drawn
-/// through its placement, not its rendered pixels (Behind Subject's Set Matte, map_layer).
+[[nodiscard]] api::RenderEffect subject_fill_entry(const RLayer& l, std::span<const std::string> ids = {});
+/// The texture key the layer's Object Matte frame is fed under: all its shown subjects
+/// (`ids` empty), or those subjects alone ("fxmatte:<layer>~<id>+<id>").
+[[nodiscard]] std::string object_matte_key(std::string_view layerId, std::span<const std::string> ids = {});
+/// The layer's shown subjects among `ids` (all of them when `ids` is empty), in panel order.
+[[nodiscard]] std::vector<SubjectPart> subject_parts(const RLayer& l, std::span<const std::string> ids = {});
+/// The subject an effect is Applied To (Compositing Options `subjectId`): one id, or none = all of them.
+[[nodiscard]] std::vector<std::string> effect_subject_ids(const Json& e);
+/// A map layer id `<layer>#subject` (or `<layer>#subject~<id>+<id>`): that layer's subject matte
+/// (object_matte_key) drawn through its placement, not its rendered pixels (Behind Subject's Set Matte, map_layer).
 inline constexpr std::string_view kSubjectMapSuffix = "#subject";
 /// The textures the layer's deep effects read this frame (frame_build.cpp).
 [[nodiscard]] std::vector<DeepFxTexture> deep_effect_textures(const RLayer& l);

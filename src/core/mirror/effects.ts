@@ -106,8 +106,11 @@ export function mirrorEffectParam(tree: MirrorTreeLike | undefined, effectId: st
 }
 
 /** Compositing Options: Effect Opacity (absent at 100), Effect Mask, Apply To and the label colour ('' = none). */
-export function mirrorEffectCompositing(tree: MirrorTreeLike | undefined, effectId: string): Pick<Effect, 'opacity' | 'maskId' | 'labelColor' | 'subjectScope'> {
-  const out: Pick<Effect, 'opacity' | 'maskId' | 'labelColor' | 'subjectScope'> = {};
+export function mirrorEffectCompositing(
+  tree: MirrorTreeLike | undefined,
+  effectId: string,
+): Pick<Effect, 'opacity' | 'maskId' | 'labelColor' | 'subjectScope' | 'subjectId'> {
+  const out: Pick<Effect, 'opacity' | 'maskId' | 'labelColor' | 'subjectScope' | 'subjectId'> = {};
   if (!tree) return out;
   const op = plainValue(tree.nodes.get(`effects/${effectId}/compositing/opacity`)?.value);
   if (typeof op === 'number' && Number.isFinite(op) && op !== 100) out.opacity = op;
@@ -117,6 +120,8 @@ export function mirrorEffectCompositing(tree: MirrorTreeLike | undefined, effect
   if (typeof label === 'string' && label !== '') out.labelColor = label;
   const scope = plainValue(tree.nodes.get(`effects/${effectId}/compositing/subject`)?.value);
   if (scope === 'subject' || scope === 'background') out.subjectScope = scope;
+  const subject = plainValue(tree.nodes.get(`effects/${effectId}/compositing/subjectId`)?.value);
+  if (typeof subject === 'string' && subject !== '') out.subjectId = subject;
   return out;
 }
 

@@ -1125,6 +1125,7 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
     src/scene/text_measure.cpp
     src/scene/text_query.cpp        # B4 round 2: getTextLayout / getLayerBounds' text boxes over text_measure
     src/scene/scene_textures.cpp
+    src/scene/subject_matte.cpp      # a layer's subjects united, with their live edge (scene_textures subject_ref)
     src/scene/image_decode_ffi.cpp
     src/scene/pdf_render_ffi.cpp     # PDF / Illustrator footage through PDFium (pdf_render.hpp)
     src/scene/svg_layer.cpp
@@ -1215,7 +1216,7 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
                                       tests/test_threed_models.cpp tests/test_time_comp_parity.cpp tests/test_particle_parity.cpp
                                       tests/test_polygon_clipping_parity.cpp tests/test_cover_crop.cpp tests/test_source_text.cpp tests/test_path_expression_scene.cpp
                                       tests/test_rig_coverage.cpp tests/test_gpu_effect_route.cpp tests/test_media_reload.cpp
-                                      tests/test_text_outlines.cpp tests/test_svg_shapes.cpp
+                                      tests/test_text_outlines.cpp tests/test_svg_shapes.cpp tests/test_subject_matte.cpp
                                       tests/test_b4_round5_text_glyphs.cpp  # B4 round 5: getTextLayout.glyphs over the harness fonts
                                       tests/test_text_anchor_tracking.cpp  # audit 2026-10-18 §5: alignment anchor y / vertical, per-range tracking
                                       tests/test_viewport_view.cpp  # setViewport view / customView → the snapshot's camera

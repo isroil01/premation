@@ -28,13 +28,16 @@ import {
   boxAt,
   findObjects,
   foundObjectsCached,
-  objectAt,
+  objectsAt,
   previewObjectMatte,
   runSubjectEdit,
   type FoundObject,
   type ObjectMattePreview,
   type SubjectEditRequest,
 } from '@core/workspace/rotoBrushTool';
+import { layerSubjects, newSubjectId, type Subject } from '@core/workspace/subjects';
+import { useSubjectStore } from '@stores/subjectStore';
+import type { CSSProperties } from 'react';
 import { explainObjectMatteError } from '@core/tracking/samModelInstall';
 import { settingsFps } from '@core/mirror/compFacts';
 import { activeCompSettingsNow } from '@hooks/useMirrorFrame';
@@ -42,7 +45,7 @@ import { useLayerScreenMapping } from './useLayerScreenMapping';
 import type { LayerScreenMapping } from './layerScreen';
 import { useDisplayedCamera2D } from './useOverlayView';
 import { autoInstallObjectMatte, offerSam2Tracking } from '@layout/Settings/objectMatteJob';
-import { subjectBoundaryPath } from './subjectBoundary';
+import { insideOutline, subjectBoundaries } from './subjectBoundary';
 import styles from './ObjectMatteOverlay.module.css';
 import { t } from '@core/i18n';
 
@@ -115,9 +118,21 @@ function ObjectMatteOverlayActive({ host }: { host?: ObjectMatteHost }): JSX.Ele
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [hover, setHover] = useState<Hover | null>(null);
   const [looking, setLooking] = useState(false);
-  // Find Objects: every object of this frame (lit faintly), and the one under the pointer (lit strongly).
+  // Find Objects: every object of this frame (lit faintly), and the ones under the pointer, the
+  // whole first (a person, the jacket on them, its sleeve): `depth` picks which is lit strongly.
   const [objects, setObjects] = useState<FoundObject[] | null>(null);
-  const [hot, setHot] = useState<FoundObject | null>(null);
+  const [stack, setStack] = useState<FoundObject[]>([]);
+  const [pointer, setPointer] = useState<Pt | null>(null);
+  const depth = useSubjectStore((s) => s.depth);
+  const hot = stack.length > 0 ? stack[Math.min(depth, stack.length - 1)]! : null;
+  const stackRef = useRef<FoundObject[]>([]);
+  stackRef.current = stack;
+  // The layer's subjects (several per layer) and the one Shift / Alt edit.
+  const storedActive = useSubjectStore((s) => (nodeId ? s.active[nodeId] : undefined));
+  void sceneTick;
+  const subjects: Subject[] = nodeId ? layerSubjects(nodeId) : [];
+  const activeId = subjects.some((s) => s.id === storedActive) ? storedActive! : (subjects[subjects.length - 1]?.id ?? null);
+  const activeSubject = subjects.find((s) => s.id === activeId) ?? null;
   const [finding, setFinding] = useState(false);
   const [drag, setDrag] = useState<{ from: Pt; to: Pt; path: Pt[] } | null>(null);
   const marquee = useRotoBrushStore((s) => s.marquee);
@@ -169,7 +184,7 @@ function ObjectMatteOverlayActive({ host }: { host?: ObjectMatteHost }): JSX.Ele
   // so moving the pointer is a lookup. It also warms the frame's encoding, so a
   // click — or the per-point hover where no object was found — is decoder-only.
   useEffect(() => {
-    setHot(null);
+    setStack([]);
     if (!active || !nodeId) {
       setObjects(null);
       return;
@@ -233,15 +248,20 @@ function ObjectMatteOverlayActive({ host }: { host?: ObjectMatteHost }): JSX.Ele
    * what is selected — the soft matte at full size, its edge snapped to the
    * picture, only the region the prompt touched kept.
    */
-  const select = (req: SubjectEditRequest): void => {
-    if (!nodeId) return;
+  // A plain click or box makes a NEW subject; Shift adds to the active one, Alt cuts from it.
+  const targetOf = (shift: boolean, alt: boolean): string | null =>
+    !nodeId ? null : (shift || alt) && activeId ? activeId : newSubjectId(nodeId);
+  const select = (req: SubjectEditRequest, subject: string | null): void => {
+    if (!nodeId || !subject) return;
     const store = useRotoBrushStore.getState();
     store.setBusy(true);
     store.setStatus(t('workspace.objectMatte.selecting', 'Selecting…'));
-    void runSubjectEdit(nodeId, time, req)
+    void runSubjectEdit(nodeId, time, req, subject)
       .then((r) => {
         const s = useRotoBrushStore.getState();
-        s.setStatus(r && r.coverage > 0 ? null : t('workspace.objectMatte.nothing', 'Nothing found there — click the subject itself, or drag a box around it.'));
+        const found = !!r && r.coverage > 0;
+        s.setStatus(found ? null : t('workspace.objectMatte.nothing', 'Nothing found there — click the subject itself, or drag a box around it.'));
+        if (found) useSubjectStore.getState().setActive(nodeId, subject);
         getWorkspaceController().requestRender();
       })
       .catch((err: unknown) => {
@@ -251,6 +271,19 @@ function ObjectMatteOverlayActive({ host }: { host?: ObjectMatteHost }): JSX.Ele
   };
   const opOf = (shift: boolean, alt: boolean): SubjectEditRequest['op'] => (alt ? 'subtract' : shift ? 'add' : 'replace');
 
+  /** The shown subject whose outline holds `p` (the smallest, so a subject inside another is reachable). */
+  const subjectUnder = (p: Pt): Subject | null => {
+    if (!nodeId) return null;
+    let best: { s: Subject; area: number } | null = null;
+    for (const b of subjectBoundaries(nodeId, time, (x, y) => ({ x, y }))) {
+      const s = subjects.find((x) => x.id === b.subject);
+      if (!s || s.hidden || !insideOutline(b.local, p)) continue;
+      const area = (b.box.x1 - b.box.x0) * (b.box.y1 - b.box.y0);
+      if (!best || area < best.area) best = { s, area };
+    }
+    return best?.s ?? null;
+  };
+
   const click = (p: Pt, shift: boolean, alt: boolean): void => {
     if (!nodeId) return;
     const held = hoverRef.current;
@@ -259,15 +292,28 @@ function ObjectMatteOverlayActive({ host }: { host?: ObjectMatteHost }): JSX.Ele
     hoverSeq.current++;
     // The hover only showed the outline; the click makes the matte itself (the frame's encoding is warm).
     held?.preview.discard();
+    // A plain click on a subject already made makes it the active one (unless a part of it is picked: a new subject).
+    const already = !shift && !alt && depth === 0 ? subjectUnder(p) : null;
+    if (already) {
+      useSubjectStore.getState().setActive(nodeId, already.id);
+      useRotoBrushStore.getState().setStatus(t('workspace.subjects.activeNow', '{name} is the active subject — Shift-click adds to it, Alt-click cuts from it.', { name: already.name }));
+      return;
+    }
     // On a found object: its own seed, so the selection is the object that was lit.
-    const found = objects ? objectAt(objects, p) : null;
-    select({ tool: 'segment', op: opOf(shift, alt), clicks: [found ? found.seed : p] });
+    select({ tool: 'segment', op: opOf(shift, alt), clicks: [hot ? hot.seed : p] }, targetOf(shift, alt));
   };
 
   useEffect(() => {
     if (!active) return;
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') clearHover();
+      // Tab / Shift-Tab: from the whole object under the pointer to its parts and back.
+      if (e.key === 'Tab' && !e.ctrlKey && !e.metaKey && !e.altKey && stackRef.current.length > 1) {
+        e.preventDefault();
+        const n = stackRef.current.length;
+        const d = useSubjectStore.getState().depth;
+        useSubjectStore.getState().setDepth(((Math.min(d, n - 1) + (e.shiftKey ? -1 : 1)) % n + n) % n);
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -292,6 +338,10 @@ function ObjectMatteOverlayActive({ host }: { host?: ObjectMatteHost }): JSX.Ele
   const lassoPath = (pts: readonly Pt[]): string =>
     pts.length < 2 ? '' : `${pts.map((q, i) => { const s = toScreen(q.x, q.y); return `${i === 0 ? 'M' : 'L'} ${s.x.toFixed(1)} ${s.y.toFixed(1)}`; }).join(' ')} Z`;
   const shownBox = drag ?? (boxAt(box, time, fps()) ? { from: { x: box!.x0, y: box!.y0 }, to: { x: box!.x1, y: box!.y1 } } : null);
+  const boundaries = nodeId && mapping ? subjectBoundaries(nodeId, time, toScreen) : [];
+  // The pointer over a subject already made (the whole picked): a click makes it the active one.
+  const hoverLocal = pointer && mapping ? mapping.screenToLocal(pointer.x, pointer.y) : null;
+  const hoverUnder = hoverLocal && depth === 0 ? subjectUnder(hoverLocal) : null;
 
   const message = !nodeId
     ? t('workspace.objectMatte.selectLayer', 'Select one footage layer, then hover the subject.')
@@ -299,7 +349,7 @@ function ObjectMatteOverlayActive({ host }: { host?: ObjectMatteHost }): JSX.Ele
       ? t('workspace.objectMatte.looking', 'Looking…')
       : finding && !objects
         ? t('workspace.objectMatte.finding', 'Finding objects…')
-      : hover || hot
+      : hover && !hot  // over a found object the tag by the pointer says it
         ? (marquee === 'lasso'
           ? t('workspace.objectMatte.clickToSelectLasso', 'Click to select · Shift-click adds · Alt-click subtracts · drag a lasso')
           : t('workspace.objectMatte.clickToSelect', 'Click to select · Shift-click adds · Alt-click subtracts · drag for a box'))
@@ -330,14 +380,20 @@ function ObjectMatteOverlayActive({ host }: { host?: ObjectMatteHost }): JSX.Ele
           return;
         }
         if (busy) return;
-        // Over a found object: lit at once, no model call.
-        const found = objects ? objectAt(objects, p) : null;
-        if (found) {
-          if (found !== hot) setHot(found);
+        const r = rootRef.current?.getBoundingClientRect();
+        if (r) setPointer({ x: e.clientX - r.left, y: e.clientY - r.top });
+        // Over found objects: lit at once, no model call (a new whole under the pointer starts at the whole).
+        const under = objects ? objectsAt(objects, p) : [];
+        if (under.length > 0) {
+          const prev = stackRef.current;
+          if (prev.length !== under.length || prev.some((o, i) => o !== under[i])) {
+            if (prev[0] !== under[0]) useSubjectStore.getState().setDepth(0);
+            setStack(under);
+          }
           if (hoverRef.current || hoverTimer.current !== null) clearHover();
           return;
         }
-        if (hot) setHot(null);
+        if (stackRef.current.length > 0) setStack([]);
         const h = hoverRef.current;
         // Still on the previewed spot: keep it rather than re-asking the model.
         if (h && Math.hypot(h.at.x - p.x, h.at.y - p.y) <= SAME_SPOT_PX) return;
@@ -363,13 +419,13 @@ function ObjectMatteOverlayActive({ host }: { host?: ObjectMatteHost }): JSX.Ele
             const cy = (Math.min(...ys) + Math.max(...ys)) / 2;
             const middle = prompts.inside.reduce((a, b) => (Math.hypot(b.x - cx, b.y - cy) < Math.hypot(a.x - cx, a.y - cy) ? b : a));
             select({ tool: 'segment', op: opOf(press.shift, press.alt), clicks: [middle],
-              box: { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys), time } });
+              box: { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys), time } }, targetOf(press.shift, press.alt));
             return;
           }
           if (Math.abs(d.to.x - d.from.x) < 2 || Math.abs(d.to.y - d.from.y) < 2) return;
           const b = { x0: d.from.x, y0: d.from.y, x1: d.to.x, y1: d.to.y, time };
           useRotoBrushStore.getState().setBox(b);
-          select({ tool: 'segment', op: opOf(press.shift, press.alt), box: b });
+          select({ tool: 'segment', op: opOf(press.shift, press.alt), box: b }, targetOf(press.shift, press.alt));
           return;
         }
         const p = toLocal(e.clientX, e.clientY) ?? press.from;
@@ -378,12 +434,24 @@ function ObjectMatteOverlayActive({ host }: { host?: ObjectMatteHost }): JSX.Ele
       onPointerLeave={() => {
         if (!pressRef.current) {
           clearHover();
-          setHot(null);
+          setStack([]);
+          setPointer(null);
         }
       }}
     >
       <svg className={styles.svg} aria-hidden="true">
-        {nodeId && mapping && <path className={styles.boundary} d={subjectBoundaryPath(nodeId, time, toScreen)} />}
+        {boundaries.map((b) => {
+          const s = subjects.find((x) => x.id === b.subject);
+          if (s?.hidden) return null;
+          return (
+            <path
+              key={b.subject}
+              className={b.subject === activeId ? styles.boundaryActive : styles.boundary}
+              style={{ '--subject-color': s?.color ?? 'var(--color-overlay-subject-boundary)' } as CSSProperties}
+              d={b.d}
+            />
+          );
+        })}
         {objects?.map((o, i) => (o === hot ? null : <path key={i} className={styles.object} d={outlinePath(o.outline)} />))}
         {hot && <path className={styles.preview} d={outlinePath(hot.outline)} />}
         {!hot && hover && (
@@ -395,6 +463,43 @@ function ObjectMatteOverlayActive({ host }: { host?: ObjectMatteHost }): JSX.Ele
           <path className={styles.box} d={rectPath(shownBox.from, shownBox.to)} />
         )}
       </svg>
+      {boundaries.map((b) => {
+        const s = subjects.find((x) => x.id === b.subject);
+        if (!s || s.hidden || !Number.isFinite(b.box.x0)) return null;
+        return (
+          <span
+            key={`tag-${b.subject}`}
+            className={b.subject === activeId ? styles.tagActive : styles.tag}
+            // Above its corner; inside it, under the chip row, when the subject reaches the viewer's top.
+            style={{ left: Math.max(0, b.box.x0), top: b.box.y0 - 20 >= 36 ? b.box.y0 - 20 : Math.max(36, b.box.y0 + 4), '--subject-color': s.color } as CSSProperties}
+          >
+            {s.name}
+          </span>
+        );
+      })}
+      {hot && pointer && !busy && !drag && (
+        <div className={styles.hoverTag} style={{ left: pointer.x + 16, top: pointer.y + 16 }}>
+          {hoverUnder ? (
+            <span>{t('workspace.subjects.hoverActivate', 'Click: make {name} active', { name: hoverUnder.name })}</span>
+          ) : (
+            <span>
+              {activeSubject
+                ? t('workspace.subjects.hoverNewOrAdd', 'Click: new subject · Shift: add to {name} · Alt: cut from it', { name: activeSubject.name })
+                : t('workspace.subjects.hoverNew', 'Click: select as a subject')}
+            </span>
+          )}
+          {stack.length > 1 && (
+            <span className={styles.hoverPath}>
+              {stack.map((_, i) => (
+                <b key={i} className={i === Math.min(depth, stack.length - 1) ? styles.hoverStepOn : styles.hoverStep}>
+                  {i === 0 ? t('workspace.subjects.whole', 'Whole') : t('workspace.subjects.part', 'Part {n}', { n: i })}
+                </b>
+              ))}
+              <span className={styles.hoverKey}>{t('workspace.subjects.tabHint', 'Tab ⇄')}</span>
+            </span>
+          )}
+        </div>
+      )}
       {message && (
         <div className={styles.status} role="status">
           {busy && <span className={styles.spinner} aria-hidden="true" />}

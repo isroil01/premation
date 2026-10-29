@@ -93,11 +93,78 @@
   stroke-linejoin: round;
 }
 
-/* The selected subject's boundary (subjectBoundary.ts): AE's magenta line. */
+/* Each subject's boundary (subjectBoundary.ts) in its own colour (AE's magenta
+   for the first); the active one — what Shift / Alt edit — drawn heavier. */
 .boundary {
   fill: none;
-  stroke: var(--color-overlay-subject-boundary);
+  stroke: var(--subject-color, var(--color-overlay-subject-boundary));
   stroke-width: 1.5;
   stroke-linejoin: round;
   filter: drop-shadow(0 0 1px var(--color-overlay-handle-halo));
+}
+
+.boundaryActive {
+  composes: boundary;
+  fill: var(--subject-color, var(--color-overlay-subject-boundary));
+  fill-opacity: 0.12;
+  stroke-width: 2.5;
+}
+
+/* A subject's name, pinned over its top-left corner. */
+.tag {
+  position: absolute;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--color-overlay-panel-bg);
+  border: 1px solid var(--subject-color, var(--color-overlay-subject-boundary));
+  color: var(--color-overlay-text);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  line-height: 16px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.tagActive {
+  composes: tag;
+  background: var(--subject-color, var(--color-overlay-subject-boundary));
+  color: var(--color-overlay-subject-tag-text);
+}
+
+/* What a click does here, beside the pointer, and the whole ⇄ parts steps under it. */
+.hoverTag {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-width: 340px;
+  padding: 5px 8px;
+  border: 1px solid var(--color-overlay-panel-border);
+  border-radius: var(--radius-md);
+  background: var(--color-overlay-panel-bg);
+  box-shadow: var(--color-overlay-panel-shadow);
+  color: var(--color-overlay-text);
+  font-size: var(--font-size-xs);
+  pointer-events: none;
+}
+
+.hoverPath {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.hoverStep {
+  font-weight: 500;
+  opacity: 0.6;
+}
+
+.hoverStepOn {
+  font-weight: 700;
+  color: var(--color-primary);
+}
+
+.hoverKey {
+  margin-left: auto;
+  opacity: 0.6;
 }
