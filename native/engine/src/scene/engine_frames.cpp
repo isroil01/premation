@@ -617,6 +617,34 @@ class EngineFrameBuilder final : public FrameBuilder, public TextQueries, public
     return out;
   }
 
+  std::shared_ptr<BuiltFrame> build_layer_pixels(const doc::Document& d, const doc::EditorView& view, const doc::ExprEnv& expr,
+                                                 doc::ExprCache& cache, std::string_view comp, std::string_view layer,
+                                                 double seconds, bool postEffect, doc::LayerPixels& drawn) override {
+    auto out = std::make_shared<BuiltFrame>();
+    out->fontFamilies = register_fonts(d);
+    out->effectTypes = document_effect_types(d);
+    out->mediaBase = mediaBase_;
+    ViewSpec vs;
+    vs.gpuEffects = engine_gpu_effects();
+    vs.svgDisplayScale = svg_display_scale_on();
+    try {
+      BuildContext ctx = context(d, view, expr, cache);
+      layer_pixels_context(ctx, layer, postEffect);
+      LayerPixelsFrame lf = build_layer_pixels_frame(ctx, comp, layer, seconds, vs);
+      plugins::finish_native_frame(ctx, comp, seconds, lf.view, false, lf.nf, plugins::PluginHost::active());
+      out->file = std::move(lf.nf.file);
+      out->textures = std::move(lf.nf.textures);
+      drawn.width = lf.width;
+      drawn.height = lf.height;
+      drawn.scale = lf.scale;
+      drawn.boxWidth = lf.boxWidth;
+      drawn.boxHeight = lf.boxHeight;
+    } catch (const std::exception& e) {
+      doc::fail(api::ErrorCode::internal, std::string("the layer could not be built: ") + e.what());
+    }
+    return out;
+  }
+
   std::shared_ptr<BuiltFrame> build_footage_still(const doc::Document& d, std::string_view src, bool video,
                                                   double sourceSec, double sourceWidth, double sourceHeight,
                                                   std::uint32_t width, std::uint32_t height) override {

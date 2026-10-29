@@ -103,4 +103,31 @@ struct CompOverrides {
                                              bool motionBlur, const std::string& sceneId = {}, std::int64_t frame = 0,
                                              const CompOverrides& overrides = {});
 
+/// The longest side a layer is drawn at for `sampleImage` (a larger one is
+/// drawn smaller and sampled through LayerPixels::scale).
+inline constexpr std::uint32_t kSampleImageMaxSide = 2048;
+
+/// `sampleImage`: `layer` (of `comp`) alone in its own space at `t` — the
+/// Layer panel's frame (BuildContext::LayerView): untransformed, over
+/// transparency, with its masks and effects when `postEffect`, else its
+/// untouched source — drawn width × height (its source size, or the comp's
+/// for a layer without one, scaled by `scale` to fit kSampleImageMaxSide).
+/// `view` carries the caller's device flags (gpuEffects, svgDisplayScale).
+struct LayerPixelsFrame {
+  NativeFrame nf;
+  /// The view it was drawn through (what finish_native_frame is given).
+  ViewSpec view;
+  std::uint32_t width = 0;
+  std::uint32_t height = 0;
+  double scale = 1;
+  /// The layer's box it shows, layer units.
+  double boxWidth = 0;
+  double boxHeight = 0;
+};
+/// `c` as build_layer_pixels_frame walks it (the Layer panel's walk of `layer`).
+void layer_pixels_context(BuildContext& c, std::string_view layer, bool postEffect);
+/// `c` is the context layer_pixels_context made.
+[[nodiscard]] LayerPixelsFrame build_layer_pixels_frame(const BuildContext& c, std::string_view comp, std::string_view layer,
+                                                        double t, const ViewSpec& view);
+
 }  // namespace premation::scene

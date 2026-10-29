@@ -1,6 +1,8 @@
 #include "docexpr.hpp"
 
+#include <bit>
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <functional>
 
@@ -321,6 +323,48 @@ std::optional<ex::SourceTextSample> DocExprEnv::source_text(std::string_view nod
   const Json& family = text->props.at("fontFamily");
   if (family.is_string()) s.style.font_family = to_u16(family.str());
   return s;
+}
+
+std::shared_ptr<const LayerPixels> DocExprEnv::layer_pixels(std::string_view node, double t, bool postEffect,
+                                                              std::string& error) const {
+  if (d_.node(node) == nullptr) {
+    error = "sampleImage: no such layer.";
+    return nullptr;
+  }
+  if (!cache_.pixelProbe) {
+    error = "sampleImage needs the renderer, which this evaluation does not have.";
+    return nullptr;
+  }
+  // One draw per layer, time and mode in a frame build (a rig samples the same layer many times).
+  std::string key;
+  if (cache_.scoped()) {
+    key.reserve(node.size() + 24);
+    key.append(node).push_back('');
+    key += std::to_string(std::bit_cast<std::uint64_t>(t));
+    key.push_back('');
+    key.push_back(postEffect ? '1' : '0');
+    auto& memo = cache_.memo(*this).pixels;
+    if (const auto it = memo.find(key); it != memo.end()) {
+      if (!it->second.first) error = it->second.second;
+      return it->second.first;
+    }
+  }
+  const std::string id(node);
+  if (sampling_.contains(id)) {
+    error = "sampleImage: the layer samples itself while it is drawn (a cycle through its own expressions).";
+    return nullptr;
+  }
+  sampling_.insert(id);
+  std::shared_ptr<const LayerPixels> px;
+  try {
+    px = cache_.pixelProbe(*this, node, t, postEffect, error);
+  } catch (...) {
+    sampling_.erase(id);
+    throw;
+  }
+  sampling_.erase(id);
+  if (cache_.scoped()) cache_.memo(*this).pixels.emplace(std::move(key), std::pair{px, px ? std::string() : error});
+  return px;
 }
 
 std::optional<PathAt> DocExprEnv::path(std::string_view node, bool mask, const std::string* name, double t) const {

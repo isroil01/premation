@@ -219,6 +219,8 @@ class RenderThread final : public FrameSink {
   [[nodiscard]] std::future<StillImage> render_still(std::shared_ptr<BuiltFrame> frame, std::uint32_t width,
                                                      std::uint32_t height) override;
   [[nodiscard]] std::future<WorkingPixels> read_pixels(std::uint32_t viewport, PixelRegion region) override;
+  [[nodiscard]] std::future<WorkingPixels> read_frame(std::shared_ptr<BuiltFrame> frame, std::uint32_t width,
+                                                      std::uint32_t height) override;
 
  private:
   struct SlotSet;

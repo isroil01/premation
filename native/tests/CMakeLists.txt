@@ -10,6 +10,7 @@ add_executable(motion_tests
   test_expr.cpp
   test_expr_lang.cpp
   test_expr_path.cpp
+  test_expr_sample_image.cpp
   test_transform.cpp
 )
 

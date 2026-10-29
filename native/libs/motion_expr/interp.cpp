@@ -1073,6 +1073,8 @@ Value Interp::global(const Node& n) {
       return bound_fn(Fn::kLayerMask, Value::null());
     case Global::kContent:
       return bound_fn(Fn::kLayerContent, Value::null());
+    case Global::kSampleImage:
+      return bound_fn(Fn::kSampleImage, Value::null());
     case Global::kThisComp:
       return this_comp();
     case Global::kThisLayer:
@@ -1417,6 +1419,7 @@ void Interp::add_layer_members(std::vector<Prop>& props, const Value& bound) {
   // AE path properties: layer.mask("Mask 1").maskPath, layer.content("Path 1").path (path.cpp).
   props.push_back({.key = KeyId::k_mask, .value = bound_fn(Fn::kLayerMask, bound), .lazy = Lazy::kNone});
   props.push_back({.key = KeyId::k_content, .value = bound_fn(Fn::kLayerContent, bound), .lazy = Lazy::kNone});
+  props.push_back({.key = KeyId::k_sampleImage, .value = bound_fn(Fn::kSampleImage, bound), .lazy = Lazy::kNone});
 }
 
 Value Interp::plain_bound(std::vector<Prop> props, const Value& bound) {
@@ -1888,6 +1891,40 @@ Value Interp::layer_at(const Value& name, const Value& prop, const Value& t) {
   return Value::number(r.value_or(0));
 }
 
+Value Interp::sample_image(const Value& layer, Args a) {
+  // A point / radius is [x, y] (a property object reads its value; a scalar is both).
+  const auto pair = [](const Value& v, std::array<double, 2> fallback) -> std::optional<std::array<double, 2>> {
+    if (v.is_undefined()) return fallback;
+    const Value u = unwrap_prop(v);
+    if (!is_array(u)) {
+      const double s = to_number(u);
+      if (!std::isfinite(s)) return std::nullopt;
+      return std::array<double, 2>{s, s};
+    }
+    if (u.o->elems.size() < 2) return std::nullopt;
+    const double x = to_number(unwrap_prop(u.o->elems[0]));
+    const double y = to_number(unwrap_prop(u.o->elems[1]));
+    if (!std::isfinite(x) || !std::isfinite(y)) return std::nullopt;
+    return std::array<double, 2>{x, y};
+  };
+  if (a[0].is_undefined()) throw_eval(u"sampleImage: give the point to sample, as [x, y] in the layer's own space.");
+  const auto point = pair(a[0], {0, 0});
+  if (!point) throw_eval(u"sampleImage: the point must be [x, y] (two numbers).");
+  const auto radius = pair(a[1], {0.5, 0.5});
+  if (!radius || (*radius)[0] < 0 || (*radius)[1] < 0) throw_eval(u"sampleImage: the radius must be [x, y], neither below 0.");
+  const bool post_effect = a[2].is_undefined() ? true : truthy(unwrap_prop(a[2]));
+  const double t = a[3].is_undefined() ? ctx_.time : to_number(unwrap_prop(a[3]));
+  if (!std::isfinite(t)) throw_eval(u"sampleImage: the time must be a number of seconds.");
+  if (ctx_.host == nullptr) throw_eval(u"sampleImage needs the renderer, which this evaluation does not have.");
+  const bool self_layer = layer.is_null();
+  Str name;
+  if (!self_layer) name = to_string(layer);
+  const std::optional<Host::ImageSample> s = ctx_.host->sample_image(self_layer ? nullptr : &name, *point, *radius, post_effect, t);
+  if (!s) throw_eval(u"sampleImage: no such layer.");
+  if (!s->error.empty()) throw_eval(s->error);
+  return array({Value::number(s->rgba[0]), Value::number(s->rgba[1]), Value::number(s->rgba[2]), Value::number(s->rgba[3])});
+}
+
 Value Interp::source_rect(Args a) {
   const double t = a[0].is_undefined() ? ctx_.time : to_number(a[0]);
   const bool extents = a[1].is_undefined() ? false : truthy(a[1]);
@@ -2044,6 +2081,8 @@ Value Interp::call_api(const Obj& f, Args a) {
       return layer_mask(f.bound, a[0]);
     case Fn::kLayerContent:
       return layer_content(f.bound, a[0]);
+    case Fn::kSampleImage:
+      return sample_image(f.bound, a);
     case Fn::kSourceRectAtTime:
       return source_rect(a);
     case Fn::kToComp:

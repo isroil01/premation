@@ -138,6 +138,8 @@ class Interp {
   Value path_method(Fn fn, Obj& self, Args a);
   Value layer_mask(const Value& layer, const Value& name);
   Value layer_content(const Value& layer, const Value& name);
+  /// AE `layer.sampleImage(point, radius = [0.5, 0.5], postEffect = true, t = time)`.
+  Value sample_image(const Value& layer, Args a);
   Value path_of(Obj& holder);
   /// loopOut / loopIn (limit = numKeyframes) and loopOutDuration / loopInDuration (limit = seconds).
   Value loop(bool out, const Value& mode, const Value& limit, bool by_duration);

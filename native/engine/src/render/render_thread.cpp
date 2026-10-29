@@ -1320,6 +1320,33 @@ std::future<WorkingPixels> RenderThread::read_pixels(std::uint32_t viewport, Pix
   return result;
 }
 
+std::future<WorkingPixels> RenderThread::read_frame(std::shared_ptr<BuiltFrame> frame, std::uint32_t width,
+                                                     std::uint32_t height) {
+  // shared_ptr: as render_still.
+  auto promise = std::make_shared<std::promise<WorkingPixels>>();
+  std::future<WorkingPixels> result = promise->get_future();
+  post([this, promise, frame = std::move(frame), width, height] {
+    WorkingPixels out;
+    std::string error;
+    if (!frame || !drawer_) {
+      out.answer = HookAnswer::unsupported;
+      out.error = frame ? "the render graph did not start on this GPU (C2 quads only)" : "no frame to draw";
+    } else if (width == 0 || height == 0) {
+      out.answer = HookAnswer::failed;
+      out.error = "an empty frame";
+    } else if (drawer_->read_working(*frame, width, height, PixelRegion{0, 0, width, height}, out, error)) {
+      out.answer = HookAnswer::ready;
+    } else {
+      out = WorkingPixels{};
+      out.answer = HookAnswer::failed;
+      out.error = std::move(error);
+      PREMATION_LOG(warn, "read_frame_failed").kv("error", out.error);
+    }
+    promise->set_value(std::move(out));
+  });
+  return result;
+}
+
 void RenderThread::rebuild(Port& port, const ViewportConfig& config, bool shared, bool copy) {
   // The slots hold frames at the preview resolution (engine_frames build draws at dpr × it);
   // the page scales them up to the viewer.

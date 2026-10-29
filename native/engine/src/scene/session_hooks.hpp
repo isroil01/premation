@@ -26,6 +26,7 @@ class Document;
 struct EditorView;
 class ExprEnv;
 class ExprCache;
+struct LayerPixels;  // core/anim.hpp
 struct Node;
 class ConvertGeometry;  // core/convert_geometry.hpp
 }  // namespace doc
@@ -144,6 +145,16 @@ class FrameBuilder {
                                                                 std::string_view /*comp*/, api::Time /*time*/,
                                                                 std::uint32_t /*width*/, std::uint32_t /*height*/,
                                                                 std::string_view /*isolateLayer*/) {
+    return nullptr;
+  }
+  /// sampleImage: `layer` of `comp` alone in its own space at `seconds`
+  /// (native_scene.hpp build_layer_pixels_frame), for FrameSink::read_frame;
+  /// `drawn` says how (its size, scale and box; no pixels). Null = this builder cannot.
+  [[nodiscard]] virtual std::shared_ptr<BuiltFrame> build_layer_pixels(const doc::Document& /*d*/, const doc::EditorView& /*view*/,
+                                                                       const doc::ExprEnv& /*expr*/, doc::ExprCache& /*cache*/,
+                                                                       std::string_view /*comp*/, std::string_view /*layer*/,
+                                                                       double /*seconds*/, bool /*postEffect*/,
+                                                                       doc::LayerPixels& /*drawn*/) {
     return nullptr;
   }
   /// getThumbnail of a footage item: `src` (a still, or a video's frame at

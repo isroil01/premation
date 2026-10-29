@@ -70,6 +70,8 @@ enum class Global : std::int8_t {
   // AE's data footage: footage("name").sourceData / dataValue (2026-10-29)
   kFootage,
   kCreatePath, kMask, kContent,
+  // AE: layer.sampleImage (2026-10-29)
+  kSampleImage,
   kCount_
 };
 
@@ -97,6 +99,7 @@ enum class Fn : std::uint8_t {
   // AE path properties (path.cpp): createPath, a path's methods, layer.mask() / layer.content()
   kCreatePath, kPathPoints, kPathInTangents, kPathOutTangents, kPathIsClosed, kPathPointOnPath, kPathTangentOnPath,
   kPathNormalOnPath, kLayerMask, kLayerContent,
+  kSampleImage,
   kPropValueAtTime, kPropVelocityAtTime, kPropKey, kPropNearestKey, kPropSmooth,
   // sourceText.ts
   kGetStyleAt, kStyleSetter, kStyleSetText,

@@ -92,3 +92,6 @@ K(smooth) K(temporalWiggle) K(message) K(wiggle)
 // AE path properties (path.cpp)
 K(createPath) K(points) K(inTangents) K(outTangents) K(isClosed) K(pointOnPath) K(tangentOnPath) K(normalOnPath)
 K(mask) K(maskPath) K(content) K(path)
+
+// AE: layer.sampleImage
+K(sampleImage)

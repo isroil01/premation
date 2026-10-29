@@ -1185,7 +1185,7 @@ constexpr std::array kMeta = {
     M(Fn::kCreatePath, u"createPath", 4), M(Fn::kPathPoints, u"points", 0), M(Fn::kPathInTangents, u"inTangents", 0),
     M(Fn::kPathOutTangents, u"outTangents", 0), M(Fn::kPathIsClosed, u"isClosed", 0), M(Fn::kPathPointOnPath, u"pointOnPath", 0),
     M(Fn::kPathTangentOnPath, u"tangentOnPath", 0), M(Fn::kPathNormalOnPath, u"normalOnPath", 0), M(Fn::kLayerMask, u"mask", 1),
-    M(Fn::kLayerContent, u"content", 1),
+    M(Fn::kLayerContent, u"content", 1), M(Fn::kSampleImage, u"sampleImage", 1),
     M(Fn::kToComp, u"toComp", 1), M(Fn::kToWorld, u"toWorld", 1), M(Fn::kFromComp, u"fromComp", 1),
     M(Fn::kFromWorld, u"fromWorld", 1), M(Fn::kSeedRandom, u"seedRandom", 1), M(Fn::kGaussRandom, u"gaussRandom", 0),
     M(Fn::kNoise, u"noise", 1), M(Fn::kKey, u"key", 1), M(Fn::kNearestKey, u"nearestKey", 0),

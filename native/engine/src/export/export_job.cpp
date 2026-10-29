@@ -10,6 +10,7 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -38,8 +39,10 @@
 #include "model.hpp"
 #include "host.hpp"
 #include "native_scene.hpp"
+#include "passes.hpp"
 #include "render_glue.hpp"
 #include "project_open.hpp"
+#include "scene.hpp"
 #include "scene_finish.hpp"
 #include "scene_renderer.hpp"
 #include "scene_textures.hpp"
@@ -464,6 +467,10 @@ class Pipeline {
   /// Returns an exit code; `failure` says why when it is not kExitOk.
   int run(rg::SceneRenderer& renderer, sc::SceneTextures& textures, unsigned inFlight,
           const std::function<bool(const OutFrame&)>& sink, std::string& failure) {
+    {
+      const std::lock_guard lock(m_);
+      drawing_ = true;
+    }
     const std::size_t window = docs_.size() * 2 + inFlight + 2;
     const std::size_t frameBytes = static_cast<std::size_t>(plan_.width) * static_cast<std::size_t>(plan_.height) * (plan_.depth == 16 ? 8U : 4U);
     // An HDR job's tables, built once (hdr_convert.hpp).
@@ -579,7 +586,16 @@ class Pipeline {
       {
         const auto w0 = Clock::now();
         std::unique_lock lock(m_);
-        cv_.wait(lock, [&] { return ready_.contains(i); });
+        for (;;) {
+          // A build waiting on a layer it samples (sampleImage) is drawn here, between frames.
+          cv_.wait(lock, [&] { return ready_.contains(i) || !pixelRequests_.empty(); });
+          if (pixelRequests_.empty()) break;
+          const std::shared_ptr<PixelRequest> req = std::move(pixelRequests_.front());
+          pixelRequests_.pop_front();
+          lock.unlock();
+          serve_pixels(renderer, textures, *req);
+          lock.lock();
+        }
         stats_.renderWaitBuildMs += ms_since(w0);
         b = std::move(ready_.at(i));
         ready_.erase(i);
@@ -632,6 +648,12 @@ class Pipeline {
     {
       const std::lock_guard lock(m_);
       abort_ = true;
+      // Builds still waiting on a layer draw are answered: nothing draws from here on.
+      drawing_ = false;
+      for (const std::shared_ptr<PixelRequest>& r : pixelRequests_) {
+        r->done.set_value({nullptr, "the export stopped before the layer was drawn"});
+      }
+      pixelRequests_.clear();
     }
     cv_.notify_all();
     workers.clear();
@@ -648,7 +670,80 @@ class Pipeline {
     return code;
   }
 
+  /// sampleImage in an export (DocCopy's ExprCache::pixelProbe): the build
+  /// worker builds the layer alone, the render loop (run) draws and reads it.
+  /// In preflight nothing draws: the layer reads as transparent there.
+  std::shared_ptr<const doc::LayerPixels> layer_pixels(DocCopy& dc, std::string_view node, double t, bool postEffect,
+                                                       std::string& error) {
+    {
+      const std::lock_guard lock(m_);
+      if (!drawing_) {
+        auto none = std::make_shared<doc::LayerPixels>();
+        none->width = 1;
+        none->height = 1;
+        none->rgba.assign(4, 0.0F);
+        return none;
+      }
+    }
+    const std::optional<std::string> comp = doc::comp_of_layer(dc.d, node);
+    if (!comp) {
+      error = "sampleImage: the layer is in no composition.";
+      return nullptr;
+    }
+    auto req = std::make_shared<PixelRequest>();
+    try {
+      sc::BuildContext ctx = dc.ctx();
+      sc::layer_pixels_context(ctx, node, postEffect);
+      req->frame = sc::build_layer_pixels_frame(ctx, *comp, node, t, plan_.view);
+      plugins::finish_native_frame(ctx, *comp, t, req->frame.view, false, req->frame.nf, plugins::PluginHost::active());
+    } catch (const std::exception& e) {
+      error = std::string("sampleImage: the layer could not be built: ") + e.what();
+      return nullptr;
+    }
+    std::future<std::pair<std::shared_ptr<const doc::LayerPixels>, std::string>> answer = req->done.get_future();
+    {
+      const std::lock_guard lock(m_);
+      if (!drawing_) {
+        error = "sampleImage: the export stopped before the layer was drawn";
+        return nullptr;
+      }
+      pixelRequests_.push_back(req);
+    }
+    cv_.notify_all();
+    auto [px, why] = answer.get();
+    if (!px) error = "sampleImage: " + why;
+    return px;
+  }
+
  private:
+  struct PixelRequest {
+    sc::LayerPixelsFrame frame;
+    std::promise<std::pair<std::shared_ptr<const doc::LayerPixels>, std::string>> done;
+  };
+
+  /// Render loop: draw a sampled layer and read it back (premultiplied, as the graph holds it).
+  static void serve_pixels(rg::SceneRenderer& renderer, sc::SceneTextures& textures, PixelRequest& req) {
+    sc::LayerPixelsFrame& lf = req.frame;
+    textures.set_color_managed(lf.nf.file.view.color_management.has_value());
+    sc::PrepareStats ps;
+    textures.prepare(lf.nf.textures, lf.nf.file.textures, ps);
+    rg::FrameStats fs;
+    std::string err;
+    rg::TargetPixels scene;
+    if (!renderer.render(lf.nf.file, nullptr, fs, err) || !renderer.read_target(rg::kSceneColor, scene, err)) {
+      req.done.set_value({nullptr, err.empty() ? std::string("the layer could not be drawn") : err});
+      return;
+    }
+    auto px = std::make_shared<doc::LayerPixels>();
+    px->width = scene.width;
+    px->height = scene.height;
+    px->scale = lf.scale * (lf.width > 0 ? static_cast<double>(scene.width) / lf.width : 1.0);
+    px->boxWidth = lf.boxWidth;
+    px->boxHeight = lf.boxHeight;
+    px->rgba = std::move(scene.rgba);
+    req.done.set_value({std::move(px), {}});
+  }
+
   const Plan& plan_;
   std::vector<std::unique_ptr<DocCopy>>& docs_;
   Control& ctl_;
@@ -659,6 +754,9 @@ class Pipeline {
   std::int64_t claim_ = 0;
   std::int64_t cursor_ = 0;
   bool abort_ = false;
+  /// m_: run() is drawing (sampleImage requests are served); false in preflight and once it stops.
+  bool drawing_ = false;
+  std::deque<std::shared_ptr<PixelRequest>> pixelRequests_;
 
  public:
   void reset_cursor() {
@@ -956,6 +1054,12 @@ int run_export(const std::string& jobPath) {
   stats.buildThreads = static_cast<unsigned>(docs.size());
   stats.inFlight = job.inFlight;
   Pipeline pipeline(plan, docs, ctl, stats);
+  for (const std::unique_ptr<DocCopy>& dc : docs) {
+    dc->cache.pixelProbe = [&pipeline, d = dc.get()](const doc::DocExprEnv& /*env*/, std::string_view node, double t,
+                                                     bool postEffect, std::string& error) {
+      return pipeline.layer_pixels(*d, node, t, postEffect, error);
+    };
+  }
 
   // ── preflight (an audio-only job renders no picture: nothing to check) ──
   // What the frames draw without (stage `warning`), told on the preflight line.

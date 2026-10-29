@@ -14,6 +14,7 @@
 //   markers            the active comp's markers / the layer's bar markers (absolute)
 #pragma once
 
+#include <memory>
 #include <set>
 #include <string>
 
@@ -44,6 +45,8 @@ class DocExprEnv final : public ExprEnv {
                                                                           double t) const override;
   [[nodiscard]] std::optional<PathAt> path(std::string_view node, bool mask, const std::string* name,
                                            double t) const override;
+  [[nodiscard]] std::shared_ptr<const LayerPixels> layer_pixels(std::string_view node, double t, bool postEffect,
+                                                                std::string& error) const override;
   [[nodiscard]] std::optional<double> prop_default(std::string_view node, std::string_view prop) const override;
   [[nodiscard]] std::optional<std::array<double, 4>> color_at(std::string_view node, std::string_view prop,
                                                              double t) const override;
@@ -64,6 +67,11 @@ class DocExprEnv final : public ExprEnv {
   [[nodiscard]] std::optional<std::string> comp_layer(const std::string& comp, const std::string* name,
                                                       double index) const override;
 
+  /// What a PixelProbe draws from: this evaluation's document, view and cache.
+  [[nodiscard]] const Document& document() const noexcept { return d_; }
+  [[nodiscard]] const EditorView& view() const noexcept { return view_; }
+  [[nodiscard]] ExprCache& cache() const noexcept { return cache_; }
+
  private:
   [[nodiscard]] std::optional<std::string> space_node(std::string_view self, const std::u16string* name) const;
   [[nodiscard]] std::optional<LayerSpace> space_at(const std::string& id, double t) const;
@@ -78,6 +86,8 @@ class DocExprEnv final : public ExprEnv {
   const EditorView& view_;
   ExprCache& cache_;
   mutable std::set<std::u16string> resolving_;
+  /// Layers being drawn for sampleImage now (a layer whose drawing samples itself is a cycle).
+  mutable std::set<std::string> sampling_;
 };
 
 /// UTF-8 ⇄ UTF-16 (expressions are UTF-16, the document UTF-8).

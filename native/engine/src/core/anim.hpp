@@ -11,6 +11,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -23,6 +24,36 @@
 #include "model.hpp"
 
 namespace premation::doc {
+
+class DocExprEnv;
+
+/// `sampleImage`: a layer drawn alone in its own space (the Layer panel's
+/// frame) and read back — premultiplied RGBA in the working space, rows from
+/// the top. The pixels show the layer's box (boxWidth × boxHeight layer
+/// units) from its top-left corner; `scale` is pixels per layer unit (below 1
+/// when a large layer was drawn smaller than its size to bound the read).
+struct LayerPixels {
+  std::uint32_t width = 0;
+  std::uint32_t height = 0;
+  double scale = 1;
+  double boxWidth = 0;   ///< 0 = width / scale
+  double boxHeight = 0;  ///< 0 = height / scale
+  std::vector<float> rgba;
+};
+
+/// AE `sampleImage` over `px`: the rectangle `point ± radius` (layer units
+/// from the box's top-left corner),
+/// each pixel weighted by how much of it the rectangle covers, outside the
+/// layer transparent. Colour is alpha-weighted (straight: a half-covered red
+/// edge reads red, not dark red), alpha the covered mean. A zero radius reads
+/// the one pixel under the point.
+[[nodiscard]] std::array<double, 4> average_layer_pixels(const LayerPixels& px, std::array<double, 2> point,
+                                                         std::array<double, 2> radius);
+
+/// Draws a layer for `sampleImage` (ExprCache::pixelProbe): the session's
+/// renderer in the app, the export's own in a render. Null result = `error`.
+using PixelProbe = std::function<std::shared_ptr<const LayerPixels>(const DocExprEnv& env, std::string_view node, double t,
+                                                                     bool postEffect, std::string& error)>;
 
 /// A layer's path as an expression reads it (AE path properties): the
 /// pre-expression path, and the expression key it is stored under —
@@ -146,6 +177,13 @@ class ExprEnv {
                                                    const std::string* /*name*/, double /*t*/) const {
     return std::nullopt;
   }
+  /// `sampleImage`: the layer's pixels at `t` — after its masks and effects
+  /// (`postEffect`) or its untouched source. Null = `error` says why.
+  [[nodiscard]] virtual std::shared_ptr<const LayerPixels> layer_pixels(std::string_view /*node*/, double /*t*/,
+                                                                        bool /*postEffect*/, std::string& error) const {
+    error = "sampleImage needs the renderer, which this evaluation does not have.";
+    return nullptr;
+  }
 
   // AE-style rigs (docs/EXPRESSION_LANGUAGE.md).
   /// inPoint / outPoint / index / parent / enabled of a layer; nullopt = not a layer.
@@ -249,6 +287,9 @@ class ExprCache {
     std::unordered_map<std::string, std::pair<bool, bool>> effects;
     /// node → layer_facts.
     std::unordered_map<std::string, std::optional<motion::expr::LayerFacts>> facts;
+    /// "<node><t bits><postEffect>" → the layer's pixels, or why there are none
+    /// (sampleImage: one draw per layer and time, and a failure is not retried per call).
+    std::unordered_map<std::string, std::pair<std::shared_ptr<const LayerPixels>, std::string>> pixels;
   };
   void begin_scope() {
     if (scopeDepth_++ == 0) memo_ = {};
@@ -268,6 +309,10 @@ class ExprCache {
   /// Expression programs run so far (tests and benches read it).
   [[nodiscard]] std::uint64_t runs() const noexcept { return runs_; }
   void count_run() noexcept { ++runs_; }
+
+  /// What draws a layer for `sampleImage` in the evaluations this cache
+  /// serves; unset = sampleImage reports that there is no renderer.
+  PixelProbe pixelProbe;
 
  private:
   std::unordered_map<std::string, std::unique_ptr<motion::expr::Expression>> cache_;

@@ -1273,6 +1273,7 @@ export const NATIVE_EXPRESSION_API: { insert: string; label: string; hint: strin
   { insert: 'content("Shape 1").content("Path 1").path', label: 'content()', hint: 'a shape layer’s Path: .points() .inTangents() .isClosed() .tangentOnPath(p)' },
   { insert: 'value.pointOnPath(0.5)', label: 'pointOnPath()', hint: 'the [x, y] at a fraction (0–1) of a path’s length; also tangentOnPath() normalOnPath()' },
   { insert: 'value.points()', label: 'points()', hint: 'a path’s vertices as [x, y] arrays; also inTangents() outTangents() isClosed()' },
+  { insert: 'thisComp.layer("Layer 1").sampleImage([100, 100], [0.5, 0.5])', label: 'sampleImage()', hint: 'a layer’s [r, g, b, a] around a point in its own space; radius, postEffect = true, t = time' },
 ];
 
 /** Everything the expression editor highlights, completes and lists. */

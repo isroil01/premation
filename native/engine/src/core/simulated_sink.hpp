@@ -195,6 +195,13 @@ class SimulatedSink final : public FrameSink {
     if (!onReadPixels) return FrameSink::read_pixels(viewport, region);
     return ready_future(onReadPixels(viewport, region));
   }
+  /// Tests: what read_frame answers (sampleImage's draws), with the frame it was given.
+  std::function<WorkingPixels(const BuiltFrame& frame, std::uint32_t width, std::uint32_t height)> onReadFrame;
+  [[nodiscard]] std::future<WorkingPixels> read_frame(std::shared_ptr<BuiltFrame> frame, std::uint32_t width,
+                                                      std::uint32_t height) override {
+    if (!onReadFrame || !frame) return FrameSink::read_frame(std::move(frame), width, height);
+    return ready_future(onReadFrame(*frame, width, height));
+  }
 
   void release(std::uint32_t generation, std::uint32_t slot) {
     const std::lock_guard<std::mutex> lock(m_);

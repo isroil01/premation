@@ -606,6 +606,8 @@ class ContextHost final : public ex::Host {
   std::optional<std::u16string> comp_layer_ref(const std::u16string& comp, const std::u16string* name,
                                                double index) override;
   // AE path properties (2026-10-29)
+  std::optional<ImageSample> sample_image(const std::u16string* layer, std::array<double, 2> point,
+                                          std::array<double, 2> radius, bool postEffect, double t) override;
   std::optional<ex::PathSample> path_at(const std::u16string* layer, bool mask, const std::u16string* name,
                                         double t) override;
 
@@ -1078,6 +1080,28 @@ std::optional<std::u16string> ContextHost::comp_layer_ref(const std::u16string& 
   return u"#" + ex::utf8_to_utf16(*id);
 }
 
+std::optional<ex::Host::ImageSample> ContextHost::sample_image(const std::u16string* layer, std::array<double, 2> point,
+                                                              std::array<double, 2> radius, bool postEffect, double t) {
+  std::string target = node_;
+  if (layer != nullptr) {
+    const auto r = s_.resolve(*layer);
+    if (!r) return std::nullopt;
+    target = *r;
+  }
+  std::string error;
+  const std::shared_ptr<const LayerPixels> px = s_.env_.layer_pixels(target, t, postEffect, error);
+  if (!px) return ImageSample{{}, ex::utf8_to_utf16(error)};
+  // The point is in the layer space toComp / fromComp use: the anchor at the
+  // origin. The box's corner sits at −(box / 2 + anchor) there (frame_build's
+  // tOrigin), the anchor as it is at `t`.
+  const double k = px->scale > 0 ? px->scale : 1.0;
+  const double boxW = px->boxWidth > 0 ? px->boxWidth : px->width / k;
+  const double boxH = px->boxHeight > 0 ? px->boxHeight : px->height / k;
+  const double ax = s_.internal(target, "anchorX", t, depth_).value_or(0);
+  const double ay = s_.internal(target, "anchorY", t, depth_).value_or(0);
+  return ImageSample{average_layer_pixels(*px, {point[0] + boxW / 2 + ax, point[1] + boxH / 2 + ay}, radius), {}};
+}
+
 std::optional<ex::PathSample> ContextHost::path_at(const std::u16string* layer, bool mask, const std::u16string* name,
                                                    double t) {
   std::string target = node_;
@@ -1096,6 +1120,57 @@ std::optional<ex::PathSample> ContextHost::path_at(const std::u16string* layer, 
 }
 
 }  // namespace
+
+std::array<double, 4> average_layer_pixels(const LayerPixels& px, std::array<double, 2> point,
+                                           std::array<double, 2> radius) {
+  std::array<double, 4> out{};
+  if (px.width == 0 || px.height == 0 || px.rgba.size() < std::size_t{px.width} * px.height * 4) return out;
+  const double k = px.scale > 0 ? px.scale : 1.0;
+  const double cx = point[0] * k;
+  const double cy = point[1] * k;
+  const auto read = [&](std::int64_t x, std::int64_t y, double w, std::array<double, 4>& sum) {
+    if (x < 0 || y < 0 || x >= std::int64_t{px.width} || y >= std::int64_t{px.height}) return;
+    const std::size_t i = (static_cast<std::size_t>(y) * px.width + static_cast<std::size_t>(x)) * 4;
+    for (std::size_t c = 0; c < 4; ++c) sum[c] += w * static_cast<double>(px.rgba[i + c]);
+  };
+  std::array<double, 4> sum{};
+  double area = 0;
+  if (radius[0] <= 0 && radius[1] <= 0) {
+    // The pixel under the point (pixel i spans [i, i + 1)).
+    read(static_cast<std::int64_t>(std::floor(cx)), static_cast<std::int64_t>(std::floor(cy)), 1.0, sum);
+    area = 1;
+  } else {
+    // A degenerate side is one pixel thick, centred on the point.
+    const double rx = std::max(radius[0] * k, 0.5);
+    const double ry = std::max(radius[1] * k, 0.5);
+    const double x0 = cx - rx;
+    const double x1 = cx + rx;
+    const double y0 = cy - ry;
+    const double y1 = cy + ry;
+    area = (x1 - x0) * (y1 - y0);
+    // Only pixels inside the layer add colour; the rest of the area is transparent.
+    const auto first = [](double v, std::uint32_t n) { return std::clamp<std::int64_t>(static_cast<std::int64_t>(std::floor(v)), 0, n); };
+    const auto last = [](double v, std::uint32_t n) { return std::clamp<std::int64_t>(static_cast<std::int64_t>(std::ceil(v)), 0, n); };
+    const std::int64_t ix0 = first(x0, px.width);
+    const std::int64_t ix1 = last(x1, px.width);
+    const std::int64_t iy0 = first(y0, px.height);
+    const std::int64_t iy1 = last(y1, px.height);
+    for (std::int64_t y = iy0; y < iy1; ++y) {
+      const double wy = std::min(y1, static_cast<double>(y + 1)) - std::max(y0, static_cast<double>(y));
+      if (wy <= 0) continue;
+      for (std::int64_t x = ix0; x < ix1; ++x) {
+        const double wx = std::min(x1, static_cast<double>(x + 1)) - std::max(x0, static_cast<double>(x));
+        if (wx > 0) read(x, y, wx * wy, sum);
+      }
+    }
+  }
+  if (area <= 0 || sum[3] <= 0) return out;
+  out[0] = sum[0] / sum[3];
+  out[1] = sum[1] / sum[3];
+  out[2] = sum[2] / sum[3];
+  out[3] = sum[3] / area;
+  return out;
+}
 
 std::optional<double> anim_sample(const Document& d, const ExprEnv& env, ExprCache& cache, std::string_view node,
                                   std::string_view prop, double t) {

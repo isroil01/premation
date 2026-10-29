@@ -162,6 +162,30 @@ channels).
  in evaluation order; an export lists it as a warning and completes.
  `PropertyInfo.expressionError` is still the compile error only.
 
+## Added 2026-10-29
+
+**Paths.** A Mask Path or a shape's Path takes an expression that returns a
+ path: `value`, `createPath(points, inTangents, outTangents, isClosed)`,
+ `mask("Mask 1").maskPath` (also another layer's, through
+ `thisComp.layer("A").mask(…)`), `content("…").path`. A path answers
+ `points(t)`, `inTangents(t)`, `outTangents(t)`, `isClosed()`, and
+ `pointOnPath(p)` / `tangentOnPath(p)` / `normalOnPath(p)` by arc length.
+
+**sampleImage.** `layer.sampleImage(point, radius = [0.5, 0.5], postEffect =
+ true, t = time)` (bare `sampleImage(…)` is this layer's) returns `[r, g, b,
+ a]` 0–1 in the working space: the pixels over `point ± radius` in the layer's
+ own space (its source size; text and shapes the comp's), each weighted by how
+ much of it the rectangle covers, outside the layer transparent. Colour is
+ alpha-weighted (a half-covered red edge reads red), alpha the covered mean; a
+ zero radius reads the one pixel under the point. `postEffect` false reads the
+ untouched source (no masks, effects or paint). The layer is drawn alone —
+ the Layer panel's frame — on the GPU and read back, once per layer, time and
+ mode in a frame; a layer larger than 2048 px is drawn smaller and sampled
+ through that scale. A layer whose drawing samples itself is an error (a
+ cycle). In an export the render loop draws it between frames; in a renderer
+ that has no GPU (`premation-engine-headless`) the expression fails and keeps
+ its pre-expression value.
+
 ## Still not supported
 
 - Destructuring, regular expressions, `new`, classes, getters, `this` inside
@@ -170,7 +194,8 @@ channels).
 - Per-iteration `let` bindings for closures made inside a loop (they share
   one slot per declaration); function declarations inside `case` clauses are
   not hoisted.
-- `content("…")` (shape groups), `mask("…")`, `sourceRectAtTime` on other
+- `content("…")` shape groups with their own transforms (one Path is read
+  whatever the names), `sourceRectAtTime` on other
   layers' objects, `thisLayer.source`, `thisComp.layer("Name")` lookups by
   partial name, `parent` chains through a precomp, `.wiggle()` / `.loopOut()`
   on another layer's property object, `.key(n)` on a property with no keys (an

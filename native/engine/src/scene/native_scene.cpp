@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <optional>
 #include <string>
 #include <utility>
@@ -10,6 +11,7 @@
 
 #include "color_settings.hpp"
 #include "anim.hpp"
+#include "item_facts.hpp"
 #include "props.hpp"
 #include "effects_port.hpp"
 #include "raster_source.hpp"
@@ -280,6 +282,78 @@ NativeFrame build_native_frame(const BuildContext& c, std::string_view comp, dou
     nf.file.scene.ground_grid = gg;
   }
   return nf;
+}
+
+void layer_pixels_context(BuildContext& c, std::string_view layer, bool postEffect) {
+  // The Layer panel's walk: the layer alone, placed untransformed at the comp's centre.
+  c.layerView = BuildContext::LayerView{std::string(layer), postEffect, std::nullopt};
+  c.isolateLayer.clear();
+  c.isolateAlso.clear();
+  c.hiddenLayers.clear();
+  c.focusLayers.clear();
+  c.useProxies = false;
+}
+
+LayerPixelsFrame build_layer_pixels_frame(const BuildContext& c, std::string_view comp, std::string_view layer, double t,
+                                          const ViewSpec& view) {
+  const SnapshotComp sc = snapshot_comp_of(c.d, comp);
+  const double compW = std::max(1.0, sc.width);
+  const double compH = std::max(1.0, sc.height);
+  // Layer space as the expression host has it (DocExprEnv::layer_info, which
+  // fromComp / toComp map through): the layer's box. Without one, a precomp's
+  // or footage's own size; text and shapes without a box, the comp's (AE).
+  double w = 0;
+  double h = 0;
+  const doc::Node* n = c.d.node(layer);
+  if (n != nullptr) {
+    for (const doc::Component& part : n->components) {
+      if (part.type != "Transform") continue;
+      const Json& bw = part.props.at("width");
+      const Json& bh = part.props.at("height");
+      if (bw.is_number() && bh.is_number() && bw.num() > 0 && bh.num() > 0) {
+        w = bw.num();
+        h = bh.num();
+      }
+    }
+  }
+  if (!(w > 0 && h > 0) && n != nullptr && n->kind() != "shape" && n->kind() != "text") {
+    for (const api::LayerSourceSize& z : doc::source_sizes(c.d, {std::string(layer)})) {
+      w = z.width;
+      h = z.height;
+    }
+  }
+  if (!(w > 0 && h > 0)) {
+    w = compW;
+    h = compH;
+  }
+  LayerPixelsFrame out;
+  out.boxWidth = w;
+  out.boxHeight = h;
+  out.scale = std::min(1.0, static_cast<double>(kSampleImageMaxSide) / std::max(w, h));
+  out.width = static_cast<std::uint32_t>(std::max(1.0, std::round(w * out.scale)));
+  out.height = static_cast<std::uint32_t>(std::max(1.0, std::round(h * out.scale)));
+  ViewSpec& vs = out.view;
+  vs = view;
+  vs.cssWidth = out.width;
+  vs.cssHeight = out.height;
+  vs.dpr = 1;
+  // The layer's box (w × h world units, centred on the comp's centre) fills the surface.
+  vs.zoom = static_cast<double>(out.width) / w;
+  vs.centerX = compW / 2;
+  vs.centerY = compH / 2;
+  vs.clipToComp = false;
+  vs.clear = api::Color{0, 0, 0, 0};
+  vs.surfaceFormat = api::RenderTextureFormat::rgba8unorm;
+  vs.channel = api::ChannelView::rgb;
+  vs.exposure = 0;
+  vs.regionOfInterest.reset();
+  vs.groundGrid = false;
+  CompOverrides ov;
+  ov.transparent = true;
+  ov.camera3dMode = "active";
+  // No motion blur: AE samples the layer's pixels at the one time asked.
+  out.nf = build_native_frame(c, comp, t, vs, false, {}, 0, ov);
+  return out;
 }
 
 }  // namespace premation::scene

@@ -36,6 +36,9 @@ using Clock = Session::Clock;
 using doc::EngineFail;
 using doc::fail;
 
+/// The session's build worker (it holds the build lock for each whole build).
+thread_local bool tlBuildWorker = false;
+
 api::EngineError err(ErrorCode code, std::string message) {
   api::EngineError e;
   e.code = code;
@@ -172,6 +175,11 @@ Session::Session(Outbox& out, FrameSink& sink, SessionOptions options)
   load_new_project(api::ResetReason::created, false);
   revision_ = 0;
   savedRevision_ = 0;
+  // sampleImage draws through this session's builder and render thread, in queries and builds alike.
+  const doc::PixelProbe probe = [this](const doc::DocExprEnv& env, std::string_view node, double t, bool postEffect,
+                                       std::string& error) { return probe_layer_pixels(env, node, t, postEffect, error); };
+  exprCache_.pixelProbe = probe;
+  buildExprCache_.pixelProbe = probe;
 }
 
 Session::~Session() {
@@ -1611,6 +1619,73 @@ StillImage Session::render_still(const doc::StillRequest& r) {
   });
 }
 
+std::shared_ptr<const doc::LayerPixels> Session::probe_layer_pixels(const doc::DocExprEnv& env, std::string_view node,
+                                                                    double t, bool postEffect, std::string& error) {
+  if (frameBuilder_ == nullptr) {
+    error = "sampleImage needs the engine's renderer; this engine has none.";
+    return nullptr;
+  }
+  const std::optional<std::string> comp = doc::comp_of_layer(env.document(), node);
+  if (!comp) {
+    error = "sampleImage: the layer is in no composition.";
+    return nullptr;
+  }
+  std::shared_ptr<BuiltFrame> frame;
+  doc::LayerPixels drawn;
+  {
+    // The build worker holds the build lock for its whole build; elsewhere this takes it.
+    std::optional<BuildLock> lock;
+    if (!tlBuildWorker) {
+      lock.emplace(*this, false);
+      frameBuilder_->set_media_base(media_base());
+    }
+    try {
+      frame = frameBuilder_->build_layer_pixels(env.document(), env.view(), env, env.cache(), *comp, node, t, postEffect, drawn);
+    } catch (const EngineFail& f) {
+      error = "sampleImage: " + f.error.message;
+      return nullptr;
+    } catch (const std::exception& e) {
+      error = std::string("sampleImage: ") + e.what();
+      return nullptr;
+    }
+  }
+  if (!frame) {
+    error = "sampleImage: this engine's frame builder cannot draw a layer alone.";
+    return nullptr;
+  }
+  // The render thread draws it between viewport frames; it never waits on this thread.
+  std::future<WorkingPixels> pending = sink_.read_frame(std::move(frame), drawn.width, drawn.height);
+  if (pending.wait_for(kSampleImageWait) != std::future_status::ready) {
+    error = "sampleImage: the renderer did not draw the layer in time.";
+    return nullptr;
+  }
+  WorkingPixels px;
+  try {
+    px = pending.get();
+  } catch (const std::future_error&) {
+    error = "sampleImage: the renderer stopped.";
+    return nullptr;
+  }
+  if (px.answer != HookAnswer::ready || px.rgba.size() < std::size_t{px.width} * px.height * 4) {
+    error = "sampleImage: " + (px.error.empty() ? std::string("the layer could not be drawn.") : px.error);
+    return nullptr;
+  }
+  // The read's own size (the slot may have been clamped): the scale follows it.
+  drawn.scale *= drawn.width > 0 ? static_cast<double>(px.width) / drawn.width : 1.0;
+  auto out = std::make_shared<doc::LayerPixels>(std::move(drawn));
+  out->width = px.width;
+  out->height = px.height;
+  out->rgba = std::move(px.rgba);
+  // The read is straight colour; the area average weighs it by alpha.
+  for (std::size_t i = 0; i + 3 < out->rgba.size(); i += 4) {
+    const float a = out->rgba[i + 3];
+    out->rgba[i] *= a;
+    out->rgba[i + 1] *= a;
+    out->rgba[i + 2] *= a;
+  }
+  return out;
+}
+
 StillImage Session::render_document_still(const doc::Json& file, const std::string& compSel, api::Time time, std::uint32_t maxSize) {
   StillImage out;
   if (frameBuilder_ == nullptr) {
@@ -1641,6 +1716,7 @@ StillImage Session::render_document_still(const doc::Json& file, const std::stri
   const auto width = static_cast<std::uint32_t>(std::max(1.0, std::round(w * scale)));
   const auto height = static_cast<std::uint32_t>(std::max(1.0, std::round(h * scale)));
   doc::ExprCache cache;
+  cache.pixelProbe = exprCache_.pixelProbe;
   const doc::DocExprEnv env(d, v, cache);
   std::shared_ptr<BuiltFrame> frame;
   {
@@ -2630,6 +2706,7 @@ bool Session::builds_active() const {
 }
 
 void Session::build_worker() {
+  tlBuildWorker = true;
   for (;;) {
     BuildTask task;
     {

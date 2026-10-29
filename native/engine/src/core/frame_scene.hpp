@@ -627,6 +627,16 @@ class FrameSink {
     out.error = "this engine has no renderer (--no-gpu)";
     return ready_future(std::move(out));
   }
+  /// sampleImage: draw `frame` (built for a width × height surface) offscreen
+  /// and read all of it in working space, straight (not premultiplied). Any
+  /// thread; ready once the render thread got to it, between viewport frames.
+  /// Default: no renderer (`unsupported`).
+  [[nodiscard]] virtual std::future<WorkingPixels> read_frame(std::shared_ptr<BuiltFrame> /*frame*/, std::uint32_t /*width*/,
+                                                              std::uint32_t /*height*/) {
+    WorkingPixels out;
+    out.error = "this engine has no renderer (--no-gpu)";
+    return ready_future(std::move(out));
+  }
 };
 
 }  // namespace premation

@@ -229,6 +229,13 @@ class Session {
   [[nodiscard]] std::string media_base() const;
   /// getThumbnail: build (frame builder) and draw (render thread) a still.
   StillImage render_still(const doc::StillRequest& r);
+  /// sampleImage (doc::ExprCache::pixelProbe): `node` drawn alone by the frame
+  /// builder and read back by the render thread. On the build worker (which
+  /// holds the build lock) or the core thread (which takes it, as hitTest does).
+  std::shared_ptr<const doc::LayerPixels> probe_layer_pixels(const doc::DocExprEnv& env, std::string_view node, double t,
+                                                             bool postEffect, std::string& error);
+  /// How long an expression waits for the render thread to draw a layer it samples.
+  static constexpr std::chrono::milliseconds kSampleImageWait{5000};
   /// renderDocumentStill: `file` restored into a scratch Document (the open one untouched), its `comp` at `time`.
   StillImage render_document_still(const doc::Json& file, const std::string& comp, api::Time time, std::uint32_t maxSize);
   /// A render-thread answer for the request being handled. Ready already →

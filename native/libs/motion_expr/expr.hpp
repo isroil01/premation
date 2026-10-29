@@ -370,6 +370,19 @@ class Host {
                                             double /*t*/) {
     return std::nullopt;
   }
+  /// AE `layer.sampleImage(point, radius, postEffect, t)`: the layer's pixels
+  /// over the rectangle `point ± radius` in its own space, after its masks and
+  /// effects (`post_effect`) or its untouched source, at `t`. `error` set = the
+  /// pixels could not be had (the expression fails with it). nullopt = no such
+  /// layer. `layer` nullptr = this layer.
+  struct ImageSample {
+    std::array<double, 4> rgba{};
+    std::u16string error;
+  };
+  virtual std::optional<ImageSample> sample_image(const std::u16string* /*layer*/, std::array<double, 2> /*point*/,
+                                                  std::array<double, 2> /*radius*/, bool /*post_effect*/, double /*t*/) {
+    return ImageSample{{}, u"sampleImage needs the renderer, which this evaluation does not have."};
+  }
 };
 
 /// One evaluation's inputs (`ExprContext`).
