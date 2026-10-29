@@ -1696,8 +1696,21 @@ PreparedJob prepare_object_matte(const api::ObjectMatteJob& spec, const JobDocCo
   }
   input.set("file", Json::string(fl.file));
   input.set("sourceSeconds", Json::number(fl.source_seconds(seconds_of(spec.range.start))));
-  input.set("layerWidth", Json::number(fl.width));
-  input.set("layerHeight", Json::number(fl.height));
+  // Prompts, outlines and masks live in the LAYER's box (layer/width × layer/height — what the
+  // viewer's overlays and the mask paths use), which a resized footage layer no longer shares
+  // with its picture (2160×3840 footage in a 607×1080 box); the picture is mapped onto it.
+  {
+    double boxW = fl.width;
+    double boxH = fl.height;
+    if (ctx.layerSize) {
+      if (const std::optional<std::array<double, 2>> b = ctx.layerSize(fl.layer, seconds_of(spec.range.start)); b && (*b)[0] > 0 && (*b)[1] > 0) {
+        boxW = (*b)[0];
+        boxH = (*b)[1];
+      }
+    }
+    input.set("layerWidth", Json::number(boxW));
+    input.set("layerHeight", Json::number(boxH));
+  }
   input.set("points", std::move(points));
   input.set("encoder", Json::string(encoder));
   input.set("decoder", Json::string(decoder));

@@ -174,9 +174,9 @@ function ObjectMatteOverlayActive({ host }: { host?: ObjectMatteHost }): JSX.Ele
       setObjects(null);
       return;
     }
-    const cached = foundObjectsCached(nodeId, time);
-    setObjects(cached ?? null);
-    if (cached) return;
+    // The last search shows at once; the search runs again unless it was for the layer's box now
+    // (findObjects answers from its cache then), so a resized layer is searched afresh.
+    setObjects(foundObjectsCached(nodeId, time) ?? null);
     let live = true;
     const key = `${nodeId}@${time}`;
     const timer = window.setTimeout(() => {
@@ -193,7 +193,7 @@ function ObjectMatteOverlayActive({ host }: { host?: ObjectMatteHost }): JSX.Ele
       window.clearTimeout(timer);
       setFinding(false);
     };
-  }, [active, nodeId, time]);
+  }, [active, nodeId, time, sceneTick]);
 
   const fps = (): number => settingsFps(activeCompSettingsNow());
 

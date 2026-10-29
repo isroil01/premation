@@ -10,7 +10,7 @@
 import { engine } from '@core/engine/engineInstance';
 import { settingsDurationSeconds, settingsFps, settingsSetWorkArea } from '@core/mirror/compFacts';
 import { playheadSeconds } from '@core/timeline/timelineView';
-import { propagateObjectMatte } from '@core/workspace/rotoBrushTool';
+import { layerSize, propagateObjectMatte } from '@core/workspace/rotoBrushTool';
 import { activeCompSettingsNow } from '@hooks/useMirrorFrame';
 import { useRotoBrushStore } from '@stores/rotoBrushStore';
 import { useSelectionStore } from '@stores/selectionStore';
@@ -90,9 +90,12 @@ async function makeMatte(subject: string, point: { x: number; y: number }): Prom
   ui.startJob({ id: jobId, kind: 'analysis', label: t('workspace.placeBehind.jobLabel', 'Cutting out the subject'), progress: 0, cancel: () => { cancelled = true; } });
   try {
     const roto = useRotoBrushStore.getState();
+    // The point is in the footage's pixels; strokes are layer-local px of the layer's box (a resized layer's is smaller).
+    const box = (await layerSize(subject)) ?? s;
+    const local = { x: (point.x / s.width - 0.5) * box.width, y: (point.y / s.height - 0.5) * box.height };
     const r = await propagateObjectMatte(
       subject,
-      [{ id: 'place-behind', kind: 'fg', points: [{ x: point.x - s.width / 2, y: point.y - s.height / 2 }], time: origin }],
+      [{ id: 'place-behind', kind: 'fg', points: [local], time: origin }],
       { origin, start, end, fps, direction: 'both', featherPx: roto.featherPx, refine: roto.refine },
       (f) => {
         useUIStore.getState().updateJob(jobId, { progress: f });

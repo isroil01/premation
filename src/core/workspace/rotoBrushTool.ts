@@ -161,8 +161,20 @@ export function boxAt(box: RotoBox | null | undefined, time: number, fps = 30): 
   return box && Math.abs(box.time - time) <= 0.5 / Math.max(1, fps) ? box : null;
 }
 
-/** The footage's display size — the layer px the strokes and prompts live in. */
-async function layerSize(nodeId: string): Promise<{ width: number; height: number } | null> {
+/**
+ * The layer's box — the layer px the strokes, prompts, outlines and masks live
+ * in: `layer/width` × `layer/height` (a resized footage layer's box is not its
+ * picture's size), else the footage's own size. The objectMatte job maps the
+ * picture onto the same box.
+ */
+export async function layerSize(nodeId: string): Promise<{ width: number; height: number } | null> {
+  const box = await engine().query({
+    type: 'getPropertyValues', props: [{ layer: nodeId, path: 'layer/width' }, { layer: nodeId, path: 'layer/height' }], time: 0, evaluated: true,
+  });
+  if (box.ok) {
+    const [w, h] = box.value.values.map((v) => (v.value as { value?: unknown }).value);
+    if (typeof w === 'number' && typeof h === 'number' && w > 0 && h > 0) return { width: w, height: h };
+  }
   const res = await engine().query({ type: 'getSourceSize', layers: [nodeId] });
   const s = res.ok ? res.value.sizes[0] : undefined;
   return s && s.width > 0 && s.height > 0 ? { width: s.width, height: s.height } : null;
@@ -308,9 +320,16 @@ export interface FoundObject {
 const foundCache = new Map<string, FoundObject[]>();
 const FOUND_CACHE_SIZE = 12;
 
-/** The objects found in `nodeId`'s frame at `timeSec` when that search already ran, else undefined. */
+/** The cache key: the layer, the frame and the layer's box (a resized layer's outlines are in its new box). */
+const foundKey = (nodeId: string, timeSec: number, box: { width: number; height: number } | null): string =>
+  `${nodeId}@${timeSec}@${box ? `${box.width}x${box.height}` : '-'}`;
+/** The last key searched per layer@time, so a synchronous look-up finds it without the box. */
+const lastFoundKey = new Map<string, string>();
+
+/** The objects found in `nodeId`'s frame at `timeSec` when that search already ran (for the layer's box then), else undefined. */
 export function foundObjectsCached(nodeId: string, timeSec: number): FoundObject[] | undefined {
-  return foundCache.get(`${nodeId}@${timeSec}`);
+  const key = lastFoundKey.get(`${nodeId}@${timeSec}`);
+  return key ? foundCache.get(key) : undefined;
 }
 
 /**
@@ -320,9 +339,12 @@ export function foundObjectsCached(nodeId: string, timeSec: number): FoundObject
  * Nothing is written. Null when the engine could not search the frame.
  */
 export async function findObjects(nodeId: string, timeSec: number): Promise<FoundObject[] | null> {
-  const key = `${nodeId}@${timeSec}`;
+  const key = foundKey(nodeId, timeSec, await layerSize(nodeId));
   const hit = foundCache.get(key);
-  if (hit) return hit;
+  if (hit) {
+    lastFoundKey.set(`${nodeId}@${timeSec}`, key);
+    return hit;
+  }
   const out = await previewEngineJob<{ objects?: Array<{ outline: number[]; seed: [number, number]; area: number }> }>({
     kind: 'objectMatte',
     value: {
@@ -350,6 +372,7 @@ export async function findObjects(nodeId: string, timeSec: number): Promise<Foun
     return { outline: o.outline, seed: { x: o.seed[0], y: o.seed[1] }, area: o.area, bounds: { x0, y0, x1, y1 } };
   });
   foundCache.set(key, objects);
+  lastFoundKey.set(`${nodeId}@${timeSec}`, key);
   while (foundCache.size > FOUND_CACHE_SIZE) foundCache.delete(foundCache.keys().next().value!);
   return objects;
 }
