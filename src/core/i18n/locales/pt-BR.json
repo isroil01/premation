@@ -10144,5 +10144,20 @@
   "assets.psd.message": "Importar {name} como uma composição de suas camadas (cada camada no seu próprio tamanho, grupos como composições aninhadas) ou como um único item de mídia da imagem mesclada?",
   "assets.psd.composition": "Composição",
   "assets.psd.footage": "Mídia",
-  "assets.psd.imported": "{n} composição(ões) importada(s) do Photoshop — as camadas estão na pasta “Layers”"
+  "assets.psd.imported": "{n} composição(ões) importada(s) do Photoshop — as camadas estão na pasta “Layers”",
+  "assets.interpret.color": "Cor",
+  "assets.interpret.assignProfile": "Atribuir perfil",
+  "assets.interpret.color.auto": "Do arquivo (incorporado / marcado)",
+  "assets.interpret.color.display": "Tela",
+  "assets.interpret.color.hdr": "HDR",
+  "assets.interpret.color.linear": "Linear / ACES",
+  "assets.interpret.color.camera": "Log de câmera",
+  "assets.interpret.color.linearSrgb": "sRGB linear (Rec. 709)",
+  "assets.interpret.color.linearP3": "Display P3 linear",
+  "assets.interpret.color.linear2020": "Rec. 2020 linear",
+  "assets.interpret.colorHint": "Atribua o perfil em que a câmera gravou (log, HDR, Display P3). Ele é convertido para o espaço de trabalho com o gerenciamento de cores (Arquivo ▸ Configurações do projeto ▸ Cor).",
+  "composition.settings.projectWorkingSpace": "Gerenciamento de cores do projeto",
+  "composition.settings.projectWorkingSpaceHint": "A mídia é convertida do seu próprio perfil (Interpretar mídia ▸ Cor) para este espaço, mesclada nele e exibida pela transformação de tela. Nenhum desenha os pixels como estão.",
+  "composition.settings.wsNone": "Nenhum (sem gerenciamento)",
+  "composition.settings.wsSrgbLinear": "sRGB (mesclagem linear)"
 }

@@ -403,7 +403,7 @@ endif()
 if(MOTION_BUILD_TESTS)
   target_sources(engine_tests PRIVATE tests/test_render_graph_color.cpp)
   if(TARGET engine_gpu_tests)
-    target_sources(engine_gpu_tests PRIVATE tests/test_render_graph_gpu_d3.cpp)
+    target_sources(engine_gpu_tests PRIVATE tests/test_render_graph_gpu_d3.cpp tests/test_color_spaces.cpp)
   endif()
 endif()
 

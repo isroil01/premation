@@ -253,10 +253,17 @@ TEST_CASE("Y'CbCr: matrix/range resolution and input space", "[media][yuv]") {
   CHECK(input_space_of(ci).renderColorSpace == 1);
   ci.primaries = Primaries::bt2020;
   ci.transfer = Transfer::pq;
-  CHECK(input_space_of(ci).renderColorSpace == 4);
-  CHECK(input_space_of(ci).hdrUnmodelled);
+  CHECK(input_space_of(ci).renderColorSpace == 9);   // rec2100Pq
+  ci.transfer = Transfer::hlg;
+  CHECK(input_space_of(ci).renderColorSpace == 10);  // rec2100Hlg
   ci.transfer = Transfer::linear;
   CHECK(input_space_of(ci).renderColorSpace == 5);
+  ci.primaries = Primaries::smpte432;
+  CHECK(input_space_of(ci).renderColorSpace == 8);   // linearDisplayP3
+  ci.transfer = Transfer::srgb;
+  CHECK(input_space_of(ci).renderColorSpace == 7);   // displayP3
+  ci.transfer = Transfer::bt709;
+  CHECK(input_space_of(ci).renderColorSpace == 7);
   // Planar RGB full range: per-channel identity.
   FrameFormat f;
   f.layout = Layout::planarRgb;

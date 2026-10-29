@@ -43,6 +43,8 @@ struct TextureRequest {
   double sourceTime = 0;
   bool video = false;
   bool premultiplied = false;
+  /// Interpret Footage > Color > Assign Profile (RLayer::colorProfile); absent = the file's tags.
+  std::optional<api::RenderColorSpace> colorProfile;
   /// The layer's fill: an SVG source is recoloured with it (AppTextureProvider.rasterizeSvg).
   std::optional<std::string> fill;
   /// E4: an SVG source's DISPLAYED long edge in screen texels — the layer box's

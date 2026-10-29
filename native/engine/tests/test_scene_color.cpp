@@ -64,13 +64,19 @@ TEST_CASE("viewer display and the output module", "[scene][color]") {
   CHECK_FALSE(c.note.empty());
 }
 
-TEST_CASE("what RenderColorSpace cannot express stays unmanaged and says so", "[scene][color]") {
+TEST_CASE("the Display P3 working space blends in linear P3-D65", "[scene][color]") {
   doc::Document d;
   d.project_mut().working_space = api::ColorWorkingSpace::display_p3;
-  auto c = sc::color_management_of(d);
-  CHECK_FALSE(c.management.has_value());
-  CHECK_FALSE(c.note.empty());
+  const auto c = sc::color_management_of(d);
+  REQUIRE(c.management.has_value());
+  CHECK(c.management->working_space == api::RenderColorSpace::linear_display_p3);
+  CHECK(c.note.empty());
+}
+
+TEST_CASE("what RenderColorSpace cannot express stays unmanaged and says so", "[scene][color]") {
+  doc::Document d;
   d.project_mut().working_space = api::ColorWorkingSpace::rec2020;
+  auto c = sc::color_management_of(d);
   d.color_mut().displayTransform = "pq";
   c = sc::color_management_of(d);
   CHECK_FALSE(c.management.has_value());
@@ -85,6 +91,10 @@ TEST_CASE("colour-space names", "[scene][color]") {
   CHECK(sc::color_space_named("ACEScg") == std::optional<S>(S::aces_cg));
   CHECK(sc::color_space_named("rec2020") == std::optional<S>(S::rec2020));
   CHECK(sc::color_space_named("ACES2065-1") == std::optional<S>(S::aces2065));
+  CHECK(sc::color_space_named("Display P3") == std::optional<S>(S::display_p3));
+  CHECK(sc::color_space_named("Rec.2100 PQ") == std::optional<S>(S::rec2100_pq));
+  CHECK(sc::color_space_named("ARRI LogC3") == std::optional<S>(S::arri_log_c3));
+  CHECK(sc::color_space_named("S-Log3 S-Gamut3.Cine") == std::optional<S>(S::s_log3_s_gamut3_cine));
   CHECK_FALSE(sc::color_space_named("").has_value());
-  CHECK_FALSE(sc::color_space_named("Display P3").has_value());
+  CHECK_FALSE(sc::color_space_named("Cineon Log").has_value());
 }

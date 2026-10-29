@@ -51,14 +51,15 @@ struct LumaCoefficients {
 
 /// The inputSpace the render graph's colour management should assume for this
 /// footage (api::RenderColorSpace numbering: srgb 0, rec709 1, linearSrgb 2,
-/// acesCg 3, rec2020 4, linearRec2020 5, aces2065 6). BT.2020 primaries → rec2020;
-/// linear transfer → the linear variant; otherwise rec709 (HD/SD video's
-/// primaries are BT.709/601 — the 601 primaries difference is below what the
-/// working-space conversion models today). PQ / HLG have no RenderColorSpace
-/// yet: they report rec2020 and `hdrUnmodelled` = true.
+/// acesCg 3, rec2020 4, linearRec2020 5, aces2065 6, displayP3 7,
+/// linearDisplayP3 8, rec2100Pq 9, rec2100Hlg 10). BT.2020 primaries → rec2020,
+/// P3-D65 (smpte432) → displayP3; linear transfer → the linear variant; PQ / HLG
+/// → Rec.2100 (white at the levels the HDR export writes); otherwise rec709
+/// (HD/SD video's primaries are BT.709/601 — the 601 primaries difference is
+/// below what the working-space conversion models today). Interpret Footage ▸
+/// Assign Profile overrides it (TextureRequest::colorProfile).
 struct InputSpaceGuess {
   int renderColorSpace = 1;
-  bool hdrUnmodelled = false;
 };
 [[nodiscard]] InputSpaceGuess input_space_of(const ColorInfo& c) noexcept;
 

@@ -1908,6 +1908,14 @@ void Walk::build_node(const doc::Node& n) {
       if (asset->at("interpret").at("alpha").is_string() && asset->at("interpret").at("alpha").str() == "premultiplied") {
         l.premultipliedSource = true;
       }
+      // Interpret Footage > Color > Assign Profile (a RenderColorSpace's API name; handlers_items validates it).
+      if (const Json& cp = asset->at("interpret").at("colorProfile"); cp.is_string()) {
+        for (std::uint32_t k = 0; k < 64; ++k) {
+          api::RenderColorSpace s{};
+          if (!api::from_u32(k, s)) break;
+          if (api::to_string(s) == cp.str()) l.colorProfile = s;
+        }
+      }
       // Mutually exclusive (footageSourceOf): Remove Pulldown serves progressive
       // frames, so its fields are not separated again.
       const Json& fields = asset->at("interpret").at("fields");

@@ -635,7 +635,7 @@ api::Interpretation interpretation_of(const Json& a) {
                     : f.is_string() && f.str() == "lower" ? api::FieldOrder::lower_first
                                                           : api::FieldOrder::progressive;
   out.loops = u32_of(i.at("loopCount").is_undefined() || i.at("loopCount").is_null() ? 1.0 : i.at("loopCount").num());
-  out.color_profile = "auto";
+  out.color_profile = i.at("colorProfile").is_string() && !i.at("colorProfile").str().empty() ? i.at("colorProfile").str() : "auto";
   out.invert_alpha = false;
   // B3z: Remove Pulldown — an integer phase 0..4 (sourceInfo.ts interpretationOf).
   const Json& pd = i.at("pulldownPhase");

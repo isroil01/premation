@@ -16,18 +16,30 @@ namespace premation::rg::color {
 
 struct Ocio::Impl {
   OCIO::ConstConfigRcPtr config;
+  /// Loaded on the first camera-log request (kStudioConfig).
+  mutable OCIO::ConstConfigRcPtr studio;
 };
 
 namespace {
 
-enum class Encoding : std::uint8_t { linear, srgb_curve, gamma24 };
+/// `config`: the name is a full (encoded) colour space of the config: no curve of ours around it.
+enum class Encoding : std::uint8_t { linear, srgb_curve, gamma24, pq, hlg, config };
 
 struct Resolved {
   const char* linear;
   Encoding encoding;
   /// The config's display for a view on this space (nullptr = none).
   const char* display;
+  /// The name is in the studio config (a camera encoding).
+  bool studio = false;
 };
+
+/// Working-space 1.0 is SDR reference white (ITU-R BT.2408), as the HDR export
+/// writes it (export/hdr_convert.hpp): PQ 203 nits; HLG the scene light at 75 % signal.
+constexpr double kPqWhiteNits = 203;
+constexpr double kHlgWhiteScene = 0.26496255;  // (exp((0.75 - c) / a) + b) / 12, ARIB STD-B67
+/// OCIO's built-in HLG curve works in 3 x E (signal 0.5 -> 0.25, not 1/12).
+constexpr double kHlgWhiteOcio = 3.0 * kHlgWhiteScene;
 
 Resolved resolve(Space s) noexcept {
   switch (s) {
@@ -38,6 +50,21 @@ Resolved resolve(Space s) noexcept {
     case Space::rec2020: return {"Linear Rec.2020", Encoding::gamma24, nullptr};
     case Space::linear_rec2020: return {"Linear Rec.2020", Encoding::linear, nullptr};
     case Space::aces2065: return {"ACES2065-1", Encoding::linear, nullptr};
+    case Space::display_p3: return {"Linear P3-D65", Encoding::srgb_curve, "Display P3 - Display"};
+    case Space::linear_display_p3: return {"Linear P3-D65", Encoding::linear, nullptr};
+    case Space::rec2100_pq: return {"Linear Rec.2020", Encoding::pq, nullptr};
+    case Space::rec2100_hlg: return {"Linear Rec.2020", Encoding::hlg, nullptr};
+    case Space::aces_cct: return {"ACEScct", Encoding::config, nullptr};
+    case Space::arri_logc3: return {"ARRI LogC3 (EI800)", Encoding::config, nullptr, true};
+    case Space::arri_logc4: return {"ARRI LogC4", Encoding::config, nullptr, true};
+    case Space::slog3_sgamut3: return {"S-Log3 S-Gamut3", Encoding::config, nullptr, true};
+    case Space::slog3_sgamut3_cine: return {"S-Log3 S-Gamut3.Cine", Encoding::config, nullptr, true};
+    case Space::vlog_vgamut: return {"V-Log V-Gamut", Encoding::config, nullptr, true};
+    case Space::log3g10_rwg: return {"Log3G10 REDWideGamutRGB", Encoding::config, nullptr, true};
+    case Space::canon_log3_cg: return {"CanonLog3 CinemaGamut D55", Encoding::config, nullptr, true};
+    case Space::apple_log: return {"Apple Log", Encoding::config, nullptr, true};
+    case Space::bmd_film_gen5: return {"BMDFilm WideGamut Gen5", Encoding::config, nullptr, true};
+    case Space::davinci_intermediate: return {"DaVinci Intermediate WideGamut", Encoding::config, nullptr, true};
   }
   return {"Linear Rec.709 (sRGB)", Encoding::linear, nullptr};
 }
@@ -46,7 +73,35 @@ bool scene_linear(Space s) noexcept { return resolve(s).encoding == Encoding::li
 
 /// The config's own curves: sRGB = ExponentWithLinear(2.4, 0.055), Rec.1886 = Exponent(2.4, pass-thru).
 /// FORWARD decodes (encoded → linear), INVERSE encodes — the direction the CG config writes them in.
+OCIO::TransformRcPtr scale_by(double k) {
+  auto m = OCIO::MatrixTransform::Create();
+  // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays): OCIO's API takes double(&)[16]
+  const double v[16] = {k, 0, 0, 0, 0, k, 0, 0, 0, 0, k, 0, 0, 0, 0, 1};
+  m->setMatrix(v);
+  return m;
+}
+
+OCIO::TransformRcPtr builtin(const char* style) {
+  auto b = OCIO::BuiltinTransform::Create();
+  b->setStyle(style);
+  return b;
+}
+
 OCIO::TransformRcPtr curve(Encoding e, OCIO::TransformDirection dir) {
+  if (e == Encoding::pq || e == Encoding::hlg) {
+    // OCIO's built-in curves: ST 2084 <-> nits/100; HLG OETF-1 <-> relative scene light.
+    const bool pq = e == Encoding::pq;
+    const double toWorking = pq ? 100.0 / kPqWhiteNits : 1.0 / kHlgWhiteOcio;
+    auto g = OCIO::GroupTransform::Create();
+    if (dir == OCIO::TRANSFORM_DIR_FORWARD) {
+      g->appendTransform(builtin(pq ? "CURVE - ST-2084_to_LINEAR" : "CURVE - HLG-OETF-INVERSE"));
+      g->appendTransform(scale_by(toWorking));
+    } else {
+      g->appendTransform(scale_by(1.0 / toWorking));
+      g->appendTransform(builtin(pq ? "CURVE - LINEAR_to_ST-2084" : "CURVE - HLG-OETF"));
+    }
+    return g;
+  }
   if (e == Encoding::srgb_curve) {
     auto t = OCIO::ExponentWithLinearTransform::Create();
     // NOLINTNEXTLINE(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays): OCIO's API takes double(&)[4]
@@ -67,11 +122,25 @@ OCIO::TransformRcPtr curve(Encoding e, OCIO::TransformDirection dir) {
   return t;
 }
 
-OCIO::ConstProcessorRcPtr processor(const OCIO::ConstConfigRcPtr& cfg, const Request& req) {
+bool has_curve(Encoding e) noexcept { return e != Encoding::linear && e != Encoding::config; }
+
+/// `studio` is loaded here on first need (a camera encoding).
+OCIO::ConstProcessorRcPtr processor(const OCIO::ConstConfigRcPtr& cfg, OCIO::ConstConfigRcPtr& studio, const Request& req) {
   auto group = OCIO::GroupTransform::Create();
   const Resolved src = resolve(req.src);
   const Resolved dst = resolve(req.dst);
-  if (src.encoding != Encoding::linear) group->appendTransform(curve(src.encoding, OCIO::TRANSFORM_DIR_FORWARD));
+  if (dst.studio) throw OCIO::Exception("a camera encoding is an input, not a destination");
+  if (src.studio) {
+    // A camera encoding: the studio config's colour space -> ACES2065-1 -> the CG
+    // config's linear destination (the interchange role both share), then dst's curve.
+    if (!req.view.empty()) throw OCIO::Exception("a view takes a working-space source, not a camera encoding");
+    const OCIO::ConstProcessorRcPtr across = OCIO::Config::GetProcessorFromConfigs(
+        studio ? studio : (studio = OCIO::Config::CreateFromFile(std::string(kStudioConfig).c_str())), src.linear, cfg, dst.linear);
+    group->appendTransform(across->createGroupTransform());
+    if (has_curve(dst.encoding)) group->appendTransform(curve(dst.encoding, OCIO::TRANSFORM_DIR_INVERSE));
+    return cfg->getProcessor(group)->getOptimizedProcessor(OCIO::OPTIMIZATION_LOSSLESS);
+  }
+  if (has_curve(src.encoding)) group->appendTransform(curve(src.encoding, OCIO::TRANSFORM_DIR_FORWARD));
   if (!req.view.empty()) {
     if (dst.display == nullptr) throw OCIO::Exception("that space has no OCIO display to apply a view on");
     auto dv = OCIO::DisplayViewTransform::Create();
@@ -84,7 +153,7 @@ OCIO::ConstProcessorRcPtr processor(const OCIO::ConstConfigRcPtr& cfg, const Req
     cs->setSrc(src.linear);
     cs->setDst(dst.linear);
     group->appendTransform(cs);
-    if (dst.encoding != Encoding::linear) group->appendTransform(curve(dst.encoding, OCIO::TRANSFORM_DIR_INVERSE));
+    if (has_curve(dst.encoding)) group->appendTransform(curve(dst.encoding, OCIO::TRANSFORM_DIR_INVERSE));
   }
   // LOSSLESS: identities and pairs fold, matrices compose; no LUT, no fast pow.
   return cfg->getProcessor(group)->getOptimizedProcessor(OCIO::OPTIMIZATION_LOSSLESS);
@@ -272,7 +341,7 @@ Ocio::~Ocio() = default;
 
 bool Ocio::program(const Request& req, Program& out, std::string& error) const {
   try {
-    const OCIO::ConstProcessorRcPtr proc = processor(impl_->config, req);
+    const OCIO::ConstProcessorRcPtr proc = processor(impl_->config, impl_->studio, req);
     out = Program{};
     out.key = req.key();
     bool expressible = !req.forceLut;
@@ -290,8 +359,13 @@ bool Ocio::program(const Request& req, Program& out, std::string& error) const {
     // input (2^-12 … 2^6: below reads black, above saturates every SDR output
     // transform), identity on [0, 1] for encoded input.
     const Shaper shaper = scene_linear(req.src) ? Shaper{true, -12.0, 6.0} : Shaper{false, 0.0, 1.0};
+    // A log or HDR signal spans decades of light over [0, 1]: 33^3 interpolates
+    // it ~3 % off; 65^3 keeps it near 0.7 % (test_color_spaces.cpp).
+    const Encoding enc = resolve(req.src).encoding;
+    const bool steep = enc == Encoding::config || enc == Encoding::pq || enc == Encoding::hlg;
+    const std::uint32_t lattice = steep ? std::max<std::uint32_t>(req.lutSize, 65) : req.lutSize;
     const OCIO::ConstCPUProcessorRcPtr cpu = proc->getOptimizedCPUProcessor(OCIO::OPTIMIZATION_LOSSLESS);
-    Program baked = bake_lut(shaper, std::max<std::uint32_t>(2, req.lutSize), [&](std::span<float> rgb) {
+    Program baked = bake_lut(shaper, std::max<std::uint32_t>(2, lattice), [&](std::span<float> rgb) {
       OCIO::PackedImageDesc img(rgb.data(), static_cast<long>(rgb.size() / 3), 1, 3);
       cpu->apply(img);
     });
@@ -306,7 +380,7 @@ bool Ocio::program(const Request& req, Program& out, std::string& error) const {
 
 bool Ocio::apply_cpu(const Request& req, std::span<float> rgb, std::string& error) const {
   try {
-    const OCIO::ConstCPUProcessorRcPtr cpu = processor(impl_->config, req)->getOptimizedCPUProcessor(OCIO::OPTIMIZATION_LOSSLESS);
+    const OCIO::ConstCPUProcessorRcPtr cpu = processor(impl_->config, impl_->studio, req)->getOptimizedCPUProcessor(OCIO::OPTIMIZATION_LOSSLESS);
     OCIO::PackedImageDesc img(rgb.data(), static_cast<long>(rgb.size() / 3), 1, 3);
     cpu->apply(img);
     return true;
@@ -318,7 +392,7 @@ bool Ocio::apply_cpu(const Request& req, std::span<float> rgb, std::string& erro
 
 bool Ocio::describe(const Request& req, std::string& out, std::string& error) const {
   try {
-    const OCIO::ConstGroupTransformRcPtr g = processor(impl_->config, req)->createGroupTransform();
+    const OCIO::ConstGroupTransformRcPtr g = processor(impl_->config, impl_->studio, req)->createGroupTransform();
     out.clear();
     for (int i = 0; i < g->getNumTransforms(); ++i) {
       const OCIO::ConstTransformRcPtr t = g->getTransform(i);

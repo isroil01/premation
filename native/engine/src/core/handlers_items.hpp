@@ -11,6 +11,8 @@
 namespace premation::doc {
 
 ResultOf<api::ImportFiles> handle(const api::ImportFiles& c, HCtx& x);
+/// Interpret Footage > Color > Assign Profile: the colour space a stored profile name (a RenderColorSpace's API name) is.
+[[nodiscard]] std::optional<api::RenderColorSpace> color_profile_of(std::string_view name);
 ResultOf<api::ImportBytes> handle(const api::ImportBytes& c, HCtx& x);
 /// importFiles with createComposition for a .psd / .psb (handlers_psd.cpp): [composition, folder].
 std::vector<std::string> import_psd_composition(const api::ImportFile& f, HCtx& x);

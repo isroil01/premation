@@ -38,6 +38,14 @@ import { useAssetStore } from '@stores/assetStore';
  */
 export interface FootageInterpretation {
   /**
+   * After Effects' Interpret Footage > Color > Assign Profile: the colour space
+   * the pixels are in (a RenderColorSpace name: `displayP3`, `rec2100Pq`,
+   * `arriLogC3` ...), over what the file's tags say. Absent = the file's own
+   * (Preserve RGB / embedded). Only under colour management does it change
+   * pixels: unmanaged frames are drawn as they are.
+   */
+  colorProfile?: string;
+  /**
    * Play the source as if it were shot at this rate. Distinct from the probed
    * rate: probing tells us what the file says, conform overrides it (24 → 25
    * PAL pulldown, 30 → 24 for a slow-mo look).
@@ -160,7 +168,7 @@ export function assetIdOf(node: SceneNode): string | null {
 }
 
 /** Stored interpretation for a file, with defaults filled in. */
-export function interpretationOf(assetId: string): Required<Omit<FootageInterpretation, 'conformFps' | 'fields' | 'pulldownPhase'>> & { conformFps?: number; fields?: 'upper' | 'lower'; pulldownPhase?: number } {
+export function interpretationOf(assetId: string): Required<Omit<FootageInterpretation, 'conformFps' | 'fields' | 'pulldownPhase' | 'colorProfile'>> & { conformFps?: number; fields?: 'upper' | 'lower'; pulldownPhase?: number; colorProfile?: string } {
   const asset = useAssetStore.getState().assets.find((a) => a.id === assetId);
   const i = asset?.interpret ?? {};
   // Validated like fields: only a whole phase 0..4 means anything to the
@@ -180,6 +188,7 @@ export function interpretationOf(assetId: string): Required<Omit<FootageInterpre
     // field order must read as progressive, not as a truthy mystery string.
     ...(i.fields === 'upper' || i.fields === 'lower' ? { fields: i.fields } : {}),
     ...(phase !== undefined ? { pulldownPhase: phase } : {}),
+    ...(i.colorProfile ? { colorProfile: i.colorProfile } : {}),
   };
 }
 

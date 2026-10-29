@@ -19,6 +19,21 @@ color::Space space_of(api::RenderColorSpace s) noexcept {
     case api::RenderColorSpace::rec2020: return color::Space::rec2020;
     case api::RenderColorSpace::linear_rec2020: return color::Space::linear_rec2020;
     case api::RenderColorSpace::aces2065: return color::Space::aces2065;
+    case api::RenderColorSpace::display_p3: return color::Space::display_p3;
+    case api::RenderColorSpace::linear_display_p3: return color::Space::linear_display_p3;
+    case api::RenderColorSpace::rec2100_pq: return color::Space::rec2100_pq;
+    case api::RenderColorSpace::rec2100_hlg: return color::Space::rec2100_hlg;
+    case api::RenderColorSpace::aces_cct: return color::Space::aces_cct;
+    case api::RenderColorSpace::arri_log_c3: return color::Space::arri_logc3;
+    case api::RenderColorSpace::arri_log_c4: return color::Space::arri_logc4;
+    case api::RenderColorSpace::s_log3_s_gamut3: return color::Space::slog3_sgamut3;
+    case api::RenderColorSpace::s_log3_s_gamut3_cine: return color::Space::slog3_sgamut3_cine;
+    case api::RenderColorSpace::v_log_v_gamut: return color::Space::vlog_vgamut;
+    case api::RenderColorSpace::log3_g10_red_wide_gamut: return color::Space::log3g10_rwg;
+    case api::RenderColorSpace::canon_log3_cinema_gamut: return color::Space::canon_log3_cg;
+    case api::RenderColorSpace::apple_log: return color::Space::apple_log;
+    case api::RenderColorSpace::bmd_film_gen5: return color::Space::bmd_film_gen5;
+    case api::RenderColorSpace::davinci_intermediate: return color::Space::davinci_intermediate;
   }
   return color::Space::srgb;
 }

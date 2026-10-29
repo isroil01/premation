@@ -116,22 +116,28 @@ std::array<double, 4> convert_codes(const YuvToRgb& c, double y, double cb, doub
 }
 
 InputSpaceGuess input_space_of(const ColorInfo& c) noexcept {
+  // RenderColorSpace numbers (96_render.eapi).
   InputSpaceGuess g;
   const bool wide = c.primaries == Primaries::bt2020;
+  // P3-D65 (smpte432): iPhone / Mac screen recordings and Display P3 stills.
+  const bool p3 = c.primaries == Primaries::smpte432;
   if (c.transfer == Transfer::linear) {
-    g.renderColorSpace = wide ? 5 : 2;  // linearRec2020 : linearSrgb
+    g.renderColorSpace = wide ? 5 : p3 ? 8 : 2;  // linearRec2020 : linearDisplayP3 : linearSrgb
     return g;
   }
-  if (c.transfer == Transfer::pq || c.transfer == Transfer::hlg) {
-    g.renderColorSpace = 4;  // rec2020 primaries; the PQ/HLG curve itself is not a RenderColorSpace yet
-    g.hdrUnmodelled = true;
+  if (c.transfer == Transfer::pq) {
+    g.renderColorSpace = 9;  // rec2100Pq
+    return g;
+  }
+  if (c.transfer == Transfer::hlg) {
+    g.renderColorSpace = 10;  // rec2100Hlg
     return g;
   }
   if (c.transfer == Transfer::srgb || c.transfer == Transfer::iec61966_2_4) {
-    g.renderColorSpace = 0;
+    g.renderColorSpace = p3 ? 7 : 0;  // displayP3 : srgb
     return g;
   }
-  g.renderColorSpace = wide ? 4 : 1;
+  g.renderColorSpace = wide ? 4 : p3 ? 7 : 1;
   return g;
 }
 

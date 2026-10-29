@@ -1810,6 +1810,21 @@ std::string_view to_string(RenderColorSpace v) noexcept {
     case RenderColorSpace::rec2020: return "rec2020";
     case RenderColorSpace::linear_rec2020: return "linearRec2020";
     case RenderColorSpace::aces2065: return "aces2065";
+    case RenderColorSpace::display_p3: return "displayP3";
+    case RenderColorSpace::linear_display_p3: return "linearDisplayP3";
+    case RenderColorSpace::rec2100_pq: return "rec2100Pq";
+    case RenderColorSpace::rec2100_hlg: return "rec2100Hlg";
+    case RenderColorSpace::aces_cct: return "acesCct";
+    case RenderColorSpace::arri_log_c3: return "arriLogC3";
+    case RenderColorSpace::arri_log_c4: return "arriLogC4";
+    case RenderColorSpace::s_log3_s_gamut3: return "sLog3SGamut3";
+    case RenderColorSpace::s_log3_s_gamut3_cine: return "sLog3SGamut3Cine";
+    case RenderColorSpace::v_log_v_gamut: return "vLogVGamut";
+    case RenderColorSpace::log3_g10_red_wide_gamut: return "log3G10RedWideGamut";
+    case RenderColorSpace::canon_log3_cinema_gamut: return "canonLog3CinemaGamut";
+    case RenderColorSpace::apple_log: return "appleLog";
+    case RenderColorSpace::bmd_film_gen5: return "bmdFilmGen5";
+    case RenderColorSpace::davinci_intermediate: return "davinciIntermediate";
   }
   return {};
 }
@@ -1822,6 +1837,21 @@ bool from_u32(std::uint32_t n, RenderColorSpace& out) noexcept {
     case 4: out = RenderColorSpace::rec2020; return true;
     case 5: out = RenderColorSpace::linear_rec2020; return true;
     case 6: out = RenderColorSpace::aces2065; return true;
+    case 7: out = RenderColorSpace::display_p3; return true;
+    case 8: out = RenderColorSpace::linear_display_p3; return true;
+    case 9: out = RenderColorSpace::rec2100_pq; return true;
+    case 10: out = RenderColorSpace::rec2100_hlg; return true;
+    case 11: out = RenderColorSpace::aces_cct; return true;
+    case 12: out = RenderColorSpace::arri_log_c3; return true;
+    case 13: out = RenderColorSpace::arri_log_c4; return true;
+    case 14: out = RenderColorSpace::s_log3_s_gamut3; return true;
+    case 15: out = RenderColorSpace::s_log3_s_gamut3_cine; return true;
+    case 16: out = RenderColorSpace::v_log_v_gamut; return true;
+    case 17: out = RenderColorSpace::log3_g10_red_wide_gamut; return true;
+    case 18: out = RenderColorSpace::canon_log3_cinema_gamut; return true;
+    case 19: out = RenderColorSpace::apple_log; return true;
+    case 20: out = RenderColorSpace::bmd_film_gen5; return true;
+    case 21: out = RenderColorSpace::davinci_intermediate; return true;
     default: return false;
   }
 }

@@ -937,6 +937,21 @@ enum class RenderColorSpace : std::uint32_t {
   rec2020 = 4,
   linear_rec2020 = 5,
   aces2065 = 6,
+  display_p3 = 7,
+  linear_display_p3 = 8,
+  rec2100_pq = 9,
+  rec2100_hlg = 10,
+  aces_cct = 11,
+  arri_log_c3 = 12,
+  arri_log_c4 = 13,
+  s_log3_s_gamut3 = 14,
+  s_log3_s_gamut3_cine = 15,
+  v_log_v_gamut = 16,
+  log3_g10_red_wide_gamut = 17,
+  canon_log3_cinema_gamut = 18,
+  apple_log = 19,
+  bmd_film_gen5 = 20,
+  davinci_intermediate = 21,
 };
 [[nodiscard]] std::string_view to_string(RenderColorSpace v) noexcept;
 [[nodiscard]] bool from_u32(std::uint32_t n, RenderColorSpace& out) noexcept;

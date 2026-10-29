@@ -239,6 +239,8 @@ struct RLayer {
   double behindSubjectSoftness = 0;
   std::optional<std::array<double, 4>> uvRect;
   bool premultipliedSource = false;
+  /// Interpret Footage > Color > Assign Profile: the input space over the file's own tags.
+  std::optional<api::RenderColorSpace> colorProfile;
   /// Interpret Footage ▸ Remove Pulldown (buildSnapshot `pulldownSource`): the
   /// 3:2 phase (0–4) the frames are rebuilt from fields with.
   std::optional<int> pulldownSource;

@@ -548,6 +548,7 @@ void Flattener::feed(const RLayer& l, double parentScale) {
     r.sourceTime = l.sourceTime.value_or(0);
     r.video = l.kind == LayerKind::video;
     r.premultiplied = l.premultipliedSource;
+    r.colorProfile = l.colorProfile;
     r.fill = l.fill;
     r.compFps = fps_;
     r.layerId = l.id;

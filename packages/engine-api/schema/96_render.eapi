@@ -58,7 +58,18 @@ enum RenderFogMode { linear = 0; exponential = 1; exponential2 = 2; }
 ///   rec709        Rec.709 primaries, gamma 2.4 (BT.1886 display)    acesCg         linear AP1 (ACEScg)
 ///   rec2020       Rec.2020 primaries, gamma 2.4                     linearRec2020  linear Rec.2020 primaries
 ///   aces2065      linear AP0 (ACES2065-1, interchange)
-enum RenderColorSpace { srgb = 0; rec709 = 1; linearSrgb = 2; acesCg = 3; rec2020 = 4; linearRec2020 = 5; aces2065 = 6; }
+///   displayP3     sRGB-encoded P3-D65 (Apple Display P3)            linearDisplayP3 linear P3-D65
+///   rec2100Pq     Rec.2020, ST 2084 (PQ), 203 nits = 1.0            rec2100Hlg     Rec.2020, ARIB STD-B67 (HLG), 75 % signal = 1.0
+///   acesCct       ACEScct (AP1, log)
+///   camera logs (OCIO's studio config): arriLogC3 (EI800, ARRI Wide Gamut 3), arriLogC4 (AWG4), sLog3SGamut3,
+///   sLog3SGamut3Cine, vLogVGamut, log3G10RedWideGamut, canonLog3CinemaGamut (D55), appleLog (Rec.2020),
+///   bmdFilmGen5 (Blackmagic Wide Gamut Gen 5), davinciIntermediate (DaVinci Wide Gamut)
+enum RenderColorSpace {
+  srgb = 0; rec709 = 1; linearSrgb = 2; acesCg = 3; rec2020 = 4; linearRec2020 = 5; aces2065 = 6;
+  displayP3 = 7; linearDisplayP3 = 8; rec2100Pq = 9; rec2100Hlg = 10; acesCct = 11;
+  arriLogC3 = 12; arriLogC4 = 13; sLog3SGamut3 = 14; sLog3SGamut3Cine = 15; vLogVGamut = 16; log3G10RedWideGamut = 17;
+  canonLog3CinemaGamut = 18; appleLog = 19; bmdFilmGen5 = 20; davinciIntermediate = 21;
+}
 /// What a RenderEffectParam carries: `number`, `numbers` (a list, a colour as [r,g,b,a], packed vec4 rows, a Float32Array), `text`, `texts`, or a boolean in `number` (0/1).
 enum RenderParamKind { number = 0; numbers = 1; text = 2; flag = 3; color = 4; texts = 5; }
 

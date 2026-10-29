@@ -30,6 +30,9 @@
 namespace premation::rg::color {
 
 inline constexpr std::string_view kBuiltinConfig = "ocio://cg-config-v2.2.0_aces-v1.3_ocio-v2.4";
+/// The CG config's twin with camera encodings (LogC, S-Log3, V-Log ...): an input
+/// in one of them converts through ACES2065-1, the interchange both share.
+inline constexpr std::string_view kStudioConfig = "ocio://studio-config-v2.2.0_aces-v1.3_ocio-v2.4";
 
 struct Request {
   Space src = Space::linear_srgb;

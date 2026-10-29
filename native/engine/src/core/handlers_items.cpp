@@ -59,6 +59,19 @@ std::string js_trim(std::string_view s) {
 namespace {
 
 /// `interpretationPatch(p)`: the validated patch and the keys it clears.
+}  // namespace
+
+std::optional<api::RenderColorSpace> color_profile_of(std::string_view name) {
+  for (std::uint32_t i = 0; i < 64; ++i) {
+    api::RenderColorSpace s{};
+    if (!api::from_u32(i, s)) break;
+    if (api::to_string(s) == name) return s;
+  }
+  return std::nullopt;
+}
+
+namespace {
+
 struct InterpPatch {
   Json patch = Json::object();
   std::vector<std::string> clear;
@@ -96,9 +109,19 @@ InterpPatch interpretation_patch(const api::InterpretationPatch& p) {
   }
   if (p.clear_remove_pulldown && *p.clear_remove_pulldown) out.clear.emplace_back("pulldownPhase");
   if (p.invert_alpha && *p.invert_alpha) fail(ErrorCode::unsupported, "Invert Alpha is not implemented by the TypeScript renderer");
-  if (p.premultiplied_matte || p.start_timecode || (p.color_profile && *p.color_profile != "auto")) {
-    fail(ErrorCode::unsupported,
-         "premultiplied matte colour, start timecode and colour profiles are not stored by the TypeScript engine");
+  // Interpret Footage > Color > Assign Profile: a RenderColorSpace name; "auto" (or "") = the file's own tags.
+  if (p.color_profile) {
+    if (p.color_profile->empty() || *p.color_profile == "auto") {
+      out.clear.emplace_back("colorProfile");
+    } else {
+      if (!color_profile_of(*p.color_profile)) {
+        fail(ErrorCode::invalid_argument, "'" + *p.color_profile + "' is not a colour profile (auto, srgb, rec709, displayP3, rec2100Pq, arriLogC3, ...)");
+      }
+      out.patch.set("colorProfile", Json::string(*p.color_profile));
+    }
+  }
+  if (p.premultiplied_matte || p.start_timecode) {
+    fail(ErrorCode::unsupported, "premultiplied matte colour and start timecode are not stored by the TypeScript engine");
   }
   return out;
 }

@@ -367,6 +367,8 @@ export function interpretationPatchFor(asset: ImportedAsset, next: FootageInterp
   if ((next.fields ?? 'off') !== (cur.fields ?? 'off')) {
     p.fieldOrder = next.fields === 'upper' ? 'upperFirst' : next.fields === 'lower' ? 'lowerFirst' : 'progressive';
   }
+  // Assign Profile: a colour space name, or back to the file's own ('auto').
+  if ((next.colorProfile ?? 'auto') !== (cur.colorProfile ?? 'auto')) p.colorProfile = next.colorProfile ?? 'auto';
   // Remove Pulldown (B3z): arm at a phase, or switch off.
   if ((next.pulldownPhase ?? undefined) !== (cur.pulldownPhase ?? undefined)) {
     if (next.pulldownPhase === undefined) p.clearRemovePulldown = true;

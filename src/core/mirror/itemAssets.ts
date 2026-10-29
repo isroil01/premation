@@ -47,6 +47,8 @@ export function interpretOf(i: Interpretation | undefined, prev: FootageInterpre
   else delete next.loopCount;
   if (typeof i.removePulldown === 'number') next.pulldownPhase = i.removePulldown;
   else delete next.pulldownPhase;
+  if (i.colorProfile && i.colorProfile !== 'auto') next.colorProfile = i.colorProfile;
+  else delete next.colorProfile;
   return Object.keys(next).length > 0 ? next : undefined;
 }
 

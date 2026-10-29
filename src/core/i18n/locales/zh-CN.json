@@ -10144,5 +10144,20 @@
   "assets.psd.message": "将 {name} 导入为由各图层组成的合成（每个图层保持自身尺寸，图层组作为嵌套合成），还是导入为一个合并图像的素材？",
   "assets.psd.composition": "合成",
   "assets.psd.footage": "素材",
-  "assets.psd.imported": "已从 Photoshop 导入 {n} 个合成，图层位于“Layers”文件夹中"
+  "assets.psd.imported": "已从 Photoshop 导入 {n} 个合成，图层位于“Layers”文件夹中",
+  "assets.interpret.color": "颜色",
+  "assets.interpret.assignProfile": "指定配置文件",
+  "assets.interpret.color.auto": "来自文件（嵌入 / 标记）",
+  "assets.interpret.color.display": "显示",
+  "assets.interpret.color.hdr": "HDR",
+  "assets.interpret.color.linear": "线性 / ACES",
+  "assets.interpret.color.camera": "摄像机 Log",
+  "assets.interpret.color.linearSrgb": "线性 sRGB（Rec. 709）",
+  "assets.interpret.color.linearP3": "线性 Display P3",
+  "assets.interpret.color.linear2020": "线性 Rec. 2020",
+  "assets.interpret.colorHint": "指定摄像机录制所用的配置文件（Log 素材、HDR、Display P3）。启用色彩管理时会转换到工作空间（文件 ▸ 项目设置 ▸ 颜色）。",
+  "composition.settings.projectWorkingSpace": "项目色彩管理",
+  "composition.settings.projectWorkingSpaceHint": "素材从自身的配置文件（解释素材 ▸ 颜色）转换到此空间，在其中混合，并通过显示变换呈现。“无”则按原样绘制像素。",
+  "composition.settings.wsNone": "无（不管理）",
+  "composition.settings.wsSrgbLinear": "sRGB（线性混合）"
 }

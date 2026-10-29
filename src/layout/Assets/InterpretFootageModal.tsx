@@ -30,6 +30,42 @@ function parPresets(): Array<{ label: string; value: number }> {
   ];
 }
 
+/** Interpret Footage > Color > Assign Profile (RenderColorSpace names), grouped as AE's menu reads. */
+function colorProfiles(): Array<{ group: string; items: Array<{ value: string; label: string }> }> {
+  return [
+    { group: t('assets.interpret.color.display', 'Display'), items: [
+      { value: 'srgb', label: 'sRGB IEC61966-2.1' },
+      { value: 'rec709', label: 'Rec. 709 (gamma 2.4)' },
+      { value: 'displayP3', label: 'Display P3' },
+      { value: 'rec2020', label: 'Rec. 2020 (gamma 2.4)' },
+    ] },
+    { group: t('assets.interpret.color.hdr', 'HDR'), items: [
+      { value: 'rec2100Pq', label: 'Rec. 2100 PQ' },
+      { value: 'rec2100Hlg', label: 'Rec. 2100 HLG' },
+    ] },
+    { group: t('assets.interpret.color.linear', 'Linear / ACES'), items: [
+      { value: 'linearSrgb', label: t('assets.interpret.color.linearSrgb', 'Linear sRGB (Rec. 709)') },
+      { value: 'linearDisplayP3', label: t('assets.interpret.color.linearP3', 'Linear Display P3') },
+      { value: 'linearRec2020', label: t('assets.interpret.color.linear2020', 'Linear Rec. 2020') },
+      { value: 'acesCg', label: 'ACEScg' },
+      { value: 'acesCct', label: 'ACEScct' },
+      { value: 'aces2065', label: 'ACES2065-1' },
+    ] },
+    { group: t('assets.interpret.color.camera', 'Camera log'), items: [
+      { value: 'arriLogC3', label: 'ARRI LogC3 (EI 800)' },
+      { value: 'arriLogC4', label: 'ARRI LogC4' },
+      { value: 'sLog3SGamut3', label: 'Sony S-Log3 / S-Gamut3' },
+      { value: 'sLog3SGamut3Cine', label: 'Sony S-Log3 / S-Gamut3.Cine' },
+      { value: 'vLogVGamut', label: 'Panasonic V-Log / V-Gamut' },
+      { value: 'log3G10RedWideGamut', label: 'RED Log3G10 / REDWideGamutRGB' },
+      { value: 'canonLog3CinemaGamut', label: 'Canon Log 3 / Cinema Gamut' },
+      { value: 'appleLog', label: 'Apple Log' },
+      { value: 'bmdFilmGen5', label: 'Blackmagic Film Gen 5' },
+      { value: 'davinciIntermediate', label: 'DaVinci Intermediate' },
+    ] },
+  ];
+}
+
 function findParPreset(val: number): string {
   const match = parPresets().find((p) => Math.abs(p.value - val) < 0.01);
   return match ? String(match.value) : 'custom';
@@ -68,6 +104,7 @@ function InterpretFootageBody({
   const [parPreset, setParPreset] = useState<string>(findParPreset(initialPar));
   const [customPar, setCustomPar] = useState<number>(initialPar);
 
+  const [colorProfile, setColorProfile] = useState<string>(currentInterpret.colorProfile ?? 'auto');
   const [alphaMode, setAlphaMode] = useState<AlphaInterpretation>(
     currentInterpret.alpha ?? 'straight',
   );
@@ -142,6 +179,7 @@ function InterpretFootageBody({
       // progressive), so arming one clears the other.
       fields: pulldownPhase === null && fieldsMode !== 'off' ? fieldsMode : undefined,
       pulldownPhase: pulldownPhase !== null ? pulldownPhase : undefined,
+      colorProfile: colorProfile === 'auto' ? undefined : colorProfile,
     };
 
     // Read the item as it is NOW (the dialog is floating; it may have changed).
@@ -254,6 +292,29 @@ function InterpretFootageBody({
           </select>
           <p className={styles.hint}>
             {t('assets.interpret.alphaHint', 'Straight is standard for PNG, ProRes 4444 and WebM. Premultiplied prevents black fringing on rendered elements.')}
+          </p>
+        </div>
+      )}
+
+      {/* ── Color ▸ Assign Profile ── */}
+      {asset.type !== 'audio' && (
+        <div className={styles.section}>
+          <h4 className={styles.sectionTitle}>{t('assets.interpret.color', 'Color')}</h4>
+          <select
+            className={styles.select}
+            value={colorProfile}
+            aria-label={t('assets.interpret.assignProfile', 'Assign profile')}
+            onChange={(e) => setColorProfile(e.target.value)}
+          >
+            <option value="auto">{t('assets.interpret.color.auto', 'From the file (embedded / tagged)')}</option>
+            {colorProfiles().map((g) => (
+              <optgroup key={g.group} label={g.group}>
+                {g.items.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+              </optgroup>
+            ))}
+          </select>
+          <p className={styles.hint}>
+            {t('assets.interpret.colorHint', 'Assign the profile the camera recorded in (log footage, HDR, Display P3). It is converted into the working space under colour management (File ▸ Project Settings ▸ Color).')}
           </p>
         </div>
       )}

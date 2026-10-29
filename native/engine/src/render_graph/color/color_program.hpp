@@ -29,7 +29,13 @@
 namespace premation::rg::color {
 
 /// The colour spaces the engine names (engine-api RenderColorSpace, same order).
-enum class Space : std::uint8_t { srgb, rec709, linear_srgb, aces_cg, rec2020, linear_rec2020, aces2065 };
+enum class Space : std::uint8_t {
+  srgb, rec709, linear_srgb, aces_cg, rec2020, linear_rec2020, aces2065,
+  display_p3, linear_display_p3, rec2100_pq, rec2100_hlg, aces_cct,
+  // Camera log encodings (OCIO's studio config).
+  arri_logc3, arri_logc4, slog3_sgamut3, slog3_sgamut3_cine, vlog_vgamut, log3g10_rwg, canon_log3_cg, apple_log,
+  bmd_film_gen5, davinci_intermediate,
+};
 
 enum class OpType : std::uint8_t {
   none = 0,

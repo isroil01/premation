@@ -767,6 +767,12 @@ export const RenderFogModeValues = ['linear', 'exponential', 'exponential2'] as 
  *   rec709        Rec.709 primaries, gamma 2.4 (BT.1886 display)    acesCg         linear AP1 (ACEScg)
  *   rec2020       Rec.2020 primaries, gamma 2.4                     linearRec2020  linear Rec.2020 primaries
  *   aces2065      linear AP0 (ACES2065-1, interchange)
+ *   displayP3     sRGB-encoded P3-D65 (Apple Display P3)            linearDisplayP3 linear P3-D65
+ *   rec2100Pq     Rec.2020, ST 2084 (PQ), 203 nits = 1.0            rec2100Hlg     Rec.2020, ARIB STD-B67 (HLG), 75 % signal = 1.0
+ *   acesCct       ACEScct (AP1, log)
+ *   camera logs (OCIO's studio config): arriLogC3 (EI800, ARRI Wide Gamut 3), arriLogC4 (AWG4), sLog3SGamut3,
+ *   sLog3SGamut3Cine, vLogVGamut, log3G10RedWideGamut, canonLog3CinemaGamut (D55), appleLog (Rec.2020),
+ *   bmdFilmGen5 (Blackmagic Wide Gamut Gen 5), davinciIntermediate (DaVinci Wide Gamut)
  */
 export type RenderColorSpace =
   | 'srgb'
@@ -775,8 +781,23 @@ export type RenderColorSpace =
   | 'acesCg'
   | 'rec2020'
   | 'linearRec2020'
-  | 'aces2065';
-export const RenderColorSpaceValues = ['srgb', 'rec709', 'linearSrgb', 'acesCg', 'rec2020', 'linearRec2020', 'aces2065'] as const;
+  | 'aces2065'
+  | 'displayP3'
+  | 'linearDisplayP3'
+  | 'rec2100Pq'
+  | 'rec2100Hlg'
+  | 'acesCct'
+  | 'arriLogC3'
+  | 'arriLogC4'
+  | 'sLog3SGamut3'
+  | 'sLog3SGamut3Cine'
+  | 'vLogVGamut'
+  | 'log3G10RedWideGamut'
+  | 'canonLog3CinemaGamut'
+  | 'appleLog'
+  | 'bmdFilmGen5'
+  | 'davinciIntermediate';
+export const RenderColorSpaceValues = ['srgb', 'rec709', 'linearSrgb', 'acesCg', 'rec2020', 'linearRec2020', 'aces2065', 'displayP3', 'linearDisplayP3', 'rec2100Pq', 'rec2100Hlg', 'acesCct', 'arriLogC3', 'arriLogC4', 'sLog3SGamut3', 'sLog3SGamut3Cine', 'vLogVGamut', 'log3G10RedWideGamut', 'canonLog3CinemaGamut', 'appleLog', 'bmdFilmGen5', 'davinciIntermediate'] as const;
 
 /** What a RenderEffectParam carries: `number`, `numbers` (a list, a colour as [r,g,b,a], packed vec4 rows, a Float32Array), `text`, `texts`, or a boolean in `number` (0/1). */
 export type RenderParamKind =

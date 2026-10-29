@@ -27,7 +27,7 @@ constexpr std::string_view kAcesSdrView = "ACES 1.0 - SDR Video";
 
 std::optional<api::RenderColorSpace> color_space_named(std::string_view name) {
   using S = api::RenderColorSpace;
-  static constexpr std::array<std::pair<std::string_view, S>, 16> kNames = {{
+  static constexpr std::array<std::pair<std::string_view, S>, 45> kNames = {{
       {"srgb", S::srgb},
       {"srgbiec6196621", S::srgb},
       {"srgbiec61966", S::srgb},
@@ -44,6 +44,35 @@ std::optional<api::RenderColorSpace> color_space_named(std::string_view name) {
       {"rec2020linear", S::linear_rec2020},
       {"aces20651", S::aces2065},
       {"aces2065", S::aces2065},
+      {"displayp3", S::display_p3},
+      {"p3d65", S::display_p3},
+      {"lineardisplayp3", S::linear_display_p3},
+      {"linearp3d65", S::linear_display_p3},
+      {"displayp3linear", S::linear_display_p3},
+      {"rec2100pq", S::rec2100_pq},
+      {"bt2100pq", S::rec2100_pq},
+      {"pq", S::rec2100_pq},
+      {"rec2100hlg", S::rec2100_hlg},
+      {"bt2100hlg", S::rec2100_hlg},
+      {"hlg", S::rec2100_hlg},
+      {"acescct", S::aces_cct},
+      {"arrilogc3", S::arri_log_c3},
+      {"logc3", S::arri_log_c3},
+      {"arrilogc4", S::arri_log_c4},
+      {"logc4", S::arri_log_c4},
+      {"slog3sgamut3", S::s_log3_s_gamut3},
+      {"slog3sgamut3cine", S::s_log3_s_gamut3_cine},
+      {"vlogvgamut", S::v_log_v_gamut},
+      {"vlog", S::v_log_v_gamut},
+      {"log3g10redwidegamut", S::log3_g10_red_wide_gamut},
+      {"log3g10redwidegamutrgb", S::log3_g10_red_wide_gamut},
+      {"canonlog3cinemagamut", S::canon_log3_cinema_gamut},
+      {"canonlog3cinemagamutd55", S::canon_log3_cinema_gamut},
+      {"applelog", S::apple_log},
+      {"bmdfilmgen5", S::bmd_film_gen5},
+      {"bmdfilmwidegamutgen5", S::bmd_film_gen5},
+      {"davinciintermediate", S::davinci_intermediate},
+      {"davinciintermediatewidegamut", S::davinci_intermediate},
   }};
   const std::string f = fold(name);
   if (f.empty()) return std::nullopt;
@@ -72,9 +101,7 @@ ColorManagementChoice color_management_of(const doc::Document& d, std::string_vi
     case W::rec2020: m.working_space = S::linear_rec2020; break;
     case W::acescg:
     case W::acescct: m.working_space = S::aces_cg; break;
-    case W::display_p3:
-      out.note = "the Display P3 working space has no RenderColorSpace yet: the frame uses the unmanaged pipeline";
-      return out;
+    case W::display_p3: m.working_space = S::linear_display_p3; break;
     case W::none: return out;
   }
   m.display_space = S::srgb;

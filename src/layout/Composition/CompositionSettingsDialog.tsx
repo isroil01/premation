@@ -26,7 +26,9 @@ import { openModal } from '@stores/modalStore';
 import { DialogFooter, useDialogPrimaryAction } from '@components/Modal';
 import { sanitize as sanitizeComp } from '@stores/compositionStore';
 import { documentMirror } from '@stores/documentMirror';
-import { activeCompIdNow } from '@hooks/useMirror';
+import { activeCompIdNow, useMirrorProjectSettings } from '@hooks/useMirror';
+import { edit as engineEdit } from '@core/engine/uiEdits';
+import type { ColorWorkingSpace } from '@motion/engine-api';
 import { compRecordFromSettings, settingsFps } from '@core/mirror/compFacts';
 import {
   resolveSsao,
@@ -168,6 +170,11 @@ export function CompositionSettings({ close }: { close?: () => void }): JSX.Elem
 
   const cm = useColorManagementStore();
   const setWorkingSpace = useColorManagementStore((c) => c.setWorkingSpace);
+  // File > Project Settings > Color > Working Space (AE): the project's colour-managed working space (OCIO).
+  const projectWorkingSpace = useMirrorProjectSettings()?.workingSpace ?? 'none';
+  const setProjectWorkingSpace = (ws: ColorWorkingSpace): void => {
+    void engineEdit('Project Settings', { type: 'setProjectSettings', patch: { workingSpace: ws } });
+  };
   const setDisplayTransform = useColorManagementStore((c) => c.setDisplayTransform);
   const setBitDepth = useColorManagementStore((c) => c.setBitDepth);
   const viewerLutName = useViewerLutStore((v) => v.name);
@@ -1268,6 +1275,28 @@ export function CompositionSettings({ close }: { close?: () => void }): JSX.Elem
         {/* TAB 7: COLOR */}
         {activeTab === 'color' && (
           <>
+            <div className={styles.section}>
+              <div className={styles.label}>{t('composition.settings.projectWorkingSpace', 'Project colour management')}</div>
+              <p className={styles.hint}>
+                {t('composition.settings.projectWorkingSpaceHint', 'Footage is converted from its own profile (Interpret Footage ▸ Color) into this space, blended there, and shown through the display transform. None draws pixels as they are.')}
+              </p>
+              <select
+                className={styles.selectInput}
+                value={projectWorkingSpace}
+                aria-label={t('composition.settings.projectWorkingSpace', 'Project colour management')}
+                onChange={(e) => setProjectWorkingSpace(e.target.value as ColorWorkingSpace)}
+              >
+                <option value="none">{t('composition.settings.wsNone', 'None (unmanaged)')}</option>
+                <option value="srgb">sRGB IEC61966-2.1</option>
+                <option value="rec709">Rec. 709</option>
+                <option value="rec2020">Rec. 2020</option>
+                <option value="displayP3">Display P3</option>
+                <option value="srgbLinear">{t('composition.settings.wsSrgbLinear', 'sRGB (linear blending)')}</option>
+                <option value="acescg">ACEScg</option>
+                <option value="acescct">ACEScct</option>
+              </select>
+            </div>
+
             <div className={styles.section}>
               <div className={styles.label}>{t('composition.settings.workingSpace', 'Working Space')}</div>
               <p className={styles.hint}>{t('composition.settings.internalColorPipelineSpaceWhere', 'Internal color pipeline space where math runs.')}</p>

@@ -667,6 +667,7 @@ std::string SceneTextures::media_ref(const TextureRequest& r, PrepareStats& stat
                                      std::optional<api::RenderColorSpace>& space) {
   // Still footage decodes to sRGB-encoded RGBA8 (PNG / JPEG / WebP without a profile).
   space = api::RenderColorSpace::srgb;
+  if (r.colorProfile) space = *r.colorProfile;
   if (r.src.empty()) return {};
   // A still's CPU-baked effect chain runs on its decoded bitmap (setImage's bake).
   const auto baked_still = [&](std::string hash) {
@@ -738,10 +739,9 @@ std::string SceneTextures::media_ref(const TextureRequest& r, PrepareStats& stat
   if (haveInfo && info.video) {
     const media::InputSpaceGuess g = media::input_space_of(info.video->color);
     space = static_cast<api::RenderColorSpace>(g.renderColorSpace);
-    if (g.hdrUnmodelled && colorManaged_) {
-      stats.unsupported.emplace_back(r.key, "HDR (PQ / HLG) footage under colour management: no RenderColorSpace for the curve");
-    }
   }
+  // Interpret Footage > Color > Assign Profile: the user's choice over the file's tags.
+  if (r.colorProfile) space = *r.colorProfile;
   media::FootageInterpretation interp;
   interp.pulldownPhase = r.pulldownPhase;  // Remove Pulldown: plan_frames weaves the film frame back
   const media::FramePlan plan =
