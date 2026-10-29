@@ -2933,6 +2933,14 @@ export interface OnionSkin {
   colorize: boolean;
 }
 
+/** A subject view (setViewport subjectView): layer's subject subject (absent = all its shown subjects) as mode — 'overlay' (the subject tinted color, default its own colour or magenta), 'black' / 'white' (the subject over black / white), 'alpha' (the subject's matte, white on black) or 'boundary' (the matte's edge drawn in color). Any other mode: invalidArgument. A layer without that subject draws as it is. */
+export interface SubjectView {
+  layer: LayerId;
+  subject?: string;
+  mode: string;
+  color?: string;
+}
+
 /** A viewport's render parameters: pixel size, zoom/pan, region of interest, channel, exposure. */
 export interface SetViewport {
   viewport: number;
@@ -2975,6 +2983,8 @@ export interface SetViewport {
   layerAlphaOverlayColor?: string;
   /** With `layerAlphaView` 'overlay': the tint's opacity, 0–100 %. Absent = 50. */
   layerAlphaOverlayOpacity?: number;
+  /** Subjects Pro view modes: how one layer's subject is shown in this viewport (a composition or a layer view). A viewer aid: never in an export, a thumbnail or the cache. */
+  subjectView?: SubjectView;
 }
 
 export interface CloseViewport {
@@ -3166,6 +3176,8 @@ export interface ObjectMatteJob {
   proposals?: boolean;
   /** Which of the layer's subjects (setLayerMatte `subject`) an edit or a walk reads and writes; absent = "s1", the first. A new id makes a new subject. */
   subject?: string;
+  /** Video: re-track only `range` (the Subjects panel's re-track between two fixes): the subject's stored frames outside it stay (setLayerMatte `merge`) and its outline keeps its keys outside it, instead of the walk replacing the subject. Absent = false. */
+  keepOutside?: boolean;
 }
 
 export interface SubjectEdit {
@@ -3416,6 +3428,27 @@ export interface SetLayerMatte {
   subject?: string;
 }
 
+/** Subjects Pro tracking lanes: one stored matte frame of a subject, in composition time — the tracker's `confidence` (0–1, absent = not measured) and whether it is a `fix` (setLayerMatte's ContentAwareFillFrame). */
+export interface SubjectTrackFrame {
+  time: Time;
+  confidence?: number;
+  fix: boolean;
+}
+
+export interface SubjectTrack {
+  subject: string;
+  frames: SubjectTrackFrame[];
+}
+
+export interface SubjectTracks {
+  subjects: SubjectTrack[];
+}
+
+/** The layer's subjects (core/subjects.hpp, panel order) with their stored matte frames in time order: what the Subjects panel's tracking lanes and Frames to Review draw. A layer with no subjects answers an empty list. */
+export interface GetSubjectTracks {
+  layer: LayerId;
+}
+
 /**
  * Roto Brush (rotoBrush.ts runRotoBrush): a GrabCut-class matte from the `seed` click (layer pixels at `range.start`, colour `tolerance` default 36), propagated frame to frame by block flow with a colour re-seed, as ONE "Roto Brush" mask with a path key per frame of the range (feather `feather` px, default 2).
  * Roto Brush propagation. The starting matte is `startMask` at `range.start` (the tool's SAM outline, a mask id of `layer`), else GrabCut from every foreground prompt. Every prompt (layer px, top-left origin) rides the flow from frame to frame and re-seeds the matte; background prompts keep their region out of the re-seed. `seed` is the prompt used when `prompts` is empty. The result is ONE "Roto Brush" mask with a path key per frame; `replaceMasks` and every other "Roto Brush" mask on the layer are removed in the same history entry.
@@ -3539,6 +3572,10 @@ export interface JobRef {
 export interface ContentAwareFillFrame {
   time: Time;
   src: string;
+  /** A subject matte frame (setLayerMatte): how sure the tracker was of it, 0–1 (absent = not measured). Content-Aware Fill ignores it. */
+  confidence?: number;
+  /** A subject matte frame: a FIX — the user's own selection or edit, or a frame a walk was prompted on — not one the tracker carried there. Content-Aware Fill ignores it. */
+  fix?: boolean;
 }
 
 /** The layer's content-aware fill (the content-aware fill job's result; the page stored the same record as `fx.contentAwareFill`): the frame nearest the layer's time stands in for its footage. Empty `frames` clears it. Inverse: the previous record. */
@@ -6244,6 +6281,7 @@ export type Query =
   | ({ type: 'getPerformanceTakes' } & GetPerformanceTakes)
   | ({ type: 'getLayerTrackers' } & GetLayerTrackers)
   | ({ type: 'getCameraSolve' } & GetCameraSolve)
+  | ({ type: 'getSubjectTracks' } & GetSubjectTracks)
   | ({ type: 'listPluginCommands' } & ListPluginCommands)
   | ({ type: 'getDocument' } & GetDocument)
   | ({ type: 'exportDocument' } & ExportDocument)
@@ -6307,6 +6345,7 @@ export type QueryResult =
   | ({ type: 'getPerformanceTakes' } & PerformanceTakes)
   | ({ type: 'getLayerTrackers' } & LayerTrackers)
   | ({ type: 'getCameraSolve' } & CameraSolveAnswer)
+  | ({ type: 'getSubjectTracks' } & SubjectTracks)
   | ({ type: 'listPluginCommands' } & PluginCommandList)
   | ({ type: 'getDocument' } & DocumentSnapshot)
   | ({ type: 'exportDocument' } & ExportedDocument)
@@ -6768,6 +6807,7 @@ export interface QueryArgs {
   getPerformanceTakes: GetPerformanceTakes;
   getLayerTrackers: GetLayerTrackers;
   getCameraSolve: GetCameraSolve;
+  getSubjectTracks: GetSubjectTracks;
   listPluginCommands: ListPluginCommands;
   getDocument: GetDocument;
   exportDocument: ExportDocument;
@@ -6831,6 +6871,7 @@ export interface QueryResults {
   getPerformanceTakes: PerformanceTakes;
   getLayerTrackers: LayerTrackers;
   getCameraSolve: CameraSolveAnswer;
+  getSubjectTracks: SubjectTracks;
   listPluginCommands: PluginCommandList;
   getDocument: DocumentSnapshot;
   exportDocument: ExportedDocument;

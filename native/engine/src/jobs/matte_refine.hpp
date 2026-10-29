@@ -38,6 +38,17 @@ namespace premation::jobs::matte {
 [[nodiscard]] std::vector<float> guided_filter(std::span<const float> p, std::span<const float> I, int width, int height, int radius,
                                                double eps);
 
+/// The guided filter with the picture's COLOUR as the guide (straight RGBA8): the matte follows
+/// an edge between two colours of the same brightness too, which the luma guide cannot see.
+[[nodiscard]] std::vector<float> guided_filter_rgb(std::span<const float> p, std::span<const std::uint8_t> rgba, int width, int height,
+                                                   int radius, double eps);
+
+/// Edge snap: a model matte (its edge traced on the model's coarse grid) moved onto the
+/// picture's own edge at full resolution — inside a band of `radius` px around its 0.5
+/// crossing the matte is the colour guided filter of itself; elsewhere it is untouched, so
+/// nothing far from the subject's edge can bleed in. `radius` ≈ one model cell in frame px.
+[[nodiscard]] std::vector<float> snap_edge(std::span<const float> alpha, std::span<const std::uint8_t> rgba, int width, int height, int radius);
+
 /// Rec.601 luma in [0, 1] from straight RGBA8.
 [[nodiscard]] std::vector<float> luma(std::span<const std::uint8_t> rgba, int width, int height);
 

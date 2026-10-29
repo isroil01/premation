@@ -2,6 +2,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <vector>
@@ -106,4 +108,95 @@ TEST_CASE("choke shrinks, feather softens, motion blur smears along the flow", "
   CHECK(blurred[8 * W + 10] > 0.99f);
   const std::vector<float> moved = mt::warp_by_flow(a, flow, W, H);
   CHECK(moved[8 * W + 30] > 0.99f);  // the matte moved 8 px right
+}
+
+TEST_CASE("edge snap finds an edge of colour alone, and leaves pixels far from the edge as they are", "[jobs][matte][subject]") {
+  // A red subject (x < 60) on a green ground of the SAME luma: the luma guide sees no edge here.
+  constexpr int W = 120;
+  constexpr int H = 40;
+  std::vector<std::uint8_t> rgba(static_cast<std::size_t>(W * H) * 4);
+  std::vector<float> coarse(static_cast<std::size_t>(W * H));
+  for (int y = 0; y < H; ++y)
+    for (int x = 0; x < W; ++x) {
+      const std::size_t i = static_cast<std::size_t>(y * W + x);
+      const bool subject = x < 60;
+      rgba[i * 4 + 0] = subject ? 200 : 60;
+      rgba[i * 4 + 1] = subject ? 60 : 125;  // 0.299·R + 0.587·G alike on both sides
+      rgba[i * 4 + 2] = 40;
+      rgba[i * 4 + 3] = 255;
+      // The model's edge: 5 px too far right and soft over ±4 px (its 256² grid, upsampled).
+      coarse[i] = static_cast<float>(std::clamp((65.0 - x) / 8.0 + 0.5, 0.0, 1.0));
+    }
+  const std::vector<float> lumaOnly = mt::guided_filter(coarse, mt::luma(rgba, W, H), W, H, 8, 1e-3);
+  const std::vector<float> snapped = mt::snap_edge(coarse, rgba, W, H, 8);
+  const auto crossing = [&](const std::vector<float>& a) {
+    for (int x = 0; x + 1 < W; ++x)
+      if (a[static_cast<std::size_t>(20 * W + x)] >= 0.5f && a[static_cast<std::size_t>(20 * W + x + 1)] < 0.5f) return x;
+    return -1;
+  };
+  CHECK(std::abs(crossing(snapped) - 59) <= 1);  // on the colour edge
+  CHECK(std::abs(crossing(lumaOnly) - 59) > 2);  // the luma guide could not move it
+  CHECK(snapped[static_cast<std::size_t>(20 * W + 59)] > 0.8f);  // a hard edge stays hard
+  CHECK(snapped[static_cast<std::size_t>(20 * W + 61)] < 0.2f);
+  CHECK(snapped[static_cast<std::size_t>(20 * W + 10)] == coarse[static_cast<std::size_t>(20 * W + 10)]);   // far inside: untouched
+  CHECK(snapped[static_cast<std::size_t>(20 * W + 110)] == coarse[static_cast<std::size_t>(20 * W + 110)]);  // far outside: untouched
+}
+
+TEST_CASE("edge snap leaves a matte with no edge alone", "[jobs][matte][subject]") {
+  std::vector<std::uint8_t> rgba(16 * 16 * 4, 128);
+  const std::vector<float> none(16 * 16, 0.0f);
+  CHECK(mt::snap_edge(none, rgba, 16, 16, 4) == none);
+}
+TEST_CASE("edge snap keeps a striped subject whole and grades a blurred edge", "[jobs][matte][subject]") {
+  constexpr int W = 120;
+  constexpr int H = 40;
+  std::vector<std::uint8_t> rgba(static_cast<std::size_t>(W * H) * 4, 255);
+  std::vector<float> coarse(static_cast<std::size_t>(W * H));
+  for (int y = 0; y < H; ++y)
+    for (int x = 0; x < W; ++x) {
+      const std::size_t i = static_cast<std::size_t>(y * W + x);
+      // Subject x < 60: stripes of white and black every 3 rows (a striped shirt), on mid blue.
+      // The edge is blurred over x 57…63 (motion), linearly from the subject's colour to the ground.
+      const double t = std::clamp((x - 57) / 6.0, 0.0, 1.0);
+      const double sub = (y / 3) % 2 == 0 ? 250.0 : 15.0;
+      rgba[i * 4 + 0] = static_cast<std::uint8_t>(std::lround(sub * (1 - t) + 40 * t));
+      rgba[i * 4 + 1] = static_cast<std::uint8_t>(std::lround(sub * (1 - t) + 90 * t));
+      rgba[i * 4 + 2] = static_cast<std::uint8_t>(std::lround(sub * (1 - t) + 200 * t));
+      coarse[i] = static_cast<float>(std::clamp((63.0 - x) / 8.0 + 0.5, 0.0, 1.0));
+    }
+  const std::vector<float> s = mt::snap_edge(coarse, rgba, W, H, 8);
+  // Inside the subject, in the band, on either kind of stripe: still subject.
+  for (int y : {1, 4, 7, 10})
+    for (int x = 50; x <= 55; ++x) CHECK(s[static_cast<std::size_t>(y * W + x)] > 0.85f);
+  // The blurred edge reads as a ramp, not a step: about half-way at its middle.
+  const float mid = s[static_cast<std::size_t>(1 * W + 60)];
+  CHECK(mid > 0.25f);
+  CHECK(mid < 0.75f);
+  // Past the blur: ground.
+  for (int x = 66; x <= 72; ++x) CHECK(s[static_cast<std::size_t>(1 * W + x)] < 0.1f);
+}
+TEST_CASE("edge snap at 1080p: the time it adds to a selection", "[.bench][matte]") {
+  // A person-sized ellipse on a noisy ground, its coarse edge 5 px out — how long one snap takes.
+  constexpr int W = 1920;
+  constexpr int H = 1080;
+  std::vector<std::uint8_t> rgba(static_cast<std::size_t>(W) * H * 4);
+  std::vector<float> coarse(static_cast<std::size_t>(W) * H);
+  std::uint32_t seed = 7;
+  for (int y = 0; y < H; ++y)
+    for (int x = 0; x < W; ++x) {
+      const std::size_t i = static_cast<std::size_t>(y) * W + static_cast<std::size_t>(x);
+      seed = seed * 1664525u + 1013904223u;
+      const double e = std::hypot((x - 960.0) / 300.0, (y - 560.0) / 480.0);
+      const auto noise = static_cast<int>(seed >> 28);
+      rgba[i * 4 + 0] = static_cast<std::uint8_t>(e < 1 ? 180 + noise : 40 + noise);
+      rgba[i * 4 + 1] = static_cast<std::uint8_t>(e < 1 ? 120 + noise : 90 + noise);
+      rgba[i * 4 + 2] = static_cast<std::uint8_t>(e < 1 ? 90 + noise : 160 + noise);
+      rgba[i * 4 + 3] = 255;
+      coarse[i] = static_cast<float>(std::clamp((1.0 - e) * 300.0 / 8.0 + 0.5 + 5.0 / 8.0, 0.0, 1.0));
+    }
+  const auto t0 = std::chrono::steady_clock::now();
+  const std::vector<float> s = mt::snap_edge(coarse, rgba, W, H, 9);
+  const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+  WARN("snap_edge 1920x1080, radius 9: " << ms << " ms");
+  CHECK(s.size() == coarse.size());
 }

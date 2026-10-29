@@ -235,6 +235,7 @@ class SubjectEditResult final : public JobResult {
     api::ContentAwareFillFrame fr;
     fr.time = flicks_of(compTime_);
     fr.src = file_;
+    fr.fix = true;  // the user's own edit: a fix on the subject's tracking lane
     m.frames.push_back(std::move(fr));
     (void)a.run(command(std::move(m)));
     if (outline_.vertices.size() < 6) return;  // nothing selected now: the outline keeps its last shape
@@ -314,6 +315,13 @@ std::string model_path(const std::string& given, const std::optional<std::string
 using Clock = std::chrono::steady_clock;
 
 double ms_since(Clock::time_point t) { return std::chrono::duration<double, std::milli>(Clock::now() - t).count(); }
+
+/// One cell of the models' 256² mask in frame px (the letterbox `scale` maps the frame into the
+/// 1024² input): the edge snap's reach, so it can move the coarse edge onto the true one.
+int model_cell_radius(double letterboxScale) {
+  const double cell = (static_cast<double>(sam::kInputSize) / sam::kMaskSize) / std::max(1e-6, letterboxScale);
+  return std::clamp(static_cast<int>(std::lround(cell * 1.25)), 3, 24);
+}
 
 /// What the single-frame work keeps between calls in one process — the
 /// long-lived worker (job_worker.hpp) answers every hover from here: the
@@ -859,9 +867,11 @@ std::string object_matte_child(const std::string& inputJson, JobControl& control
       sam::constrain_to_box(keepBox, img.width, img.height, *box);
       for (std::size_t i = 0; i < soft.size(); ++i) soft[i] *= keepBox[i] / 255.0f;
     }
-    // The low-res edge snapped onto the picture's own edges (a cell of the 256² logits is ~4 px of a 1080p frame).
-    const int snap = std::clamp(static_cast<int>(std::lround(std::max(w, h) / 320.0)), 2, 12);
-    soft = matte::guided_filter(soft, matte::luma(img.rgba, w, h), w, h, snap, 2e-3);
+    // The coarse edge snapped onto the picture's own, at full resolution: a cell of the 256² logits
+    // is 4 / scale frame px (7.5 at 1920 wide). The colour guide also finds an edge between two
+    // colours of one brightness; only the band around the edge is touched (matte::snap_edge).
+    const int snap = model_cell_radius(lb.scale);
+    soft = matte::snap_edge(soft, img.rgba, w, h, snap);
     subject::solidify(soft);
     std::vector<subject::Pt> seeds;
     for (const sam::Point& p : points)
@@ -1118,13 +1128,19 @@ scene::pixmo::FlowField walk_flow(const stabilize::FloatLuma& prev, const stabil
 /// entry. Runs on the FrameFinisher's thread; it touches only the tail's
 /// stages (refine, cut, contour, png, write).
 Json store_matte_frame(const RgbaImage& img, const std::vector<float>& alpha, const scene::pixmo::FlowField* flow, const VideoRefine& rf,
-                       const std::string& folder, double compTime, double compFps, double kx, double ky, WalkStages& stages) {
+                       const std::string& folder, double compTime, double compFps, double kx, double ky, WalkStages& stages,
+                       double confidence, bool fix) {
   const int w = static_cast<int>(img.width);
   const int h = static_cast<int>(img.height);
   auto t = Clock::now();
   std::vector<float> refined = alpha;
   subject::solidify(refined);  // no text behind a followed subject ghosts through it either
-  if (rf.edgeRadius > 0) refined = matte::guided_filter(refined, matte::luma(img.rgba, w, h), w, h, static_cast<int>(std::lround(rf.edgeRadius)), 1e-3);
+  // Refine Edge: the model's coarse edge snapped onto the picture's own (colour guide, the band
+  // around the edge only), at least one model cell wide so the snap can reach the true edge.
+  if (rf.edgeRadius > 0) {
+    const int r = std::max(static_cast<int>(std::lround(rf.edgeRadius)), model_cell_radius(sam::letterbox(img.width, img.height).scale));
+    refined = matte::snap_edge(refined, img.rgba, w, h, r);
+  }
   if (rf.motionBlur && flow != nullptr) refined = matte::motion_blur(refined, *flow, w, h, rf.shutterAngle);
   matte::choke_feather(refined, w, h, rf.choke, rf.feather);
   stages.refine += ms_since(t);
@@ -1169,6 +1185,8 @@ Json store_matte_frame(const RgbaImage& img, const std::vector<float>& alpha, co
     c.arr_mut().push_back(Json::number(p.y / ky));
   }
   fr.set("contour", std::move(c));
+  fr.set("confidence", Json::number(confidence));  // the tracking lanes (setLayerMatte frame `confidence` / `fix`)
+  if (fix) fr.set("fix", Json::boolean(true));
   return fr;
 }
 
@@ -1216,7 +1234,6 @@ std::string object_matte_video_sam2(const Json& in, JobControl& control) {
   double modelMs = 0;
   Json frames = Json::array();
   std::string status = "completed";
-  const bool needFlow = rf.motionBlur || rf.reduceChatter > 0;
   for (const Json& walk : in.at("walks").arr()) {
     sam2::Tracker tracker(*models, *constants, walk.arr().size());
     stabilize::FloatLuma prevLuma;
@@ -1266,26 +1283,29 @@ std::string object_matte_video_sam2(const Json& in, JobControl& control) {
         status = "empty";
         break;
       }
+      // The flow to the previous frame: motion blur, chatter, and the confidence's agreement term
+      // (cheap next to the model's step).
       std::optional<scene::pixmo::FlowField> flow;
-      stabilize::FloatLuma lum;
-      if (needFlow) {
-        lum = walk_luma(img);
-        if (!prevAlpha.empty()) flow = walk_flow(prevLuma, lum);
-      }
-      if (flow && rf.reduceChatter > 0 && !res.conditioning) {
+      stabilize::FloatLuma lum = walk_luma(img);
+      if (!prevAlpha.empty()) flow = walk_flow(prevLuma, lum);
+      std::vector<float> warped;
+      if (flow) warped = matte::warp_by_flow(prevAlpha, *flow, w, h);
+      const double presence = 1.0 / (1.0 + std::exp(-static_cast<double>(res.objectScore)));
+      const double confidence = res.conditioning ? 1.0
+                                                 : subject::track_confidence(res.iou, presence,
+                                                                             warped.empty() ? std::nullopt : std::optional<double>(subject::matte_iou(alpha, warped)));
+      const bool fix = res.conditioning;
+      if (!warped.empty() && rf.reduceChatter > 0 && !res.conditioning) {
         // Chatter: where this frame and the carried matte nearly agree, settle between them.
-        const std::vector<float> warped = matte::warp_by_flow(prevAlpha, *flow, w, h);
         const auto k = static_cast<float>(std::clamp(rf.reduceChatter, 0.0, 100.0) / 200.0);
         for (std::size_t i = 0; i < alpha.size(); ++i)
           if (std::abs(alpha[i] - warped[i]) < 0.5f) alpha[i] += k * (warped[i] - alpha[i]);
       }
-      if (needFlow) {
-        prevAlpha = alpha;
-        prevLuma = std::move(lum);
-      }
+      prevAlpha = alpha;
+      prevLuma = std::move(lum);
       // The tail (refine, cut-out, PNG, outline) runs on the finisher's thread while the next frame's model runs.
-      finisher.put([&rf, &folder, &stages, img = std::move(img), alpha = std::move(alpha), flow = std::move(flow), compTime, compFps, kx, ky] {
-        return store_matte_frame(img, alpha, flow ? &*flow : nullptr, rf, folder, compTime, compFps, kx, ky, stages);
+      finisher.put([&rf, &folder, &stages, img = std::move(img), alpha = std::move(alpha), flow = std::move(flow), compTime, compFps, kx, ky, confidence, fix] {
+        return store_matte_frame(img, alpha, flow ? &*flow : nullptr, rf, folder, compTime, compFps, kx, ky, stages, confidence, fix);
       });
       ++done;
       control.progress(0.03 + 0.95 * static_cast<double>(done) / static_cast<double>(std::max<std::size_t>(1, total)),
@@ -1413,7 +1433,9 @@ std::string object_matte_video_child(const std::string& inputJson, JobControl& c
         pts = carried.seeds.points;
         box = carried.seeds.box;
       }
+      bool stroked = false;
       strokes_at(in->at("strokes"), compTime, compFps, [&](const Json& a) {
+        stroked = true;
         for (const sam::Point& p : points_of(a, kx, ky)) pts.push_back(p);
       });
       // A box with points: the points prompt, the box constrains (the decoder export takes points only).
@@ -1446,6 +1468,12 @@ std::string object_matte_video_child(const std::string& inputJson, JobControl& c
         status = first ? "empty" : "lost";
         break;
       }
+      // The tracking lanes: a prompted frame is a fix; the others how sure the walk is of them.
+      const bool fix = first || stroked;
+      const double confidence =
+          fix ? 1.0
+              : subject::track_confidence(dec.iouScores.data.size() > best ? static_cast<double>(dec.iouScores.data[best]) : 0.0, 1.0,
+                                          warped.empty() ? std::nullopt : std::optional<double>(subject::matte_iou(alpha, warped)));
       // Chatter: where this frame and the carried matte nearly agree, settle between them.
       if (!warped.empty() && rf.reduceChatter > 0) {
         const auto k = static_cast<float>(std::clamp(rf.reduceChatter, 0.0, 100.0) / 200.0);
@@ -1457,8 +1485,8 @@ std::string object_matte_video_child(const std::string& inputJson, JobControl& c
       first = false;
       stages.mask += ms_since(ts);
       // The tail (refine, cut-out, PNG, outline) runs on the finisher's thread while the next frame's model runs.
-      finisher.put([&rf, &folder, &stages, img = std::move(img), alpha = std::move(alpha), flow = std::move(flow), compTime, compFps, kx, ky] {
-        return store_matte_frame(img, alpha, flow ? &*flow : nullptr, rf, folder, compTime, compFps, kx, ky, stages);
+      finisher.put([&rf, &folder, &stages, img = std::move(img), alpha = std::move(alpha), flow = std::move(flow), compTime, compFps, kx, ky, confidence, fix] {
+        return store_matte_frame(img, alpha, flow ? &*flow : nullptr, rf, folder, compTime, compFps, kx, ky, stages, confidence, fix);
       });
       ++done;
       control.progress(0.03 + 0.95 * static_cast<double>(done) / static_cast<double>(std::max<std::size_t>(1, total)),
@@ -1483,6 +1511,8 @@ std::string object_matte_video_child(const std::string& inputJson, JobControl& c
 struct MatteFrame {
   double t = 0;
   std::string file;
+  std::optional<double> confidence;  // the walk's (store_matte_frame)
+  bool fix = false;
   api::BezierPath path;
 };
 
@@ -1497,9 +1527,9 @@ class ObjectMatteVideoResult final : public JobResult {
   };
 
   ObjectMatteVideoResult(std::string layer, std::vector<MatteFrame> frames, std::string status, bool storeMatte,
-                         std::vector<std::string> replace, Run run, std::string subject)
+                         std::vector<std::string> replace, Run run, std::string subject, bool keepOutside, bool fromStored)
       : layer_(std::move(layer)), frames_(std::move(frames)), status_(std::move(status)), storeMatte_(storeMatte), subject_(std::move(subject)),
-        replace_(std::move(replace)), run_(std::move(run)) {}
+        replace_(std::move(replace)), run_(std::move(run)), keepOutside_(keepOutside), fromStored_(fromStored) {}
 
   [[nodiscard]] std::string summary_json() const override {
     Json s = Json::object();
@@ -1517,17 +1547,31 @@ class ObjectMatteVideoResult final : public JobResult {
 
   void apply(JobApply& a) const override {
     if (frames_.empty()) return;
+    // A walk from the subject's stored matte whose subject was deleted (or its selection undone)
+    // while it ran: nothing to apply — the result must not bring the subject back.
+    if (fromStored_) {
+      const doc::Node* node = a.document().node(layer_);
+      if (node == nullptr) return;
+      const Json& am = node->fx().at("alphaMatte");
+      const bool still = am.is_object() && am.at("frames").is_array() &&
+                         std::ranges::any_of(am.at("frames").arr(), [&](const Json& f) { return doc::frame_subject(f) == subject_; });
+      if (!still) return;
+    }
     // The new outline replaces the subject's old one (the one-frame edit's "Object Matte" mask) too.
     std::vector<std::string> drop = replace_;
+    // keepOutside (a re-track between two fixes): the subject's outline stays and takes the new keys.
+    std::string keptOutline;
     if (const doc::Node* node = a.document().node(layer_); node != nullptr) {
       const Json mask = doc::get_node_mask(*node);
       if (mask.at("paths").is_array())
         for (const Json& p : mask.at("paths").arr())
           if (p.at("id").is_string() && p.at("name").is_string() && p.at("name").str() == doc::subject_outline_name(subject_) &&
               std::ranges::find(drop, p.at("id").str()) == drop.end()) {
-            drop.push_back(p.at("id").str());
+            if (keepOutside_ && keptOutline.empty()) keptOutline = p.at("id").str();
+            else drop.push_back(p.at("id").str());
           }
     }
+    if (!keptOutline.empty()) std::erase(drop, keptOutline);
     if (!drop.empty()) {
       api::RemovePropertyGroups rm;
       for (const std::string& id : drop) rm.groups.push_back(api::PropRef{layer_, "masks/" + id});
@@ -1538,10 +1582,13 @@ class ObjectMatteVideoResult final : public JobResult {
       m.layer = layer_;
       m.cut = false;  // the subject is a selection: a new Object Matte card starts off (Remove Background turns it on)
       m.subject = subject_;
+      m.merge = keepOutside_;  // a re-track: the frames outside its range stay
       for (const MatteFrame& f : frames_) {
         api::ContentAwareFillFrame fr;
         fr.time = flicks_of(f.t);
         fr.src = f.file;
+        fr.confidence = f.confidence;
+        if (f.fix) fr.fix = true;
         m.frames.push_back(std::move(fr));
       }
       (void)a.run(command(std::move(m)));
@@ -1553,13 +1600,16 @@ class ObjectMatteVideoResult final : public JobResult {
         break;
       }
     if (firstWithPath == nullptr) return;
-    api::AddMask m;
-    m.layer = layer_;
-    m.path = firstWithPath->path;
-    // The cut is the matte; the outline is for editing and Track mask (an Add mask would cut twice).
-    m.mode = storeMatte_ ? api::MaskMode::none : api::MaskMode::add;
-    m.name = doc::subject_outline_name(subject_);
-    const std::string group = mask_group_of(a.run(command(std::move(m))));
+    std::string group = keptOutline.empty() ? std::string() : "masks/" + keptOutline;
+    if (group.empty()) {
+      api::AddMask m;
+      m.layer = layer_;
+      m.path = firstWithPath->path;
+      // The cut is the matte; the outline is for editing and Track mask (an Add mask would cut twice).
+      m.mode = storeMatte_ ? api::MaskMode::none : api::MaskMode::add;
+      m.name = doc::subject_outline_name(subject_);
+      group = mask_group_of(a.run(command(std::move(m))));
+    }
     api::AddKeyframes keys;
     for (const MatteFrame& f : frames_) {
       if (f.path.vertices.size() < 6) continue;
@@ -1582,6 +1632,8 @@ class ObjectMatteVideoResult final : public JobResult {
   std::string subject_;
   std::vector<std::string> replace_;
   Run run_;
+  bool keepOutside_ = false;  // ObjectMatteJob keepOutside: a re-track of part of the subject
+  bool fromStored_ = false;   // the walk started from the subject's stored matte (it existed then)
   mutable std::string mask_;
 };
 
@@ -1818,7 +1870,8 @@ PreparedJob prepare_object_matte(const api::ObjectMatteJob& spec, const JobDocCo
     PreparedJob job;
     job.kind = "objectMatte";
     job.work = [layer = fl.layer, inputJson = js::stringify(input), store = spec.matte.value_or(true),
-                replace = spec.replace_masks, subject](JobControl& control) -> std::unique_ptr<JobResult> {
+                replace = spec.replace_masks, subject, keepOutside = spec.keep_outside.value_or(false),
+                fromStored = !originMatte.empty()](JobControl& control) -> std::unique_ptr<JobResult> {
       // The walk runs in the same model process as the hover (the pair stays loaded); a cancel kills it at once.
       WorkerCall walkCall;
       walkCall.killOnCancel = true;
@@ -1834,6 +1887,8 @@ PreparedJob prepare_object_matte(const api::ObjectMatteJob& spec, const JobDocCo
         MatteFrame f;
         f.t = fr.at("t").num();
         f.file = fr.at("file").str();
+        if (fr.at("confidence").is_number()) f.confidence = fr.at("confidence").num();
+        f.fix = fr.at("fix").is_bool() && fr.at("fix").b();
         f.path.closed = true;
         const Json::Array& c = fr.at("contour").arr();
         for (std::size_t i = 0; i + 1 < c.size(); i += 2) {
@@ -1853,7 +1908,7 @@ PreparedJob prepare_object_matte(const api::ObjectMatteJob& spec, const JobDocCo
       run.provider = r->at("provider").is_string() ? r->at("provider").str() : "";
       run.msPerFrame = num_or(*r, "msPerFrame", 0);
       if (r->at("stageMs").is_object()) run.stageMs = r->at("stageMs");
-      return std::make_unique<ObjectMatteVideoResult>(layer, std::move(frames), status, store, replace, std::move(run), subject);
+      return std::make_unique<ObjectMatteVideoResult>(layer, std::move(frames), status, store, replace, std::move(run), subject, keepOutside, fromStored);
     };
     return job;
   }

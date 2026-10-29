@@ -112,6 +112,9 @@ struct OnionSkin {
   colorize: bool = 5;
 }
 
+/// A subject view (setViewport subjectView): layer's subject subject (absent = all its shown subjects) as mode — 'overlay' (the subject tinted color, default its own colour or magenta), 'black' / 'white' (the subject over black / white), 'alpha' (the subject's matte, white on black) or 'boundary' (the matte's edge drawn in color). Any other mode: invalidArgument. A layer without that subject draws as it is.
+struct SubjectView { layer: LayerId = 1; subject?: string = 2; mode: string = 3; color?: string = 4; }
+
 /// A viewport's render parameters: pixel size, zoom/pan, region of interest, channel, exposure.
 command setViewport = 808 [control, coalesce] {
   viewport: u32 = 1;
@@ -152,6 +155,8 @@ command setViewport = 808 [control, coalesce] {
   layerAlphaOverlayColor?: string = 22;
   /// With `layerAlphaView` 'overlay': the tint's opacity, 0–100 %. Absent = 50.
   layerAlphaOverlayOpacity?: f64 = 23;
+  /// Subjects Pro view modes: how one layer's subject is shown in this viewport (a composition or a layer view). A viewer aid: never in an export, a thumbnail or the cache.
+  subjectView?: SubjectView = 24;
 }
 command closeViewport = 809 [control] { viewport: u32 = 1; }
 command setCacheBudget = 810 [control] {

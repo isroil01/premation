@@ -426,3 +426,335 @@
   border: 0;
   background: var(--color-primary);
 }
+/* ── View modes and tracking lanes (SubjectTracking.tsx) ───────────────────── */
+
+.checkInline {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--color-text-tertiary);
+  font-size: var(--panel-font-size-help);
+}
+
+.viewModes {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-1);
+}
+
+.viewMode {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+  padding: var(--space-1) 2px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--panel-font-size-help);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.viewMode:hover {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+}
+
+.viewMode:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: -2px;
+}
+
+.viewModeOn,
+.viewModeOn:hover {
+  background: var(--color-primary-subtle);
+  color: var(--color-text-primary);
+}
+
+/* A small picture of each mode: a figure on its ground. */
+.viewGlyph {
+  position: relative;
+  width: 18px;
+  height: 12px;
+  border-radius: 2px;
+  background: var(--color-surface-3);
+}
+
+.viewGlyph::after {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 2px;
+  width: 6px;
+  height: 8px;
+  border-radius: 3px 3px 1px 1px;
+  background: var(--color-text-secondary);
+}
+
+.viewGlyph[data-mode='overlay']::after { background: var(--color-primary); }
+.viewGlyph[data-mode='black'] { background: var(--color-black-a64); }
+.viewGlyph[data-mode='white'] { background: var(--color-neutral-100); }
+.viewGlyph[data-mode='alpha'] { background: var(--color-black-a64); }
+.viewGlyph[data-mode='alpha']::after { background: var(--color-neutral-100); }
+.viewGlyph[data-mode='boundary']::after {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--color-primary);
+}
+
+.lanes {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.laneRow,
+.laneRowActive {
+  display: grid;
+  grid-template-columns: minmax(56px, 30%) 1fr;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.laneName {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.laneRowActive .laneName {
+  color: var(--color-text-primary);
+}
+
+.lane {
+  position: relative;
+  height: 14px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-1);
+  box-shadow: inset 0 0 0 1px var(--color-border);
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.laneRowActive .lane {
+  box-shadow: inset 0 0 0 1px var(--subject-color);
+}
+
+.lane:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+
+.laneCovered,
+.laneLow {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  border-radius: 1px;
+}
+
+.laneCovered {
+  background: var(--subject-color);
+  opacity: 0.45;
+}
+
+.laneLow {
+  top: 1px;
+  bottom: 1px;
+  background: var(--color-warning);
+}
+
+/* A subject selected on a frame or two (held on the others): a tick per frame. */
+.laneHeld {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--subject-color);
+}
+
+.laneFix {
+  position: absolute;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  margin: -3.5px 0 0 -3.5px;
+  transform: rotate(45deg);
+  background: var(--color-text-primary);
+  box-shadow: 0 0 0 1px var(--color-surface-1);
+}
+
+.lanePlayhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--color-timeline-playhead);
+  pointer-events: none;
+}
+
+.reviewHead {
+  display: flex;
+  align-items: center;
+}
+
+.reviewList {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 132px;
+  overflow-y: auto;
+}
+
+.reviewRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 3px var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.reviewRow:hover {
+  background: var(--color-hover);
+}
+
+.reviewRow:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: -2px;
+}
+
+.reviewSwatch {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--color-warning);
+}
+
+.reviewTime {
+  flex: 1;
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+/* ── A style's time span (SubjectStyleSpan.tsx) ───────────────────────────── */
+
+.styleItem {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.spanBox {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: 0 var(--space-1) var(--space-1) calc(var(--space-1) + 18px);
+}
+
+.spanModes {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.spanMode {
+  padding: 1px var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font: inherit;
+  font-size: var(--panel-font-size-help);
+  cursor: pointer;
+}
+
+.spanMode:hover {
+  color: var(--color-text-primary);
+  background: var(--color-hover);
+}
+
+.spanMode:focus-visible,
+.spanTime:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+
+.spanModeOn,
+.spanModeOn:hover {
+  border-color: var(--color-primary);
+  background: var(--color-primary-subtle);
+  color: var(--color-text-primary);
+}
+
+.spanFields {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 2px var(--space-1);
+}
+
+.spanLabel {
+  color: var(--color-text-tertiary);
+  font-size: var(--panel-font-size-help);
+}
+
+.spanTime {
+  justify-self: start;
+  padding: 0 var(--space-1);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-primary-text);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.spanTime:hover {
+  background: var(--color-hover);
+}
+
+.spanFade {
+  grid-column: 2 / span 2;
+  max-width: 96px;
+}
+
+.heldNote {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+  font-size: var(--panel-font-size-help);
+  line-height: 1.45;
+}

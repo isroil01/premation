@@ -1335,8 +1335,61 @@ void apply_source_text(RLayer& l, const motion::expr::SourceTextResult& result) 
   l.text = after;
 }
 
-void Walk::build_node(const doc::Node& n) {
-  const std::string kind = n.kind();
+namespace {
+
+/// Subjects Pro view modes (setViewport subjectView): viewer-only effects after the layer's own
+/// that show one subject (or all of them) through the subject matte the effects already read
+/// (Apply To = subjectScope, compositing/subjectId) — so the live edge shows exactly as it renders.
+void add_subject_view_effects(RLayer& l, const api::SubjectView& sv, const Json& entries) {
+  const std::string sid = sv.subject.value_or(std::string());
+  std::string colour = sv.color.value_or(std::string());
+  if (colour.empty() && !sid.empty()) {
+    const Json& e = doc::subject_entry(entries, sid);
+    if (e.at("color").is_string() && e.at("color").str().size() == 7) colour = e.at("color").str();
+  }
+  if (colour.empty()) colour = "#ff3fd4";
+  const auto add = [&](std::string_view type, std::string_view scope, Json params) {
+    Json fx = Json::object();
+    fx.set("id", Json::string("subject-view:" + std::string(type) + ":" + std::string(scope)));
+    fx.set("type", Json::string(std::string(type)));
+    fx.set("enabled", Json::boolean(true));
+    fx.set("params", std::move(params));
+    if (!scope.empty()) fx.set("subjectScope", Json::string(std::string(scope)));
+    if (!sid.empty()) fx.set("subjectId", Json::string(sid));
+    l.effects.push_back(std::move(fx));
+  };
+  const auto fill = [](std::string_view hex, double opacity) {
+    Json p = Json::object();
+    p.set("color", Json::string(std::string(hex)));
+    p.set("opacity", Json::number(opacity));
+    return p;
+  };
+  if (sv.mode == "overlay") {
+    add("fill", "subject", fill(colour, 45));
+  } else if (sv.mode == "black") {
+    add("fill", "background", fill("#000000", 100));
+  } else if (sv.mode == "white") {
+    add("fill", "background", fill("#ffffff", 100));
+  } else if (sv.mode == "alpha") {
+    add("fill", "subject", fill("#ffffff", 100));
+    add("fill", "background", fill("#000000", 100));
+  } else if (sv.mode == "boundary") {
+    Json p = Json::object();
+    p.set("width", Json::number(std::max(2.0, std::max(l.width, l.height) / 640.0)));
+    p.set("softness", Json::number(0));
+    p.set("position", Json::number(1));  // centred on the edge
+    p.set("color", Json::string(colour));
+    p.set("opacity", Json::number(100));
+    p.set("composite", Json::number(0));
+    p.set("glowAmount", Json::number(0));
+    p.set("glowRadius", Json::number(0));
+    add("matte-stroke", "", std::move(p));
+  }
+}
+
+}  // namespace
+
+void Walk::build_node(const doc::Node& n) {  const std::string kind = n.kind();
   if (kind == "comp") {
     // A SEALED instance renders the referenced comp through its own recursive
     // pass; a COLLAPSED one was expanded into this walk and draws nothing itself.
@@ -1461,7 +1514,7 @@ void Walk::build_node(const doc::Node& n) {
   const double baseOpacity = (a.has("opacity") ? *a.get("opacity") / 100 : base.opacity) *
                              (clone != nullptr ? clone->opacity / 100 : 1) * (ghost ? kGhostOpacity : 1);
   l.effects = effects_of(n, a, layerTimeNow, &l);
-
+  if (c_.subjectView && c_.subjectView->layer == n.id) add_subject_view_effects(l, *c_.subjectView, n.fx().at("subjects"));
   const bool isSolid = fx.at("solid").is_bool() && fx.at("solid").b();
   const doc::Component* geom = n.comp("Geometry");
   const Json staticPath = geom != nullptr ? geom->props.at("points") : Json();

@@ -112,6 +112,16 @@ void solidify(std::vector<float>& alpha);
 /// inside) and grown by `growPx` — taking a thing away must not leave its outline behind.
 void harden_for_subtract(std::vector<float>& delta, int width, int height, int growPx);
 
+/// The IoU of two mattes of the same size, each read at 0.5 (1 when both are empty).
+double matte_iou(std::span<const float> a, std::span<const float> b);
+
+/// How sure a walk is of one frame's matte, 0–1 (the Subjects panel's tracking lanes flag a
+/// frame under 0.5 for review): the model's own predicted mask quality (iou), whether it
+/// thinks the object is there at all (presence, 0–1; 1 for a model without the score) and
+/// how well the matte agrees with the previous frame's carried along by the flow
+/// (`agreement`, their IoU; absent on a walk's first frame). The weakest of the three, each
+/// mapped so a healthy frame reads 1 — one bad signal is enough to flag it.
+double track_confidence(double iou, double presence, std::optional<double> agreement);
 /// `base` edited by `delta`: replace = delta; add = max; subtract = base × (1 − delta).
 [[nodiscard]] std::vector<float> combine(std::span<const float> base, std::span<const float> delta, Op op);
 

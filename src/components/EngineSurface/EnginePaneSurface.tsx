@@ -23,6 +23,7 @@ import { copyRouteDpr } from './EngineSurface';
 import { BOARD_FLOATS, createFrameBlitter } from './frameBlit';
 import { allocatePaneViewport, releasePaneViewport, subscribeEngineFrames } from './engineFrameHub';
 import { compUvRect, fitUvRect } from './pasteboard';
+import { sameSubjectView, subjectViewNow, subscribeSubjectView, type SubjectViewRequest } from '@stores/subjectStore';
 
 /** A colour painted around the composition (the engine clears it to opaque black): 0..1 rgb and the comp's size. */
 export interface PaneSurround {
@@ -77,6 +78,8 @@ interface Desired extends PaneDrawnView {
   panX: number;
   panY: number;
   layer: PaneLayerView | null;
+  /** Subjects Pro view modes (subjectStore): the selected layer's subject as overlay / black / white / alpha / boundary. */
+  subjectView: SubjectViewRequest | null;
 }
 
 interface Pending {
@@ -104,7 +107,8 @@ function sameLayerView(a: PaneLayerView | null, b: PaneLayerView | null): boolea
 
 function sameDesired(a: Desired, b: Desired): boolean {
   return a.width === b.width && a.height === b.height && a.dpr === b.dpr && a.zoom === b.zoom && a.panX === b.panX
-    && a.panY === b.panY && a.view === b.view && sameCustomView(a.customView, b.customView) && sameLayerView(a.layer, b.layer);
+    && a.panY === b.panY && a.view === b.view && sameCustomView(a.customView, b.customView) && sameLayerView(a.layer, b.layer)
+    && sameSubjectView(a.subjectView, b.subjectView);
 }
 
 export function EnginePaneSurface({ mode, getView, framingRev, layer, surround, onDrawnView, className, style }: {
@@ -235,6 +239,7 @@ export function EnginePaneSurface({ mode, getView, framingRev, layer, surround, 
         view: isCustomViewId(m) ? 'custom' : m,
         customView: isCustomViewId(m) ? g.customViews[m] : null,
         layer: layerRef.current ?? null,
+        subjectView: subjectViewNow(),
       };
     };
     const send = (): void => {
@@ -279,6 +284,7 @@ export function EnginePaneSurface({ mode, getView, framingRev, layer, surround, 
             ...(d.customView.poi !== null ? { poi: d.customView.poi } : {}),
           },
         } : {}),
+        ...(d.subjectView ? { subjectView: d.subjectView } : {}),
       }).then((res) => {
         if (res.ok) applied = d;  // frames from here on are drawn with this viewport
       }).finally(() => {
@@ -307,6 +313,7 @@ export function EnginePaneSurface({ mode, getView, framingRev, layer, surround, 
     const unGuides = useGuidesStore.subscribe((s, prev) => {
       if (s.customViews !== prev.customViews) request();
     });
+    const unSubjectView = subscribeSubjectView(request);
 
     let unFrames: (() => void) | null = null;
     void allocatePaneViewport().then((id) => {
@@ -349,6 +356,7 @@ export function EnginePaneSurface({ mode, getView, framingRev, layer, surround, 
       refreshRef.current = () => {};
       unsub();
       unGuides();
+      unSubjectView();
       ro.disconnect();
       if (raf) cancelAnimationFrame(raf);
       if (sizeRaf) cancelAnimationFrame(sizeRaf);

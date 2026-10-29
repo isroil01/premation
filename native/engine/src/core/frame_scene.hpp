@@ -285,6 +285,8 @@ struct ViewportConfig {
   /// setViewport `onion`. Absent = off. Playback ignores it (ghosts are for a
   /// still playhead). Not a ring change.
   std::optional<api::OnionSkin> onion;
+  /// setViewport `subjectView`: one layer's subject shown as overlay / black / white / alpha / boundary (BuildContext::subjectView).
+  std::optional<api::SubjectView> subjectView;
   /// setPreviewQuality `draft3d` (AE's Draft 3D): lights, shadows, depth of field
   /// and camera motion off in this viewport's frames (SnapshotComp.draft3d).
   bool draft3d = false;

@@ -197,6 +197,7 @@ export const QUERIES: Readonly<Record<QueryType, QueryInfo>> = {
   getPerformanceTakes: { id: 1952, family: "PropertyGroups", result: "PerformanceTakes", doc: "The layer's stored takes, sample times and spans in composition time." },
   getLayerTrackers: { id: 1090, family: "Jobs", result: "LayerTrackers", doc: "The layer's saved trackers, sample times in composition time." },
   getCameraSolve: { id: 1091, family: "Jobs", result: "CameraSolveAnswer", doc: "" },
+  getSubjectTracks: { id: 1954, family: "Jobs", result: "SubjectTracks", doc: "The layer's subjects (core/subjects.hpp, panel order) with their stored matte frames in time order: what the Subjects panel's tracking lanes and Frames to Review draw. A layer with no subjects answers an empty list." },
   listPluginCommands: { id: 1092, family: "Plugins", result: "PluginCommandList", doc: "P7a — every native plugin command, in load order (a disabled plugin's are listed with enabled = false; the editor hides them)." },
   getDocument: { id: 1000, family: "Model", result: "DocumentSnapshot", doc: "" },
   exportDocument: { id: 1088, family: "Model", result: "ExportedDocument", doc: "F2 — the whole project document at the answer's revision, exactly as saveProject writes it (cloud upload, versions, templates and export read it here instead of capturing a copy in the page). Byte order of keys is the engine's; parse it, do not compare bytes across engines." },
@@ -293,4 +294,4 @@ export const EVENTS: Readonly<Record<EventType, EventInfo>> = {
 };
 
 /** Size of the schema, for docs and tests. */
-export const SCHEMA_COUNTS = {"enums":95,"structs":559,"unions":11,"commands":176,"queries":59,"events":34} as const;
+export const SCHEMA_COUNTS = {"enums":95,"structs":564,"unions":11,"commands":176,"queries":60,"events":34} as const;

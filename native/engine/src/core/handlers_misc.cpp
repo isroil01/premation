@@ -755,6 +755,9 @@ ResultOf<api::SetLayerMatte> handle(const api::SetLayerMatte& c, HCtx& x) {
     fr.set("t", Json::number(comp_to_keyframe_time(d, x.view, c.layer, flicks_to_seconds(f.time))));
     fr.set("src", Json::string(f.src));
     if (sid != kFirstSubject) fr.set("s", Json::string(sid));
+    // Tracking lanes (getSubjectTracks): how sure the tracker was, and whether the user fixed this frame.
+    if (f.confidence && std::isfinite(*f.confidence)) fr.set("c", Json::number(std::clamp(*f.confidence, 0.0, 1.0)));
+    if (f.fix.value_or(false)) fr.set("k", Json::boolean(true));
     frames.arr_mut().push_back(std::move(fr));
   }
   if (old.is_object() && old.at("frames").is_array()) {

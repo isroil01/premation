@@ -17,16 +17,17 @@ import { propagateObjectMatte, rotoFreezeEdit, rotoMattes, ROTO_PATH_NAME } from
 import { activeCompSettingsNow } from '@hooks/useMirrorFrame';
 import { documentMirror } from '@stores/documentMirror';
 import { useRotoBrushStore } from '@stores/rotoBrushStore';
-import { activeSubjectId } from '@stores/subjectStore';
+import { activeSubjectId, useSubjectStore } from '@stores/subjectStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
 import type { ContextMenuItem } from '@stores/contextMenuStore';
 import { t } from '@core/i18n';
 import { objectMatteCard } from '@core/workspace/objectMatteEffect';
-import { layerSubjects } from '@core/workspace/subjects';
+import { layerSubjects, subjectLocked } from '@core/workspace/subjects';
 import { newLayerFromSubject } from './newLayerFromSubjectCommand';
 import { runCreateSubjectTrack } from './placeBehindSubjectCommand';
 import { matteOutlineKeys } from './subjectTrack';
+import { fetchSubjectTracks, isTracked, retrackRange } from '@core/workspace/subjectTracks';
 
 export type SubjectActionId =
   | 'select' | 'follow' | 'newLayer' | 'textBehind' | 'outline' | 'colorSubject' | 'colorBackground'
@@ -110,20 +111,81 @@ const notify = (message: string, level: 'info' | 'success' | 'warning' = 'succes
 };
 
 /** Follow a subject (default the active one) through the work area, both ways, as a Tasks-panel job. */
-export async function followSubject(layer: string, subject: string = activeSubjectId(layer)): Promise<void> {
+export async function followSubject(layer: string, subject: string = activeSubjectId(layer), origin: number = playheadSeconds()): Promise<void> {
   const settings = activeCompSettingsNow();
-  const fps = settingsFps(settings);
   const wa = settingsSetWorkArea(settings);
-  const start = wa ? wa.start : 0;
-  const end = wa ? wa.end : settingsDurationSeconds(settings);
+  await walkSubject(layer, subject, { start: wa ? wa.start : 0, end: wa ? wa.end : settingsDurationSeconds(settings) }, false,
+    t('workspace.subjects.following', 'Following the subject'), origin);
+}
+
+/** Footage that moves: a video item (a still's subject is rightly held on every frame). */
+export function layerMoves(nodeId: string): boolean {
+  const m = documentMirror();
+  const src = m.layer(nodeId)?.source;
+  return !!src && m.item(src)?.mediaType === 'video';
+}
+
+/**
+ * A style is going onto a subject of moving footage: if the subject is still
+ * HELD (selected on a frame or two, the same matte on every frame), it is
+ * tracked first — else the style would sit where the subject was while the
+ * subject moves on. Nothing for stills, a tracked or locked subject, a walk
+ * already running, or with automatic tracking off.
+ */
+export async function ensureSubjectTracked(layer: string, subject: string): Promise<void> {
+  if (!useSubjectStore.getState().autoTrack || !layerMoves(layer) || subjectLocked(layer, subject) || subjectWalkRunning(layer, subject)) return;
+  const frames = (await fetchSubjectTracks(layer)).find((s) => s.subject === subject)?.frames ?? [];
+  if (frames.length === 0 || isTracked(frames, settingsFps(activeCompSettingsNow()))) return;
+  const fix = frames.find((f) => f.fix) ?? frames[0]!;
+  await followSubject(layer, subject, fix.time);
+}
+
+/** The walks running now, by `layer:subject` → cancel. A new walk of the same subject cancels the old one. */
+const runningWalks = new Map<string, () => void>();
+
+/** Whether a walk of the subject is running. */
+export function subjectWalkRunning(layer: string, subject: string): boolean {
+  return runningWalks.has(`${layer}:${subject}`);
+}
+
+/** Cancel the subject's running walk, if any (its result is then not applied). */
+export function cancelSubjectWalk(layer: string, subject: string): void {
+  runningWalks.get(`${layer}:${subject}`)?.();
+}
+
+/**
+ * Re-track a tracked subject between the fixes either side of `time` (the
+ * Subjects panel's tracking lane, after a fix): only those frames are walked
+ * again, from the matte at `time`; every other frame and fix stays.
+ */
+export async function retrackSubject(layer: string, subject: string, time: number): Promise<void> {
+  const fps = settingsFps(activeCompSettingsNow());
+  const range = retrackRange((await fetchSubjectTracks(layer)).find((s) => s.subject === subject)?.frames ?? [], time, fps);
+  if (!range) {
+    notify(t('workspace.subjects.retrackNothing', 'Nothing to re-track here: move the playhead onto the subject\'s tracked frames.'), 'warning');
+    return;
+  }
+  await walkSubject(layer, subject, range, true, t('workspace.subjects.retracking', 'Re-tracking the subject'), time);
+}
+
+/** The walk both of them run, as a Tasks-panel job (the work runs in the engine's model process). */
+async function walkSubject(layer: string, subject: string, range: { start: number; end: number }, keepOutside: boolean, label: string,
+  origin: number = playheadSeconds()): Promise<void> {
+  const fps = settingsFps(activeCompSettingsNow());
+  const { start, end } = range;
   const store = useRotoBrushStore.getState();
-  const jobId = `follow-${layer}`;
+  const key = `${layer}:${subject}`;
+  // One walk per subject: a newer one (a second fix while the first re-track runs) replaces it.
+  runningWalks.get(key)?.();
+  const jobId = `follow-${layer}-${subject}`;
   let cancelled = false;
-  useUIStore.getState().startJob({ id: jobId, kind: 'analysis', label: t('workspace.subjects.following', 'Following the subject'), progress: 0, cancel: () => { cancelled = true; } });
+  const cancel = (): void => { cancelled = true; };
+  runningWalks.set(key, cancel);
+  useUIStore.getState().startJob({ id: jobId, kind: 'analysis', label, progress: 0, cancel });
   store.setBusy(true, 0);
   try {
     const r = await propagateObjectMatte(layer, store.strokes, {
-      origin: playheadSeconds(), start, end, fps, direction: 'both', featherPx: store.featherPx, refine: store.refine, box: store.box, subject,
+      origin, start, end, fps, direction: 'both', featherPx: store.featherPx, refine: store.refine, box: store.box, subject, keepOutside,
     }, (f) => {
       useUIStore.getState().updateJob(jobId, { progress: f });
       useRotoBrushStore.getState().setBusy(true, f);
@@ -137,6 +199,7 @@ export async function followSubject(layer: string, subject: string = activeSubje
     useUIStore.getState().finishJob(jobId, { status: 'failed', message });
     notify(message, 'warning');
   } finally {
+    if (runningWalks.get(key) === cancel) runningWalks.delete(key);
     useRotoBrushStore.getState().setBusy(false);
   }
 }
@@ -155,7 +218,10 @@ async function addEffect(layer: string, label: string, effect: string, params: P
     commands.push({ type: 'setProperty', prop: { layer, path: `effects/${id}/compositing/subjectId` }, value: values.string(activeSubjectId(layer)) });
   }
   const res = await edit(label, commands);
-  if (res.ok) useSelectionStore.getState().set([layer]);
+  if (res.ok) {
+    useSelectionStore.getState().set([layer]);
+    void ensureSubjectTracked(layer, activeSubjectId(layer));
+  }
   return res.ok;
 }
 

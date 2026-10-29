@@ -533,4 +533,25 @@ std::vector<float> resample(std::span<const float> plane, int fromW, int fromH, 
   return out;
 }
 
+double matte_iou(std::span<const float> a, std::span<const float> b) {
+  std::size_t both = 0;
+  std::size_t either = 0;
+  const std::size_t n = std::min(a.size(), b.size());
+  for (std::size_t i = 0; i < n; ++i) {
+    const bool x = a[i] >= 0.5f;
+    const bool y = b[i] >= 0.5f;
+    both += x && y ? 1 : 0;
+    either += x || y ? 1 : 0;
+  }
+  return either == 0 ? 1.0 : static_cast<double>(both) / static_cast<double>(either);
+}
+
+double track_confidence(double iou, double presence, std::optional<double> agreement) {
+  // A held subject's SAM masks predict IoU well above 0.8 and move little against the flow-carried
+  // previous frame; a jump onto the background or a lost limb drops one of them, so each ramps to 0 well before 0.4.
+  const auto ramp = [](double v, double lo, double hi) { return std::clamp((v - lo) / (hi - lo), 0.0, 1.0); };
+  double c = std::min(ramp(iou, 0.45, 0.8), ramp(presence, 0.2, 0.7));
+  if (agreement) c = std::min(c, ramp(*agreement, 0.4, 0.75));
+  return c;
+}
 }  // namespace premation::jobs::subject

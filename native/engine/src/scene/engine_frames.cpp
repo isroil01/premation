@@ -462,6 +462,7 @@ class EngineFrameBuilder final : public FrameBuilder, public TextQueries, public
       ctx.hiddenLayers = viewport.hiddenLayers;  // setViewportHiddenLayers: the text under the in-place editor
       ctx.focusLayers = viewport.focusLayers;    // setViewportFocus: layers outside the set are dim references
       ctx.useProxies = viewport.useProxies;      // setUseProxies: footage from its enabled proxy (viewport frames only)
+      ctx.subjectView = viewport.subjectView;    // setViewport subjectView: the Subjects view modes (viewer only)
       SnapshotComp sc = with_viewport_view(snapshot_comp_of(d, comp), viewport);
       if (!viewport.layer.empty()) {
         // The Layer panel: the layer alone at its source size, over transparency,

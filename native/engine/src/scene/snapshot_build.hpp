@@ -153,6 +153,9 @@ struct BuildContext {
   /// Focus Mode (setViewportFocus): non-empty = a layer outside this set is a
   /// dim reference (12 % of its opacity) in the viewport being built.
   std::vector<std::string> focusLayers{};
+  /// setViewport `subjectView` (Subjects Pro view modes): viewer-only effects on that layer that show its
+  /// subject — tinted, over black or white, as its matte, or by its edge. Never set for an export or a thumbnail.
+  std::optional<api::SubjectView> subjectView{};
   /// The project folder relative media paths resolve against (the texture
   /// feed's mediaBase); empty = none (a relative path is reported).
   std::filesystem::path mediaBase{};

@@ -1266,6 +1266,20 @@ struct ControlVisitor {
       v.clipToComp = c.clip_to_comp.value_or(true);  // U1: the Extended Viewer draws outside the frame
       v.groundGrid = c.ground_grid.value_or(false);  // E8: the engine-drawn ground grid
     }
+    if (c.subject_view && !c.subject_view->layer.empty()) {
+      const api::SubjectView& sv = *c.subject_view;
+      if (s.doc_.node(sv.layer) == nullptr) fail(ErrorCode::not_found, "no layer " + sv.layer, {.layer = sv.layer});
+      if (sv.mode != "overlay" && sv.mode != "black" && sv.mode != "white" && sv.mode != "alpha" && sv.mode != "boundary") {
+        fail(ErrorCode::invalid_argument, "subjectView mode '" + sv.mode + "' is not overlay, black, white, alpha or boundary", {.layer = sv.layer});
+      }
+      if (sv.color) {
+        const std::string& col = *sv.color;
+        const bool hex = col.size() == 7 && col[0] == '#' &&
+                         std::all_of(col.begin() + 1, col.end(), [](char ch) { return std::isxdigit(static_cast<unsigned char>(ch)) != 0; });
+        if (!hex) fail(ErrorCode::invalid_argument, "subjectView colour '" + col + "' is not #rrggbb", {.layer = sv.layer});
+      }
+      v.subjectView = sv;
+    }
     if (c.time && *c.time >= 0) v.time = *c.time;
     if (c.layer_source_time && v.time) v.layerSourceTime = *c.layer_source_time;
     if (c.onion && v.layer.empty()) {

@@ -34,6 +34,7 @@
 #include "scene.hpp"
 #include "scene/session_hooks.hpp"
 #include "strutil.hpp"
+#include "subjects.hpp"
 #include "time_conv.hpp"
 #include "variant_util.hpp"
 #include "worldxf.hpp"
@@ -1189,8 +1190,28 @@ struct Q {
   api::QueryResult operator()(const api::GetLayerTrackers& q) const {
     return query_result_for<api::GetLayerTrackers>(layer_trackers(d, pc.view, q.layer));
   }
-  api::QueryResult operator()(const api::GetPerformanceTakes& q) const {
-    return query_result_for<api::GetPerformanceTakes>(performance_takes(d, pc.view, q.layer));
+  api::QueryResult operator()(const api::GetSubjectTracks& q) const {
+    // Tracking lanes: each subject's stored matte frames (core/subjects.hpp), comp time, in time order.
+    const Node& n = require_layer(d, q.layer);
+    const Json& am = n.fx().at("alphaMatte");
+    api::SubjectTracks out;
+    for (const std::string& sid : subject_ids(am, n.fx().at("subjects"))) {
+      api::SubjectTrack track;
+      track.subject = sid;
+      for (const Json& f : am.at("frames").arr()) {
+        if (!f.at("t").is_number() || frame_subject(f) != sid) continue;
+        api::SubjectTrackFrame fr;
+        fr.time = seconds_to_flicks(keyframe_to_comp_time(d, pc.view, q.layer, f.at("t").num()));
+        if (f.at("c").is_number() && std::isfinite(f.at("c").num())) fr.confidence = f.at("c").num();
+        fr.fix = f.at("k").is_bool() && f.at("k").b();
+        track.frames.push_back(fr);
+      }
+      std::ranges::sort(track.frames, {}, &api::SubjectTrackFrame::time);
+      out.subjects.push_back(std::move(track));
+    }
+    return query_result_for<api::GetSubjectTracks>(std::move(out));
+  }
+  api::QueryResult operator()(const api::GetPerformanceTakes& q) const {    return query_result_for<api::GetPerformanceTakes>(performance_takes(d, pc.view, q.layer));
   }
   api::QueryResult operator()(const api::GetSourceSize& q) const {
     return query_result_for<api::GetSourceSize>(api::SourceSizes{source_sizes(d, q.layers)});

@@ -57,6 +57,7 @@ import { extendedViewerActive } from '@core/workspace/extendedViewer';
 import { compUvRect, parseCssRgb } from './pasteboard';
 import { BOARD_FLOATS, createFrameBlitter } from './frameBlit';
 import { subscribeEngineFrames } from './engineFrameHub';
+import { sameSubjectView, subjectViewNow, subscribeSubjectView, type SubjectViewRequest } from '@stores/subjectStore';
 import { t } from '@core/i18n';
 import styles from './EngineSurface.module.css';
 
@@ -141,6 +142,8 @@ export interface EngineSurfaceStats {
     clipToComp: boolean;
     /** E8: the engine draws the 3D ground grid into this viewport's frames (View ▸ 3D Ground Plane, or Draft 3D). */
     groundGrid: boolean;
+    /** Subjects Pro view modes: the selected layer's subject as overlay / black / white / alpha / boundary (subjectStore). */
+    subjectView: SubjectViewRequest | null;
   } | null;
   errors: string[];
   /**
@@ -535,6 +538,7 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
         clipToComp: !extendedViewerActive(g.camera3dMode, g.draft3d, g.extendedViewer),
         // E8: the engine's ground grid, under the same rule as the overlay's (useSceneRefGeometry).
         groundGrid: g.groundGridVisible || g.draft3d,
+        subjectView: subjectViewNow(),
       };
     };
     const sameOnion = (a: NonNullable<EngineSurfaceStats['lastViewport']>['onion'], b: NonNullable<EngineSurfaceStats['lastViewport']>['onion']): boolean =>
@@ -553,7 +557,7 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
         && last.zoom === d.zoom && last.panX === d.panX && last.panY === d.panY
         && last.view === d.view && sameCustomView(last.customView, d.customView) && sameOnion(last.onion, d.onion)
         && last.exposure === d.exposure && last.transparencyGrid === d.transparencyGrid && last.roi === d.roi
-        && last.clipToComp === d.clipToComp && last.groundGrid === d.groundGrid) return;
+        && last.clipToComp === d.clipToComp && last.groundGrid === d.groundGrid && sameSubjectView(last.subjectView, d.subjectView)) return;
       if (inFlight) {
         again = true;
         return;
@@ -591,6 +595,7 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
           },
         } : {}),
         ...(d.onion ? { onion: d.onion } : {}),
+        ...(d.subjectView ? { subjectView: d.subjectView } : {}),
       }).then((res) => {
         if (!res.ok) fail(`setViewport: ${res.error.code} ${res.error.message}`);
         else applied = d;  // frames from here on are drawn with this camera (the pasteboard rect)
@@ -649,6 +654,7 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
       if (s.exposure !== prev.exposure || s.transparencyGrid !== prev.transparencyGrid) sendViewport();
     });
     const unOnion = useOnionSkinStore.subscribe(() => sendViewport());
+    const unSubjectView = subscribeSubjectView(() => sendViewport());
     // Difference turned on over a still viewport: it needs a live frame, so the engine delivers this one again.
     let hadLive = needsLiveFrame();
     const unCompare = useCompareStore.subscribe(() => {
@@ -740,6 +746,7 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
       unGuides();
       unDisplay();
       unOnion();
+      unSubjectView();
       unCompare();
       unQuality();
       unLut();

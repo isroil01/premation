@@ -8,6 +8,9 @@
  *   edge    the active subject's live edge — Feather, Choke, Contrast,
  *           Temporal Smooth, Invert — applied when the matte is read, every
  *           frame, nothing re-run (layer/subjects)
+ *   view    Overlay / Black / White / Alpha / Boundary in the viewers
+ *   track   a lane per subject, Frames to Review, Re-track between fixes
+ *           (SubjectTracking.tsx)
  *   use as  Follow, New Layer, Text Behind, Remove Background, Track with Null
  *   styles  the effects that read that subject alone, and the preset shelf
  *
@@ -37,10 +40,15 @@ import {
   type Subject,
   type SubjectEdge,
 } from '@core/workspace/subjects';
-import { followSubject, subjectActions, subjectStateOf, type SubjectState } from '@layout/Workspace/subjectActions';
+import { cancelSubjectWalk, ensureSubjectTracked, followSubject, subjectActions, subjectStateOf, type SubjectState } from '@layout/Workspace/subjectActions';
 import { SUBJECT_STYLES, applySubjectStyle } from '@layout/Workspace/subjectStyles';
 import { openTextBehind } from '@layout/Workspace/TextBehindDialog';
 import { useEngineEdit } from './useEngineEdit';
+import { SubjectTracking } from './SubjectTracking';
+import { SubjectStyleSpan } from './SubjectStyleSpan';
+import { activeCompSettingsNow } from '@hooks/useMirrorFrame';
+import { settingsDurationSeconds, settingsFps } from '@core/mirror/compFacts';
+import { playheadSeconds } from '@core/timeline/timelineView';
 import styles from './SubjectSection.module.css';
 
 const EMPTY: SubjectState = { selected: false, followed: false, frozen: false, cuts: false };
@@ -122,6 +130,14 @@ export function SubjectSection({ nodeId }: { nodeId: string }): JSX.Element | nu
       ? !!e.subjectScope || e.subjectId === active.id || e.type === 'matte-stroke' || e.type === 'selective-color-ai'
       : e.subjectId === active.id));
 
+  // A new style span: the playhead on for three seconds (inside the composition).
+  const defaultSpan = (): { start: number; end: number } => {
+    const settings = activeCompSettingsNow();
+    const end = settingsDurationSeconds(settings) - 1 / settingsFps(settings);
+    const start = Math.min(playheadSeconds(), Math.max(0, end));
+    return { start, end: Math.min(end, start + 3) };
+  };
+
   const use = actions.filter((a) => a.id === 'newLayer' || a.id === 'textBehind' || a.id === 'removeBackground' || a.id === 'trackNull');
   const followed = followedFrames(nodeId, active.id);
 
@@ -187,7 +203,7 @@ export function SubjectSection({ nodeId }: { nodeId: string }): JSX.Element | nu
                 <Icon name="chevron-up" size={14} />
               </button>
               <button type="button" className={styles.icon} aria-label={t('inspector.subject.delete', 'Delete subject')} title={t('inspector.subject.delete', 'Delete subject')}
-                onClick={() => void edit(t('inspector.subject.deleteLabel', 'Delete Subject'), removeSubjectCommands(nodeId, s.id))}>
+                onClick={() => { cancelSubjectWalk(nodeId, s.id); void edit(t('inspector.subject.deleteLabel', 'Delete Subject'), removeSubjectCommands(nodeId, s.id)); }}>
                 <Icon name="trash" size={14} />
               </button>
             </li>
@@ -212,6 +228,8 @@ export function SubjectSection({ nodeId }: { nodeId: string }): JSX.Element | nu
         </label>
       </div>
 
+      <SubjectTracking nodeId={nodeId} subjects={subjects} active={active} rev={rev} locked={!!active.locked} />
+
       <div className={styles.block}>
         <div className={styles.blockHead}>
           <span className={styles.blockTitle}>{t('inspector.subject.useAs', 'Use {name}', { name: active.name })}</span>
@@ -220,7 +238,7 @@ export function SubjectSection({ nodeId }: { nodeId: string }): JSX.Element | nu
           onClick={() => { void followSubject(nodeId, active.id); }}>
           <span className={styles.actionTitle}>{followed > 1 ? t('inspector.subject.refollow', 'Follow again through the shot') : t('workspace.subjects.action.follow', 'Follow Through Shot')}</span>
           <span className={styles.actionDesc}>{followed > 1
-            ? t('inspector.subject.followedOver', 'Followed over {n} frames · fix a frame with Shift / Alt clicks, then follow again', { n: followed })
+            ? t('inspector.subject.followedOverRetrack', 'Followed over {n} frames · to fix one frame, edit it and Re-track from it (Tracking above)', { n: followed })
             : t('workspace.subjects.action.followDesc', 'Carry the selection to every frame')}</span>
         </button>
         <div className={styles.grid}>
@@ -242,7 +260,8 @@ export function SubjectSection({ nodeId }: { nodeId: string }): JSX.Element | nu
         ) : (
           <ul className={styles.styleList}>
             {styled.map((e) => (
-              <li key={e.id} className={styles.styleRow}>
+              <li key={e.id} className={styles.styleItem}>
+              <div className={styles.styleRow}>
                 <input
                   type="checkbox"
                   checked={e.enabled !== false}
@@ -255,6 +274,8 @@ export function SubjectSection({ nodeId }: { nodeId: string }): JSX.Element | nu
                   onClick={() => void edit(t('inspector.subject.styleRemoveLabel', 'Remove Style'), { type: 'removePropertyGroups', groups: [{ layer: nodeId, path: `effects/${e.id}` }] })}>
                   <Icon name="trash" size={14} />
                 </button>
+              </div>
+              <SubjectStyleSpan nodeId={nodeId} effectId={e.id} name={names.get(e.id) ?? e.type} defaultSpan={defaultSpan} />
               </li>
             ))}
           </ul>
@@ -269,7 +290,7 @@ export function SubjectSection({ nodeId }: { nodeId: string }): JSX.Element | nu
               title={p.hint()}
               onClick={() => {
                 useSelectionStore.getState().set([nodeId]);
-                void applySubjectStyle(nodeId, subjects.length > 1 ? active.id : null, p);
+                void applySubjectStyle(nodeId, subjects.length > 1 ? active.id : null, p).then((ok) => { if (ok) void ensureSubjectTracked(nodeId, active.id); });
               }}
             >
               <span className={styles.presetSwatch} aria-hidden="true" />

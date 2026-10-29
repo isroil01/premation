@@ -7902,6 +7902,38 @@ function decS_OnionSkin(r: Reader, end: number, o: any): T.OnionSkin {
   o.colorize = v_colorize;
   return o;
 }
+function encS_SubjectView(w: Writer, v: T.SubjectView): void {
+  w.byte(10); w.str(v.layer);
+  if (v.subject !== undefined) { w.byte(18); w.str(v.subject); }
+  w.byte(26); w.str(v.mode);
+  if (v.color !== undefined) { w.byte(34); w.str(v.color); }
+}
+function decS_SubjectView(r: Reader, end: number, o: any): T.SubjectView {
+  let h_layer = false;
+  let h_mode = false;
+  let v_layer: string | undefined;
+  let v_subject: string | undefined;
+  let v_mode: string | undefined;
+  let v_color: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_layer = r.str(); h_layer = true; break;
+      case 18: v_subject = r.str(); break;
+      case 26: v_mode = r.str(); h_mode = true; break;
+      case 34: v_color = r.str(); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_layer) throw new DecodeError('SubjectView.layer: missing', 'missingField');
+  if (!h_mode) throw new DecodeError('SubjectView.mode: missing', 'missingField');
+  o.layer = v_layer;
+  if (v_subject !== undefined) o.subject = v_subject;
+  o.mode = v_mode;
+  if (v_color !== undefined) o.color = v_color;
+  return o;
+}
 function encS_SetViewport(w: Writer, v: T.SetViewport): void {
   w.byte(8); w.u32(v.viewport);
   w.byte(16); w.u32(v.width);
@@ -7926,6 +7958,7 @@ function encS_SetViewport(w: Writer, v: T.SetViewport): void {
   if (v.groundGrid !== undefined) { w.varint(168); w.bool(v.groundGrid); }
   if (v.layerAlphaOverlayColor !== undefined) { w.varint(178); w.str(v.layerAlphaOverlayColor); }
   if (v.layerAlphaOverlayOpacity !== undefined) { w.varint(185); w.f64(v.layerAlphaOverlayOpacity); }
+  if (v.subjectView !== undefined) { w.varint(194); { const s = w.beginLd(); encS_SubjectView(w, v.subjectView); w.endLd(s); } }
 }
 function decS_SetViewport(r: Reader, end: number, o: any): T.SetViewport {
   let h_viewport = false;
@@ -7962,6 +7995,7 @@ function decS_SetViewport(r: Reader, end: number, o: any): T.SetViewport {
   let v_groundGrid: boolean | undefined;
   let v_layerAlphaOverlayColor: string | undefined;
   let v_layerAlphaOverlayOpacity: number | undefined;
+  let v_subjectView: T.SubjectView | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -7988,6 +8022,7 @@ function decS_SetViewport(r: Reader, end: number, o: any): T.SetViewport {
       case 168: v_groundGrid = r.bool(); break;
       case 178: v_layerAlphaOverlayColor = r.str(); break;
       case 185: v_layerAlphaOverlayOpacity = r.f64(); break;
+      case 194: v_subjectView = decS_SubjectView(r, r.ldEnd(), {}); break;
       default: r.skip(key);
     }
   }
@@ -8026,6 +8061,7 @@ function decS_SetViewport(r: Reader, end: number, o: any): T.SetViewport {
   if (v_groundGrid !== undefined) o.groundGrid = v_groundGrid;
   if (v_layerAlphaOverlayColor !== undefined) o.layerAlphaOverlayColor = v_layerAlphaOverlayColor;
   if (v_layerAlphaOverlayOpacity !== undefined) o.layerAlphaOverlayOpacity = v_layerAlphaOverlayOpacity;
+  if (v_subjectView !== undefined) o.subjectView = v_subjectView;
   return o;
 }
 function encS_CloseViewport(w: Writer, v: T.CloseViewport): void {
@@ -8587,6 +8623,7 @@ function encS_ObjectMatteJob(w: Writer, v: T.ObjectMatteJob): void {
   if (v.edit !== undefined) { w.varint(5738); { const s = w.beginLd(); encS_SubjectEdit(w, v.edit); w.endLd(s); } }
   if (v.proposals !== undefined) { w.varint(5744); w.bool(v.proposals); }
   if (v.subject !== undefined) { w.varint(5754); w.str(v.subject); }
+  if (v.keepOutside !== undefined) { w.varint(5760); w.bool(v.keepOutside); }
 }
 function decS_ObjectMatteJob(r: Reader, end: number, o: any): T.ObjectMatteJob {
   const l_prompts: T.Vec2[] = [];
@@ -8613,6 +8650,7 @@ function decS_ObjectMatteJob(r: Reader, end: number, o: any): T.ObjectMatteJob {
   let v_edit: T.SubjectEdit | undefined;
   let v_proposals: boolean | undefined;
   let v_subject: string | undefined;
+  let v_keepOutside: boolean | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -8636,6 +8674,7 @@ function decS_ObjectMatteJob(r: Reader, end: number, o: any): T.ObjectMatteJob {
       case 5738: v_edit = decS_SubjectEdit(r, r.ldEnd(), {}); break;
       case 5744: v_proposals = r.bool(); break;
       case 5754: v_subject = r.str(); break;
+      case 5760: v_keepOutside = r.bool(); break;
       default: r.skip(key);
     }
   }
@@ -8664,6 +8703,7 @@ function decS_ObjectMatteJob(r: Reader, end: number, o: any): T.ObjectMatteJob {
   if (v_edit !== undefined) o.edit = v_edit;
   if (v_proposals !== undefined) o.proposals = v_proposals;
   if (v_subject !== undefined) o.subject = v_subject;
+  if (v_keepOutside !== undefined) o.keepOutside = v_keepOutside;
   return o;
 }
 function encS_SubjectEdit(w: Writer, v: T.SubjectEdit): void {
@@ -9620,6 +9660,90 @@ function decS_SetLayerMatte(r: Reader, end: number, o: any): T.SetLayerMatte {
   if (v_subject !== undefined) o.subject = v_subject;
   return o;
 }
+function encS_SubjectTrackFrame(w: Writer, v: T.SubjectTrackFrame): void {
+  w.byte(8); w.i64(v.time);
+  if (v.confidence !== undefined) { w.byte(17); w.f64(v.confidence); }
+  w.byte(24); w.bool(v.fix);
+}
+function decS_SubjectTrackFrame(r: Reader, end: number, o: any): T.SubjectTrackFrame {
+  let h_time = false;
+  let h_fix = false;
+  let v_time: number | undefined;
+  let v_confidence: number | undefined;
+  let v_fix: boolean | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 8: v_time = r.i64(); h_time = true; break;
+      case 17: v_confidence = r.f64(); break;
+      case 24: v_fix = r.bool(); h_fix = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_time) throw new DecodeError('SubjectTrackFrame.time: missing', 'missingField');
+  if (!h_fix) throw new DecodeError('SubjectTrackFrame.fix: missing', 'missingField');
+  o.time = v_time;
+  if (v_confidence !== undefined) o.confidence = v_confidence;
+  o.fix = v_fix;
+  return o;
+}
+function encS_SubjectTrack(w: Writer, v: T.SubjectTrack): void {
+  w.byte(10); w.str(v.subject);
+  { const a = v.frames; for (let i = 0; i < a.length; i++) { w.byte(18); { const s = w.beginLd(); encS_SubjectTrackFrame(w, a[i]!); w.endLd(s); } } }
+}
+function decS_SubjectTrack(r: Reader, end: number, o: any): T.SubjectTrack {
+  const l_frames: T.SubjectTrackFrame[] = [];
+  let h_subject = false;
+  let v_subject: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_subject = r.str(); h_subject = true; break;
+      case 18: l_frames.push(decS_SubjectTrackFrame(r, r.ldEnd(), {})); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_subject) throw new DecodeError('SubjectTrack.subject: missing', 'missingField');
+  o.subject = v_subject;
+  o.frames = l_frames;
+  return o;
+}
+function encS_SubjectTracks(w: Writer, v: T.SubjectTracks): void {
+  { const a = v.subjects; for (let i = 0; i < a.length; i++) { w.byte(10); { const s = w.beginLd(); encS_SubjectTrack(w, a[i]!); w.endLd(s); } } }
+}
+function decS_SubjectTracks(r: Reader, end: number, o: any): T.SubjectTracks {
+  const l_subjects: T.SubjectTrack[] = [];
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_subjects.push(decS_SubjectTrack(r, r.ldEnd(), {})); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  o.subjects = l_subjects;
+  return o;
+}
+function encS_GetSubjectTracks(w: Writer, v: T.GetSubjectTracks): void {
+  w.byte(10); w.str(v.layer);
+}
+function decS_GetSubjectTracks(r: Reader, end: number, o: any): T.GetSubjectTracks {
+  let h_layer = false;
+  let v_layer: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_layer = r.str(); h_layer = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_layer) throw new DecodeError('GetSubjectTracks.layer: missing', 'missingField');
+  o.layer = v_layer;
+  return o;
+}
 function encS_RotoBrushJob(w: Writer, v: T.RotoBrushJob): void {
   w.byte(10); w.str(v.layer);
   w.byte(18); { const s = w.beginLd(); encS_TimeRange(w, v.range); w.endLd(s); }
@@ -9963,17 +10087,23 @@ function decS_JobRef(r: Reader, end: number, o: any): T.JobRef {
 function encS_ContentAwareFillFrame(w: Writer, v: T.ContentAwareFillFrame): void {
   w.byte(8); w.i64(v.time);
   w.byte(18); w.str(v.src);
+  if (v.confidence !== undefined) { w.byte(25); w.f64(v.confidence); }
+  if (v.fix !== undefined) { w.byte(32); w.bool(v.fix); }
 }
 function decS_ContentAwareFillFrame(r: Reader, end: number, o: any): T.ContentAwareFillFrame {
   let h_time = false;
   let h_src = false;
   let v_time: number | undefined;
   let v_src: string | undefined;
+  let v_confidence: number | undefined;
+  let v_fix: boolean | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
       case 8: v_time = r.i64(); h_time = true; break;
       case 18: v_src = r.str(); h_src = true; break;
+      case 25: v_confidence = r.f64(); break;
+      case 32: v_fix = r.bool(); break;
       default: r.skip(key);
     }
   }
@@ -9982,6 +10112,8 @@ function decS_ContentAwareFillFrame(r: Reader, end: number, o: any): T.ContentAw
   if (!h_src) throw new DecodeError('ContentAwareFillFrame.src: missing', 'missingField');
   o.time = v_time;
   o.src = v_src;
+  if (v_confidence !== undefined) o.confidence = v_confidence;
+  if (v_fix !== undefined) o.fix = v_fix;
   return o;
 }
 function encS_SetContentAwareFill(w: Writer, v: T.SetContentAwareFill): void {
@@ -19858,6 +19990,7 @@ function encU_Query(w: Writer, v: T.Query): void {
     case 'listCameras': w.varint(15506); { const s = w.beginLd(); encS_ListCameras(w, v); w.endLd(s); } return;
     case 'getPerformanceTakes': w.varint(15618); { const s = w.beginLd(); encS_GetPerformanceTakes(w, v); w.endLd(s); } return;
     case 'drawEffectParamUi': w.varint(15626); { const s = w.beginLd(); encS_DrawEffectParamUi(w, v); w.endLd(s); } return;
+    case 'getSubjectTracks': w.varint(15634); { const s = w.beginLd(); encS_GetSubjectTracks(w, v); w.endLd(s); } return;
     default: throw new RangeError('Query: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -19926,6 +20059,7 @@ function decU_Query(r: Reader, end: number): T.Query {
       case 15506: out = decS_ListCameras(r, r.ldEnd(), { type: 'listCameras' }) as T.Query; break;
       case 15618: out = decS_GetPerformanceTakes(r, r.ldEnd(), { type: 'getPerformanceTakes' }) as T.Query; break;
       case 15626: out = decS_DrawEffectParamUi(r, r.ldEnd(), { type: 'drawEffectParamUi' }) as T.Query; break;
+      case 15634: out = decS_GetSubjectTracks(r, r.ldEnd(), { type: 'getSubjectTracks' }) as T.Query; break;
       default: r.skip(key);
     }
   }
@@ -19994,6 +20128,7 @@ function encU_QueryResult(w: Writer, v: T.QueryResult): void {
     case 'listCameras': w.varint(15506); { const s = w.beginLd(); encS_CameraList(w, v); w.endLd(s); } return;
     case 'getPerformanceTakes': w.varint(15618); { const s = w.beginLd(); encS_PerformanceTakes(w, v); w.endLd(s); } return;
     case 'drawEffectParamUi': w.varint(15626); { const s = w.beginLd(); encS_ParamUiDrawing(w, v); w.endLd(s); } return;
+    case 'getSubjectTracks': w.varint(15634); { const s = w.beginLd(); encS_SubjectTracks(w, v); w.endLd(s); } return;
     default: throw new RangeError('QueryResult: unknown type ' + String((v as { type?: unknown }).type));
   }
 }
@@ -20062,6 +20197,7 @@ function decU_QueryResult(r: Reader, end: number): T.QueryResult {
       case 15506: out = decS_CameraList(r, r.ldEnd(), { type: 'listCameras' }) as T.QueryResult; break;
       case 15618: out = decS_PerformanceTakes(r, r.ldEnd(), { type: 'getPerformanceTakes' }) as T.QueryResult; break;
       case 15626: out = decS_ParamUiDrawing(r, r.ldEnd(), { type: 'drawEffectParamUi' }) as T.QueryResult; break;
+      case 15634: out = decS_SubjectTracks(r, r.ldEnd(), { type: 'getSubjectTracks' }) as T.QueryResult; break;
       default: r.skip(key);
     }
   }
@@ -20422,6 +20558,7 @@ export const codecs = {
   SetActiveComposition: mk<T.SetActiveComposition>(encS_SetActiveComposition, (r, e) => decS_SetActiveComposition(r, e, {})),
   CustomView: mk<T.CustomView>(encS_CustomView, (r, e) => decS_CustomView(r, e, {})),
   OnionSkin: mk<T.OnionSkin>(encS_OnionSkin, (r, e) => decS_OnionSkin(r, e, {})),
+  SubjectView: mk<T.SubjectView>(encS_SubjectView, (r, e) => decS_SubjectView(r, e, {})),
   SetViewport: mk<T.SetViewport>(encS_SetViewport, (r, e) => decS_SetViewport(r, e, {})),
   CloseViewport: mk<T.CloseViewport>(encS_CloseViewport, (r, e) => decS_CloseViewport(r, e, {})),
   SetCacheBudget: mk<T.SetCacheBudget>(encS_SetCacheBudget, (r, e) => decS_SetCacheBudget(r, e, {})),
@@ -20467,6 +20604,10 @@ export const codecs = {
   SetCameraSolve: mk<T.SetCameraSolve>(encS_SetCameraSolve, (r, e) => decS_SetCameraSolve(r, e, {})),
   GetCameraSolve: mk<T.GetCameraSolve>(encS_GetCameraSolve, (r, e) => decS_GetCameraSolve(r, e, {})),
   SetLayerMatte: mk<T.SetLayerMatte>(encS_SetLayerMatte, (r, e) => decS_SetLayerMatte(r, e, {})),
+  SubjectTrackFrame: mk<T.SubjectTrackFrame>(encS_SubjectTrackFrame, (r, e) => decS_SubjectTrackFrame(r, e, {})),
+  SubjectTrack: mk<T.SubjectTrack>(encS_SubjectTrack, (r, e) => decS_SubjectTrack(r, e, {})),
+  SubjectTracks: mk<T.SubjectTracks>(encS_SubjectTracks, (r, e) => decS_SubjectTracks(r, e, {})),
+  GetSubjectTracks: mk<T.GetSubjectTracks>(encS_GetSubjectTracks, (r, e) => decS_GetSubjectTracks(r, e, {})),
   RotoBrushJob: mk<T.RotoBrushJob>(encS_RotoBrushJob, (r, e) => decS_RotoBrushJob(r, e, {})),
   ContentAwareFillJob: mk<T.ContentAwareFillJob>(encS_ContentAwareFillJob, (r, e) => decS_ContentAwareFillJob(r, e, {})),
   AutoReframeJob: mk<T.AutoReframeJob>(encS_AutoReframeJob, (r, e) => decS_AutoReframeJob(r, e, {})),

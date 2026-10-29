@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <optional>
 #include <vector>
 
 #include "jobs/sam_pipeline.hpp"
@@ -251,4 +252,26 @@ TEST_CASE("Find Objects keeps each whole object once and never the background", 
   std::ranges::sort(areas);
   CHECK(std::abs(areas[0] - 60.0 * 60.0 / 65536.0) < 1e-6);   // the ball
   CHECK(std::abs(areas[1] - 80.0 * 200.0 / 65536.0) < 1e-6);  // the whole person, not the shirt
+}
+
+TEST_CASE("matte_iou reads both mattes at one half", "[subject][track]") {
+  std::vector<float> a(100, 0.0f);
+  std::vector<float> b(100, 0.0f);
+  CHECK(se::matte_iou(a, b) == 1.0);  // both empty: they agree
+  for (std::size_t i = 0; i < 40; ++i) a[i] = 0.9f;
+  for (std::size_t i = 20; i < 60; ++i) b[i] = 0.7f;
+  CHECK(std::abs(se::matte_iou(a, b) - 20.0 / 60.0) < 1e-9);
+  b.assign(100, 0.4f);  // under one half: nothing
+  CHECK(se::matte_iou(a, b) == 0.0);
+}
+
+TEST_CASE("track_confidence is the weakest of the model, presence and agreement", "[subject][track]") {
+  CHECK(se::track_confidence(0.95, 1.0, 0.9) == 1.0);           // a held subject
+  CHECK(se::track_confidence(0.95, 1.0, std::nullopt) == 1.0);  // a walk's first frame
+  CHECK(se::track_confidence(0.95, 0.05, 0.9) == 0.0);          // the model says it is gone
+  CHECK(se::track_confidence(0.95, 1.0, 0.3) == 0.0);           // jumped onto something else
+  const double shaky = se::track_confidence(0.6, 1.0, 0.9);
+  CHECK(shaky > 0.0);
+  CHECK(shaky < 0.5);  // flagged for review
+  CHECK(se::track_confidence(0.9, 1.0, 0.6) < se::track_confidence(0.9, 1.0, 0.7));
 }

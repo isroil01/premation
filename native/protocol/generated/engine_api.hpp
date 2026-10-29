@@ -1192,6 +1192,7 @@ struct SetAudioPreview;
 struct SetActiveComposition;
 struct CustomView;
 struct OnionSkin;
+struct SubjectView;
 struct SetViewport;
 struct CloseViewport;
 struct SetCacheBudget;
@@ -1258,6 +1259,7 @@ struct Command;
 struct GetPerformanceTakes;
 struct GetLayerTrackers;
 struct GetCameraSolve;
+struct GetSubjectTracks;
 struct ListPluginCommands;
 struct GetDocument;
 struct ExportDocument;
@@ -1357,6 +1359,9 @@ struct CommandResult;
 struct PerformanceTakes;
 struct LayerTrackers;
 struct CameraSolveAnswer;
+struct SubjectTrackFrame;
+struct SubjectTrack;
+struct SubjectTracks;
 struct PluginCommandList;
 struct ProjectSettings;
 struct Interpretation;
@@ -3098,6 +3103,14 @@ struct OnionSkin {
   bool operator==(const OnionSkin&) const = default;
 };
 
+struct SubjectView {
+  LayerId layer;
+  std::optional<std::string> subject;
+  std::string mode;
+  std::optional<std::string> color;
+  bool operator==(const SubjectView&) const = default;
+};
+
 struct SetViewport {
   std::uint32_t viewport = 0;
   std::uint32_t width = 0;
@@ -3122,6 +3135,7 @@ struct SetViewport {
   std::optional<bool> ground_grid;
   std::optional<std::string> layer_alpha_overlay_color;
   std::optional<double> layer_alpha_overlay_opacity;
+  std::optional<SubjectView> subject_view;
   bool operator==(const SetViewport&) const = default;
 };
 
@@ -3258,6 +3272,8 @@ struct SetCameraSolve {
 struct ContentAwareFillFrame {
   Time time = 0;
   std::string src;
+  std::optional<double> confidence;
+  std::optional<bool> fix;
   bool operator==(const ContentAwareFillFrame&) const = default;
 };
 
@@ -3380,6 +3396,7 @@ struct ObjectMatteJob {
   std::optional<SubjectEdit> edit;
   std::optional<bool> proposals;
   std::optional<std::string> subject;
+  std::optional<bool> keep_outside;
   bool operator==(const ObjectMatteJob&) const = default;
 };
 
@@ -3882,6 +3899,11 @@ struct GetCameraSolve {
   bool operator==(const GetCameraSolve&) const = default;
 };
 
+struct GetSubjectTracks {
+  LayerId layer;
+  bool operator==(const GetSubjectTracks&) const = default;
+};
+
 struct ListPluginCommands {
   bool operator==(const ListPluginCommands&) const = default;
 };
@@ -4232,6 +4254,7 @@ struct Query {
     get_performance_takes = 1952,
     get_layer_trackers = 1090,
     get_camera_solve = 1091,
+    get_subject_tracks = 1954,
     list_plugin_commands = 1092,
     get_document = 1000,
     export_document = 1088,
@@ -4289,7 +4312,7 @@ struct Query {
     get_cache_coverage = 1089,
     list_cameras = 1938,
   };
-  std::variant<GetPerformanceTakes, GetLayerTrackers, GetCameraSolve, ListPluginCommands, GetDocument, ExportDocument, GetComposition, GetLayers, GetPropertyTree, GetPropertyValues, SampleProperty, GetKeyframes, GetMotionPath, GetMarkers, CopyLayers, CopyKeyframes, GetMemberKeyframes, CopyEffects, GetSearchFacts, GetDocumentColors, GetCaptionCues, MapLayerTime, GetSourceSize, CheckPrecompose, GetTimelineRows, GetRigPose, SampleCamera, GetWaveform, ListFonts, GetItems, GetSvgDocument, GetCryptomatte, GetThumbnail, RenderDocumentStill, ListEffects, ListGroupTypes, ListPresets, CapturePreset, GetCapabilities, ListPlugins, GetEffectUi, DrawEffectParamUi, GetLayerFaces, HitTest, GetLayerBounds, GetLayerTransforms, GetTextLayout, EvaluateExpression, ReadPixels, FindLayers, GetDependencies, GetHistory, GetRenderStats, GetLayerErrors, GetJobs, GetRenderQueue, GetCommandLog, GetCacheCoverage, ListCameras> v;
+  std::variant<GetPerformanceTakes, GetLayerTrackers, GetCameraSolve, GetSubjectTracks, ListPluginCommands, GetDocument, ExportDocument, GetComposition, GetLayers, GetPropertyTree, GetPropertyValues, SampleProperty, GetKeyframes, GetMotionPath, GetMarkers, CopyLayers, CopyKeyframes, GetMemberKeyframes, CopyEffects, GetSearchFacts, GetDocumentColors, GetCaptionCues, MapLayerTime, GetSourceSize, CheckPrecompose, GetTimelineRows, GetRigPose, SampleCamera, GetWaveform, ListFonts, GetItems, GetSvgDocument, GetCryptomatte, GetThumbnail, RenderDocumentStill, ListEffects, ListGroupTypes, ListPresets, CapturePreset, GetCapabilities, ListPlugins, GetEffectUi, DrawEffectParamUi, GetLayerFaces, HitTest, GetLayerBounds, GetLayerTransforms, GetTextLayout, EvaluateExpression, ReadPixels, FindLayers, GetDependencies, GetHistory, GetRenderStats, GetLayerErrors, GetJobs, GetRenderQueue, GetCommandLog, GetCacheCoverage, ListCameras> v;
   Query();
   Query(const Query&);
   Query(Query&&) noexcept;
@@ -4765,6 +4788,24 @@ struct LayerTrackers {
 struct CameraSolveAnswer {
   std::optional<CameraSolveData> solve;
   bool operator==(const CameraSolveAnswer&) const = default;
+};
+
+struct SubjectTrackFrame {
+  Time time = 0;
+  std::optional<double> confidence;
+  bool fix = false;
+  bool operator==(const SubjectTrackFrame&) const = default;
+};
+
+struct SubjectTrack {
+  std::string subject;
+  std::vector<SubjectTrackFrame> frames;
+  bool operator==(const SubjectTrack&) const = default;
+};
+
+struct SubjectTracks {
+  std::vector<SubjectTrack> subjects;
+  bool operator==(const SubjectTracks&) const = default;
 };
 
 struct PluginCommandList {
@@ -5740,6 +5781,7 @@ struct QueryResult {
     get_performance_takes = 1952,
     get_layer_trackers = 1090,
     get_camera_solve = 1091,
+    get_subject_tracks = 1954,
     list_plugin_commands = 1092,
     get_document = 1000,
     export_document = 1088,
@@ -5797,7 +5839,7 @@ struct QueryResult {
     get_cache_coverage = 1089,
     list_cameras = 1938,
   };
-  std::variant<PerformanceTakes, LayerTrackers, CameraSolveAnswer, PluginCommandList, DocumentSnapshot, ExportedDocument, CompositionDetails, LayerDetails, PropertyTree, PropertyValues, PropertySamples, KeyframeSets, PropertySamples, MarkerList, DocumentFragment, KeyframeSets, MemberTracks, CopiedEffects, SearchFactsList, DocumentColors, CaptionCues, MappedTime, SourceSizes, PrecomposeCheck, TimelineRowSets, RigPose, CameraSamples, WaveformPeaks, FontList, ItemDetails, SvgDocument, CryptomatteInfo, Thumbnail, Thumbnail, EffectCatalog, GroupTypeList, PresetList, CapturedPreset, Capabilities, PluginList, EffectUi, ParamUiDrawing, LayerFaces, HitResult, LayerBoundsList, LayerTransformList, TextLayout, ExpressionEvaluation, PixelSamples, LayerList, Dependencies, HistoryState, RenderStats, LayerErrorList, JobList, RenderQueueState, CommandLog, CacheCoverage, CameraList> v;
+  std::variant<PerformanceTakes, LayerTrackers, CameraSolveAnswer, SubjectTracks, PluginCommandList, DocumentSnapshot, ExportedDocument, CompositionDetails, LayerDetails, PropertyTree, PropertyValues, PropertySamples, KeyframeSets, PropertySamples, MarkerList, DocumentFragment, KeyframeSets, MemberTracks, CopiedEffects, SearchFactsList, DocumentColors, CaptionCues, MappedTime, SourceSizes, PrecomposeCheck, TimelineRowSets, RigPose, CameraSamples, WaveformPeaks, FontList, ItemDetails, SvgDocument, CryptomatteInfo, Thumbnail, Thumbnail, EffectCatalog, GroupTypeList, PresetList, CapturedPreset, Capabilities, PluginList, EffectUi, ParamUiDrawing, LayerFaces, HitResult, LayerBoundsList, LayerTransformList, TextLayout, ExpressionEvaluation, PixelSamples, LayerList, Dependencies, HistoryState, RenderStats, LayerErrorList, JobList, RenderQueueState, CommandLog, CacheCoverage, CameraList> v;
   QueryResult();
   QueryResult(const QueryResult&);
   QueryResult(QueryResult&&) noexcept;
@@ -7172,6 +7214,8 @@ void encode(wire::Writer& w, const CustomView& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, CustomView& out);
 void encode(wire::Writer& w, const OnionSkin& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, OnionSkin& out);
+void encode(wire::Writer& w, const SubjectView& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, SubjectView& out);
 void encode(wire::Writer& w, const SetViewport& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, SetViewport& out);
 void encode(wire::Writer& w, const CloseViewport& v);
@@ -7304,6 +7348,8 @@ void encode(wire::Writer& w, const GetLayerTrackers& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, GetLayerTrackers& out);
 void encode(wire::Writer& w, const GetCameraSolve& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, GetCameraSolve& out);
+void encode(wire::Writer& w, const GetSubjectTracks& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, GetSubjectTracks& out);
 void encode(wire::Writer& w, const ListPluginCommands& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, ListPluginCommands& out);
 void encode(wire::Writer& w, const GetDocument& v);
@@ -7502,6 +7548,12 @@ void encode(wire::Writer& w, const LayerTrackers& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, LayerTrackers& out);
 void encode(wire::Writer& w, const CameraSolveAnswer& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, CameraSolveAnswer& out);
+void encode(wire::Writer& w, const SubjectTrackFrame& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, SubjectTrackFrame& out);
+void encode(wire::Writer& w, const SubjectTrack& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, SubjectTrack& out);
+void encode(wire::Writer& w, const SubjectTracks& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, SubjectTracks& out);
 void encode(wire::Writer& w, const PluginCommandList& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, PluginCommandList& out);
 void encode(wire::Writer& w, const ProjectSettings& v);

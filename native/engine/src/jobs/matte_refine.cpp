@@ -254,6 +254,221 @@ std::vector<float> guided_filter(std::span<const float> p, std::span<const float
   return out;
 }
 
+std::vector<float> guided_filter_rgb(std::span<const float> p, std::span<const std::uint8_t> rgba, int width, int height, int radius, double eps) {
+  const std::size_t n = px(width, height);
+  if (p.size() < n || rgba.size() < n * 4 || radius <= 0) return std::vector<float>(p.begin(), p.end());
+  // He, Sun & Tang's colour guide: q = aᵀ·I + b with a = (Σ + εU)⁻¹ cov(I, p) per window — an
+  // edge between two colours of the same brightness (a red shirt on green) is found too. The
+  // coefficients are solved on a copy subsampled as guided_filter's are.
+  std::array<std::vector<double>, 3> Ic;
+  for (auto& c : Ic) c.resize(n);
+  std::vector<double> pd(n);
+  for (std::size_t i = 0; i < n; ++i) {
+    for (std::size_t c = 0; c < 3; ++c) Ic[c][i] = rgba[i * 4 + c] / 255.0;
+    pd[i] = p[i];
+  }
+  constexpr int kGuidedEdge = 1280;
+  const int s = std::max(1, (std::max(width, height) + kGuidedEdge - 1) / kGuidedEdge);
+  int lw = width;
+  int lh = height;
+  std::array<std::vector<double>, 3> Il;
+  for (std::size_t c = 0; c < 3; ++c) Il[c] = s > 1 ? downsample(Ic[c], width, height, s, lw, lh) : Ic[c];
+  const std::vector<double> pl = s > 1 ? downsample(pd, width, height, s, lw, lh) : pd;
+  const int r = std::max(1, static_cast<int>(std::lround(static_cast<double>(radius) / s)));
+  const std::size_t ln = px(lw, lh);
+  std::array<std::vector<double>, 3> mI;
+  std::array<std::vector<double>, 3> mIp;
+  const std::vector<double> mp = box_mean(pl, lw, lh, r);
+  for (std::size_t c = 0; c < 3; ++c) {
+    mI[c] = box_mean(Il[c], lw, lh, r);
+    std::vector<double> prod(ln);
+    for (std::size_t i = 0; i < ln; ++i) prod[i] = Il[c][i] * pl[i];
+    mIp[c] = box_mean(prod, lw, lh, r);
+  }
+  // The six distinct entries of the colour covariance: rr rg rb gg gb bb.
+  constexpr std::array<std::pair<std::size_t, std::size_t>, 6> kPairs{{{0, 0}, {0, 1}, {0, 2}, {1, 1}, {1, 2}, {2, 2}}};
+  std::array<std::vector<double>, 6> mII;
+  for (std::size_t k = 0; k < kPairs.size(); ++k) {
+    std::vector<double> prod(ln);
+    for (std::size_t i = 0; i < ln; ++i) prod[i] = Il[kPairs[k].first][i] * Il[kPairs[k].second][i];
+    mII[k] = box_mean(prod, lw, lh, r);
+  }
+  std::array<std::vector<double>, 3> a;
+  for (auto& c : a) c.resize(ln);
+  std::vector<double> b(ln);
+  for (std::size_t i = 0; i < ln; ++i) {
+    const double rr = mII[0][i] - mI[0][i] * mI[0][i] + eps;
+    const double rg = mII[1][i] - mI[0][i] * mI[1][i];
+    const double rb = mII[2][i] - mI[0][i] * mI[2][i];
+    const double gg = mII[3][i] - mI[1][i] * mI[1][i] + eps;
+    const double gb = mII[4][i] - mI[1][i] * mI[2][i];
+    const double bb = mII[5][i] - mI[2][i] * mI[2][i] + eps;
+    const std::array<double, 3> cov{mIp[0][i] - mI[0][i] * mp[i], mIp[1][i] - mI[1][i] * mp[i], mIp[2][i] - mI[2][i] * mp[i]};
+    // The symmetric 3×3 inverse by cofactors (eps keeps it well conditioned).
+    const double c00 = gg * bb - gb * gb;
+    const double c01 = rb * gb - rg * bb;
+    const double c02 = rg * gb - rb * gg;
+    const double c11 = rr * bb - rb * rb;
+    const double c12 = rb * rg - rr * gb;
+    const double c22 = rr * gg - rg * rg;
+    const double det = rr * c00 + rg * c01 + rb * c02;
+    if (!(std::abs(det) > 1e-18)) {
+      a[0][i] = a[1][i] = a[2][i] = 0;
+      b[i] = mp[i];
+      continue;
+    }
+    a[0][i] = (c00 * cov[0] + c01 * cov[1] + c02 * cov[2]) / det;
+    a[1][i] = (c01 * cov[0] + c11 * cov[1] + c12 * cov[2]) / det;
+    a[2][i] = (c02 * cov[0] + c12 * cov[1] + c22 * cov[2]) / det;
+    b[i] = mp[i] - a[0][i] * mI[0][i] - a[1][i] * mI[1][i] - a[2][i] * mI[2][i];
+  }
+  std::array<std::vector<double>, 3> ma;
+  for (std::size_t c = 0; c < 3; ++c) {
+    ma[c] = box_mean(a[c], lw, lh, r);
+    if (s > 1) ma[c] = upsample(ma[c], lw, lh, width, height, s);
+  }
+  std::vector<double> mb = box_mean(b, lw, lh, r);
+  if (s > 1) mb = upsample(mb, lw, lh, width, height, s);
+  std::vector<float> out(n);
+  for (std::size_t i = 0; i < n; ++i)
+    out[i] = static_cast<float>(std::clamp(ma[0][i] * Ic[0][i] + ma[1][i] * Ic[1][i] + ma[2][i] * Ic[2][i] + mb[i], 0.0, 1.0));
+  return out;
+}
+
+std::vector<float> snap_edge(std::span<const float> alpha, std::span<const std::uint8_t> rgba, int width, int height, int radius) {
+  const std::size_t n = px(width, height);
+  std::vector<float> out(alpha.begin(), alpha.end());
+  if (alpha.size() < n || rgba.size() < n * 4 || radius <= 0 || width < 2 || height < 2) return out;
+  // The band: every pixel within `radius` of a 0.5 crossing (a separable max of the crossing marks).
+  std::vector<std::uint8_t> mark(n, 0);
+  int x0 = width;
+  int y0 = height;
+  int x1 = -1;
+  int y1 = -1;
+  for (int y = 0; y < height; ++y)
+    for (int x = 0; x < width; ++x) {
+      const bool in = alpha[at(y * width + x)] >= 0.5f;
+      const bool edge = (x + 1 < width && (alpha[at(y * width + x + 1)] >= 0.5f) != in) || (y + 1 < height && (alpha[at((y + 1) * width + x)] >= 0.5f) != in);
+      if (!edge) continue;
+      mark[at(y * width + x)] = 1;
+      x0 = std::min(x0, x);
+      y0 = std::min(y0, y);
+      x1 = std::max(x1, x);
+      y1 = std::max(y1, y);
+    }
+  if (x1 < 0) return out;
+  // Only the edge's box (and the filter's reach around it) is filtered: a small subject costs little.
+  const int pad = 3 * radius + 2;
+  const int bx0 = std::max(0, x0 - pad);
+  const int by0 = std::max(0, y0 - pad);
+  const int bw = std::min(width - 1, x1 + pad) - bx0 + 1;
+  const int bh = std::min(height - 1, y1 + pad) - by0 + 1;
+  std::vector<float> pc(px(bw, bh));
+  std::vector<std::uint8_t> ic(px(bw, bh) * 4);
+  std::vector<std::uint8_t> band(px(bw, bh), 0);
+  for (int y = 0; y < bh; ++y)
+    for (int x = 0; x < bw; ++x) {
+      const std::size_t g = at((by0 + y) * width + bx0 + x);
+      const std::size_t l = at(y * bw + x);
+      pc[l] = alpha[g];
+      for (std::size_t c = 0; c < 4; ++c) ic[l * 4 + c] = rgba[g * 4 + c];
+      band[l] = mark[g];
+    }
+  std::vector<std::uint8_t> tmp(band.size(), 0);
+  for (int y = 0; y < bh; ++y)  // horizontal max
+    for (int x = 0, last = -radius - 1; x < bw; ++x) {
+      if (band[at(y * bw + x)] != 0) last = x;
+      tmp[at(y * bw + x)] = x - last <= radius ? 1 : 0;
+    }
+  for (int y = 0; y < bh; ++y)
+    for (int x = bw - 1, last = bw + radius + 1; x >= 0; --x) {
+      if (band[at(y * bw + x)] != 0) last = x;
+      if (last - x <= radius) tmp[at(y * bw + x)] = 1;
+    }
+  std::fill(band.begin(), band.end(), 0);
+  for (int x = 0; x < bw; ++x) {  // vertical max
+    for (int y = 0, last = -radius - 1; y < bh; ++y) {
+      if (tmp[at(y * bw + x)] != 0) last = y;
+      if (y - last <= radius) band[at(y * bw + x)] = 1;
+    }
+    for (int y = bh - 1, last = bh + radius + 1; y >= 0; --y) {
+      if (tmp[at(y * bw + x)] != 0) last = y;
+      if (last - y <= radius) band[at(y * bw + x)] = 1;
+    }
+  }
+  // Sample-based matting (Gastal & Oliveira's Shared Matting): from each band pixel, rays in 8
+  // directions run out of the band to the first SURE pixel (inside the band the coarse matte is
+  // unsure, so a pixel it calls subject may be background); each ray's end is a subject or a
+  // background colour sample. The pair (F, B) that best explains the pixel's colour as a mix
+  // αF + (1 − α)B gives its alpha — a stripe of the shirt is matched with its own colour, not an
+  // average of the stripes. No sample of either side in reach, two sides too alike to tell apart,
+  // or no pair that explains the colour: the coarse matte stays.
+  constexpr std::array<std::pair<int, int>, 8> kDirs{{{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {-1, -1}, {1, -1}, {-1, 1}}};
+  const int maxSteps = 3 * radius + 2;
+  constexpr double kMinContrast = (8.0 / 255) * (8.0 / 255) * 3;
+  constexpr double kMaxResidual = (24.0 / 255) * (24.0 / 255) * 3;
+  const auto colour = [&](std::size_t l) {
+    return std::array<double, 3>{ic[l * 4] / 255.0, ic[l * 4 + 1] / 255.0, ic[l * 4 + 2] / 255.0};
+  };
+  std::vector<float> est = pc;
+  std::vector<std::array<double, 3>> fs;
+  std::vector<std::array<double, 3>> bs;
+  fs.reserve(kDirs.size());
+  bs.reserve(kDirs.size());
+  for (int y = 0; y < bh; ++y)
+    for (int x = 0; x < bw; ++x) {
+      const std::size_t l = at(y * bw + x);
+      if (band[l] == 0) continue;
+      fs.clear();
+      bs.clear();
+      for (const auto& [dx, dy] : kDirs) {
+        for (int s = 1; s <= maxSteps; ++s) {
+          const int sx = x + dx * s;
+          const int sy = y + dy * s;
+          if (sx < 0 || sy < 0 || sx >= bw || sy >= bh) break;
+          const std::size_t sl = at(sy * bw + sx);
+          if (band[sl] != 0) continue;
+          (pc[sl] >= 0.5f ? fs : bs).push_back(colour(sl));
+          break;
+        }
+      }
+      if (fs.empty() || bs.empty()) continue;
+      const std::array<double, 3> I = colour(l);
+      double best = std::numeric_limits<double>::infinity();
+      double bestAlpha = pc[l];
+      for (const auto& F : fs)
+        for (const auto& B : bs) {
+          double dd = 0;
+          double dv = 0;
+          for (std::size_t c = 0; c < 3; ++c) {
+            dd += (F[c] - B[c]) * (F[c] - B[c]);
+            dv += (F[c] - B[c]) * (I[c] - B[c]);
+          }
+          if (dd < kMinContrast) continue;
+          const double a = std::clamp(dv / dd, 0.0, 1.0);
+          double err = 0;
+          for (std::size_t c = 0; c < 3; ++c) {
+            const double r = I[c] - (a * F[c] + (1 - a) * B[c]);
+            err += r * r;
+          }
+          if (err < best) {
+            best = err;
+            bestAlpha = a;
+          }
+        }
+      if (best <= kMaxResidual) est[l] = static_cast<float>(bestAlpha);
+    }
+  // A light colour guided filter of the estimate: texture noise in the projection smoothed, the
+  // picture's edge kept.
+  const std::vector<float> q = guided_filter_rgb(est, ic, bw, bh, std::max(1, radius / 3), 1e-4);
+  for (int y = 0; y < bh; ++y)
+    for (int x = 0; x < bw; ++x) {
+      const std::size_t l = at(y * bw + x);
+      if (band[l] != 0) out[at((by0 + y) * width + bx0 + x)] = q[l];
+    }
+  return out;
+}
+
 void decontaminate(std::span<std::uint8_t> rgba, std::span<const float> alpha, int width, int height, double amount) {
   const std::size_t n = px(width, height);
   if (!(amount > 0) || rgba.size() < n * 4 || alpha.size() < n) return;

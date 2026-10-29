@@ -491,7 +491,21 @@ export async function runSubjectEdit(
     if (out.status === 'failed') throw new Error(out.error?.message ?? 'Object Matte failed');
     return null;
   }
+  for (const l of subjectEditListeners) l(nodeId, subject, timeSec);
   return { coverage: out.result?.coverage ?? 0, outline: out.result?.outline ?? [] };
+}
+
+type SubjectEditListener = (nodeId: string, subject: string, timeSec: number) => void;
+const subjectEditListeners = new Set<SubjectEditListener>();
+
+/**
+ * Told after every applied subject edit (a click, a brush, Refine Edge) with
+ * the layer, the subject and the frame — the editor's automatic tracking
+ * listens (layout/Workspace/autoTrack.ts). Returns the unsubscribe.
+ */
+export function onSubjectEdited(listener: SubjectEditListener): () => void {
+  subjectEditListeners.add(listener);
+  return () => { subjectEditListeners.delete(listener); };
 }
 
 /**
@@ -571,6 +585,8 @@ export async function propagateObjectMatte(
     box?: RotoBox | null;
     /** Which of the layer's subjects is followed (default the first). */
     subject?: string;
+    /** Re-track only start…end (between two fixes): the subject's frames and outline keys outside it stay. */
+    keepOutside?: boolean;
   },
   onProgress?: (f: number) => boolean | void,
 ): Promise<RotoBrushResult> {
@@ -594,8 +610,8 @@ export async function propagateObjectMatte(
       return { time: secondsToFlicks(s.time!), points: s.kind === 'fg' ? p.fg : p.bg, background: s.kind === 'bg' };
     })
     .filter((c) => c.points.length > 0);
-  const replace = new Set<string>(rotoMattes(nodeId).live);
-  for (const m of mirrorMaskHeaders(documentMirror().tree(nodeId))) if (m.name === outline) replace.add(m.id);
+  const replace = new Set<string>(opts.keepOutside ? [] : rotoMattes(nodeId).live);
+  if (!opts.keepOutside) for (const m of mirrorMaskHeaders(documentMirror().tree(nodeId))) if (m.name === outline) replace.add(m.id);
   // The layer's Object Matte effect card holds the bake settings once it exists (objectMatteEffect.ts).
   const bake = objectMatteBake(nodeId, { ...opts.refine, featherPx: opts.featherPx });
   let cancel: (() => void) | null = null;
@@ -614,6 +630,7 @@ export async function propagateObjectMatte(
         direction: opts.direction,
         origin: secondsToFlicks(opts.origin),
         subject,
+        ...(opts.keepOutside ? { keepOutside: true } : {}),
         strokes: corrections,
         matte: true,
         refine: {

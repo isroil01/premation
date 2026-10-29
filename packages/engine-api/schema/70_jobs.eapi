@@ -133,6 +133,8 @@ struct ObjectMatteJob {
   proposals?: bool = 718;
   /// Which of the layer's subjects (setLayerMatte `subject`) an edit or a walk reads and writes; absent = "s1", the first. A new id makes a new subject.
   subject?: string = 719;
+  /// Video: re-track only `range` (the Subjects panel's re-track between two fixes): the subject's stored frames outside it stay (setLayerMatte `merge`) and its outline keeps its keys outside it, instead of the walk replacing the subject. Absent = false.
+  keepOutside?: bool = 720;
 }
 enum SubjectTool { segment = 0; paint = 1; refine = 2; }
 enum SubjectOp { replace = 0; add = 1; subtract = 2; }
@@ -249,6 +251,12 @@ query getCameraSolve = 1091 { layer: LayerId = 1; } -> CameraSolveAnswer;
 /// `merge`: `frames` replace only the stored frames at their times (the rest kept). `cut` (absent = true): a newly made Object Matte effect is enabled (the matte cuts the layer); false = it is made disabled (the matte is a selection other effects read).
 /// `subject`: which of the layer's subjects the frames belong to (absent = "s1"); a layer holds several, each its own frames (tagged `s`) and its entry in `layer/subjects` (name, colour, live edge), made here the first time an id is written. Empty `frames` with `subject` removes that subject alone.
 command setLayerMatte = 1947 { layer: LayerId = 1; frames: ContentAwareFillFrame[] = 2; merge: bool = 3; cut?: bool = 4; subject?: string = 5; }
+/// Subjects Pro tracking lanes: one stored matte frame of a subject, in composition time — the tracker's `confidence` (0–1, absent = not measured) and whether it is a `fix` (setLayerMatte's ContentAwareFillFrame).
+struct SubjectTrackFrame { time: Time = 1; confidence?: f64 = 2; fix: bool = 3; }
+struct SubjectTrack { subject: string = 1; frames: SubjectTrackFrame[] = 2; }
+struct SubjectTracks { subjects: SubjectTrack[] = 1; }
+/// The layer's subjects (core/subjects.hpp, panel order) with their stored matte frames in time order: what the Subjects panel's tracking lanes and Frames to Review draw. A layer with no subjects answers an empty list.
+query getSubjectTracks = 1954 { layer: LayerId = 1; } -> SubjectTracks;
 /// Roto Brush (rotoBrush.ts runRotoBrush): a GrabCut-class matte from the `seed` click (layer pixels at `range.start`, colour `tolerance` default 36), propagated frame to frame by block flow with a colour re-seed, as ONE "Roto Brush" mask with a path key per frame of the range (feather `feather` px, default 2).
 /// Roto Brush propagation. The starting matte is `startMask` at `range.start` (the tool's SAM outline, a mask id of `layer`), else GrabCut from every foreground prompt. Every prompt (layer px, top-left origin) rides the flow from frame to frame and re-seeds the matte; background prompts keep their region out of the re-seed. `seed` is the prompt used when `prompts` is empty. The result is ONE "Roto Brush" mask with a path key per frame; `replaceMasks` and every other "Roto Brush" mask on the layer are removed in the same history entry.
 struct RotoBrushJob { layer: LayerId = 1; range: TimeRange = 2; seed: Vec2 = 3; tolerance?: f64 = 4; feather?: f64 = 5; prompts: Vec2[] = 6; backgroundPrompts: Vec2[] = 7; startMask?: string = 8; replaceMasks: string[] = 9; }
@@ -309,7 +317,14 @@ command applyJobResult = 852 { job: JobId = 1; } -> ItemList;
 struct JobRef { job: JobId = 1; }
 
 /// A content-aware fill frame: `time` in composition time, `src` the filled picture (a file path or URL the renderer reads as a still).
-struct ContentAwareFillFrame { time: Time = 1; src: string = 2; }
+struct ContentAwareFillFrame {
+  time: Time = 1;
+  src: string = 2;
+  /// A subject matte frame (setLayerMatte): how sure the tracker was of it, 0–1 (absent = not measured). Content-Aware Fill ignores it.
+  confidence?: f64 = 3;
+  /// A subject matte frame: a FIX — the user's own selection or edit, or a frame a walk was prompted on — not one the tracker carried there. Content-Aware Fill ignores it.
+  fix?: bool = 4;
+}
 /// The layer's content-aware fill (the content-aware fill job's result; the page stored the same record as `fx.contentAwareFill`): the frame nearest the layer's time stands in for its footage. Empty `frames` clears it. Inverse: the previous record.
 command setContentAwareFill = 1852 { layer: LayerId = 1; frames: ContentAwareFillFrame[] = 2; }
 
