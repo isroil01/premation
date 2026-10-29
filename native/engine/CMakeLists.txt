@@ -1126,6 +1126,7 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
     src/scene/text_query.cpp        # B4 round 2: getTextLayout / getLayerBounds' text boxes over text_measure
     src/scene/scene_textures.cpp
     src/scene/image_decode_ffi.cpp
+    src/scene/pdf_render_ffi.cpp     # PDF / Illustrator footage through PDFium (pdf_render.hpp)
     src/scene/svg_layer.cpp
     src/scene/text_port.cpp
     src/scene/paint_port.cpp
@@ -1164,6 +1165,28 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
   else()
     target_link_libraries(engine_scene PRIVATE unofficial::skia::skia)  # Skia's codecs: still-image footage (image_decode_ffi.cpp)
   endif()
+  # PDF / Illustrator footage (pdf_render_ffi.cpp): PDFium, prebuilt and pinned
+  # (native/vcpkg-overlays/pdfium). On Windows it is delay-loaded — an engine
+  # without pdfium.dll starts, and a PDF import says why it cannot read the
+  # file — and copied beside every executable that draws footage
+  # (scripts/stageEngine.cjs ships it with the engine).
+  find_package(pdfium CONFIG QUIET)
+  set(PREMATION_PDFIUM_DLL "")
+  if(pdfium_FOUND)
+    target_link_libraries(engine_scene PUBLIC pdfium::pdfium)
+    target_compile_definitions(engine_scene PRIVATE PREMATION_HAVE_PDFIUM=1)
+    get_target_property(_pdfium_location pdfium::pdfium IMPORTED_LOCATION)
+    set(PREMATION_PDFIUM_DLL "${_pdfium_location}")
+    if(WIN32)
+      set_property(TARGET pdfium::pdfium APPEND PROPERTY INTERFACE_LINK_OPTIONS "/DELAYLOAD:pdfium.dll")
+      set_property(TARGET pdfium::pdfium APPEND PROPERTY INTERFACE_LINK_LIBRARIES delayimp)
+    elseif(APPLE)
+      set_property(TARGET pdfium::pdfium APPEND PROPERTY INTERFACE_LINK_OPTIONS "LINKER:-rpath,@executable_path")
+    endif()
+    message(STATUS "premation-engine: PDFium (${PREMATION_PDFIUM_DLL})")
+  else()
+    message(STATUS "premation-engine: PDFium not found — PDF / Illustrator footage answers why it cannot be read")
+  endif()
   if(TARGET engine_media_gpu)
     target_link_libraries(engine_scene PUBLIC engine_media_gpu)
     target_compile_definitions(engine_scene PUBLIC PREMATION_HAVE_MEDIA=1)
@@ -1188,7 +1211,7 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
   # engine_scene_tests: the scene builder's GPU-free units (colour settings,
   # the D4 frame cache) — the pixel parity is premation-scene's (render-tests).
   if(MOTION_BUILD_TESTS)
-    add_executable(engine_scene_tests tests/test_scene_color.cpp tests/test_text_port_parity.cpp tests/test_bake_chain.cpp
+    add_executable(engine_scene_tests tests/test_pdf_footage.cpp tests/test_scene_color.cpp tests/test_text_port_parity.cpp tests/test_bake_chain.cpp
                                       tests/test_threed_models.cpp tests/test_time_comp_parity.cpp tests/test_particle_parity.cpp
                                       tests/test_polygon_clipping_parity.cpp tests/test_cover_crop.cpp tests/test_source_text.cpp
                                       tests/test_rig_coverage.cpp tests/test_gpu_effect_route.cpp tests/test_media_reload.cpp
@@ -1638,4 +1661,22 @@ if(TARGET premation-engine)
   if(TARGET premation-host-bridge)
     add_dependencies(premation-release premation-host-bridge)
   endif()
+endif()
+
+# PDFium beside every executable that draws footage (engine_scene): Windows
+# delay-loads it (an exe without it starts; PDF footage then says why), macOS
+# finds it through @executable_path.
+if(PREMATION_PDFIUM_DLL)
+  get_property(_premation_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+  foreach(_t IN LISTS _premation_targets)
+    get_target_property(_type ${_t} TYPE)
+    if(_type STREQUAL "EXECUTABLE")
+      get_target_property(_libs ${_t} LINK_LIBRARIES)
+      if(_libs AND ("engine_scene" IN_LIST _libs OR _t STREQUAL "premation-engine"))
+        add_custom_command(TARGET ${_t} POST_BUILD
+          COMMAND ${CMAKE_COMMAND} -E copy_if_different "${PREMATION_PDFIUM_DLL}" $<TARGET_FILE_DIR:${_t}>
+          VERBATIM)
+      endif()
+    endif()
+  endforeach()
 endif()

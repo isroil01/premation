@@ -1,0 +1,12 @@
+# pdfium::pdfium — the prebuilt shared library (native/vcpkg-overlays/pdfium).
+get_filename_component(_pdfium_root "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
+if(NOT TARGET pdfium::pdfium)
+  add_library(pdfium::pdfium SHARED IMPORTED)
+  set_target_properties(pdfium::pdfium PROPERTIES
+    INTERFACE_INCLUDE_DIRECTORIES "${_pdfium_root}/include/pdfium"
+    IMPORTED_LOCATION "${_pdfium_root}/@PDFIUM_LOCATION@")
+  if(NOT "@PDFIUM_IMPLIB@" STREQUAL "")
+    set_target_properties(pdfium::pdfium PROPERTIES IMPORTED_IMPLIB "${_pdfium_root}/@PDFIUM_IMPLIB@")
+  endif()
+endif()
+set(pdfium_FOUND TRUE)

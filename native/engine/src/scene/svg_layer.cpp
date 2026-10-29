@@ -8,6 +8,7 @@
 #include <sstream>
 
 #include "image_decode.hpp"
+#include "pdf_render.hpp"
 #include "svg_render.hpp"
 
 namespace premation::scene {
@@ -77,6 +78,8 @@ bool is_svg_src(std::string_view src) {
   // isSvgBlob: the blob's type (a data: URL states it), or a .svg path.
   if (src.size() >= 18 && lower(src.substr(0, 18)) == "data:image/svg+xml") return true;
   if (src.starts_with("data:")) return false;
+  // PDF / Illustrator footage: a vector document drawn at its display size like an SVG (pdf_render.hpp).
+  if (is_pdf_path(src)) return true;
   std::string_view path = src;
   const std::size_t q = path.find_first_of("?#");
   if (q != std::string_view::npos) path = path.substr(0, q);
@@ -108,6 +111,7 @@ raster::svg::SvgFacts svg_file_facts(const std::filesystem::path& p) {
 
 raster::RasterOutput rasterize_svg_src(std::string_view src, const std::optional<std::string>& fill,
                                        const std::string& filePath, double time, double targetLongEdge) {
+  if (!src.starts_with("data:") && is_pdf_path(filePath)) return rasterize_pdf_file(filePath, targetLongEdge);
   raster::RasterOutput out;
   std::string markup;
   if (src.starts_with("data:")) {

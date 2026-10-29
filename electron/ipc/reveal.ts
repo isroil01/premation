@@ -93,7 +93,7 @@ export function registerRevealIpc(): void {
       properties: ['openFile', 'multiSelections'],
       filters: [
         { name: 'Media', extensions: ['mp4', 'm4v', 'mov', 'webm', 'mkv', 'avi', 'mpg', 'mpeg', 'wmv', 'mxf', 'mts', 'm2ts',
-          'png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'avif', 'bmp', 'tif', 'tiff', 'exr', 'dpx', 'psd',
+          'png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'avif', 'bmp', 'tif', 'tiff', 'exr', 'dpx', 'psd', 'psb', 'pdf', 'ai',
           'mp3', 'wav', 'm4a', 'aac', 'ogg', 'flac', 'aif', 'aiff', 'opus', ...pluginExts] },
         ...(pluginExts.length > 0 ? [{ name: 'Plugin formats', extensions: pluginExts }] : []),
         { name: 'All Files', extensions: ['*'] },

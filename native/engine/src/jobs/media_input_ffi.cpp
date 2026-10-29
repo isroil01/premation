@@ -20,6 +20,7 @@ extern "C" {
 
 #include "audio_decode.hpp"
 #include "scene/image_decode.hpp"
+#include "scene/pdf_render.hpp"
 #include "scene/svg_layer.hpp"
 
 namespace premation::jobs {
@@ -383,6 +384,25 @@ bool probe_svg(const std::string& path, js::Json& facts, std::string& error) {
   return true;
 }
 
+/// A PDF / Illustrator file: its first page, sized in points (AE: 1 pt = 1 px),
+/// an image drawn at its display size by PDFium (scene/pdf_render.hpp).
+bool probe_pdf(const std::string& path, js::Json& facts, std::string& error) {
+  const scene::PdfFacts f = scene::pdf_file_facts(path);
+  if (!f.ok) {
+    error = "'" + path + "' could not be read: " + f.error;
+    return false;
+  }
+  facts = js::Json::object();
+  facts.set("type", js::Json::string("image"));
+  js::Json md = js::Json::object();
+  md.set("width", js::Json::number(std::max(1.0, std::round(f.width))));
+  md.set("height", js::Json::number(std::max(1.0, std::round(f.height))));
+  md.set("duration", js::Json::number(0));
+  md.set("pages", js::Json::number(f.pages));
+  facts.set("metadata", std::move(md));
+  return true;
+}
+
 /// An animated GIF / WebP: the OS still codec reads only the first frame, so
 /// ffmpeg is asked first; with more than one frame it is footage that moves.
 bool probe_animated_still(const std::string& path, js::Json& facts) {
@@ -406,6 +426,7 @@ bool probe_animated_still(const std::string& path, js::Json& facts) {
 bool probe_media(const std::string& path, js::Json& facts, std::string& error) {
   const std::string ext = lower_ext(fs_path(path));
   if (ext == ".svg") return probe_svg(path, facts, error);
+  if (ext == ".pdf" || ext == ".ai") return probe_pdf(path, facts, error);
   if ((ext == ".gif" || ext == ".webp") && probe_animated_still(path, facts)) return true;
   audio::AudioStreamInfo sound;
   std::string soundError;

@@ -60,13 +60,13 @@ describe('stageEngine', () => {
 
   it('stages Windows with DXC, macOS with the host bridge, Linux with its shared libraries', () => {
     const log = quiet();
-    built('windows-clang-cl-engine', ['premation-engine.exe', 'dxcompiler.dll', 'dxil.dll', 'DirectML.dll', 'premation-render.exe']);
+    built('windows-clang-cl-engine', ['premation-engine.exe', 'dxcompiler.dll', 'dxil.dll', 'DirectML.dll', 'pdfium.dll', 'premation-render.exe']);
     stageEngine('win32', 1, {}, root);
-    expect(staged()).toEqual(['DirectML.dll', 'dxcompiler.dll', 'dxil.dll', 'premation-engine.exe']);
+    expect(staged()).toEqual(['DirectML.dll', 'dxcompiler.dll', 'dxil.dll', 'pdfium.dll', 'premation-engine.exe']);
 
-    built('macos-clang-engine-x64', ['premation-engine', 'premation-host-bridge.node', 'engine_tests']);
+    built('macos-clang-engine-x64', ['premation-engine', 'premation-host-bridge.node', 'libpdfium.dylib', 'engine_tests']);
     stageEngine('darwin', 1, {}, root);
-    expect(staged()).toEqual(['premation-engine', 'premation-host-bridge.node']);
+    expect(staged()).toEqual(['libpdfium.dylib', 'premation-engine', 'premation-host-bridge.node']);
     if (process.platform !== 'win32') {
       expect(statSync(path.join(root, 'build', 'engine', 'premation-engine')).mode & 0o111).not.toBe(0);
     }

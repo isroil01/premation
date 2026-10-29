@@ -1,0 +1,8 @@
+{
+  "name": "pdfium",
+  "version-string": "chromium-8100",
+  "description": "PDFium (Google's PDF renderer, BSD-3-Clause / Apache-2.0) as the prebuilt shared library from bblanchon/pdfium-binaries, pinned by SHA-512. Premation overlay: there is no builtin port.",
+  "homepage": "https://pdfium.googlesource.com/pdfium/",
+  "license": "BSD-3-Clause",
+  "supports": "(windows & x64) | osx"
+}

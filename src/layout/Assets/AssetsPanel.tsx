@@ -1488,7 +1488,7 @@ export function AssetsPanel(): JSX.Element {
             ref={fileInputRef}
             className={styles.fileInput}
             multiple
-            accept="image/*,video/*,audio/*,.exr,.dpx,.psd,.dng,.cr2,.cr3,.nef,.arw,.mxf,.mkv,.avi,.mts,.m2ts,.r3d,.braw,.glb,.gltf,.obj,.fbx,.usda,.usdz,.json,.csv,.tsv"
+            accept="image/*,video/*,audio/*,.exr,.dpx,.psd,.psb,.pdf,.ai,.dng,.cr2,.cr3,.nef,.arw,.mxf,.mkv,.avi,.mts,.m2ts,.r3d,.braw,.glb,.gltf,.obj,.fbx,.usda,.usdz,.json,.csv,.tsv"
             onChange={handleFileChange}
           />
           <input
