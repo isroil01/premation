@@ -5,6 +5,7 @@
 #include <string_view>
 
 #include "fxstate.hpp"
+#include "handlers_comps.hpp"
 #include "parenting.hpp"
 #include "readmodel.hpp"
 #include "values.hpp"
@@ -188,20 +189,52 @@ std::string native_path(std::string_view p) {
   return std::string(p);
 }
 
+bool is_photoshop_path(std::string_view p) {
+  const std::size_t dot = p.find_last_of('.');
+  if (dot == std::string_view::npos) return false;
+  std::string ext(p.substr(dot + 1));
+  for (char& ch : ext) ch = static_cast<char>(ch >= 'A' && ch <= 'Z' ? ch - 'A' + 'a' : ch);
+  return ext == "psd" || ext == "psb";
+}
+
 }  // namespace
 
 ResultOf<api::ImportFiles> handle(const api::ImportFiles& c, HCtx& x) {
   Document& d = x.d;
   if (c.files.empty()) fail(ErrorCode::invalid_argument, "no files given");
   if (!x.ports.has_import()) fail(ErrorCode::unsupported, "no media import port is attached to this engine");
+  bool anyComposition = false;
   for (const api::ImportFile& f : c.files) {
     if (f.folder && !f.folder->empty() && !has_folder(d, *f.folder)) {
       fail(ErrorCode::not_found, "no folder '" + *f.folder + "'", {.item = *f.folder});
     }
-    if (f.create_composition) {
-      fail(ErrorCode::unsupported, "import then createComposition{fromItems} (one batch) — the TS engine does not fold the two");
-    }
     if (f.interpretation) (void)interpretation_patch(*f.interpretation);
+    anyComposition = anyComposition || f.create_composition;
+  }
+  if (anyComposition) {
+    // AE's Import As: Composition. A Photoshop file becomes a composition of its
+    // layers (handlers_psd.cpp); any other file a composition of the footage.
+    // Per file, in order: the composition first, then what was imported for it.
+    std::vector<std::string> out;
+    for (const api::ImportFile& f : c.files) {
+      api::ImportFile plain = f;
+      plain.create_composition = false;
+      if (f.create_composition && is_photoshop_path(f.path)) {
+        plain.path = native_path(f.path);
+        for (auto& id : import_psd_composition(plain, x)) out.push_back(std::move(id));
+        continue;
+      }
+      const auto items = handle(api::ImportFiles{{plain}}, x).items;
+      if (f.create_composition) {
+        api::CreateComposition cc;
+        cc.from_items = items;
+        if (f.folder && !f.folder->empty()) cc.folder = f.folder;
+        out.push_back(handle(cc, x).item);
+      }
+      out.insert(out.end(), items.begin(), items.end());
+    }
+    x.label = c.files.size() == 1 ? "Import File as Composition" : "Import " + plural(c.files.size(), "File");
+    return api::ItemList{out};
   }
   std::vector<std::string> ids;
   for (std::size_t i = 0; i < c.files.size(); ++i) ids.push_back(x.mint_id("item_"));

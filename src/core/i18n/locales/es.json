@@ -10138,5 +10138,11 @@
   "export.postRender.nothing": "Post-render: un archivo de secuencia de imágenes no se importa; descomprímelo e importa los fotogramas.",
   "export.postRender.replaced": "Render importado y {n} usos de la composición reemplazados",
   "export.postRender.imported": "{n} archivo(s) renderizado(s) importado(s) al proyecto",
-  "export.form.postRender.importReplaceShort": "Importar y reemplazar"
+  "export.form.postRender.importReplaceShort": "Importar y reemplazar",
+  "assets.psd.files": "{n} archivos de Photoshop",
+  "assets.psd.title": "Importar como",
+  "assets.psd.message": "¿Importar {name} como una composición de sus capas (cada capa a su propio tamaño, los grupos como composiciones anidadas) o como un único material de la imagen combinada?",
+  "assets.psd.composition": "Composición",
+  "assets.psd.footage": "Material",
+  "assets.psd.imported": "{n} composición(es) importada(s) de Photoshop: las capas están en la carpeta “Layers”"
 }

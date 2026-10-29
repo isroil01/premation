@@ -10138,5 +10138,11 @@
   "export.postRender.nothing": "渲染后操作：图像序列压缩包不会被导入，请解压后导入帧。",
   "export.postRender.replaced": "已导入渲染结果，并替换了该合成的 {n} 处使用",
   "export.postRender.imported": "已将 {n} 个渲染文件导入项目",
-  "export.form.postRender.importReplaceShort": "导入并替换"
+  "export.form.postRender.importReplaceShort": "导入并替换",
+  "assets.psd.files": "{n} 个 Photoshop 文件",
+  "assets.psd.title": "导入为",
+  "assets.psd.message": "将 {name} 导入为由各图层组成的合成（每个图层保持自身尺寸，图层组作为嵌套合成），还是导入为一个合并图像的素材？",
+  "assets.psd.composition": "合成",
+  "assets.psd.footage": "素材",
+  "assets.psd.imported": "已从 Photoshop 导入 {n} 个合成，图层位于“Layers”文件夹中"
 }

@@ -10138,5 +10138,11 @@
   "export.postRender.nothing": "Pós-render: um arquivo de sequência de imagens não é importado — descompacte-o e importe os quadros.",
   "export.postRender.replaced": "Render importado e {n} usos da composição substituídos",
   "export.postRender.imported": "{n} arquivo(s) renderizado(s) importado(s) no projeto",
-  "export.form.postRender.importReplaceShort": "Importar e substituir"
+  "export.form.postRender.importReplaceShort": "Importar e substituir",
+  "assets.psd.files": "{n} arquivos do Photoshop",
+  "assets.psd.title": "Importar como",
+  "assets.psd.message": "Importar {name} como uma composição de suas camadas (cada camada no seu próprio tamanho, grupos como composições aninhadas) ou como um único item de mídia da imagem mesclada?",
+  "assets.psd.composition": "Composição",
+  "assets.psd.footage": "Mídia",
+  "assets.psd.imported": "{n} composição(ões) importada(s) do Photoshop — as camadas estão na pasta “Layers”"
 }

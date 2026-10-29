@@ -110,13 +110,16 @@ import {
   createFolderTreeEdit,
   importBrowserFilesEdit,
   importPathsEdit,
+  isPhotoshopPath,
   layersUsingItems,
   moveItemsEdit,
   removeItemsEdit,
   renameItemEdit,
   setItemLabelEdit,
   setItemTagsEdit,
+  type PsdImportAs,
 } from './assetEdits';
+import { customTwoChoice } from '@components/Modal/Dialogs';
 import {
   filterAssets,
   formatBytes,
@@ -282,10 +285,32 @@ export function AssetsPanel(): JSX.Element {
       const chosen = await pick();
       if (!chosen || chosen.length === 0) return;
       const folder = currentFolderRef.current;
-      const { imported, failed, reasons } = await importPathsEdit(
+      // AE's Import As for Photoshop files: a composition of the layers, or the merged image.
+      const psds = chosen.filter(isPhotoshopPath);
+      let psdAs: PsdImportAs = 'footage';
+      if (psds.length > 0) {
+        const name = psds.length === 1 ? psds[0]!.replace(/^.*[\\/]/, '') : t('assets.psd.files', '{n} Photoshop files', { n: psds.length });
+        const choice = await customTwoChoice<PsdImportAs>(
+          t('assets.psd.title', 'Import As'),
+          t('assets.psd.message', 'Import {name} as a composition of its layers (each layer at its own size, groups as nested compositions), or as one footage item of the merged image?', { name }),
+          { value: 'composition', label: t('assets.psd.composition', 'Composition') },
+          { value: 'footage', label: t('assets.psd.footage', 'Footage') },
+        );
+        if (choice === null) return;
+        psdAs = choice;
+      }
+      const { imported, failed, reasons, compositions } = await importPathsEdit(
         chosen,
         folder && documentMirror().item(folder)?.kind === 'folder' ? folder : null,
+        { psdAs },
       );
+      if (compositions?.length) {
+        useUIStore.getState().notify({
+          level: 'success',
+          message: t('assets.psd.imported', 'Imported {n} composition(s) from Photoshop — layers are in the “Layers” folder', { n: compositions.length }),
+          durationMs: 4000,
+        });
+      }
       if (failed.length > 0) {
         // Each file with its reason: "Could not import clip.r3d: this file type or codec cannot be read."
         const lines = failed.map((p) => t('assets.panel.importFailedLine', '{name}: {reason}', {

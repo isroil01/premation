@@ -129,6 +129,61 @@ export function customConfirm(
 export type SaveChoice = 'save' | 'discard' | 'cancel';
 
 /**
+ * Two answers and a way out — AE's "Import As" for a Photoshop file. Enter
+ * takes the primary (`first`); Escape / Cancel resolves null.
+ */
+export function customTwoChoice<T extends string>(
+  title: string,
+  message: string,
+  first: { value: T; label: string },
+  second: { value: T; label: string },
+): Promise<T | null> {
+  return new Promise((resolve) => {
+    let resolved = false;
+    const settle = (value: T | null, close: () => void): void => {
+      resolved = true;
+      close();
+      resolve(value);
+    };
+    openModal({
+      title: <DialogTitle icon="composition">{title}</DialogTitle>,
+      size: 'sm',
+      onClose: () => {
+        if (!resolved) {
+          resolved = true;
+          resolve(null);
+        }
+      },
+      render: () => (
+        <div className={styles.stack}>
+          <p className={cn(styles.message, styles.preWrap)}>{message}</p>
+        </div>
+      ),
+      footer: (close) => (
+        <DialogFooter
+          secondary={
+            <Button variant="ghost" onClick={() => settle(null, close)}>
+              {t('ui.modal.cancel', 'Cancel')}
+            </Button>
+          }
+          destructive={
+            <Button variant="secondary" onClick={() => settle(second.value, close)}>
+              {second.label}
+            </Button>
+          }
+          primary={
+            <Button variant="primary" onClick={() => settle(first.value, close)}>
+              {first.label}
+            </Button>
+          }
+        />
+      ),
+      primaryAction: (close) => settle(first.value, close),
+    });
+  });
+}
+
+/**
  * The three-way unsaved-changes dialog: Save / Don't Save / Cancel.
  *
  * `customConfirm` can only ask yes-or-no, so the unsaved-changes prompt built

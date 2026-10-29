@@ -12,6 +12,7 @@
 #include "bundle_io.hpp"
 #include "fail.hpp"
 #include "fxstate.hpp"
+#include "psd_read.hpp"
 #include "scene.hpp"
 #include "strutil.hpp"
 
@@ -332,7 +333,7 @@ Json FakePorts::import_file(const api::ImportFile& file, const std::string& id) 
     return d;
   }
   const bool audio = ends_with_ci(name, ".wav") || ends_with_ci(name, ".mp3") || ends_with_ci(name, ".aac");
-  const bool image = ends_with_ci(name, ".png") || ends_with_ci(name, ".jpg") || ends_with_ci(name, ".jpeg");
+  const bool image = ends_with_ci(name, ".png") || ends_with_ci(name, ".jpg") || ends_with_ci(name, ".jpeg") || ends_with_ci(name, ".psd");
   const bool model = ends_with_ci(name, ".glb");
   Json a = Json::object();
   a.set("id", Json::string(id));
@@ -507,6 +508,11 @@ std::vector<std::uint8_t> FakePorts::read_file_bytes(const std::string& path) {
     std::ifstream in(p, std::ios::binary);
     if (in) return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
   }
+  // A real file the test wrote (a .psd imported as a composition): read as it is.
+  {
+    std::ifstream in(std::filesystem::path(std::u8string(path.begin(), path.end())), std::ios::binary);
+    if (in) return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+  }
   fail(api::ErrorCode::unsupported, "importing '" + path + "' needs file bytes the test ports do not have");
 }
 
@@ -653,10 +659,55 @@ Json FilePorts::import_file(const api::ImportFile& file, const std::string& id) 
     a.set("path", Json::string(file.path));
     return a;
   }
+  // AE's Footage – Merged Layers for a Photoshop file: the document's merged
+  // image, cached as a PNG; the item keeps the .psd's name and path (relink,
+  // collect and Edit Original work on the original).
+  if (any_suffix(base_name(file.path), {".psd", ".psb"})) {
+    const std::filesystem::path p(std::u8string(file.path.begin(), file.path.end()));
+    std::error_code ec;
+    const auto size = std::filesystem::file_size(p, ec);
+    if (ec) fail(api::ErrorCode::io, "the file could not be read");
+    std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size));
+    {
+      std::ifstream in(p, std::ios::binary);
+      in.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+      if (!in) fail(api::ErrorCode::io, "the file could not be read");
+    }
+    std::string error;
+    const auto doc = psd::read(bytes, false, error);
+    if (!doc) fail(api::ErrorCode::io, error);
+    if (doc->composite.empty()) {
+      fail(api::ErrorCode::io, "the file carries no merged image (saved without Maximize Compatibility) — import it as a composition");
+    }
+    api::ImportBytesFile png;
+    png.name = base_name(file.path) + ".png";
+    png.mime_type = "image/png";
+    if (!psd::encode_png(doc->composite, doc->width, doc->height, png.data)) fail(api::ErrorCode::io, "the merged image could not be encoded");
+    Json a = import_bytes(png, id);
+    a.set("name", Json::string(base_name(file.path)));
+    a.set("path", Json::string(file.path));
+    return a;
+  }
   return record_for(file.path, base_name(file.path), id);
 }
 
 Json FilePorts::import_bytes(const api::ImportBytesFile& file, const std::string& id) {
+  // A dropped Photoshop file: its merged image (as import_file does for a path).
+  if (any_suffix(file.name, {".psd", ".psb"})) {
+    std::string error;
+    const auto doc = psd::read(file.data, false, error);
+    if (!doc) fail(api::ErrorCode::io, error);
+    if (doc->composite.empty()) {
+      fail(api::ErrorCode::io, "the file carries no merged image (saved without Maximize Compatibility) — import it as a composition");
+    }
+    api::ImportBytesFile png = file;
+    png.name = file.name + ".png";
+    png.mime_type = "image/png";
+    if (!psd::encode_png(doc->composite, doc->width, doc->height, png.data)) fail(api::ErrorCode::io, "the merged image could not be encoded");
+    Json a = import_bytes(png, id);
+    a.set("name", Json::string(file.name));
+    return a;
+  }
   // Content-addressed: the same bytes imported twice are one cache file.
   const std::string_view bytes(reinterpret_cast<const char*>(file.data.data()), file.data.size());
   std::error_code ec;

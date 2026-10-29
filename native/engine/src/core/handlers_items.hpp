@@ -12,6 +12,8 @@ namespace premation::doc {
 
 ResultOf<api::ImportFiles> handle(const api::ImportFiles& c, HCtx& x);
 ResultOf<api::ImportBytes> handle(const api::ImportBytes& c, HCtx& x);
+/// importFiles with createComposition for a .psd / .psb (handlers_psd.cpp): [composition, folder].
+std::vector<std::string> import_psd_composition(const api::ImportFile& f, HCtx& x);
 ResultOf<api::RelinkItem> handle(const api::RelinkItem& c, HCtx& x);
 ResultOf<api::RemoveItems> handle(const api::RemoveItems& c, HCtx& x);
 ResultOf<api::RenameItem> handle(const api::RenameItem& c, HCtx& x);

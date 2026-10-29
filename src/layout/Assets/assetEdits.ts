@@ -48,6 +48,8 @@ async function importedAssets(ids: readonly string[]): Promise<ImportedAsset[]> 
 
 export interface ImportPathsResult {
   imported: ImportedAsset[];
+  /** Compositions the import made (a Photoshop file imported as a composition). */
+  compositions?: string[];
   /** Paths that could not be read or decoded. */
   failed: string[];
   /** Why, by failed path / name, in words for the user (`importFailureReason`). */
@@ -73,14 +75,22 @@ export function importFailureReason(message: string | undefined): string {
  * fails, the rest are imported one by one inside one gesture so a single bad
  * file neither blocks the others nor splits the undo entry.
  */
-export async function importPathsEdit(paths: readonly string[], folder: string | null = null): Promise<ImportPathsResult> {
+export async function importPathsEdit(
+  paths: readonly string[],
+  folder: string | null = null,
+  opts: { psdAs?: PsdImportAs } = {},
+): Promise<ImportPathsResult> {
   if (paths.length === 0) return { imported: [], failed: [] };
   const label = paths.length === 1 ? 'Import File' : `Import ${plural(paths.length, 'File')}`;
-  const file = (path: string) => ({ path, asSequence: false, createComposition: false, ...(folder ? { folder } : {}) });
+  // AE's Import As for a Photoshop file: Footage (the merged image) unless asked for a Composition.
+  const asComposition = (path: string): boolean => opts.psdAs === 'composition' && isPhotoshopPath(path);
+  const file = (path: string) => ({ path, asSequence: false, createComposition: asComposition(path), ...(folder ? { folder } : {}) });
+  const compositionsOf = (ids: readonly string[]): string[] => ids.filter((id) => id.startsWith('comp_'));
   const all = await edit(label, { type: 'importFiles', files: paths.map(file) }, { quiet: true });
   if (all.ok) {
     const ids = (all.value[0] as { items?: string[] } | undefined)?.items ?? [];
-    return { imported: await importedAssets(ids), failed: [] };
+    const compositions = compositionsOf(ids);
+    return { imported: await importedAssets(ids), failed: [], ...(compositions.length ? { compositions } : {}) };
   }
   if (paths.length === 1) return { imported: [], failed: [...paths], reasons: { [paths[0]!]: importFailureReason(all.error.message) } };
 
@@ -91,21 +101,32 @@ export async function importPathsEdit(paths: readonly string[], folder: string |
     return { imported: [], failed: [...paths] };
   }
   const imported: ImportedAsset[] = [];
+  const compositions: string[] = [];
   const failed: string[] = [];
   const reasons: Record<string, string> = {};
   for (const path of paths) {
     const res = await client.execute({ type: 'importFiles', files: [file(path)] });
-    const id = res.ok ? (res.value as { items?: string[] }).items?.[0] : undefined;
-    const asset = id ? (await importedAssets([id]))[0] : undefined;
+    const ids = res.ok ? (res.value as { items?: string[] }).items ?? [] : [];
+    const made = compositionsOf(ids);
+    compositions.push(...made);
+    const asset = ids[0] && made.length === 0 ? (await importedAssets([ids[0]]))[0] : undefined;
     if (asset) imported.push(asset);
+    else if (made.length > 0) continue;
     else {
       failed.push(path);
       reasons[path] = importFailureReason(res.ok ? undefined : res.error.message);
     }
   }
-  const closed = await client.endGesture(opened.value.gesture, imported.length > 0);
+  const closed = await client.endGesture(opened.value.gesture, imported.length > 0 || compositions.length > 0);
   if (!closed.ok) reportEngineError(label, closed.error);
-  return { imported, failed, reasons };
+  return { imported, failed, reasons, ...(compositions.length ? { compositions } : {}) };
+}
+
+/** How a Photoshop file comes in: AE's Import As. */
+export type PsdImportAs = 'composition' | 'footage';
+
+export function isPhotoshopPath(path: string): boolean {
+  return /\.ps[db]$/i.test(path);
 }
 
 // ── Import (browser Files) ────────────────────────────────────────────
