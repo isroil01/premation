@@ -335,17 +335,25 @@ ResultOf<api::ReplaceLayerSource> handle(const api::ReplaceLayerSource& c, HCtx&
   const Node& node = require_layer(d, c.layer);
   const std::string comp = comp_of_layer(d, c.layer).value_or("");
   const bool isComp = read_comp_ref(node).has_value();
-  const Json* asset = nullptr;
-  if (isComp) {
-    if (!is_comp_item(d, c.source)) fail(ErrorCode::not_found, "no composition '" + c.source + "'", {.item = c.source});
-    if (would_create_comp_cycle(d, comp, c.source)) fail(ErrorCode::cycle, "that composition already contains this one");
-  } else {
-    const std::string kind = node.kind();
-    if (kind != "image" && kind != "video" && kind != "audio" && kind != "svg") {
-      fail(ErrorCode::invalid_argument, "only footage and precomp layers have a source", {.layer = c.layer});
-    }
-    asset = find_asset(d, c.source);
-    if (asset == nullptr) fail(ErrorCode::not_found, "no footage item '" + c.source + "'", {.item = c.source});
+  const std::string layerKind = node.kind();
+  const bool isVisualFootage = layerKind == "image" || layerKind == "video" || layerKind == "svg";
+  if (!isComp && !isVisualFootage && layerKind != "audio") {
+    fail(ErrorCode::invalid_argument, "only footage and precomp layers have a source", {.layer = c.layer});
+  }
+  // AE's Replace works across kinds: a precomp layer can take footage (Import &
+  // Replace Usage after a pre-render) and a footage layer a composition. The
+  // layer keeps its id, timing, transform, effects, masks and keyframes; only
+  // what names the source changes.
+  const bool toComp = is_comp_item(d, c.source);
+  const Json* asset = toComp ? nullptr : find_asset(d, c.source);
+  if (!toComp && asset == nullptr) {
+    fail(ErrorCode::not_found, std::string(isComp ? "no composition or footage item '" : "no footage item '") + c.source + "'", {.item = c.source});
+  }
+  if (toComp && layerKind == "audio") fail(ErrorCode::invalid_argument, "an audio layer cannot take a composition", {.layer = c.layer});
+  if (toComp && would_create_comp_cycle(d, comp, c.source)) fail(ErrorCode::cycle, "that composition already contains this one");
+  const std::string assetType = asset != nullptr && asset->at("type").is_string() ? asset->at("type").str() : std::string("image");
+  if (asset != nullptr && layerKind != "audio" && (assetType == "audio" || assetType == "data" || assetType == "model")) {
+    fail(ErrorCode::invalid_argument, "a " + assetType + " item cannot be the picture of a layer", {.item = c.source});
   }
   x.label = "Replace Layer Source";
   const Node& n = *d.node(c.layer);
@@ -353,7 +361,25 @@ ResultOf<api::ReplaceLayerSource> handle(const api::ReplaceLayerSource& c, HCtx&
   const Component* t = n.comp("Transform");
   const std::optional<std::string> fxId = fx != nullptr ? std::optional<std::string>(fx->id) : std::nullopt;
   const std::optional<std::string> tId = t != nullptr ? std::optional<std::string>(t->id) : std::nullopt;
-  if (isComp) {
+  if (isComp && !toComp && tId) {
+    // Precomp → footage: the Transform names the file; the precomp flags go.
+    (void)sg_write_prop(d, c.layer, *tId, "__kind", Json::string(assetType == "video" ? "video" : assetType == "svg" ? "svg" : "image"));
+    sg_set_fx(d, c.layer, "precomp", Json());
+    sg_set_fx(d, c.layer, "__compRef", Json());
+  } else if (!isComp && toComp && tId) {
+    // Footage → precomp.
+    (void)sg_write_prop(d, c.layer, *tId, "__kind", Json::string("comp"));
+    (void)sg_write_prop(d, c.layer, *tId, "assetId", Json());
+    (void)sg_write_prop(d, c.layer, *tId, "src", Json());
+    sg_set_fx(d, c.layer, "precomp", Json::boolean(true));
+    sg_set_fx(d, c.layer, "__compRef", Json::string(c.source));
+    if (!c.keep_size) {
+      const Json& s = *d.comp(c.source);
+      write_transform_props(x, c.layer, {{"width", s.at("width").num()}, {"height", s.at("height").num()}});
+    }
+    return {};
+  }
+  if (toComp) {
     if (fxId) (void)sg_write_prop(d, c.layer, *fxId, "__compRef", Json::string(c.source));
     if (!c.keep_size && tId) {
       const Json& s = *d.comp(c.source);

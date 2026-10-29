@@ -19,6 +19,8 @@
 
 import { useCallback, useEffect, useMemo } from 'react';
 import { Icon } from '@components/Icon';
+import { Button } from '@components/Button';
+import { IconButton } from '@components/IconButton';
 import { Switch } from '@components/Switch';
 import { cn } from '@utils/cn';
 import { useWorkspaceStore } from '@stores/projectStore';
@@ -36,23 +38,34 @@ import { flicksToSeconds } from '@motion/engine-api';
 import { runDataExport, isAbortError, isDataExportFormat, availableExportPresets, type ExportFormat, type ExportPreset } from '@core/export/exportManager';
 import {
   canEncodeLocally,
+  isStreamedFormat,
   MP4_CODEC_ENCODER,
   MP4_CODEC_LABELS,
   offersDeepColour,
   PRORES_PROFILE_LABELS,
   type ExportQuality,
+  type ExtraOutput,
   type Mp4Codec,
   type ProresProfile,
   type RenderJobSpec,
+  type StreamedFormat,
 } from '@core/export/renderSpec';
 import { chaptersFromMarkers, formatCarriesChapters, type ExportChapter } from '@core/export/chapters';
 import { openHelp } from '@layout/Help/openHelp';
 import { exportSupervisorClient } from '@core/export/exportSupervisorClient';
-import { addToRenderQueue, engineExportRefusal, FfmpegNotReadyError, queueEngineRender, reportQueueFailure, shouldUseSupervisor, stageWindowOnlyFootage } from './supervisorQueue';
+import { addToRenderQueue, engineExportRefusal, FfmpegNotReadyError, placeExtraOutputs, queueEngineRender, reportQueueFailure, shouldUseSupervisor, stageWindowOnlyFootage } from './supervisorQueue';
 import { ensureFfmpegFor } from '@stores/ffmpegStore';
 import { ExportPreview } from './ExportPreview';
 import { ExportQueueList } from './ExportQueueList';
-import { useExportFormStore } from './exportFormStore';
+import { useExportFormStore, type ExportFormChoices, type ExtraOutputChoice } from './exportFormStore';
+import {
+  deleteOutputTemplate,
+  isBuiltinOutputTemplate,
+  listOutputTemplates,
+  saveOutputTemplate,
+  type OutputTemplate,
+} from '@core/export/outputTemplates';
+import { customPrompt } from '@components/Modal/Dialogs';
 import styles from './ExportDialog.module.css';
 import { useState } from 'react';
 import { t } from '@core/i18n';
@@ -111,6 +124,75 @@ const isDnxhr = (p: ProresProfile): boolean => p.startsWith('dnxhr-');
 /** The mp4 encoder a job is queued with: H.264 follows Settings ▸ Export (software or hardware). */
 function mp4EncoderFor(codec: Mp4Codec): NonNullable<RenderJobSpec['videoEncoder']> {
   return codec === 'h264' ? usePreferenceStore.getState().exportVideoEncoder : MP4_CODEC_ENCODER[codec];
+}
+
+const MAX_EXTRA_OUTPUTS = 7;
+
+/**
+ * A render-settings template from the form: format, codec, resolution (as a
+ * scale of the comp), quality, depth, alpha, chapters, range, the extra
+ * output modules and the post-render action.
+ */
+function templateFromForm(name: string, c: ExportFormChoices): OutputTemplate {
+  return {
+    name,
+    format: c.format as OutputTemplate['format'],
+    quality: c.quality,
+    transparent: c.transparent,
+    scale: RES[c.scaleIdx]?.scale ?? 1,
+    fps: 'comp',
+    chapters: c.chapters,
+    proresProfile: c.proresProfile,
+    mp4Codec: c.mp4Codec,
+    bitDepth: c.bitDepth,
+    rangeMode: c.rangeMode,
+    extraOutputs: c.extraOutputs.map((e) => ({ format: e.format, mp4Codec: e.mp4Codec, proresProfile: e.proresProfile })),
+    postRender: c.postRender,
+  };
+}
+
+/**
+ * The form choices a template sets. Its scale snaps to the nearest of the
+ * form's sizes (Full / Half / Quarter); a frame-rate override is not applied
+ * (the form renders at the composition's rate). Fields a template does not
+ * carry keep the form's current value.
+ */
+function formFromTemplate(tpl: OutputTemplate, current: ExportFormChoices): Partial<ExportFormChoices> {
+  let scaleIdx = 0;
+  RES.forEach((r, i) => { if (Math.abs(r.scale - tpl.scale) < Math.abs((RES[scaleIdx]?.scale ?? 1) - tpl.scale)) scaleIdx = i; });
+  return {
+    format: tpl.format,
+    activeCategory: FORMAT_GROUPS.find((g) => g.formats.includes(tpl.format))?.id ?? current.activeCategory,
+    scaleIdx,
+    quality: tpl.quality,
+    transparent: tpl.transparent,
+    chapters: tpl.chapters ?? current.chapters,
+    proresProfile: tpl.proresProfile ?? current.proresProfile,
+    mp4Codec: tpl.mp4Codec ?? 'h264',
+    bitDepth: tpl.bitDepth ?? 8,
+    rangeMode: tpl.rangeMode ?? current.rangeMode,
+    extraOutputs: (tpl.extraOutputs ?? []).map((e) => ({ format: e.format, mp4Codec: e.mp4Codec ?? 'h264', proresProfile: e.proresProfile ?? 'hq' })),
+    postRender: tpl.postRender ?? 'none',
+  };
+}
+const EXTRA_FORMAT_LABELS: Record<StreamedFormat, string> = { mp4: 'MP4', mov: 'MOV', webm: 'WebM', gif: 'GIF' };
+
+/** The form's extra output modules as a job's (the main output's quality applies to each). */
+function extraOutputsOf(format: ExportFormat, choices: ReadonlyArray<ExtraOutputChoice>, quality: ExportQuality): ExtraOutput[] {
+  if (!isStreamedFormat(format)) return [];
+  return choices.map((c) => ({
+    format: c.format,
+    quality,
+    ...(c.format === 'mov' ? { proresProfile: c.proresProfile } : {}),
+    ...(c.format === 'mp4' ? { videoEncoder: mp4EncoderFor(c.mp4Codec) } : {}),
+  }));
+}
+
+/** An extra output row's codec choices, in one list: `mp4:<codec>` / `mov:<profile>`. */
+function codecChoices(format: StreamedFormat): ReadonlyArray<{ value: string; label: string }> {
+  if (format === 'mp4') return MP4_CODECS.map((c) => ({ value: c, label: MP4_CODEC_LABELS[c] }));
+  if (format === 'mov') return [...PRORES_PROFILES, ...DNXHR_PROFILES].map((p) => ({ value: p, label: PRORES_PROFILE_LABELS[p] }));
+  return [];
 }
 
 const FORMAT_GROUPS: ReadonlyArray<{ id: string; label: string; formats: ExportFormat[] }> = [
@@ -211,6 +293,8 @@ export function useExportModel(duration: number, fps: number): ExportModel {
       quality: 'high',
       proresProfile: '4444',
       mp4Codec: 'h264',
+      extraOutputs: [],
+      postRender: 'none',
       bitDepth: 8,
       // Seeded from the COMP's own setting: a user who set "Transparent
       // background" in Composition Settings got an opaque export (and preview)
@@ -228,6 +312,8 @@ export function useExportModel(duration: number, fps: number): ExportModel {
   const quality = useExportFormStore((s) => s.quality);
   const proresProfile = useExportFormStore((s) => s.proresProfile);
   const mp4Codec = useExportFormStore((s) => s.mp4Codec);
+  const extraChoices = useExportFormStore((s) => s.extraOutputs);
+  const postRender = useExportFormStore((s) => s.postRender);
   const bitDepth = useExportFormStore((s) => s.bitDepth);
   const transparent = useExportFormStore((s) => s.transparent);
   const chapters = useExportFormStore((s) => s.chapters);
@@ -311,6 +397,11 @@ export function useExportModel(duration: number, fps: number): ExportModel {
         ...(format === 'mov' ? { proresProfile } : {}),
         ...(format === 'mp4' ? { videoEncoder: mp4EncoderFor(mp4Codec) } : {}),
         ...(offersDeepColour(format) && bitDepth === 16 ? { bitDepth: 16 as const } : {}),
+        ...((): { extraOutputs?: ReturnType<typeof placeExtraOutputs> } => {
+          const placed = placeExtraOutputs(extraOutputsOf(format, extraChoices, quality), outPath);
+          return placed.length ? { extraOutputs: placed } : {};
+        })(),
+        ...(postRender !== 'none' ? { postRender } : {}),
         transparent: alpha,
         ...(chapterMarks.length ? { chapters: chapterMarks } : {}),
         ...pluginOptionsField(format),
@@ -320,7 +411,7 @@ export function useExportModel(duration: number, fps: number): ExportModel {
     } catch (err) {
       reportQueueFailure(err, t('export.form.queueFailed', 'The export could not be queued'));
     }
-  }, [outputName, captureChapters, captureRange, baseComp.id, compName, format, width, height, fps, time, quality, proresProfile, mp4Codec, bitDepth, alpha]);
+  }, [outputName, captureChapters, captureRange, baseComp.id, compName, format, width, height, fps, time, quality, proresProfile, mp4Codec, extraChoices, postRender, bitDepth, alpha]);
 
   const doExport = useCallback(async (): Promise<void> => {
     const store = useExportFormStore.getState();
@@ -402,6 +493,11 @@ export function useExportModel(duration: number, fps: number): ExportModel {
       ...(format === 'mp4' ? { videoEncoder: mp4EncoderFor(mp4Codec) } : {}),
       ...(chapterMarks.length ? { chapters: chapterMarks } : {}),
       ...pluginOptionsField(format),
+      ...((): { extraOutputs?: ExtraOutput[] } => {
+        const extras = extraOutputsOf(format, useExportFormStore.getState().extraOutputs, quality);
+        return extras.length ? { extraOutputs: extras } : {};
+      })(),
+      ...(useExportFormStore.getState().postRender !== 'none' ? { postRender: useExportFormStore.getState().postRender as 'import' } : {}),
     });
     showRenderQueue();
     // Failures (folder dialog, snapshot, ffmpeg) are reported by the queue
@@ -422,6 +518,64 @@ export function useExportModel(duration: number, fps: number): ExportModel {
   }, []);
 
   return { busy, progress, showQueue: QUEUEABLE.has(format) || isPluginFormat(format), outputName, activePreset, doExport, queueJob, cancel };
+}
+
+/**
+ * Render-settings templates (AE's Render Settings / Output Module templates):
+ * pick one to set the whole form, save the form under a name, delete a saved
+ * one (a built-in's override resets to the shipped settings).
+ */
+function TemplateRow({ busy }: { busy: boolean }): JSX.Element {
+  const [, setRev] = useState(0);
+  const [selected, setSelected] = useState('');
+  const patch = useExportFormStore((s) => s.patch);
+  const templates = listOutputTemplates();
+  const apply = (name: string): void => {
+    setSelected(name);
+    const tpl = templates.find((x) => x.name === name);
+    if (tpl) patch(formFromTemplate(tpl, useExportFormStore.getState()));
+  };
+  const save = async (): Promise<void> => {
+    const name = await customPrompt(
+      t('renderQueue.outputModule.saveTemplateTitle', 'Save Template'),
+      t('renderQueue.outputModule.templateName', 'Template name'),
+      selected || t('renderQueue.outputModule.defaultTemplateName', 'My Template'),
+    );
+    if (!name?.trim()) return;
+    if (saveOutputTemplate(templateFromForm(name.trim(), useExportFormStore.getState()))) {
+      setSelected(name.trim());
+      setRev((r) => r + 1);
+    }
+  };
+  const remove = (): void => {
+    if (!selected) return;
+    deleteOutputTemplate(selected);
+    if (!isBuiltinOutputTemplate(selected)) setSelected('');
+    setRev((r) => r + 1);
+  };
+  return (
+    <div className={styles.section}>
+      <div className={styles.label}>{t('export.form.template', 'Template')}</div>
+      <div className={cn(styles.outputRow, styles.templateRow)}>
+        <select
+          className={styles.outputSelect}
+          value={selected}
+          disabled={busy}
+          aria-label={t('renderQueue.outputModule.templateLabel', 'Output template')}
+          onChange={(e) => apply(e.target.value)}
+        >
+          <option value="">{t('renderQueue.outputModule.choose', '— choose —')}</option>
+          {templates.map((tpl) => <option key={tpl.name} value={tpl.name}>{tpl.name}</option>)}
+        </select>
+        <Button size="sm" variant="ghost" disabled={busy} onClick={() => { void save(); }}>
+          {t('renderQueue.outputModule.save', 'Save…')}
+        </Button>
+        <Button size="sm" variant="ghost" disabled={busy || !selected} onClick={remove}>
+          {isBuiltinOutputTemplate(selected) ? t('renderQueue.outputModule.reset', 'Reset') : t('renderQueue.outputModule.delete', 'Delete')}
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 export interface ExportFormProps {
@@ -447,6 +601,8 @@ export function ExportForm({ duration, fps, host }: ExportFormProps): JSX.Elemen
   const quality = useExportFormStore((s) => s.quality);
   const proresProfile = useExportFormStore((s) => s.proresProfile);
   const mp4Codec = useExportFormStore((s) => s.mp4Codec);
+  const extraChoices = useExportFormStore((s) => s.extraOutputs);
+  const postRender = useExportFormStore((s) => s.postRender);
   const transparent = useExportFormStore((s) => s.transparent);
   const chapters = useExportFormStore((s) => s.chapters);
   const rangeMode = useExportFormStore((s) => s.rangeMode);
@@ -556,6 +712,7 @@ export function ExportForm({ duration, fps, host }: ExportFormProps): JSX.Elemen
         </section>
 
         <section className={styles.settingsCol} aria-label={t('export.form.settingsLabel', 'Export settings')}>
+          <TemplateRow busy={busy} />
           <div className={styles.section}>
             <div className={styles.label}>{t('export.form.formatCategory', 'Format Category')}</div>
             <div className={styles.categoryTabs} role="tablist">
@@ -857,6 +1014,94 @@ export function ExportForm({ duration, fps, host }: ExportFormProps): JSX.Elemen
                 onChange={(e) => patch({ chapters: e.currentTarget.checked })}
                 aria-label={t('export.form.chapters', 'Chapters from markers')}
               />
+            </div>
+          ) : null}
+
+          {isStreamedFormat(format) && shouldUseSupervisor(format) ? (
+            <div className={styles.section}>
+              <div className={styles.label}>{t('export.form.moreOutputs', 'More outputs from this render')}</div>
+              {extraChoices.map((c, i) => {
+                const setRow = (next: Partial<ExtraOutputChoice>): void =>
+                  patch({ extraOutputs: extraChoices.map((x, j) => (j === i ? { ...x, ...next } : x)) });
+                const codecs = codecChoices(c.format);
+                return (
+                  <div key={i} className={styles.outputRow}>
+                    <select
+                      className={styles.outputSelect}
+                      value={c.format}
+                      disabled={busy}
+                      aria-label={t('export.form.outputFormat', 'Output {n} format', { n: i + 2 })}
+                      onChange={(e) => setRow({ format: e.target.value as StreamedFormat })}
+                    >
+                      {(['mp4', 'mov', 'webm', 'gif'] as const).map((f) => <option key={f} value={f}>{EXTRA_FORMAT_LABELS[f]}</option>)}
+                    </select>
+                    {codecs.length > 0 ? (
+                      <select
+                        className={styles.outputSelect}
+                        value={c.format === 'mp4' ? c.mp4Codec : c.proresProfile}
+                        disabled={busy}
+                        aria-label={t('export.form.outputCodec', 'Output {n} codec', { n: i + 2 })}
+                        onChange={(e) => setRow(c.format === 'mp4' ? { mp4Codec: e.target.value as Mp4Codec } : { proresProfile: e.target.value as ProresProfile })}
+                      >
+                        {codecs.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                      </select>
+                    ) : <span className={styles.outputSelect} aria-hidden="true" />}
+                    <IconButton
+                      size="sm"
+                      variant="ghost"
+                      disabled={busy}
+                      tooltip={t('export.form.removeOutput', 'Remove this output')}
+                      aria-label={t('export.form.removeOutput', 'Remove this output')}
+                      onClick={() => patch({ extraOutputs: extraChoices.filter((_, j) => j !== i) })}
+                    >
+                      <Icon name="close" size="sm" />
+                    </IconButton>
+                  </div>
+                );
+              })}
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={busy || extraChoices.length >= MAX_EXTRA_OUTPUTS}
+                onClick={() => patch({ extraOutputs: [...extraChoices, { format: format === 'mov' ? 'mp4' : 'mov', mp4Codec: 'h264', proresProfile: 'hq' }] })}
+              >
+                {t('export.form.addOutput', 'Add output')}
+              </Button>
+              <p className={styles.fieldNote}>
+                {extraChoices.length > 0
+                  ? t('export.form.moreOutputsNote', 'Rendered once, encoded {n} ways. Written beside the main file with the same name.', { n: extraChoices.length + 1 })
+                  : t('export.form.moreOutputsHint', 'Write several files — say a ProRes master and an H.264 review copy — from one render.')}
+              </p>
+            </div>
+          ) : null}
+
+          {shouldUseSupervisor(format) && (MOVING.has(format) || format === 'png') ? (
+            <div className={styles.section}>
+              <div className={styles.label}>{t('export.form.postRender', 'When the render finishes')}</div>
+              <div className={styles.seg} role="radiogroup" aria-label={t('export.form.postRender', 'When the render finishes')}>
+                {(['none', 'import', 'importReplace'] as const).map((a) => (
+                  <button
+                    key={a}
+                    type="button"
+                    role="radio"
+                    aria-checked={postRender === a}
+                    disabled={busy}
+                    className={cn(styles.segChip, postRender === a && styles.segChipOn)}
+                    onClick={() => patch({ postRender: a })}
+                  >
+                    {a === 'none'
+                      ? t('export.form.postRender.none', 'Nothing')
+                      : a === 'import'
+                        ? t('export.form.postRender.import', 'Import')
+                        : t('export.form.postRender.importReplace', 'Import & Replace Usage')}
+                  </button>
+                ))}
+              </div>
+              {postRender === 'importReplace' ? (
+                <p className={styles.fieldNote}>
+                  {t('export.form.postRender.replaceNote', 'Every layer that uses this composition switches to the rendered file — keyframes, effects and masks stay. Undo brings the composition back.')}
+                </p>
+              ) : null}
             </div>
           ) : null}
 

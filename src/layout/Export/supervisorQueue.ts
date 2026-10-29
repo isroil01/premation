@@ -11,6 +11,7 @@
  */
 
 import type { ExportFormat } from '@core/export/exportManager';
+import { extraOutputPaths, type ExtraOutput } from '@core/export/renderSpec';
 import {
   buildSupervisorSpec,
   exportSupervisorAvailable,
@@ -24,7 +25,8 @@ import { engine } from '@core/engine/engineInstance';
 import { engineCanReadFootage, materializeUnreadableFootage } from '@core/engine/sessionFootage';
 import { getProjectManager } from '@core/services/coreServices';
 import { documentMirror } from '@stores/documentMirror';
-import { useExportQueueStore } from '@stores/exportQueueStore';
+import { setExportCompletedHandler, useExportQueueStore } from '@stores/exportQueueStore';
+import { runPostRenderAction } from './postRender';
 import { canChooseOutputDir, setRenderQueueSubmitter, useRenderQueueStore, type RenderJob } from '@stores/renderQueueStore';
 import { useUIStore } from '@stores/uiStore';
 import { ensureFfmpegFor, useFfmpegStore } from '@stores/ffmpegStore';
@@ -147,7 +149,15 @@ function specInput(job: QueueJobInput): Omit<SupervisorSpecInput, 'projectPath' 
     transparent: job.transparent,
     ...(job.chapters && job.chapters.length > 0 ? { chapters: job.chapters } : {}),
     ...(job.pluginOptions !== undefined ? { pluginOptions: job.pluginOptions } : {}),
+    ...(job.postRender ? { postRender: job.postRender } : {}),
   };
+}
+
+/** The job's extra output modules, placed beside `outPath` (renderSpec `extraOutputPaths`). */
+export function placeExtraOutputs(extras: ReadonlyArray<ExtraOutput> | undefined, outPath: string): Array<ExtraOutput & { outPath: string }> {
+  if (!extras || extras.length === 0) return [];
+  const paths = extraOutputPaths(outPath, extras.map((e) => e.format));
+  return extras.map((e, i) => ({ ...e, outPath: paths[i]! }));
 }
 
 /**
@@ -192,7 +202,8 @@ export async function enqueueSupervisorJob(job: QueueJobInput, priority = 0): Pr
   try {
     const outPath = dir ? joinOutputPath(dir, fileName) : await exportSupervisorClient.chooseOutputPath(fileName);
     if (!outPath) return null;
-    return await queueEngineRender({ ...specInput(job), outPath }, priority);
+    const extraOutputs = placeExtraOutputs(job.extraOutputs, outPath);
+    return await queueEngineRender({ ...specInput(job), outPath, ...(extraOutputs.length ? { extraOutputs } : {}) }, priority);
   } catch (err) {
     reportQueueFailure(err);
     return null;
@@ -246,3 +257,5 @@ export async function renderAndWait(
 
 // Render All in the Render Queue panel hands its pending jobs over through this.
 setRenderQueueSubmitter((job) => enqueueSupervisorJob(job));
+// Post-render actions (Import / Import & Replace Usage) when a job finishes.
+setExportCompletedHandler((job) => { void runPostRenderAction(job); });

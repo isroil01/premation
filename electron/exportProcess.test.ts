@@ -123,6 +123,24 @@ describe('validateSpec', () => {
     expect(() => validateSpec({ ...spec(), quality: 'best' })).toThrow(/quality/);
     expect(() => validateSpec(null)).toThrow(/spec/);
   });
+
+  it('keeps 16 bits for mov and the EXR / TIFF / DPX sequences only', () => {
+    expect(validateSpec({ ...spec(), format: 'tiff-sequence', bitDepth: 16 }).bitDepth).toBe(16);
+    expect(validateSpec({ ...spec(), format: 'dpx-sequence', bitDepth: 16 }).bitDepth).toBe(16);
+    expect(() => validateSpec({ ...spec(), format: 'png-sequence', bitDepth: 16 })).toThrow(/16-bit/);
+  });
+
+  it('extra outputs: streamed formats with absolute, distinct paths; post-render action', () => {
+    const extra = (over: Record<string, unknown> = {}): Record<string, unknown> => ({ format: 'mov', outPath: path.join(path.dirname(spec().outPath), 'job1.mov'), proresProfile: 'dnxhr-hq', ...over });
+    const ok = validateSpec({ ...spec(), extraOutputs: [extra()], postRender: 'importReplace' });
+    expect(ok.extraOutputs).toEqual([{ format: 'mov', outPath: extra().outPath, proresProfile: 'dnxhr-hq' }]);
+    expect(ok.postRender).toBe('importReplace');
+    expect(() => validateSpec({ ...spec(), extraOutputs: [extra({ format: 'png-sequence' })] })).toThrow(/mp4, mov, webm or gif/);
+    expect(() => validateSpec({ ...spec(), extraOutputs: [extra({ outPath: 'x.mov' })] })).toThrow(/absolute/);
+    expect(() => validateSpec({ ...spec(), extraOutputs: [extra({ outPath: spec().outPath })] })).toThrow(/same file/);
+    expect(() => validateSpec({ ...spec(), format: 'png-sequence', extraOutputs: [extra()] })).toThrow(/main output/);
+    expect(() => validateSpec({ ...spec(), postRender: 'delete' })).toThrow(/postRender/);
+  });
 });
 
 describe('the state machine', () => {

@@ -563,3 +563,27 @@
     overflow-wrap: anywhere;
   }
 }
+
+/* Extra output modules: format, codec, remove. */
+.outputRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) auto;
+  gap: var(--space-2);
+  align-items: center;
+  margin-bottom: var(--space-2);
+}
+
+.outputSelect {
+  min-width: 0;
+  height: var(--control-height-row);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-field-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-0);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-xs);
+}
+
+.templateRow {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}

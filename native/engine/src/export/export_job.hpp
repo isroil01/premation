@@ -100,6 +100,9 @@ struct JobSpec {
   /// The encoder, when known up front (tools / benches); otherwise it arrives on stdin.
   std::optional<std::string> encodeBin;
   std::vector<std::string> encodeArgs;
+  /// More encoders fed the SAME frames (AE's several output modules on one render
+  /// item): each runs `encodeBin` with its own args and log (ffmpeg.<n>.log).
+  std::vector<std::vector<std::string>> encodeExtra;
   /// Image sequence instead of an encoder: "png", "exr", "png-zip", or "exr-zip".
   /// P7c: `plugin:<plugin id>/<module id>` — a native plugin's output module writes the frames.
   std::string sequence;

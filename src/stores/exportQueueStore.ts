@@ -26,6 +26,16 @@ import { t } from '@core/i18n';
 
 const TRAY_PREFIX = 'export-job:';
 
+/**
+ * Told once when a job this window watched finishes `completed` (not for jobs
+ * already done when it connected): the post-render action runner, registered
+ * by the layout (src/layout/Export/postRender.ts) — a store does not import it.
+ */
+let onCompleted: ((job: ExportJobRecord) => void) | null = null;
+export function setExportCompletedHandler(fn: ((job: ExportJobRecord) => void) | null): void {
+  onCompleted = fn;
+}
+
 export interface ExportQueueState {
   /** Newest last, the order main keeps them in. */
   jobs: ReadonlyArray<ExportJobRecord>;
@@ -70,6 +80,7 @@ function mirrorToTray(prev: ExportJobRecord | undefined, next: ExportJobRecord):
   if (!wasLive) return;
   if (next.status === 'completed') {
     ui.finishJob(trayId, { status: 'done', message: t('stores.exportQueue.complete', 'Export complete — {path}', { path: next.spec.outPath }) });
+    onCompleted?.(next);
   } else if (next.status === 'cancelled') {
     ui.finishJob(trayId, { status: 'cancelled', message: t('stores.exportQueue.cancelled', 'Export cancelled') });
   } else {

@@ -75,6 +75,8 @@ export interface EngineExportSpec {
   bitDepth?: 8 | 16;
   /** P7c: a plugin output module's option values (JSON), for `plugin:<id>/<module>` formats. */
   pluginOptions?: string;
+  /** More files from the same render: each its own encoder on the same frames (export_job.hpp `encodeExtra`). */
+  extraOutputs?: ReadonlyArray<ExtraOutputSpec>;
   /**
    * mov only — an HDR ProRes master (PQ or HLG, BT.2020, 10-bit). The
    * `hdr10` / `hlg` formats are the MP4 (HEVC) deliveries and imply it.
@@ -177,6 +179,36 @@ export function isPluginFormat(format: string): boolean {
   return /^plugin:[A-Za-z][\w.-]{0,99}\/[A-Za-z0-9_][\w.-]{0,63}$/.test(format);
 }
 
+/** One more file from a render (AE's extra output module). */
+export interface ExtraOutputSpec {
+  format: 'mp4' | 'mov' | 'webm' | 'gif';
+  outPath: string;
+  quality?: 'high' | 'medium' | 'draft';
+  proresProfile?: EngineExportSpec['proresProfile'];
+  videoEncoder?: string;
+}
+
+/** The formats an encoder writes from the raw pipe — the ones a render can feed several of. */
+export const STREAMED_FORMATS: ReadonlySet<string> = new Set(['mp4', 'mov', 'webm', 'gif']);
+
+/** The spec an extra output encodes with: the render's, with the output module's own codec choices. */
+function extraSpecOf(spec: EngineExportSpec, e: ExtraOutputSpec): EngineExportSpec {
+  return {
+    ...spec,
+    format: e.format,
+    outPath: e.outPath,
+    quality: e.quality ?? spec.quality,
+    proresProfile: e.proresProfile,
+    videoEncoder: e.videoEncoder,
+    extraOutputs: undefined,
+  };
+}
+
+/** Where extra output `i` is encoded before delivery. */
+export function extraOutputFile(workDir: string, i: number, format: string): string {
+  return path.join(workDir, `out.${i + 1}.${format}`);
+}
+
 /** Image sequences: `<kind>-sequence`, written by the engine as workDir/frames.<ext>.zip. */
 const SEQUENCE_EXT: Readonly<Record<string, string>> = {
   'png-sequence': 'png', 'jpg-sequence': 'jpg', 'exr-sequence': 'exr', 'tiff-sequence': 'tif', 'dpx-sequence': 'dpx',
@@ -215,6 +247,10 @@ export function engineIneligible(spec: EngineExportSpec, enginePath: string | nu
   if (!ENGINE_FORMATS.has(spec.format) && !isPluginFormat(spec.format)) return `the engine does not write "${spec.format}"`;
   if (Array.isArray(spec.chapters) && spec.chapters.length > 0 && !resolvedChapters(spec.chapters)) return 'chapters are formatted by the editor';
   if (hdrTransferOf(spec) && isDnxhrProfile(spec.proresProfile)) return 'an HDR master is ProRes 422 HQ or 4444, not DNxHR';
+  if (spec.extraOutputs?.length) {
+    if (!STREAMED_FORMATS.has(spec.format) || hdrTransferOf(spec)) return 'extra outputs need an SDR mp4, mov, webm or gif as the main output';
+    if (spec.extraOutputs.some((e) => !STREAMED_FORMATS.has(e.format))) return 'an extra output must be mp4, mov, webm or gif';
+  }
   return null;
 }
 
@@ -432,7 +468,9 @@ export function startEngineExport(
             return;
           }
           if (!writesWithoutEncoder(spec.format)) {
-            const encode = { bin: deps.ffmpegPath(), args: engineEncodeArgs(spec, preflight, out) };
+            const pre = preflight;
+            const extra = (spec.extraOutputs ?? []).map((e, i) => ({ args: engineEncodeArgs(extraSpecOf(spec, e), pre, extraOutputFile(workDir, i, e.format)) }));
+            const encode = { bin: deps.ffmpegPath(), args: engineEncodeArgs(spec, preflight, out), ...(extra.length ? { extra } : {}) };
             proc.stdin?.write(`${JSON.stringify({ encode })}\n`);
           }
           return;
@@ -503,6 +541,7 @@ export function startEngineExport(
       try {
         // P7c: an output module wrote its files where the user asked: nothing to move.
         if (!isPluginFormat(spec.format)) await deliver(fs, out, spec.outPath);
+        for (const [i, e] of (spec.extraOutputs ?? []).entries()) await deliver(fs, extraOutputFile(workDir, i, e.format), e.outPath);
       } catch (err) {
         finish({ kind: 'failed', message: `The export could not be moved to ${spec.outPath}: ${(err as Error).message}` });
         return;

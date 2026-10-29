@@ -222,6 +222,14 @@ export interface ExportJobSpec {
   bitDepth?: 8 | 16;
   /** P7c: a plugin output module's option values (JSON), for `plugin:<id>/<module>` formats. */
   pluginOptions?: string;
+  /**
+   * More files from the SAME render — AE's extra output modules on one render
+   * item. Streamed formats only (mp4 / mov / webm / gif); the engine feeds every
+   * encoder the same frames, so the comp is rendered once however many files.
+   */
+  extraOutputs?: Array<{ format: 'mp4' | 'mov' | 'webm' | 'gif'; outPath: string; quality?: 'high' | 'medium' | 'draft'; proresProfile?: 'proxy' | 'lt' | '422' | 'hq' | '4444' | 'dnxhr-lb' | 'dnxhr-sq' | 'dnxhr-hq' | 'dnxhr-hqx' | 'dnxhr-444'; videoEncoder?: string }>;
+  /** What the editor does with the finished file(s): import them, or import and replace the comp's usage. */
+  postRender?: 'import' | 'importReplace';
   label: string;
   totalFrames: number;
 }

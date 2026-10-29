@@ -158,6 +158,48 @@ export interface RenderJobSpec {
   chapters?: ReadonlyArray<ExportChapter>;
   /** P7c: a plugin output module's option values (JSON) — `format` is `plugin:<id>/<module>`. */
   pluginOptions?: string;
+  /**
+   * More files from the same render — AE's extra output modules. Each is
+   * encoded from the same frames (rendered once) and written beside the main
+   * file under the same name with its own extension (`extraOutputPaths`).
+   */
+  extraOutputs?: ReadonlyArray<ExtraOutput>;
+  /** AE's Post-Render Action: import the finished file(s), or import and replace the comp's usage. */
+  postRender?: PostRenderAction;
+}
+
+/** One extra output module: a streamed format and its codec choices. */
+export interface ExtraOutput {
+  format: StreamedFormat;
+  quality?: ExportQuality;
+  proresProfile?: ProresProfile;
+  videoEncoder?: RenderJobSpec['videoEncoder'];
+}
+
+/** The formats one render can feed several of: each is an ffmpeg encode of the raw frames. */
+export type StreamedFormat = 'mp4' | 'mov' | 'webm' | 'gif';
+export const STREAMED_FORMATS: ReadonlyArray<StreamedFormat> = ['mp4', 'mov', 'webm', 'gif'];
+export function isStreamedFormat(format: string): format is StreamedFormat {
+  return (STREAMED_FORMATS as ReadonlyArray<string>).includes(format);
+}
+
+export type PostRenderAction = 'import' | 'importReplace';
+
+/**
+ * Where each extra output goes: beside `mainPath`, the same name with the
+ * format's extension; a name already taken (two MP4s with different codecs)
+ * gets `_2`, `_3`… Case-insensitive, as the file systems the app runs on are.
+ */
+export function extraOutputPaths(mainPath: string, formats: ReadonlyArray<OutputFormat>): string[] {
+  const stem = mainPath.replace(/\.[A-Za-z0-9]+$/, '');
+  const taken = new Set([mainPath.toLowerCase()]);
+  return formats.map((format) => {
+    const ext = outputExtFor(format);
+    let candidate = `${stem}.${ext}`;
+    for (let n = 2; taken.has(candidate.toLowerCase()); n++) candidate = `${stem}_${n}.${ext}`;
+    taken.add(candidate.toLowerCase());
+    return candidate;
+  });
 }
 
 /**

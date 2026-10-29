@@ -38,6 +38,7 @@ import { handle } from './ipcGuard';
 import {
   engineIneligible,
   startEngineExport,
+  STREAMED_FORMATS,
   type EngineExportCallbacks,
   type EngineExportRun,
 } from './engineExport';
@@ -115,6 +116,14 @@ export interface ExportJobSpec {
   hdrMastering?: { maxCll?: number; maxFall?: number; displayMaxNits?: number; displayMinNits?: number };
   /** P7c: a plugin output module's option values (JSON) when `format` is `plugin:<id>/<module>`. */
   pluginOptions?: string;
+  /**
+   * More files from the SAME render — AE's extra output modules on one render
+   * item. Streamed formats only (mp4 / mov / webm / gif); the engine feeds every
+   * encoder the same frames, so the comp is rendered once however many files.
+   */
+  extraOutputs?: Array<{ format: 'mp4' | 'mov' | 'webm' | 'gif'; outPath: string; quality?: 'high' | 'medium' | 'draft'; proresProfile?: 'proxy' | 'lt' | '422' | 'hq' | '4444' | 'dnxhr-lb' | 'dnxhr-sq' | 'dnxhr-hq' | 'dnxhr-hqx' | 'dnxhr-444'; videoEncoder?: string }>;
+  /** What the editor does with the finished file(s): import them, or import and replace the comp's usage. */
+  postRender?: 'import' | 'importReplace';
   /** What the UI calls this job — "Promo → promo.mp4". */
   label: string;
   /** Frames in the range, for progress. */
@@ -213,6 +222,11 @@ function positiveInt(raw: string | undefined, fallback: number): number {
  * shows it — rather than queueing a job that fails minutes later where nobody
  * can see.
  */
+const PRORES_VALUES: ReadonlyArray<string> = ['proxy', 'lt', '422', 'hq', '4444', 'dnxhr-lb', 'dnxhr-sq', 'dnxhr-hq', 'dnxhr-hqx', 'dnxhr-444'];
+/** Formats whose writer keeps 16 bits per channel. */
+const DEEP_FORMATS: ReadonlySet<string> = new Set(['mov', 'exr-sequence', 'tiff-sequence', 'dpx-sequence']);
+const MAX_EXTRA_OUTPUTS = 7;
+
 export function validateSpec(raw: unknown): ExportJobSpec {
   if (!raw || typeof raw !== 'object') throw new Error('An export job needs a spec.');
   const s = raw as Record<string, unknown>;
@@ -244,7 +258,7 @@ export function validateSpec(raw: unknown): ExportJobSpec {
     throw new Error('Export job: unknown quality.');
   }
   const prores = optStr('proresProfile');
-  if (prores !== undefined && !['proxy', 'lt', '422', 'hq', '4444', 'dnxhr-lb', 'dnxhr-sq', 'dnxhr-hq', 'dnxhr-hqx', 'dnxhr-444'].includes(prores)) {
+  if (prores !== undefined && !PRORES_VALUES.includes(prores)) {
     throw new Error('Export job: unknown ProRes profile.');
   }
   const out: ExportJobSpec = {
@@ -274,7 +288,7 @@ export function validateSpec(raw: unknown): ExportJobSpec {
   const depth = optNum('bitDepth');
   if (depth !== undefined) {
     if (depth !== 8 && depth !== 16) throw new Error('Export job: "bitDepth" must be 8 or 16.');
-    if (depth === 16 && out.format !== 'mov') throw new Error('Export job: 16-bit output is written as mov (ProRes) only.');
+    if (depth === 16 && !DEEP_FORMATS.has(out.format)) throw new Error('Export job: 16-bit output is written as mov, or an EXR / TIFF / DPX sequence, only.');
     out.bitDepth = depth;
   }
   const hdr = optStr('hdr');
@@ -282,6 +296,37 @@ export function validateSpec(raw: unknown): ExportJobSpec {
     if (hdr !== 'pq' && hdr !== 'hlg') throw new Error('Export job: "hdr" must be pq or hlg.');
     if (out.format !== 'mov') throw new Error('Export job: "hdr" is a mov (ProRes) option; the MP4 deliveries are the hdr10 and hlg formats.');
     out.hdr = hdr;
+  }
+  const extras = s['extraOutputs'];
+  if (extras !== undefined) {
+    if (!Array.isArray(extras) || extras.length > MAX_EXTRA_OUTPUTS) throw new Error(`Export job: "extraOutputs" must be a list of at most ${MAX_EXTRA_OUTPUTS}.`);
+    if (extras.length > 0 && (!STREAMED_FORMATS.has(out.format) || out.hdr)) throw new Error('Export job: extra outputs need an SDR mp4, mov, webm or gif as the main output.');
+    const list: NonNullable<ExportJobSpec['extraOutputs']> = [];
+    for (const e of extras as unknown[]) {
+      const x = (e ?? {}) as Record<string, unknown>;
+      const format = x['format'];
+      const at = x['outPath'];
+      if (typeof format !== 'string' || !STREAMED_FORMATS.has(format)) throw new Error('Export job: an extra output must be mp4, mov, webm or gif.');
+      if (typeof at !== 'string' || !path.isAbsolute(at)) throw new Error('Export job: an extra output needs an absolute "outPath".');
+      if (at === outPath || list.some((l) => l.outPath === at)) throw new Error('Export job: two outputs write the same file.');
+      const item: NonNullable<ExportJobSpec['extraOutputs']>[number] = { format: format as 'mp4', outPath: at };
+      if (x['quality'] !== undefined) {
+        if (!['high', 'medium', 'draft'].includes(String(x['quality']))) throw new Error('Export job: unknown quality.');
+        item.quality = x['quality'] as 'high';
+      }
+      if (x['proresProfile'] !== undefined) {
+        if (!PRORES_VALUES.includes(String(x['proresProfile']))) throw new Error('Export job: unknown ProRes profile.');
+        item.proresProfile = x['proresProfile'] as 'hq';
+      }
+      if (typeof x['videoEncoder'] === 'string') item.videoEncoder = x['videoEncoder'];
+      list.push(item);
+    }
+    if (list.length > 0) out.extraOutputs = list;
+  }
+  const post = optStr('postRender');
+  if (post !== undefined) {
+    if (post !== 'import' && post !== 'importReplace') throw new Error('Export job: "postRender" must be import or importReplace.');
+    out.postRender = post;
   }
   const m = s['hdrMastering'];
   if (m && typeof m === 'object') {
@@ -871,7 +916,9 @@ function createEngineLauncher(root: string): EngineLauncher {
         // all? A broken ffmpeg fails here in seconds, with a Fix button
         // (exportFailure.ts → the renderer's repair dialog), instead of at the end.
         const health = await ffmpegService.ensure();
-        const blocker = formatBlocker(health, spec.format);
+        const blocker = [spec.format, ...(spec.extraOutputs ?? []).map((e) => e.format)]
+          .map((f) => formatBlocker(health, f))
+          .find((b) => b !== null) ?? null;
         if (blocker) {
           const why = blocker.code === 'incomplete'
             ? `the FFmpeg in use has no ${blocker.missingEncoders.join(', ')} encoder`
@@ -886,12 +933,16 @@ function createEngineLauncher(root: string): EngineLauncher {
         }
         // A codec chosen per output module (HEVC, AV1, DNxHR) has no fallback:
         // the user asked for that codec, so a build without it fails here, before the render.
-        const codecEncoder = spec.format === 'mp4' && (spec.videoEncoder === 'libx265' || spec.videoEncoder === 'libsvtav1')
-          ? spec.videoEncoder
-          : spec.format === 'mov' && isDnxhrProfile(spec.proresProfile) ? 'dnxhd' : null;
-        if (codecEncoder && !(await probe.has(codecEncoder))) {
-          deps.log(`job ${jobId}: refused before render — ffmpeg has no ${codecEncoder}`);
-          return { kind: 'failed' as const, message: `${FFMPEG_UNAVAILABLE_MESSAGE} (the FFmpeg in use has no ${codecEncoder} encoder)` };
+        const codecOf = (o: { format: string; videoEncoder?: string; proresProfile?: string }): string | null =>
+          o.format === 'mp4' && (o.videoEncoder === 'libx265' || o.videoEncoder === 'libsvtav1')
+            ? o.videoEncoder
+            : o.format === 'mov' && isDnxhrProfile(o.proresProfile) ? 'dnxhd' : null;
+        for (const o of [spec, ...(spec.extraOutputs ?? [])]) {
+          const codecEncoder = codecOf(o);
+          if (codecEncoder && !(await probe.has(codecEncoder))) {
+            deps.log(`job ${jobId}: refused before render — ffmpeg has no ${codecEncoder}`);
+            return { kind: 'failed' as const, message: `${FFMPEG_UNAVAILABLE_MESSAGE} (the FFmpeg in use has no ${codecEncoder} encoder)` };
+          }
         }
         if (spec.format === 'hdr10' || spec.format === 'hlg') {
           // HEVC carries the HDR10 metadata; without libx265 the stream is H.264 High 10, tagged.

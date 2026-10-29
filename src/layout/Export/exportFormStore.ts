@@ -14,7 +14,16 @@
 
 import { create } from 'zustand';
 import type { ExportFormat } from '@core/export/exportManager';
-import type { ExportQuality, Mp4Codec, ProresProfile } from '@core/export/renderSpec';
+import type { ExportQuality, Mp4Codec, PostRenderAction, ProresProfile, StreamedFormat } from '@core/export/renderSpec';
+
+/** One extra output module on the export (AE's "+" beside Output To): same render, its own file. */
+export interface ExtraOutputChoice {
+  format: StreamedFormat;
+  /** mp4 */
+  mp4Codec: Mp4Codec;
+  /** mov: ProRes or DNxHR */
+  proresProfile: ProresProfile;
+}
 
 export type RangeMode = 'full' | 'work';
 
@@ -28,6 +37,10 @@ export interface ExportFormChoices {
   proresProfile: ProresProfile;
   /** mp4: H.264 (the Settings encoder), HEVC or AV1. */
   mp4Codec: Mp4Codec;
+  /** More files from the same render (streamed formats only). */
+  extraOutputs: ExtraOutputChoice[];
+  /** What happens when the render finishes. */
+  postRender: PostRenderAction | 'none';
   /** F1: bits per channel of a mov through the engine export path (8 elsewhere). */
   bitDepth: 8 | 16;
   transparent: boolean;
@@ -55,6 +68,8 @@ export const useExportFormStore = create<ExportFormState>((set, get) => ({
   quality: 'high',
   proresProfile: '4444',
   mp4Codec: 'h264',
+  extraOutputs: [],
+  postRender: 'none',
   bitDepth: 8,
   transparent: false,
   chapters: false,

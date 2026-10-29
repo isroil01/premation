@@ -10121,5 +10121,21 @@
   "workspace.subjects.frozenMessage": "主体已冻结。要更改它，请先解冻（属性 ▸ 主体，或选项栏上的“冻结”）。",
   "workspace.rotoBrush.frozenMessage": "此图层上的 Roto 笔刷已冻结。解冻后才能更改遮罩。",
   "workspace.textBehind.softEdge": "柔和边缘",
-  "workspace.textBehind.softEdgeLabel": "重叠处使用柔和边缘"
+  "workspace.textBehind.softEdgeLabel": "重叠处使用柔和边缘",
+  "export.form.template": "模板",
+  "export.form.moreOutputs": "此渲染的更多输出",
+  "export.form.outputFormat": "输出 {n} 格式",
+  "export.form.outputCodec": "输出 {n} 编解码器",
+  "export.form.removeOutput": "移除此输出",
+  "export.form.addOutput": "添加输出",
+  "export.form.moreOutputsNote": "只渲染一次，编码为 {n} 种输出。与主文件同名，保存在其旁边。",
+  "export.form.moreOutputsHint": "一次渲染写出多个文件，例如 ProRes 母版和 H.264 审阅副本。",
+  "export.form.postRender": "渲染完成后",
+  "export.form.postRender.none": "无操作",
+  "export.form.postRender.import": "导入",
+  "export.form.postRender.importReplace": "导入并替换使用",
+  "export.form.postRender.replaceNote": "所有使用此合成的图层都会改用渲染出的文件，关键帧、效果和蒙版保留。撤销即可恢复合成。",
+  "export.postRender.nothing": "渲染后操作：图像序列压缩包不会被导入，请解压后导入帧。",
+  "export.postRender.replaced": "已导入渲染结果，并替换了该合成的 {n} 处使用",
+  "export.postRender.imported": "已将 {n} 个渲染文件导入项目"
 }

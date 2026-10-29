@@ -18,7 +18,7 @@ import type {
   ExportJobStatus,
   ExportQueueEvent,
 } from '@app-types/motionEditor';
-import { offersDeepColour, type RenderJobSpec } from '@core/export/renderSpec';
+import { isStreamedFormat, offersDeepColour, type ExtraOutput, type PostRenderAction, type RenderJobSpec } from '@core/export/renderSpec';
 import { t } from '@core/i18n';
 
 export type { ExportJobRecord, ExportJobSpec, ExportJobStatus, ExportQueueEvent };
@@ -105,6 +105,9 @@ export interface SupervisorSpecInput {
   bitDepth?: 8 | 16;
   /** P7c: a plugin output module's option values (JSON) — `format` is `plugin:<id>/<module>`. */
   pluginOptions?: string;
+  /** Extra output modules on the same render, each with its absolute output path. */
+  extraOutputs?: ReadonlyArray<ExtraOutput & { outPath: string }>;
+  postRender?: PostRenderAction;
 }
 
 /**
@@ -144,6 +147,18 @@ export function buildSupervisorSpec(input: SupervisorSpecInput): ExportJobSpec {
   if (input.pluginOptions !== undefined && input.format.startsWith('plugin:')) spec.pluginOptions = input.pluginOptions;
   // 16 bits only where the writer keeps them (mov, EXR / TIFF / DPX sequences).
   if (input.bitDepth === 16 && offersDeepColour(input.format)) spec.bitDepth = 16;
+  // Extra outputs only ride on a streamed main output (main refuses the rest).
+  const extras = isStreamedFormat(input.format) ? (input.extraOutputs ?? []) : [];
+  if (extras.length > 0) {
+    spec.extraOutputs = extras.map((e) => ({
+      format: e.format,
+      outPath: e.outPath,
+      ...(e.quality ? { quality: e.quality } : {}),
+      ...(e.format === 'mov' && e.proresProfile ? { proresProfile: e.proresProfile } : {}),
+      ...(e.format === 'mp4' && e.videoEncoder ? { videoEncoder: e.videoEncoder } : {}),
+    }));
+  }
+  if (input.postRender) spec.postRender = input.postRender;
   return spec;
 }
 

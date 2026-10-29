@@ -726,6 +726,15 @@ api::CommandResult Session::run_in_journal(const api::Command& cmd, api::Origin 
 void Session::apply_history(const doc::ChangeSet& target) {
   const BuildLock lock(*this, true);
   doc_.apply(target.after);
+  // ensure_timelines makes every composition's timeline OUTSIDE the journal,
+  // so an undo / redo / history jump that takes a composition away does not
+  // take its timeline with it: drop the ones whose composition is gone (the
+  // same structural mirror, kept in step the other way).
+  std::vector<std::string> orphans;
+  for (const auto& id : doc_.timelines().keys()) {
+    if (doc_.comp(id) == nullptr) orphans.emplace_back(id);
+  }
+  for (const auto& id : orphans) doc_.remove_timeline(id);
   keys_.invalidate();
 }
 

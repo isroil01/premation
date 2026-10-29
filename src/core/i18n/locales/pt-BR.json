@@ -10121,5 +10121,21 @@
   "workspace.subjects.frozenMessage": "O objeto está congelado. Descongele-o (Propriedades ▸ Objeto, ou Congelar na barra de opções) para alterá-lo.",
   "workspace.rotoBrush.frozenMessage": "O Pincel Roto está congelado nesta camada. Descongele-o para alterar o fosco.",
   "workspace.textBehind.softEdge": "Borda suave",
-  "workspace.textBehind.softEdgeLabel": "Borda suave onde se sobrepõem"
+  "workspace.textBehind.softEdgeLabel": "Borda suave onde se sobrepõem",
+  "export.form.template": "Modelo",
+  "export.form.moreOutputs": "Mais saídas deste render",
+  "export.form.outputFormat": "Formato da saída {n}",
+  "export.form.outputCodec": "Codec da saída {n}",
+  "export.form.removeOutput": "Remover esta saída",
+  "export.form.addOutput": "Adicionar saída",
+  "export.form.moreOutputsNote": "Renderizado uma vez, codificado de {n} formas. Gravado ao lado do arquivo principal com o mesmo nome.",
+  "export.form.moreOutputsHint": "Grave vários arquivos — por exemplo um master ProRes e uma cópia H.264 para revisão — com um só render.",
+  "export.form.postRender": "Quando o render terminar",
+  "export.form.postRender.none": "Nada",
+  "export.form.postRender.import": "Importar",
+  "export.form.postRender.importReplace": "Importar e substituir usos",
+  "export.form.postRender.replaceNote": "Cada camada que usa esta composição passa para o arquivo renderizado — quadros-chave, efeitos e máscaras permanecem. Desfazer traz a composição de volta.",
+  "export.postRender.nothing": "Pós-render: um arquivo de sequência de imagens não é importado — descompacte-o e importe os quadros.",
+  "export.postRender.replaced": "Render importado e {n} usos da composição substituídos",
+  "export.postRender.imported": "{n} arquivo(s) renderizado(s) importado(s) no projeto"
 }

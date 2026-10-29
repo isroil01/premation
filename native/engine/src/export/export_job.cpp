@@ -89,13 +89,15 @@ class Control {
         }
         const Json& enc = j->at("encode");
         if (enc.is_object() && enc.at("bin").is_string()) {
-          std::vector<std::string> args;
-          for (const Json& a : enc.at("args").arr()) {
-            if (a.is_string()) args.push_back(a.str());
+          std::vector<std::string> args = string_list(enc.at("args"));
+          std::vector<std::vector<std::string>> extra;
+          for (const Json& e : enc.at("extra").arr()) {
+            if (e.is_object()) extra.push_back(string_list(e.at("args")));
           }
           const std::lock_guard lock(m_);
           encodeBin_ = enc.at("bin").str();
           encodeArgs_ = std::move(args);
+          encodeExtra_ = std::move(extra);
           cv_.notify_all();
         }
       }
@@ -114,13 +116,22 @@ class Control {
   void mark_done() noexcept { done_.store(true); }
 
   /// Wait for the encoder command (or a cancel). False = cancelled.
-  bool wait_encode(std::string& bin, std::vector<std::string>& args) {
+  bool wait_encode(std::string& bin, std::vector<std::string>& args, std::vector<std::vector<std::string>>& extra) {
     std::unique_lock lock(m_);
     cv_.wait(lock, [&] { return cancelled_.load() || encodeBin_.has_value(); });
     if (cancelled_.load()) return false;
     bin = *encodeBin_;
     args = encodeArgs_;
+    extra = encodeExtra_;
     return true;
+  }
+
+  static std::vector<std::string> string_list(const Json& a) {
+    std::vector<std::string> out;
+    for (const Json& s : a.arr()) {
+      if (s.is_string()) out.push_back(s.str());
+    }
+    return out;
   }
 
  private:
@@ -131,6 +142,7 @@ class Control {
   std::atomic<bool> done_{false};
   std::optional<std::string> encodeBin_;
   std::vector<std::string> encodeArgs_;
+  std::vector<std::vector<std::string>> encodeExtra_;
 };
 
 Json str_array(const std::vector<std::string>& v) {
@@ -747,6 +759,13 @@ bool parse_job(const Json& j, JobSpec& out, std::string& error) {
     for (const Json& a : enc.at("args").arr()) {
       if (a.is_string()) out.encodeArgs.push_back(a.str());
     }
+    for (const Json& e : enc.at("extra").arr()) {
+      std::vector<std::string> args;
+      for (const Json& a : e.at("args").arr()) {
+        if (a.is_string()) args.push_back(a.str());
+      }
+      if (!args.empty()) out.encodeExtra.push_back(std::move(args));
+    }
   }
   if (!j.at("sequence").is_undefined()) {
     if (!j.at("sequence").is_string()) {
@@ -1047,7 +1066,8 @@ int run_export(const std::string& jobPath) {
   const bool viaPlugin = job.sequence.starts_with("plugin:");  // P7c
   std::string bin = job.encodeBin.value_or("");
   std::vector<std::string> args = job.encodeArgs;
-  if (!sequence && !job.encodeBin && !ctl.wait_encode(bin, args)) return kExitCancelled;
+  std::vector<std::vector<std::string>> extraArgs = job.encodeExtra;
+  if (!sequence && !job.encodeBin && !ctl.wait_encode(bin, args, extraArgs)) return kExitCancelled;
 
   // ── GPU ──
   const auto tGpu = Clock::now();
@@ -1084,7 +1104,24 @@ int run_export(const std::string& jobPath) {
 
   const fs::path ffLog = u8path(job.workDir) / "ffmpeg.log";
   const fs::path framesDir = u8path(job.workDir) / "frames";
-  std::unique_ptr<ChildProcess> child;
+  // Every encoder the frames go to: [0] is the job's own output, the rest are
+  // its extra output modules (one render, N files). Each has its own log.
+  std::vector<std::unique_ptr<ChildProcess>> children;
+  const auto ffLogOf = [&](std::size_t i) {
+    return i == 0 ? ffLog : u8path(job.workDir) / ("ffmpeg." + std::to_string(i) + ".log");
+  };
+  const auto killAll = [&] {
+    for (auto& c : children) {
+      if (c) c->kill();
+    }
+  };
+  // The encoder that refused a frame (its log says why), for the error line.
+  std::size_t failedOutput = 0;
+  const auto failedTail = [&] {
+    const std::string tail = tail_of(ffLogOf(failedOutput), 600);
+    if (tail.empty()) return tail;
+    return (failedOutput == 0 ? std::string() : "output " + std::to_string(failedOutput + 1) + ": ") + tail;
+  };
   ZipWriter zip;
   bool zipOpen = false;
   // P7c: a plugin output module (BEGIN here; END below, or cancelled when the job stops).
@@ -1124,10 +1161,16 @@ int run_export(const std::string& jobPath) {
       return kExitFailed;
     }
   } else {
-    child = ChildProcess::spawn(bin, args, ffLog.string(), err);
-    if (!child) {
-      ctl.emit(error_line(false, err));
-      return kExitFailed;
+    std::vector<const std::vector<std::string>*> all{&args};
+    for (const auto& e : extraArgs) all.push_back(&e);
+    for (std::size_t i = 0; i < all.size(); ++i) {
+      auto c = ChildProcess::spawn(bin, *all[i], ffLogOf(i).string(), err);
+      if (!c) {
+        killAll();
+        ctl.emit(error_line(false, i == 0 ? err : "output " + std::to_string(i + 1) + ": " + err));
+        return kExitFailed;
+      }
+      children.push_back(std::move(c));
     }
   }
 
@@ -1177,8 +1220,15 @@ int run_export(const std::string& jobPath) {
         out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
         if (!out) return false;
       }
-    } else if (!child->write(f.rgba)) {
-      return false;
+    } else {
+      // The same bytes to every encoder, in order; any one refusing fails the job
+      // (its log says why) rather than delivering a partial set of files.
+      for (std::size_t i = 0; i < children.size(); ++i) {
+        if (!children[i]->write(f.rgba)) {
+          failedOutput = i;
+          return false;
+        }
+      }
     }
     ++written;
     const auto now = Clock::now();
@@ -1198,10 +1248,10 @@ int run_export(const std::string& jobPath) {
   stats.renderMs = ms_since(tRender);
   if (code != kExitOk && !sinkFailure.empty()) failure = sinkFailure;
   if (code != kExitOk) {
-    if (child) child->kill();
+    killAll();
     if (code == kExitCancelled || ctl.cancelled()) return kExitCancelled;
     if (code == kExitFailed) {
-      const std::string tail = tail_of(ffLog, 600);
+      const std::string tail = failedTail();
       failure += tail.empty() ? "" : ": " + tail;
     }
     ctl.emit(error_line(code == kExitFallback, failure));
@@ -1222,9 +1272,14 @@ int run_export(const std::string& jobPath) {
       return kExitFailed;
     }
   } else {
-    const int ffCode = child->finish();
-    if (ffCode != 0) {
-      ctl.emit(error_line(false, "The encode failed: ffmpeg exited " + std::to_string(ffCode) + ": " + tail_of(ffLog, 600)));
+    // Close every encoder before judging any: each finishes its own file.
+    std::vector<int> codes;
+    codes.reserve(children.size());
+    for (auto& c : children) codes.push_back(c->finish());
+    for (std::size_t i = 0; i < codes.size(); ++i) {
+      if (codes[i] == 0) continue;
+      const std::string which = i == 0 ? std::string() : " (output " + std::to_string(i + 1) + ")";
+      ctl.emit(error_line(false, "The encode failed" + which + ": ffmpeg exited " + std::to_string(codes[i]) + ": " + tail_of(ffLogOf(i), 600)));
       return kExitFailed;
     }
   }

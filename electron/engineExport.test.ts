@@ -232,6 +232,45 @@ describe('HDR10 / HLG', () => {
   });
 });
 
+describe('extra output modules: one render, several files', () => {
+  it('sends every encoder in one encode message and delivers each file', async () => {
+    const r = rig();
+    const extraOutputs = [
+      { format: 'mp4' as const, outPath: abs('out', 'promo.mp4'), videoEncoder: 'libx265' },
+      { format: 'webm' as const, outPath: abs('out', 'promo.webm'), quality: 'draft' as const },
+    ];
+    const s = spec({ format: 'mov', outPath: abs('out', 'promo.mov'), proresProfile: 'hq', extraOutputs });
+    expect(engineIneligible(s, abs('bin', 'premation-engine.exe'))).toBeNull();
+    const run = startEngineExport('j1', s, { progress: () => undefined }, r.deps);
+    await until(() => r.engines.length === 1);
+    const e = r.engines[0]!;
+    e.say({ ev: 'preflight', ok: true, ...pre });
+    await until(() => e.received.length === 1);
+    const enc = JSON.parse(e.received[0]!).encode;
+    const w = abs('jobs', 'j1', 'engine');
+    expect(enc.args).toEqual(expect.arrayContaining(['-c:v', 'prores_ks']));
+    expect(enc.extra).toHaveLength(2);
+    expect(enc.extra[0].args).toEqual(expect.arrayContaining(['-c:v', 'libx265', path.join(w, 'out.1.mp4')]));
+    expect(enc.extra[1].args).toEqual(expect.arrayContaining(['-c:v', 'libvpx-vp9', '-crf', '28', path.join(w, 'out.2.webm')]));
+    e.say({ ev: 'done', frames: 48 });
+    e.exit(EXPORT_EXIT.ok);
+    await expect(run.done).resolves.toMatchObject({ kind: 'completed' });
+    expect(r.moved).toEqual([
+      [path.join(w, 'out.mov'), abs('out', 'promo.mov')],
+      [path.join(w, 'out.1.mp4'), abs('out', 'promo.mp4')],
+      [path.join(w, 'out.2.webm'), abs('out', 'promo.webm')],
+    ]);
+  });
+
+  it('refuses extra outputs on a sequence, HDR or a non-streamed extra', () => {
+    const exe = abs('bin', 'premation-engine.exe');
+    const extra = [{ format: 'mp4' as const, outPath: abs('out', 'x.mp4') }];
+    expect(engineIneligible(spec({ format: 'png-sequence', extraOutputs: extra }), exe)).toMatch(/extra outputs/);
+    expect(engineIneligible(spec({ format: 'hdr10', extraOutputs: extra }), exe)).toMatch(/extra outputs/);
+    expect(engineIneligible(spec({ extraOutputs: [{ format: 'png' as 'mp4', outPath: abs('out', 'x.png') }] }), exe)).toMatch(/must be mp4/);
+  });
+});
+
 describe('startEngineExport', () => {
   it('preflight → encode → progress → done, then delivers the file', async () => {
     const r = rig();

@@ -24,7 +24,22 @@
  */
 
 import type { OutputFormat } from '@stores/renderQueueStore';
-import type { ExportQuality } from '@core/export/renderSpec';
+import {
+  isStreamedFormat,
+  PRORES_PROFILE_LABELS,
+  type ExportQuality,
+  type Mp4Codec,
+  type PostRenderAction,
+  type ProresProfile,
+  type StreamedFormat,
+} from '@core/export/renderSpec';
+
+/** A template's extra output module (see RenderJobSpec.extraOutputs). */
+export interface TemplateExtraOutput {
+  format: StreamedFormat;
+  mp4Codec?: Mp4Codec;
+  proresProfile?: ProresProfile;
+}
 
 export interface OutputTemplate {
   name: string;
@@ -46,6 +61,20 @@ export interface OutputTemplate {
    * intent that a template exists to stop people re-dialling.
    */
   chapters?: boolean;
+  /*
+    The rest are optional for the same reason `chapters` is (templates saved
+    before them must still load): the codec choices, depth, range and the
+    output modules / post-render action a full render setting carries.
+  */
+  /** mov: ProRes or DNxHR profile. */
+  proresProfile?: ProresProfile;
+  /** mp4: H.264 / HEVC / AV1. */
+  mp4Codec?: Mp4Codec;
+  bitDepth?: 8 | 16;
+  /** `work` renders the work area, `full` the whole composition. */
+  rangeMode?: 'full' | 'work';
+  extraOutputs?: TemplateExtraOutput[];
+  postRender?: PostRenderAction | 'none';
 }
 
 const STORAGE_KEY = 'motion-editor.outputTemplates.v1';
@@ -59,7 +88,26 @@ export const BUILTIN_OUTPUT_TEMPLATES: ReadonlyArray<OutputTemplate> = [
   { name: 'Half Res Draft', format: 'webm', quality: 'draft', transparent: false, scale: 0.5, fps: 'comp' },
   { name: 'PNG Sequence (alpha)', format: 'png-sequence', quality: 'high', transparent: true, scale: 1, fps: 'comp' },
   { name: 'GIF Preview', format: 'gif', quality: 'medium', transparent: false, scale: 0.5, fps: 15 },
+  { name: 'ProRes 4444 Master (alpha)', format: 'mov', quality: 'high', transparent: true, scale: 1, fps: 'comp', proresProfile: '4444', bitDepth: 16 },
+  { name: 'H.264 Review (half)', format: 'mp4', quality: 'medium', transparent: false, scale: 0.5, fps: 'comp', mp4Codec: 'h264' },
+  {
+    name: 'Master + Review',
+    format: 'mov', quality: 'high', transparent: false, scale: 1, fps: 'comp', proresProfile: 'hq',
+    extraOutputs: [{ format: 'mp4', mp4Codec: 'h264' }],
+  },
+  { name: 'Pre-render (Import & Replace)', format: 'mov', quality: 'high', transparent: true, scale: 1, fps: 'comp', proresProfile: '4444', postRender: 'importReplace' },
 ];
+
+const MP4_CODEC_IDS: ReadonlyArray<string> = ['h264', 'hevc', 'av1'];
+const isProres = (v: unknown): boolean => typeof v === 'string' && Object.prototype.hasOwnProperty.call(PRORES_PROFILE_LABELS, v);
+
+function isExtra(v: unknown): v is TemplateExtraOutput {
+  if (!v || typeof v !== 'object') return false;
+  const e = v as Record<string, unknown>;
+  return typeof e.format === 'string' && isStreamedFormat(e.format)
+    && (e.mp4Codec === undefined || MP4_CODEC_IDS.includes(String(e.mp4Codec)))
+    && (e.proresProfile === undefined || isProres(e.proresProfile));
+}
 
 function isTemplate(v: unknown): v is OutputTemplate {
   if (!v || typeof v !== 'object') return false;
@@ -73,6 +121,12 @@ function isTemplate(v: unknown): v is OutputTemplate {
     && (t.fps === 'comp' || (typeof t.fps === 'number' && Number.isFinite(t.fps) && t.fps > 0))
     // Absent is valid — see OutputTemplate.chapters for why this one is optional.
     && (t.chapters === undefined || typeof t.chapters === 'boolean')
+    && (t.proresProfile === undefined || isProres(t.proresProfile))
+    && (t.mp4Codec === undefined || MP4_CODEC_IDS.includes(String(t.mp4Codec)))
+    && (t.bitDepth === undefined || t.bitDepth === 8 || t.bitDepth === 16)
+    && (t.rangeMode === undefined || t.rangeMode === 'full' || t.rangeMode === 'work')
+    && (t.extraOutputs === undefined || (Array.isArray(t.extraOutputs) && t.extraOutputs.length <= 7 && t.extraOutputs.every(isExtra)))
+    && (t.postRender === undefined || t.postRender === 'none' || t.postRender === 'import' || t.postRender === 'importReplace')
   );
 }
 
