@@ -10137,5 +10137,6 @@
   "export.form.postRender.replaceNote": "Cada camada que usa esta composição passa para o arquivo renderizado — quadros-chave, efeitos e máscaras permanecem. Desfazer traz a composição de volta.",
   "export.postRender.nothing": "Pós-render: um arquivo de sequência de imagens não é importado — descompacte-o e importe os quadros.",
   "export.postRender.replaced": "Render importado e {n} usos da composição substituídos",
-  "export.postRender.imported": "{n} arquivo(s) renderizado(s) importado(s) no projeto"
+  "export.postRender.imported": "{n} arquivo(s) renderizado(s) importado(s) no projeto",
+  "export.form.postRender.importReplaceShort": "Importar e substituir"
 }

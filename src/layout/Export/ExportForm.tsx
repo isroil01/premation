@@ -1045,7 +1045,7 @@ export function ExportForm({ duration, fps, host }: ExportFormProps): JSX.Elemen
                       >
                         {codecs.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                       </select>
-                    ) : <span className={styles.outputSelect} aria-hidden="true" />}
+                    ) : <span aria-hidden="true" />}
                     <IconButton
                       size="sm"
                       variant="ghost"
@@ -1085,6 +1085,8 @@ export function ExportForm({ duration, fps, host }: ExportFormProps): JSX.Elemen
                     type="button"
                     role="radio"
                     aria-checked={postRender === a}
+                    aria-label={a === 'importReplace' ? t('export.form.postRender.importReplace', 'Import & Replace Usage') : undefined}
+                    title={a === 'importReplace' ? t('export.form.postRender.importReplace', 'Import & Replace Usage') : undefined}
                     disabled={busy}
                     className={cn(styles.segChip, postRender === a && styles.segChipOn)}
                     onClick={() => patch({ postRender: a })}
@@ -1093,7 +1095,7 @@ export function ExportForm({ duration, fps, host }: ExportFormProps): JSX.Elemen
                       ? t('export.form.postRender.none', 'Nothing')
                       : a === 'import'
                         ? t('export.form.postRender.import', 'Import')
-                        : t('export.form.postRender.importReplace', 'Import & Replace Usage')}
+                        : t('export.form.postRender.importReplaceShort', 'Import & Replace')}
                   </button>
                 ))}
               </div>

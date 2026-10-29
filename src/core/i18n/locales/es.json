@@ -10137,5 +10137,6 @@
   "export.form.postRender.replaceNote": "Cada capa que usa esta composición pasa al archivo renderizado; se conservan fotogramas clave, efectos y máscaras. Deshacer recupera la composición.",
   "export.postRender.nothing": "Post-render: un archivo de secuencia de imágenes no se importa; descomprímelo e importa los fotogramas.",
   "export.postRender.replaced": "Render importado y {n} usos de la composición reemplazados",
-  "export.postRender.imported": "{n} archivo(s) renderizado(s) importado(s) al proyecto"
+  "export.postRender.imported": "{n} archivo(s) renderizado(s) importado(s) al proyecto",
+  "export.form.postRender.importReplaceShort": "Importar y reemplazar"
 }

@@ -3664,6 +3664,7 @@
   "export.form.postRender": "When the render finishes",
   "export.form.postRender.import": "Import",
   "export.form.postRender.importReplace": "Import & Replace Usage",
+  "export.form.postRender.importReplaceShort": "Import & Replace",
   "export.form.postRender.none": "Nothing",
   "export.form.postRender.replaceNote": "Every layer that uses this composition switches to the rendered file — keyframes, effects and masks stay. Undo brings the composition back.",
   "export.form.previewLabel": "Export preview",
