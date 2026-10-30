@@ -19,6 +19,9 @@ inline constexpr std::string_view kPositionPseudoProp = "Position";
 inline constexpr std::string_view kSourceTextProp = "text.source";
 inline constexpr std::string_view kAudioLevelDbProp = "audioLevelDb";
 inline constexpr std::string_view kAudioPanProp = "audioPan";
+/// A text layer's Background: the switch, and its colour (keyframeable; a colour row).
+inline constexpr std::string_view kTextBackground = "background";
+inline constexpr std::string_view kTextBackgroundColor = "backgroundColor";
 
 struct StaticPropertyRow {
   std::string prop;
@@ -34,6 +37,8 @@ struct StaticPropertyRow {
 
 /// `groupForProp(prop, nodeId)`.
 [[nodiscard]] std::string group_for_prop(const Document& d, std::string_view prop, const Node* node);
+/// The Text component's Background switch is on.
+[[nodiscard]] bool text_background_on(const Node& n);
 
 /// `buildStaticPropertyTree(nodeId)` (empty for an unknown node).
 [[nodiscard]] std::vector<StaticPropertyRow> build_static_property_tree(const Document& d, std::string_view nodeId);

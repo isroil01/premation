@@ -22,6 +22,15 @@ inline constexpr double kTextPadX = 12;
 inline constexpr double kAutoLeading = 1.2;
 inline constexpr double kFauxBoldStrokeRatio = 1.0 / 30.0;
 
+/// The box painted behind the glyphs (Text `background*` fields).
+struct TextBackground {
+  std::string color;
+  double opacity = 1;
+  double padding = 0;
+  double radius = 0;
+  bool perLine = false;  ///< one box per line, not one around the block
+};
+
 /// TextExtras, the fields the painter reads.
 struct TextExtras {
   std::optional<double> leftIndent, rightIndent, firstLineIndent, spaceBefore, spaceAfter;
@@ -45,6 +54,7 @@ struct TextExtras {
   std::optional<int> tateChuYokoDigits;
   std::optional<double> boxOffsetY;
   std::string language;  // BCP 47 ('' = from the script): T3
+  std::optional<TextBackground> background;
 };
 [[nodiscard]] TextExtras read_text_extras(const json::Value& v);
 

@@ -74,6 +74,10 @@ export const TEXT_FIELDS: readonly TextFieldSpec[] = [
   // Where point text anchors: the box centre (every document before 2026-10),
   // or AE's alignment edge (a left-aligned title grows to the right).
   { key: 'textAnchor', label: 'Anchor', type: 'choice', default: 'center', choices: ['center', 'alignment'] },
+  // ── Background (a box behind the glyphs): the switch and its shape; Color,
+  // Opacity, Padding and Roundness are keyframeable properties, not fields. ──
+  { key: 'background', label: 'Background', type: 'bool', default: false },
+  { key: 'backgroundMode', label: 'Background Shape', type: 'choice', default: 'block', choices: ['block', 'line'] },
   // ── Paragraph ──
   {
     key: 'align', label: 'Justification', type: 'choice', default: 'left',

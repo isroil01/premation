@@ -70,6 +70,15 @@ TextExtras read_text_extras(const json::Value& v) {
   if (v["tateChuYokoDigits"].is_number()) x.tateChuYokoDigits = static_cast<int>(v["tateChuYokoDigits"].num());
   x.boxOffsetY = opt_num(v["boxOffsetY"]);
   x.language = v["language"].str_or("");
+  if (const auto& bg = v["background"]; bg.is_object()) {
+    TextBackground b;
+    b.color = bg["color"].str_or("#000000");
+    b.opacity = bg["opacity"].num(1);
+    b.padding = bg["padding"].num(0);
+    b.radius = bg["radius"].num(0);
+    b.perLine = bg["mode"].str_or("") == "line";
+    if (b.opacity > 0) x.background = std::move(b);
+  }
   return x;
 }
 

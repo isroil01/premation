@@ -152,6 +152,22 @@
       ]
     },
     {
+      "key": "background",
+      "label": "Background",
+      "type": "bool",
+      "default": false
+    },
+    {
+      "key": "backgroundMode",
+      "label": "Background Shape",
+      "type": "choice",
+      "default": "block",
+      "choices": [
+        "block",
+        "line"
+      ]
+    },
+    {
       "key": "align",
       "label": "Justification",
       "type": "choice",

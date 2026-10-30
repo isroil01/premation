@@ -36,6 +36,7 @@ import { TooltipProvider } from '@components/Tooltip';
 import { Accordion, type AccordionItem } from '@components/Accordion';
 import { useDockPanelHeader } from '@components/DockPanel';
 import { TextFillRows, TextStrokeRows } from './TextFillRows';
+import { TextBackgroundRows } from './TextBackgroundRows';
 import { VariableAxesSection, TextPathOptions, OpenTypeControls } from './TextOptionControls';
 import { TwirlGroup } from './appearance/TwirlGroup';
 import { t } from '@core/i18n';
@@ -1349,6 +1350,9 @@ function TextSettingsBodyInner({ nodeId, nodeIds, variant = 'character' }: TextS
   // Stroke Solid / Linear / Radial — a gradient spans the whole block.
   const strokeRows = hasTarget && primary ? <TextStrokeRows nodeId={primary} strokeColor={shownStroke} /> : null;
 
+  // A box behind the glyphs: on/off, colour, opacity, padding, roundness, block or per line.
+  const backgroundRows = hasTarget && primary && isText ? <TextBackgroundRows nodeId={primary} /> : null;
+
   // Tracking in 1/1000 em (AE's unit: 50 = 0.05 em, the same look at every size).
   // A range shows its run's `tracking`; a legacy px run reads back at the run's size.
   const rangeTracking = rangeStyle?.tracking !== undefined
@@ -1718,6 +1722,7 @@ function TextSettingsBodyInner({ nodeId, nodeIds, variant = 'character' }: TextS
               {fontRow}
               {metricRows}
               {strokeGrid}
+              {backgroundRows}
               {styleToolbar}
             </div>
           </TwirlGroup>
@@ -1862,6 +1867,7 @@ function TextSettingsBodyInner({ nodeId, nodeIds, variant = 'character' }: TextS
           {metricRows}
           {strokeGrid}
           {strokeRows}
+          {backgroundRows}
           {styleToolbar}
           {openType}
           {variableAxes}

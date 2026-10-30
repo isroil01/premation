@@ -585,6 +585,31 @@
     "min": 0,
     "defaultValue": 1.2
   },
+  "backgroundOpacity": {
+    "label": "Background Opacity",
+    "group": "text",
+    "type": "percent",
+    "unit": "%",
+    "min": 0,
+    "max": 100,
+    "defaultValue": 100
+  },
+  "backgroundPadding": {
+    "label": "Background Padding",
+    "group": "text",
+    "type": "number",
+    "unit": "px",
+    "min": 0,
+    "defaultValue": 12
+  },
+  "backgroundRadius": {
+    "label": "Background Roundness",
+    "group": "text",
+    "type": "number",
+    "unit": "px",
+    "min": 0,
+    "defaultValue": 0
+  },
   "groupingAlignX": {
     "label": "Grouping Alignment X",
     "group": "text",

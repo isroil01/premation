@@ -1581,6 +1581,7 @@ std::optional<api::Color> read_color_base(const Node& n, const std::string& base
   for (const Component& c : n.components) {
     if (auto col = color_of_string(c.props.at(base))) return col;
   }
+  if (base == kTextBackgroundColor && n.comp("Text") != nullptr) return api::Color{0, 0, 0, 1};  // the field's default, black
   return std::nullopt;
 }
 
@@ -1622,6 +1623,13 @@ bool write_color_base(Document& d, std::string_view nodeId, const std::string& b
   for (const Component& comp : n.components) {
     if (comp.props.at(base).is_string()) {
       const std::string cid = comp.id;
+      return sg_write_prop(d, nodeId, cid, base, Json::string(hex));
+    }
+  }
+  // A text background's colour before anything stored it: the Text component takes it.
+  if (base == kTextBackgroundColor) {
+    if (const Component* text = n.comp("Text")) {
+      const std::string cid = text->id;
       return sg_write_prop(d, nodeId, cid, base, Json::string(hex));
     }
   }

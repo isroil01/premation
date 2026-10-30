@@ -997,7 +997,62 @@ void paint_text_in_box(Canvas2D& ctx, const Value& spec, std::vector<std::string
     drawItemInner(item, which);
     ctx.setDirection(prev);
   };
+  // Background (Text `background*`): one rounded box around the laid-out text,
+  // or one per line, under the glyphs. It follows the layout, not animator
+  // moves; a glyph an animator hides (opacity 0) does not widen it, so a
+  // typewriter grows the box. Lines' boxes overlap through their padding and
+  // fill as one path (nonzero), so a translucent box has no darker seams.
+  const auto paintBackground = [&](const std::vector<DrawItem>& items) {
+    if (!ex.background || hasTextPath) return;
+    const TextBackground& bg = *ex.background;
+    const auto colour = color_style(bg.color);
+    if (!colour) return;
+    struct Rect {
+      double l, t, r, b;
+    };
+    std::map<int, Rect> boxes;
+    ctx.save();
+    for (const auto& it : items) {
+      if (is_js_blank(it.text) || (it.tr != nullptr && it.tr->opacity <= 0)) continue;
+      (void)ctx.setFont(font_for(it.style));
+      const double w = ctx.measureText(it.text).width;
+      const double em = it.style.fontSize;
+      const double x = cx + it.x;
+      const double y = cy + it.y;
+      Rect r{};
+      if (vertical) {
+        const double half = std::max(w, em) / 2;
+        r = {x - em * 0.6, y - half, x + em * 0.6, y + half};
+      } else {
+        const double l = it.align == TextAlign::center ? x - w / 2 : it.align == TextAlign::right ? x - w : x;
+        r = {l, y - em * 0.6, l + w, y + em * 0.6};
+      }
+      const auto [pos, fresh] = boxes.try_emplace(bg.perLine ? it.line : 0, r);
+      if (!fresh) {
+        Rect& u = pos->second;
+        u = {std::min(u.l, r.l), std::min(u.t, r.t), std::max(u.r, r.r), std::max(u.b, r.b)};
+      }
+    }
+    ctx.restore();
+    if (boxes.empty()) return;
+    ctx.save();
+    ctx.setGlobalAlpha(ctx.globalAlpha() * bg.opacity);
+    ctx.setFillStyle(*colour);
+    ctx.beginPath();
+    for (const auto& entry : boxes) {
+      const Rect& r = entry.second;
+      const double w = r.r - r.l + 2 * bg.padding;
+      const double h = r.b - r.t + 2 * bg.padding;
+      const double radius = std::min(bg.radius, std::min(w, h) / 2);
+      if (radius > 0) ctx.roundRect(r.l - bg.padding, r.t - bg.padding, w, h, {radius});
+      else ctx.rect(r.l - bg.padding, r.t - bg.padding, w, h);
+    }
+    ctx.fill(FillRule::nonzero);
+    ctx.restore();
+  };
+
   const auto paintItems = [&](const std::vector<DrawItem>& items) {
+    paintBackground(items);
     if (allPasses) {
       for (const Part p : parts) {
         for (const auto& it : items) drawItem(it, {p});

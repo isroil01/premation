@@ -410,6 +410,26 @@ void with_text_more_options(Json& extras, const doc::Node& n, const Values& a) {
   for (const auto& c : n.components) {
     if (c.type != "Text") continue;
     const Json& p = c.props;
+    // Background: a box behind the glyphs (whole block, or one per line).
+    // Color, Opacity, Padding and Roundness are keyframeable: the track's value first.
+    if (p.at("background").is_bool() && p.at("background").b()) {
+      const auto num = [&p, &a](const char* k, double def, double lo, double hi) {
+        const double v = a.get(k).value_or(p.at(k).is_finite_number() ? p.at(k).num() : def);
+        return std::isfinite(v) ? std::clamp(v, lo, hi) : def;
+      };
+      Json bg = Json::object();
+      if (a.has("backgroundColor_r")) {
+        bg.set("color", Json::string(color_to_hex({a.get("backgroundColor_r").value_or(0), a.get("backgroundColor_g").value_or(0),
+                                                   a.get("backgroundColor_b").value_or(0), a.get("backgroundColor_a").value_or(1)})));
+      } else {
+        bg.set("color", p.at("backgroundColor").is_string() ? p.at("backgroundColor") : Json::string("#000000"));
+      }
+      bg.set("opacity", Json::number(num("backgroundOpacity", 100, 0, 100) / 100));
+      bg.set("padding", Json::number(num("backgroundPadding", 12, 0, 500)));
+      bg.set("radius", Json::number(num("backgroundRadius", 0, 0, 1000)));
+      if (p.at("backgroundMode").is_string() && p.at("backgroundMode").str() == "line") bg.set("mode", Json::string("line"));
+      if (bg.at("opacity").num() > 0) extras.set("background", std::move(bg));
+    }
     if (p.at("ligatures").is_bool() && !p.at("ligatures").b()) extras.set("ligatures", Json::boolean(false));
     if (p.at("discretionaryLigatures").is_bool() && p.at("discretionaryLigatures").b()) {
       extras.set("discretionaryLigatures", Json::boolean(true));
@@ -590,9 +610,13 @@ double text_raster_padding(const RLayer& l, double bakedSpread) {
     }
     path = spread > 0 ? spread + em : 0;
   }
+  // The background box reaches its padding past the text box.
+  const double background = l.textExtras.is_object() && l.textExtras.at("background").is_object()
+                                ? l.textExtras.at("background").at("padding").num()
+                                : 0;
   // rasterPadding: the baked-effect bleed, widened by the text's own escape.
   double pad = bakedSpread;
-  const double escape = std::min(kMaxGlyphPad, std::max(glyph, path));
+  const double escape = std::min(kMaxGlyphPad, std::max({glyph, path, background}));
   if (escape > pad) pad = escape;
   return pad > 0 ? std::min(kMaxGlyphPad, std::ceil(pad + 1)) : 0;
 }

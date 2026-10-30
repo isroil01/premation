@@ -344,6 +344,12 @@ std::vector<mesh::BezRun> traced_runs(const Json& spec, double width, double hei
   Json painted = spec;
   painted.set("color", Json::string("#ffffff"));
   painted.set("textStroke", Json::string("#ffffff"));
+  // The extruded silhouette is the glyphs': a background box would extrude as a slab.
+  if (painted.at("textExtras").is_object() && painted.at("textExtras").at("background").is_object()) {
+    Json extras = painted.at("textExtras");
+    extras.erase("background");
+    painted.set("textExtras", std::move(extras));
+  }
   rs::json::Value rspec;
   std::string err;
   if (!rs::json::parse(js::stringify(painted), rspec, err)) return {};

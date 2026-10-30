@@ -324,6 +324,11 @@ bool holds(const Node& n, const Json& w) {
   if (!w.is_object()) return true;
   if (w.at("component").is_string() && n.comp(w.at("component").str()) == nullptr) return false;
   if (w.at("fx").is_string() && n.fx().at(w.at("fx").str()).is_undefined()) return false;
+  // A switch on the `component`: the member exists while that boolean prop is on.
+  if (w.at("switch").is_string()) {
+    const Component* c = w.at("component").is_string() ? n.comp(w.at("component").str()) : nullptr;
+    if (c == nullptr || !c->props.at(w.at("switch").str()).is_bool() || !c->props.at(w.at("switch").str()).b()) return false;
+  }
   if (w.at("threeD").is_bool() && w.at("threeD").b() && !is_3d_enabled(n)) return false;
   auto contains = [](const Json& list, const std::string& v) {
     for (const Json& x : list.arr()) {

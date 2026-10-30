@@ -403,7 +403,13 @@ std::vector<StaticPropertyRow> text_option_rows(const Node& n) {
     out.push_back(row(&n, "groupingAlignX", "text", {"groupingAlignX"}));
     out.push_back(row(&n, "groupingAlignY", "text", {"groupingAlignY"}));
   }
+  // Background Color while the background is on; its numbers are latent (latent.json).
+  if (text_background_on(n)) out.push_back(color_row(&n, std::string(kTextBackgroundColor), "text", std::string("Background Color")));
   return out;
+}
+
+bool is_text_background_prop(std::string_view p) {
+  return p == "backgroundOpacity" || p == "backgroundPadding" || p == "backgroundRadius";
 }
 
 std::vector<StaticPropertyRow> geometry_rows(const Node& n) {
@@ -448,6 +454,11 @@ void append_group(std::vector<StaticPropertyRow>& out, const std::vector<StaticP
 }
 
 }  // namespace
+
+bool text_background_on(const Node& n) {
+  const Component* t = n.comp("Text");
+  return t != nullptr && t->props.at(kTextBackground).is_bool() && t->props.at(kTextBackground).b();
+}
 
 std::string group_for_prop(const Document& d, std::string_view prop, const Node* node) {
   (void)d;
@@ -495,7 +506,10 @@ std::vector<StaticPropertyRow> build_static_property_tree(const Document& d, std
   // A text layer's gradient geometry — fill, then stroke (gradientGeometryPropsFor).
   for (const auto& p : gradient_geometry_props_for(n)) contents.push_back(row(&n, p, "contents", {p}));
   std::vector<StaticPropertyRow> scanned;
+  const bool background = text_background_on(n);
   for (auto& r : component_prop_rows(d, n, taken)) {
+    // A switched-off background keeps its stored values, out of the timeline.
+    if (!background && is_text_background_prop(r.prop)) continue;
     if (!transform.empty() || r.group != "transform") scanned.push_back(std::move(r));
   }
   const std::string kind = n.kind();

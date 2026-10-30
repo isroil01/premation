@@ -520,6 +520,36 @@
     }
   },
   {
+    "member": "backgroundOpacity",
+    "home": [
+      "Text"
+    ],
+    "when": {
+      "component": "Text",
+      "switch": "background"
+    }
+  },
+  {
+    "member": "backgroundPadding",
+    "home": [
+      "Text"
+    ],
+    "when": {
+      "component": "Text",
+      "switch": "background"
+    }
+  },
+  {
+    "member": "backgroundRadius",
+    "home": [
+      "Text"
+    ],
+    "when": {
+      "component": "Text",
+      "switch": "background"
+    }
+  },
+  {
     "member": "depthScale",
     "home": [
       "Transform"

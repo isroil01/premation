@@ -476,6 +476,19 @@ const STATIC: Record<string, MetaSpec> = {
     label: 'Grouping Alignment Y', group: 'text', type: 'percent', unit: '%',
     min: -100, max: 100, step: 1, precision: 1, defaultValue: 0, resettable: true, order: ORDER.text,
   },
+  // Text ▸ Background (a box behind the glyphs), keyframeable while it is on.
+  backgroundOpacity: {
+    label: 'Background Opacity', group: 'text', type: 'percent', unit: '%',
+    min: 0, max: 100, step: 1, precision: 0, defaultValue: 100, resettable: true, order: ORDER.text,
+  },
+  backgroundPadding: {
+    label: 'Background Padding', group: 'text', type: 'number', unit: 'px',
+    min: 0, step: 1, precision: 1, defaultValue: 12, resettable: true, order: ORDER.text,
+  },
+  backgroundRadius: {
+    label: 'Background Roundness', group: 'text', type: 'number', unit: 'px',
+    min: 0, step: 1, precision: 1, defaultValue: 0, resettable: true, order: ORDER.text,
+  },
 
   // Material Options (3D). Stored as flat props on the Transform component;
   // `readNodeMaterial(node, av)` overrides each with its track when the
