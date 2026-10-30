@@ -3465,7 +3465,10 @@ export interface RotoBrushJob {
   replaceMasks: string[];
 }
 
-/** The hole is the layer's masks as Béziers (mode `none` skipped, `subtract` cut out, `inverted` honoured), grown by `expansion` px. `references`: clean plates (PNG) painted for frames; each fills its frame and anchors propagation. `createReference`: fill only the frame at `range.start`, write `reference_<frame>.png` and apply nothing (the summary's `files` names it) — paint it, then pass it back in `references`. Any range: frames are filled in windows, each anchored on the previous window's last frame. */
+/**
+ * The hole is the layer's masks as Béziers (mode `none` skipped, `subtract` cut out, `inverted` honoured), grown by `expansion` px. `references`: clean plates (PNG) painted for frames; each fills its frame and anchors propagation. `createReference`: fill only the frame at `range.start`, write `reference_<frame>.png` and apply nothing (the summary's `files` names it) — paint it, then pass it back in `references`. Any range: frames are filled in windows, each anchored on the previous window's last frame.
+ * `subject`: the hole is that subject's stored matte (setLayerMatte frames; core/subjects.hpp) instead of the layer's masks — the area a subject left when it was Separated onto its own layer — grown by `expansion` (absent = 1% of the picture's long side, so its soft edge and motion blur go too). A tracked subject leaves no hole outside the frames it was tracked over; one held on a frame or two holes every frame.
+ */
 export interface ContentAwareFillJob {
   layer: LayerId;
   range: TimeRange;
@@ -3475,6 +3478,7 @@ export interface ContentAwareFillJob {
   references: ContentAwareFillFrame[];
   expansion?: number;
   createReference?: boolean;
+  subject?: string;
 }
 
 /** Auto-reframe (autoReframe.ts autoReframeComposition): `comp` rendered small (160 px wide, 12 frames/s) by a child engine, saliency + shot cuts per frame (saliency.ts, sceneEditDetect.ts), a dead-zone / lag camera path (reframePath.ts); a NEW composition `width`×`height` holding `comp` as a precomp layer scaled to cover, with the pan keyed on its separated position. The source is untouched. */

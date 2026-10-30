@@ -9807,6 +9807,7 @@ function encS_ContentAwareFillJob(w: Writer, v: T.ContentAwareFillJob): void {
   { const a = v.references; for (let i = 0; i < a.length; i++) { w.byte(50); { const s = w.beginLd(); encS_ContentAwareFillFrame(w, a[i]!); w.endLd(s); } } }
   if (v.expansion !== undefined) { w.byte(57); w.f64(v.expansion); }
   if (v.createReference !== undefined) { w.byte(64); w.bool(v.createReference); }
+  if (v.subject !== undefined) { w.byte(74); w.str(v.subject); }
 }
 function decS_ContentAwareFillJob(r: Reader, end: number, o: any): T.ContentAwareFillJob {
   const l_references: T.ContentAwareFillFrame[] = [];
@@ -9820,6 +9821,7 @@ function decS_ContentAwareFillJob(r: Reader, end: number, o: any): T.ContentAwar
   let v_lighting: T.ContentAwareLighting | undefined;
   let v_expansion: number | undefined;
   let v_createReference: boolean | undefined;
+  let v_subject: string | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -9831,6 +9833,7 @@ function decS_ContentAwareFillJob(r: Reader, end: number, o: any): T.ContentAwar
       case 50: l_references.push(decS_ContentAwareFillFrame(r, r.ldEnd(), {})); break;
       case 57: v_expansion = r.f64(); break;
       case 64: v_createReference = r.bool(); break;
+      case 74: v_subject = r.str(); break;
       default: r.skip(key);
     }
   }
@@ -9846,6 +9849,7 @@ function decS_ContentAwareFillJob(r: Reader, end: number, o: any): T.ContentAwar
   o.references = l_references;
   if (v_expansion !== undefined) o.expansion = v_expansion;
   if (v_createReference !== undefined) o.createReference = v_createReference;
+  if (v_subject !== undefined) o.subject = v_subject;
   return o;
 }
 function encS_AutoReframeJob(w: Writer, v: T.AutoReframeJob): void {

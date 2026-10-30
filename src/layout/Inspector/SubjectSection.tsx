@@ -138,7 +138,7 @@ export function SubjectSection({ nodeId }: { nodeId: string }): JSX.Element | nu
     return { start, end: Math.min(end, start + 3) };
   };
 
-  const use = actions.filter((a) => a.id === 'newLayer' || a.id === 'textBehind' || a.id === 'removeBackground' || a.id === 'trackNull');
+  const use = actions.filter((a) => a.id === 'newLayer' || a.id === 'textBehind' || a.id === 'removeBackground' || a.id === 'removeFromShot' || a.id === 'trackNull');
   const followed = followedFrames(nodeId, active.id);
 
   return (

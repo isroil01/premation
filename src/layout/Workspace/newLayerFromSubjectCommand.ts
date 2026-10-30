@@ -11,6 +11,7 @@ import { useUIStore } from '@stores/uiStore';
 import { t } from '@core/i18n';
 import { layerSubjects } from '@core/workspace/subjects';
 import { activeSubjectId } from '@stores/subjectStore';
+import { fillSubjectGap } from './subjectGapFill';
 import { hasSubject, newLayerFromSubjectEdit, subjectPartsOf } from './newLayerFromSubject';
 
 /** Whether `layer` has a subject to lift out, from what the mirror holds now (menus build synchronously). */
@@ -28,6 +29,16 @@ export async function newLayerFromSubject(
   const res = await newLayerFromSubjectEdit(layer, playheadSeconds(), subject);
   if (res.ok) {
     useSelectionStore.getState().set([res.layer]);
+    // The clip still shows the subject behind the cut-out: offer to rebuild the background there.
+    const lifted = subject ?? layerSubjects(layer)[0]?.id ?? null;
+    if (lifted) {
+      useUIStore.getState().notify({
+        level: 'success',
+        message: t('workspace.subjects.separatedHint', 'Separated onto its own layer. The clip still shows it underneath — fill the gap to move it freely.'),
+        durationMs: 10000,
+        action: { label: t('workspace.subjects.fillGap', 'Fill the gap'), onSelect: () => { void fillSubjectGap(layer, lifted); } },
+      });
+    }
     return true;
   }
   if (res.reason === 'noSubject') {

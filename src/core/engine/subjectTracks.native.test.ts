@@ -22,6 +22,7 @@ import { flicksToSeconds, type Command } from '@motion/engine-api';
 import { activeCompRootId } from '@core/scene/activeComp';
 import { engineIdle } from '@core/engine/engineInstance';
 import { styleOpacityPath, styleSpanKeys } from '@core/workspace/subjectStyleTime';
+import { startContentAwareFill } from '@core/tracking/contentAwareFill';
 import { sec, settleEdits, setupAppEngine, type Harness } from './__testHelpers__/appEngine';
 
 jest.useFakeTimers({ doNotFake: ['setTimeout', 'queueMicrotask', 'nextTick', 'setImmediate'] });
@@ -226,6 +227,28 @@ gpuSuite('subject view modes in the viewport', () => {
     expect(orange(await still(1.6, 60))).toBe(true);   // after it: gone again
     await h.run({ type: 'removePropertyGroups', groups: [{ layer: video, path: `effects/${id}` }] } as Command);
   });
+
+  it('fills the gap a subject leaves: the hole is its own matte, the frames are attached', async () => {
+    // The subject (left half) on frames 0–4, tracked; the fill runs over those frames.
+    const left = matteFrame(dir, 'gap.png', (x) => x < W / 2);
+    await h.run({ type: 'setLayerMatte', layer: video, frames: [0, 1, 2, 3, 4].map((i) => ({ time: sec(i / 30), src: left })), merge: false, cut: false, subject: 'gap' } as Command);
+    await settleEdits();
+    const handle = await startContentAwareFill({ layer: video, subject: 'gap', start: 0, end: 5 / 30, fps: 30, mode: 'object', lighting: 'off', expansion: 0, references: [] });
+    const out = await handle.done;
+    expect(out.status).toBe('done');
+    expect(out.result?.frames).toBe(5);
+    expect(out.result?.filledPixels).toBeGreaterThan(5 * (W / 2) * H * 0.9);  // the whole left half, every frame
+    // The flat orange footage rebuilt where the subject was.
+    await engineIdle();
+    const th = (await h.query({ type: 'getThumbnail', item: activeCompRootId() as string, time: sec(2 / 30), maxSize: W } as never)) as { data: Uint8Array };
+    const png = PNG.sync.read(Buffer.from(th.data));
+    const i = (Math.round(90 * png.height / H) * png.width + Math.round(60 * png.width / W)) * 4;
+    expect(orange([png.data[i]!, png.data[i + 1]!, png.data[i + 2]!])).toBe(true);
+    await expect(startContentAwareFill({ layer: video, subject: 'nobody', start: 0, end: 1 / 30, fps: 30, mode: 'object', lighting: 'off', expansion: 0, references: [] })
+      .then((hd) => hd.done).then((o) => { if (o.status !== 'done') throw new Error(o.error?.message ?? 'failed'); })).rejects.toThrow(/no subject/);
+    await h.run({ type: 'setLayerMatte', layer: video, frames: [], merge: false, subject: 'gap' } as Command);
+    await h.run({ type: 'setContentAwareFill', layer: video, frames: [] } as Command);
+  }, 120_000);
 
   it('is a viewer aid: the comp still is untouched', async () => {
     await view('alpha');

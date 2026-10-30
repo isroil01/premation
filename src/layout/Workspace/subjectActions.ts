@@ -25,13 +25,14 @@ import { t } from '@core/i18n';
 import { objectMatteCard } from '@core/workspace/objectMatteEffect';
 import { layerSubjects, subjectLocked } from '@core/workspace/subjects';
 import { newLayerFromSubject } from './newLayerFromSubjectCommand';
+import { fillSubjectGap } from './subjectGapFill';
 import { runCreateSubjectTrack } from './placeBehindSubjectCommand';
 import { matteOutlineKeys } from './subjectTrack';
 import { fetchSubjectTracks, isTracked, retrackRange } from '@core/workspace/subjectTracks';
 
 export type SubjectActionId =
   | 'select' | 'follow' | 'newLayer' | 'textBehind' | 'outline' | 'colorSubject' | 'colorBackground'
-  | 'blurBackground' | 'removeBackground' | 'trackNull' | 'freeze';
+  | 'blurBackground' | 'removeBackground' | 'removeFromShot' | 'trackNull' | 'freeze';
 
 export interface SubjectAction {
   id: SubjectActionId;
@@ -323,6 +324,9 @@ export function subjectActions(layer: string, state: SubjectState, hooks: Subjec
     { id: 'removeBackground', label: state.cuts ? t('workspace.subjects.action.keepBackground', 'Keep Background') : t('workspace.subjects.action.removeBackground', 'Remove Background'),
       description: state.cuts ? t('workspace.subjects.action.keepBackgroundDesc', 'Show the whole picture again') : t('workspace.subjects.action.removeBackgroundDesc', 'Keep only the person'),
       disabled: needs, run: () => { void toggleRemoveBackground(layer, state.cuts); } },
+    { id: 'removeFromShot', label: t('workspace.subjects.action.removeFromShot', 'Remove from Shot'),
+      description: t('workspace.subjects.action.removeFromShotDesc', 'Rebuild the background where it was (Content-Aware Fill)'),
+      disabled: needs, run: () => { void fillSubjectGap(layer, activeSubjectId(layer)); } },
     { id: 'trackNull', label: t('workspace.subjects.action.trackNull', 'Track with Null'), description: t('workspace.subjects.action.trackNullDesc', 'Stickers follow the person'),
       disabled: !state.followed, run: () => { void runCreateSubjectTrack(layer); } },
     { id: 'freeze', label: state.frozen ? t('workspace.subjects.action.unfreeze', 'Unfreeze') : t('workspace.subjects.action.freeze', 'Freeze'),

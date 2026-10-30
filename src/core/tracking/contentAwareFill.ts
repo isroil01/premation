@@ -33,6 +33,8 @@ export interface ContentAwareFillRequest {
   createReference?: boolean;
   /** Empty: next to the project, `Content-Aware Fill/`. */
   outputFolder?: string;
+  /** The hole is this subject's matte (what a Separated subject left), not the masks; `expansion` 0 = the engine's default margin. */
+  subject?: string;
 }
 
 export interface ContentAwareFillSummary {
@@ -86,6 +88,7 @@ export function contentAwareFillJob(req: ContentAwareFillRequest): JobSpec {
       references: req.references.map((r) => ({ time: secondsToFlicks(r.time), src: r.src })),
       expansion: Number.isFinite(req.expansion) ? req.expansion : 0,
       createReference: req.createReference ?? false,
+      ...(req.subject ? { subject: req.subject } : {}),
     },
   };
 }

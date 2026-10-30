@@ -3506,6 +3506,7 @@ struct ContentAwareFillJob {
   std::vector<ContentAwareFillFrame> references;
   std::optional<double> expansion;
   std::optional<bool> create_reference;
+  std::optional<std::string> subject;
   bool operator==(const ContentAwareFillJob&) const = default;
 };
 

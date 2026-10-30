@@ -15,6 +15,7 @@
 #include <fstream>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -28,6 +29,8 @@
 #include "json.hpp"
 #include "media_input.hpp"
 #include "png_write.hpp"
+#include "subjects.hpp"
+#include "timeline.hpp"
 #include "values.hpp"
 
 namespace premation::jobs {
@@ -87,6 +90,49 @@ std::vector<caf::HolePath> paths_of(const doc::Json& mask, double layerW, double
 doc::Json mask_at(const doc::Json& staticMask, const std::vector<doc::Json>& anim, double t) {
   if (const auto keyed = doc::interpolate_mask(anim, t)) return *keyed;
   return staticMask;
+}
+
+/// A subject's stored matte frames (ContentAwareFillJob `subject`): composition seconds and the
+/// cut-out picture whose alpha is the hole. `tracked`: frames about every frame (a Follow) — such
+/// a subject leaves no hole outside its span; one held on a frame or two holes every frame.
+struct SubjectHole {
+  std::vector<std::pair<double, std::string>> frames;
+  bool tracked = false;
+
+  /// The stored frame for composition second `t` (nullptr: no hole at `t`).
+  [[nodiscard]] const std::string* at(double t, double fps) const {
+    const std::pair<double, std::string>* best = nullptr;
+    for (const auto& f : frames)
+      if (best == nullptr || std::abs(f.first - t) < std::abs(best->first - t)) best = &f;
+    if (best == nullptr) return nullptr;
+    if (tracked && std::abs(best->first - t) > 1.0 / std::max(1.0, fps)) return nullptr;
+    return &best->second;
+  }
+};
+
+/// The hole of one stored subject frame: its alpha (resampled nearest to the picture's size) over
+/// a low threshold — the soft edge is part of what must be filled — grown by `grow` px.
+int subject_hole(std::span<std::uint8_t> hole, int w, int h, const std::string& src, int grow, const std::string& layer) {
+  std::string err;
+  std::unique_ptr<FrameSource> m = open_frames(src, 0, err);
+  if (!m) fail(ErrorCode::decode, "cannot read the subject's matte '" + src + "': " + err, {.layer = layer});
+  RgbaImage img;
+  if (!m->read(0, img, err)) fail(ErrorCode::decode, "the subject's matte '" + src + "': " + err, {.layer = layer});
+  const int mw = static_cast<int>(img.width);
+  const int mh = static_cast<int>(img.height);
+  if (mw <= 0 || mh <= 0) return 0;
+  int count = 0;
+  for (int y = 0; y < h; ++y) {
+    const int sy = std::min(mh - 1, static_cast<int>((static_cast<long long>(y) * mh) / h));
+    for (int x = 0; x < w; ++x) {
+      const int sx = std::min(mw - 1, static_cast<int>((static_cast<long long>(x) * mw) / w));
+      const bool in = img.rgba[(static_cast<std::size_t>(sy) * static_cast<std::size_t>(mw) + static_cast<std::size_t>(sx)) * 4 + 3] > 8;
+      hole[static_cast<std::size_t>(y) * static_cast<std::size_t>(w) + static_cast<std::size_t>(x)] = in ? 255 : 0;
+      count += in ? 1 : 0;
+    }
+  }
+  if (count > 0 && grow > 0) caf::dilate_hole(hole, w, h, grow);
+  return count;
 }
 
 /// Frames held at once. 1080p RGBA is ~8 MB a frame.
@@ -193,6 +239,23 @@ PreparedJob prepare_content_aware_fill(const api::ContentAwareFillJob& spec, con
   const double grow = spec.expansion.value_or(0);
   if (!std::isfinite(grow)) fail(ErrorCode::invalid_argument, "expansion must be finite", {.layer = spec.layer});
 
+  // The hole from a subject's matte (the area a Separated subject left behind), not the masks.
+  std::optional<SubjectHole> subjectHole;
+  if (spec.subject && !spec.subject->empty()) {
+    SubjectHole sh;
+    const doc::Json& am = node->fx().at("alphaMatte");
+    const doc::EditorView view{fl.comp, 0};
+    if (am.is_object() && am.at("frames").is_array())
+      for (const doc::Json& f : am.at("frames").arr())
+        if (f.at("t").is_number() && f.at("src").is_string() && doc::frame_subject(f) == *spec.subject)
+          sh.frames.emplace_back(doc::keyframe_to_comp_time(ctx.doc, view, spec.layer, f.at("t").num()), f.at("src").str());
+    if (sh.frames.empty()) fail(ErrorCode::not_found, "the layer has no subject '" + *spec.subject + "'", {.layer = spec.layer});
+    std::ranges::sort(sh.frames, {}, &std::pair<double, std::string>::first);
+    const double span = sh.frames.back().first - sh.frames.front().first;
+    sh.tracked = sh.frames.size() >= 3 && span / static_cast<double>(sh.frames.size() - 1) <= 1.5 / fps;
+    subjectHole = std::move(sh);
+  }
+
   // Reference plates by composition frame.
   std::vector<std::pair<std::int64_t, std::string>> refs;
   for (const api::ContentAwareFillFrame& r : spec.references) {
@@ -212,7 +275,8 @@ PreparedJob prepare_content_aware_fill(const api::ContentAwareFillJob& spec, con
 
   PreparedJob job;
   job.kind = "contentAwareFill";
-  job.work = [fl, fps, first, last, staticMask, anim, folderText, opts, grow, refs, reference](JobControl& control) -> std::unique_ptr<JobResult> {
+  job.work = [fl, fps, first, last, staticMask, anim, folderText, opts, grow, refs, reference,
+              subjectHole](JobControl& control) -> std::unique_ptr<JobResult> {
     std::string error;
     std::unique_ptr<FrameSource> src = open_frames(fl.file, 0, error);
     if (!src) fail(ErrorCode::decode, "cannot read '" + fl.file + "': " + error, {.layer = fl.layer});
@@ -275,8 +339,15 @@ PreparedJob prepare_content_aware_fill(const api::ContentAwareFillJob& spec, con
         if (!src->read(sf, img, error)) fail(ErrorCode::decode, "frame " + std::to_string(sf) + ": " + error, {.layer = fl.layer});
         caf::SequenceFrame fr;
         fr.hole.assign(px, 0);
-        const std::vector<caf::HolePath> paths = paths_of(mask_at(staticMask, anim, t), layerW, layerH, w, h, grow);
-        const int holes = caf::raster_hole_paths(fr.hole, w, h, paths);
+        int holes = 0;
+        if (subjectHole) {
+          // 1% of the long side by default: the matte's soft edge, a halo, motion blur.
+          const int g = static_cast<int>(std::lround(grow > 0 ? grow * w / layerW : std::max(w, h) * 0.01));
+          if (const std::string* matte = subjectHole->at(t, fps); matte != nullptr) holes = subject_hole(fr.hole, w, h, *matte, g, fl.layer);
+        } else {
+          const std::vector<caf::HolePath> paths = paths_of(mask_at(staticMask, anim, t), layerW, layerH, w, h, grow);
+          holes = caf::raster_hole_paths(fr.hole, w, h, paths);
+        }
         fr.rgba = std::move(img.rgba);
         img = RgbaImage{};
         // A frame with no hole is a clean source for its neighbours.

@@ -12905,6 +12905,7 @@ void encode(wire::Writer& w, const ContentAwareFillJob& v) {
   for (const auto& e : v.references) { w.varint(50U); { const std::size_t s = w.begin_ld(); encode(w, e); w.end_ld(s); } }
   if (v.expansion.has_value()) { w.varint(57U); w.f64(*v.expansion); }
   if (v.create_reference.has_value()) { w.varint(64U); w.boolean(*v.create_reference); }
+  if (v.subject.has_value()) { w.varint(74U); w.str(*v.subject); }
 }
 
 Status decode(wire::Reader& r, ContentAwareFillJob& out) {
@@ -12957,6 +12958,12 @@ Status decode(wire::Reader& r, ContentAwareFillJob& out) {
         bool e = false;
         if (!r.boolean(e)) return Status::truncated;
         out.create_reference = std::move(e);
+        break;
+      }
+      case 74U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.subject = std::move(e);
         break;
       }
       default:
