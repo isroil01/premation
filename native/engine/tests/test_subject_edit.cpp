@@ -275,3 +275,12 @@ TEST_CASE("track_confidence is the weakest of the model, presence and agreement"
   CHECK(shaky < 0.5);  // flagged for review
   CHECK(se::track_confidence(0.9, 1.0, 0.6) < se::track_confidence(0.9, 1.0, 0.7));
 }
+TEST_CASE("a walk keeps the whole subject, not the part the decoder rates highest", "[subject][track]") {
+  // The decoder rates the torso 0.97 and the whole person 0.88; last frame was the whole person.
+  const std::vector<float> scores{0.97f, 0.88f, 0.80f};
+  const std::vector<double> overlap{0.45, 0.91, 0.60};
+  CHECK(se::choose_continuous(scores, overlap) == 1);
+  // Two candidates that match the last frame alike: the decoder's score decides.
+  CHECK(se::choose_continuous(std::vector<float>{0.7f, 0.95f}, std::vector<double>{0.9, 0.9}) == 1);
+  CHECK(se::choose_continuous(std::vector<float>{}, std::vector<double>{}) == 0);
+}

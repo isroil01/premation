@@ -20,6 +20,7 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { cn } from '@utils/cn';
+import { Button } from '@components/Button';
 import { usePlaybackClockStore, getTime } from '@stores/playbackClockStore';
 import { useSubjectStore, type SubjectViewMode } from '@stores/subjectStore';
 import { activeCompSettingsNow } from '@hooks/useMirrorFrame';
@@ -29,7 +30,8 @@ import { framesToTimecode } from '@core/time/timecode';
 import { t } from '@core/i18n';
 import type { Subject } from '@core/workspace/subjects';
 import { fetchSubjectTracks, isTracked, reviewSpans, type ReviewSpan, type SubjectTrack, type TrackFrame } from '@core/workspace/subjectTracks';
-import { followSubject, layerMoves, retrackSubject, subjectWalkRunning } from '@layout/Workspace/subjectActions';
+import { cancelSubjectWalk, followSubject, layerMoves, retrackSubject, subjectWalkRunning } from '@layout/Workspace/subjectActions';
+import { useUIStore } from '@stores/uiStore';
 import styles from './SubjectSection.module.css';
 
 function viewModes(): ReadonlyArray<{ id: Exclude<SubjectViewMode, 'off'>; label: string; hint: string }> {
@@ -87,6 +89,8 @@ function Lane({ subject, frames, duration, fps, active, onPick }: {
   onPick: () => void;
 }): JSX.Element {
   const pct = (s: number): string => `${Math.min(100, Math.max(0, (s / duration) * 100))}%`;
+  // A marker's centre kept 4 px inside the lane, so one on the first or last frame is not cut in half.
+  const markAt = (s: number): string => `clamp(4px, ${Math.min(100, Math.max(0, (s / duration) * 100))}%, calc(100% - 4px))`;
   const width = (a: number, b: number): string => `max(2px, ${Math.max(0, ((b - a + 1 / fps) / duration) * 100)}%)`;
   const spans = reviewSpans(frames, fps);
   const fixes = frames.filter((f) => f.fix);
@@ -122,9 +126,9 @@ function Lane({ subject, frames, duration, fps, active, onPick }: {
       >
         {tracked
           ? coveredRuns(frames, fps).map((r) => <span key={r.start} className={styles.laneCovered} style={{ left: pct(r.start), width: width(r.start, r.end) }} />)
-          : frames.map((f) => <span key={f.time} className={styles.laneHeld} style={{ left: pct(f.time) }} />)}
+          : frames.map((f) => <span key={f.time} className={styles.laneHeld} style={{ left: markAt(f.time) }} />)}
         {spans.map((s) => <span key={s.start} className={styles.laneLow} style={{ left: pct(s.start), width: width(s.start, s.end) }} />)}
-        {fixes.map((f) => <span key={f.time} className={styles.laneFix} style={{ left: pct(f.time) }} />)}
+        {fixes.map((f) => <span key={f.time} className={styles.laneFix} style={{ left: markAt(f.time) }} />)}
         <LanePlayhead duration={duration} />
       </div>
     </div>
@@ -150,6 +154,8 @@ export function SubjectTracking({ nodeId, subjects, active, rev, locked }: {
   const spans: ReviewSpan[] = tracked ? reviewSpans(mine, fps) : [];
   const fixes = mine.filter((f) => f.fix).length;
   const autoTrack = useSubjectStore((s) => s.autoTrack);
+  // The active subject's walk while it runs (a Tasks-panel job; its progress is a few updates a second).
+  const walk = useUIStore((s) => s.jobs.find((j) => j.id === `follow-${nodeId}-${active.id}` && j.status === 'running'));
   // A subject of moving footage that was never tracked: the same matte on every frame.
   const held = !tracked && mine.length > 0 && layerMoves(nodeId) && !subjectWalkRunning(nodeId, active.id);
   const setActive = (id: string): void => useSubjectStore.getState().setActive(nodeId, id);
@@ -185,12 +191,31 @@ export function SubjectTracking({ nodeId, subjects, active, rev, locked }: {
       <div className={styles.block}>
         <div className={styles.blockHead}>
           <span className={styles.blockTitle}>{t('inspector.subject.trackingTitle', 'Tracking')}</span>
-          <span className={styles.meta}>
-            {tracked
-              ? t('inspector.subject.trackingMeta', '{frames} frames · {fixes} fixes', { frames: mine.length, fixes })
-              : t('inspector.subject.trackingNone', 'not tracked yet')}
-          </span>
+          {walk ? (
+            <span className={styles.meta} role="status">
+              {t('inspector.subject.trackingNow', 'Tracking… {pct}%', { pct: Math.round((typeof walk.progress === 'number' ? walk.progress : 0) * 100) })}
+            </span>
+          ) : (
+            <span className={styles.meta}>
+              {tracked
+                ? fixes === 1
+                  ? t('inspector.subject.trackingMetaOne', '{frames} frames · 1 fix', { frames: mine.length })
+                  : t('inspector.subject.trackingMeta', '{frames} frames · {fixes} fixes', { frames: mine.length, fixes })
+                : t('inspector.subject.trackingNone', 'not tracked yet')}
+            </span>
+          )}
+          {walk && (
+            <Button size="sm" variant="ghost" onClick={() => cancelSubjectWalk(nodeId, active.id)}>
+              {t('inspector.subject.trackingStop', 'Stop')}
+            </Button>
+          )}
         </div>
+        {walk && (
+          <div className={styles.walkBar} role="progressbar" aria-label={t('inspector.subject.trackingNowLabel', 'Tracking progress')}
+            aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round((typeof walk.progress === 'number' ? walk.progress : 0) * 100)}>
+            <span style={{ transform: `scaleX(${typeof walk.progress === 'number' ? walk.progress : 0})` }} />
+          </div>
+        )}
         <label className={styles.checkInline} title={t('inspector.subject.autoTrackHint', 'After each selection or fix on moving footage, the subject is tracked (or re-tracked between fixes) in the background.')}>
           <input type="checkbox" checked={autoTrack} onChange={(e) => useSubjectStore.getState().setAutoTrack(e.currentTarget.checked)} />
           {t('inspector.subject.autoTrack', 'Track automatically')}

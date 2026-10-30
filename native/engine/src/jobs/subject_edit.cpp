@@ -546,6 +546,19 @@ double matte_iou(std::span<const float> a, std::span<const float> b) {
   return either == 0 ? 1.0 : static_cast<double>(both) / static_cast<double>(either);
 }
 
+std::size_t choose_continuous(std::span<const float> scores, std::span<const double> overlap) {
+  std::size_t best = 0;
+  double bestScore = -1;
+  for (std::size_t i = 0; i < overlap.size(); ++i) {
+    const double s = overlap[i] + 0.1 * (i < scores.size() ? static_cast<double>(scores[i]) : 0.0);
+    if (s > bestScore) {
+      bestScore = s;
+      best = i;
+    }
+  }
+  return best;
+}
+
 double track_confidence(double iou, double presence, std::optional<double> agreement) {
   // A held subject's SAM masks predict IoU well above 0.8 and move little against the flow-carried
   // previous frame; a jump onto the background or a lost limb drops one of them, so each ramps to 0 well before 0.4.

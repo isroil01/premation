@@ -308,7 +308,7 @@ export function subjectActions(layer: string, state: SubjectState, hooks: Subjec
       } },
     { id: 'follow', label: t('workspace.subjects.action.follow', 'Follow Through Shot'), description: t('workspace.subjects.action.followDesc', 'Carry the selection to every frame'),
       disabled: needs, run: () => { void followSubject(layer); } },
-    { id: 'newLayer', label: t('workspace.subjects.action.newLayer', 'New Layer from Subject'), description: t('workspace.subjects.action.newLayerDesc', 'The subject alone, on its own layer'),
+    { id: 'newLayer', label: t('workspace.subjects.action.separate', 'Separate Subject'), description: t('workspace.subjects.action.separateDesc', 'Its own layer, to move or resize it alone — keeps its tracking and styles'),
       disabled: needs, run: () => { void newLayerFromSubject(layer); } },
     { id: 'textBehind', label: t('workspace.subjects.action.textBehind', 'Text Behind'), description: t('workspace.subjects.action.textBehindDesc', 'Selected text goes behind the person'),
       disabled: needs, run: () => hooks.openTextBehind(layer) },

@@ -466,13 +466,34 @@ std::vector<float> snap_edge(std::span<const float> alpha, std::span<const std::
       const double tw = trust * trust * (3 - 2 * trust);
       est[l] = static_cast<float>(pc[l] + tw * (bestAlpha - pc[l]));
     }
-  // A light colour guided filter of the estimate: texture noise in the projection smoothed, the
-  // picture's edge kept.
-  const std::vector<float> q = guided_filter_rgb(est, ic, bw, bh, std::max(1, radius / 3), 1e-4);
+  // Texture noise in the estimate smoothed, the picture's edge kept: a small joint-bilateral filter
+  // (weights from distance and colour likeness) over the BAND pixels only. A colour guided filter
+  // over the subject's whole box did the same at 172 ms a 1080p frame; this is a few ms.
+  const int k = std::max(1, radius / 3);
+  const double sigmaS2 = 2.0 * std::max(0.5, k / 2.0) * std::max(0.5, k / 2.0);
+  constexpr double kSigmaC2 = 2.0 * 0.08 * 0.08;
   for (int y = 0; y < bh; ++y)
     for (int x = 0; x < bw; ++x) {
       const std::size_t l = at(y * bw + x);
-      if (band[l] != 0) out[at((by0 + y) * width + bx0 + x)] = q[l];
+      if (band[l] == 0) continue;
+      const std::array<double, 3> I = colour(l);
+      double sum = 0;
+      double wsum = 0;
+      for (int dy = -k; dy <= k; ++dy) {
+        const int yy = y + dy;
+        if (yy < 0 || yy >= bh) continue;
+        for (int dx = -k; dx <= k; ++dx) {
+          const int xx = x + dx;
+          if (xx < 0 || xx >= bw) continue;
+          const std::size_t nb = at(yy * bw + xx);
+          const std::array<double, 3> J = colour(nb);
+          const double dc = (I[0] - J[0]) * (I[0] - J[0]) + (I[1] - J[1]) * (I[1] - J[1]) + (I[2] - J[2]) * (I[2] - J[2]);
+          const double w = std::exp(-(dx * dx + dy * dy) / sigmaS2 - dc / kSigmaC2);
+          sum += w * est[nb];
+          wsum += w;
+        }
+      }
+      out[at((by0 + y) * width + bx0 + x)] = static_cast<float>(std::clamp(sum / std::max(1e-12, wsum), 0.0, 1.0));
     }
   return out;
 }

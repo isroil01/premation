@@ -1448,8 +1448,26 @@ std::string object_matte_video_child(const std::string& inputJson, JobControl& c
       stages.decode += ms_since(ts);
       ts = Clock::now();
       const std::size_t plane = static_cast<std::size_t>(sam::kMaskSize) * sam::kMaskSize;
-      const std::size_t best = sam::best_mask(dec.iouScores.data);
+      std::size_t best = sam::best_mask(dec.iouScores.data);
       std::vector<float> alpha = matte::soft_mask(dec.predMasks.data, best * plane, img.width, img.height, lb.scale);
+      if (!warped.empty() && given.empty()) {
+        // Continuity: of the decoder's candidates (part / object / object + surroundings) the one that
+        // matches the previous frame's matte carried by the flow, not the one the decoder rates highest —
+        // which on a person is often a part (the torso); prompted from that part, the walk never got the
+        // whole person back (the skater lost his legs from 4 s on).
+        const std::size_t nCands = std::min<std::size_t>(dec.iouScores.data.size(), dec.predMasks.data.size() / plane);
+        std::vector<double> overlap(nCands, 0.0);
+        std::vector<std::vector<float>> cands(nCands);
+        for (std::size_t c = 0; c < nCands; ++c) {
+          cands[c] = c == best ? alpha : matte::soft_mask(dec.predMasks.data, c * plane, img.width, img.height, lb.scale);
+          overlap[c] = subject::matte_iou(cands[c], warped);
+        }
+        const std::size_t pick = subject::choose_continuous(dec.iouScores.data, overlap);
+        if (pick != best && pick < nCands) {
+          best = pick;
+          alpha = std::move(cands[pick]);
+        }
+      }
       if (!given.empty()) {
         alpha = std::move(given);  // the origin frame is the user's matte
       } else if (box) {

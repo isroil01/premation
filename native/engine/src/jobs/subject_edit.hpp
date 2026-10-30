@@ -115,6 +115,11 @@ void harden_for_subtract(std::vector<float>& delta, int width, int height, int g
 /// The IoU of two mattes of the same size, each read at 0.5 (1 when both are empty).
 double matte_iou(std::span<const float> a, std::span<const float> b);
 
+/// A walk's choice among the decoder's candidates: the one overlapping the previous frame's
+/// matte (carried by the flow) most (`overlap`, IoU 0–1 per candidate), the decoder's own
+/// score (`scores`) only breaking near-ties (weight 0.1). Index 0 when there are none.
+[[nodiscard]] std::size_t choose_continuous(std::span<const float> scores, std::span<const double> overlap);
+
 /// How sure a walk is of one frame's matte, 0–1 (the Subjects panel's tracking lanes flag a
 /// frame under 0.5 for review): the model's own predicted mask quality (iou), whether it
 /// thinks the object is there at all (presence, 0–1; 1 for a model without the score) and

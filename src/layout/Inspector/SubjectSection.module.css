@@ -758,3 +758,59 @@
   font-size: var(--panel-font-size-help);
   line-height: 1.45;
 }
+/* ── Tracking in progress, press feedback, numbers ─────────────────────────── */
+
+.walkBar {
+  height: 2px;
+  border-radius: 1px;
+  background: var(--color-surface-3);
+  overflow: hidden;
+}
+
+.walkBar > span {
+  display: block;
+  height: 100%;
+  background: var(--color-primary);
+  transform-origin: left center;
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.linkButton {
+  flex: none;
+  padding: 0 var(--space-1);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-primary-text);
+  font: inherit;
+  font-size: var(--panel-font-size-help);
+  cursor: pointer;
+}
+
+.linkButton:hover {
+  background: var(--color-hover);
+}
+
+.linkButton:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+
+/* A press reads as a press: the control sinks a pixel (transform only, no layout). */
+.viewMode:active,
+.spanMode:active,
+.reviewRow:active,
+.linkButton:active,
+.preset:active,
+.action:active:not(:disabled),
+.follow:active:not(:disabled),
+.primary:active:not(:disabled),
+.secondary:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.meta,
+.reviewTime,
+.spanTime {
+  font-variant-numeric: tabular-nums;
+}
