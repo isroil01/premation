@@ -20,6 +20,9 @@
   --radius-sm: 3px;
   --radius-control: 4px;
   --radius-surface: 6px;
+  --color-card: color-mix(in srgb, var(--color-surface-1) 42%, var(--color-surface-0));
+  --color-card-hover: color-mix(in srgb, var(--color-surface-1) 62%, var(--color-surface-0));
+  --color-card-border: color-mix(in srgb, var(--color-text-primary) 7%, transparent);
 
   display: flex;
   flex-direction: column;
@@ -33,45 +36,79 @@
 
 /* ── 1. Top bar ──────────────────────────────────────────────────────────── */
 .topBar {
-  height: 44px;
+  height: 52px;
   flex-shrink: 0;
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr minmax(0, 480px) 1fr;
   align-items: center;
-  gap: 12px;
+  gap: 16px;
   padding: 0 14px 0 18px;
   background: var(--color-surface-1);
   border-bottom: 1px solid var(--color-border-structural);
-}
-
-.topBarSpacer {
-  flex: 1;
 }
 
 .topSearch {
   position: relative;
   display: flex;
   align-items: center;
-  width: min(300px, 40vw);
+  width: 100%;
 }
 
 .topSearchIcon {
   position: absolute;
-  left: 9px;
+  left: 14px;
   color: var(--color-text-tertiary);
   pointer-events: none;
+  transition: color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .topSearchInput {
   width: 100%;
-  height: 28px;
-  padding: 0 10px 0 30px;
+  height: 36px;
+  padding: 0 64px 0 38px;
   background: var(--color-surface-0);
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-control);
+  border: 1px solid var(--color-card-border, var(--color-border-subtle));
+  border-radius: 999px;
   color: var(--color-text-primary);
-  font-size: var(--font-size-xs);
+  font-size: var(--font-size-sm);
   outline: none;
-  transition: border-color var(--motion-duration-fast) var(--motion-ease-standard);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition:
+  border-color var(--motion-duration-fast) var(--motion-ease-standard),
+  background-color var(--motion-duration-fast) var(--motion-ease-standard),
+  box-shadow var(--motion-duration-base) var(--motion-ease-standard);
+}
+
+.topSearchInput:hover {
+  border-color: var(--color-border-strong);
+}
+
+/* The native clear button would sit under the shortcut hint; Esc clears. */
+.topSearchInput::-webkit-search-cancel-button {
+  appearance: none;
+}
+
+.topSearch:focus-within .topSearchIcon {
+  color: var(--color-text-primary);
+}
+
+.topSearchKey {
+  position: absolute;
+  right: 8px;
+  height: 22px;
+  padding: 0 8px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--color-surface-2);
+  color: var(--color-text-tertiary);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-micro);
+  pointer-events: none;
+}
+
+.topSearch:focus-within .topSearchKey {
+  opacity: 0;
 }
 
 .topSearchInput::placeholder {
@@ -80,15 +117,20 @@
 
 .topSearchInput:focus,
 .topSearchInput:focus-visible {
-  border-color: var(--color-primary);
+  border-color: color-mix(in srgb, var(--color-primary) 70%, transparent);
+  background: var(--color-surface-0);
   outline: none;
-  box-shadow: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 22%, transparent);
 }
 
 /*
  * The same controls, inside the desktop title bar (32px tall, and outside
  * `.root`, so the app's own compact scale applies).
  */
+.topBar > :last-child {
+  justify-self: end;
+}
+
 .titleSlot {
   display: flex;
   align-items: center;
@@ -97,11 +139,29 @@
 }
 
 .titleSlot .topSearch {
-  width: min(280px, 32vw);
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: min(420px, 38vw);
+  transform: translate(-50%, -50%);
+  -webkit-app-region: no-drag;
 }
 
 .titleSlot .topSearchInput {
-  height: 22px;
+  height: 26px;
+  padding: 0 56px 0 32px;
+  font-size: 12px;
+}
+
+.titleSlot .topSearchIcon {
+  left: 11px;
+}
+
+.titleSlot .topSearchKey {
+  right: 5px;
+  height: 18px;
+  padding: 0 6px;
+  font-size: 10px;
 }
 
 .titleSlot .accountButton {
@@ -224,14 +284,14 @@
 }
 
 .ctaSecondary {
-  background: transparent;
-  border: 2px solid var(--color-text-secondary);
+  background: color-mix(in srgb, var(--color-text-primary) 4%, transparent);
+  border: 2px solid color-mix(in srgb, var(--color-text-primary) 22%, transparent);
   color: var(--color-text-primary);
 }
 
 .ctaSecondary:hover:not(:disabled) {
-  border-color: var(--color-text-primary);
-  background: var(--color-hover);
+  border-color: color-mix(in srgb, var(--color-text-primary) 42%, transparent);
+  background: color-mix(in srgb, var(--color-text-primary) 9%, transparent);
 }
 
 .ctaPrimary:disabled,
@@ -305,6 +365,92 @@
 
 .navIcon {
   flex-shrink: 0;
+}
+
+/*
+ * Preferences: one rail entry that opens into its pages while one is showing.
+ * The pages hang off a hairline under the parent's icon, so the group reads as
+ * one thing and the rail stays short everywhere else.
+ */
+.navGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.navChevron {
+  margin-left: auto;
+  color: var(--color-text-tertiary);
+  transform: rotate(-90deg);
+  transition: transform var(--motion-duration-base) var(--motion-ease-standard);
+}
+
+.navChevronOpen {
+  transform: none;
+}
+
+.navSub {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 2px 0 6px 19px;
+  padding-left: 10px;
+  border-left: 1px solid var(--color-divider);
+  animation: navSubIn var(--motion-duration-slow) var(--motion-ease-decelerate) both;
+}
+
+@keyframes navSubIn {
+  from { opacity: 0; transform: translateY(-3px); }
+  to { opacity: 1; transform: none; }
+}
+
+.navSubLink {
+  position: relative;
+  height: 28px;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.navSubLink:hover {
+  color: var(--color-text-primary);
+  background: var(--color-hover);
+}
+
+.navSubLink:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+
+/* The current page: the parent's selected fill, and a tick on the hairline. */
+.navSubLinkActive,
+.navSubLinkActive:hover {
+  color: var(--color-text-primary);
+  background: var(--color-surface-3);
+  font-weight: var(--font-weight-medium);
+}
+
+.navSubLinkActive::before {
+  content: '';
+  position: absolute;
+  left: -11px;
+  top: 7px;
+  bottom: 7px;
+  width: 1px;
+  background: var(--color-text-primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .navSub {
+    animation: none;
+  }
 }
 
 /** A live count beside a destination — renders in flight, and only then. */
@@ -392,6 +538,15 @@
   min-width: 0;
 }
 
+/** The section a page belongs to (Preferences), one quiet line over its title. */
+.pageEyebrow {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-medium);
+}
+
 .pageTitle {
   font-size: var(--font-size-2xl);
   font-weight: var(--font-weight-regular);
@@ -475,7 +630,7 @@
   display: flex;
   align-items: center;
   gap: 20px;
-  background: var(--color-surface-2);
+  background: var(--color-card, var(--color-surface-2));
   border-radius: var(--radius-surface);
   overflow: hidden;
   padding-right: 12px;
@@ -565,7 +720,7 @@
   text-align: left;
   font: inherit;
   color: inherit;
-  background: var(--color-surface-2);
+  background: var(--color-card, var(--color-surface-2));
   border: 1px solid transparent;
   border-radius: var(--radius-control);
   overflow: hidden;
@@ -574,7 +729,7 @@
 }
 
 .projectTile:hover {
-  background: var(--color-surface-3);
+  background: var(--color-card-hover, var(--color-surface-3));
 }
 
 .projectTile:focus-visible {
@@ -1343,8 +1498,8 @@
 }
 
 .statCard {
-  background: var(--color-surface-1);
-  border: 1px solid var(--color-border);
+  background: var(--color-card, var(--color-surface-1));
+  border: 1px solid var(--color-card-border, var(--color-border-subtle));
   border-radius: var(--radius-surface);
   padding: 14px 16px;
   display: flex;
@@ -1359,7 +1514,7 @@
 
 .statCard:hover {
   border-color: var(--color-border-strong);
-  background: var(--color-surface-2);
+  background: var(--color-card-hover, var(--color-surface-2));
 }
 
 .statCard:focus-visible {
@@ -1450,8 +1605,8 @@
 }
 
 .templateCard {
-  background: var(--color-surface-1);
-  border: 1px solid var(--color-border);
+  background: var(--color-card, var(--color-surface-1));
+  border: 1px solid var(--color-card-border, var(--color-border-subtle));
   border-radius: var(--radius-surface);
   overflow: hidden;
   cursor: pointer;
@@ -1610,8 +1765,8 @@
 }
 
 .assetCard {
-  background: var(--color-surface-1);
-  border: 1px solid var(--color-border);
+  background: var(--color-card, var(--color-surface-1));
+  border: 1px solid var(--color-card-border, var(--color-border-subtle));
   border-radius: var(--radius-surface);
   padding: 12px;
   display: flex;
@@ -1741,8 +1896,8 @@
 }
 
 .settingsCard {
-  background: var(--color-surface-1);
-  border: 1px solid var(--color-border);
+  background: var(--color-card, var(--color-surface-1));
+  border: 1px solid var(--color-card-border, var(--color-border-subtle));
   border-radius: var(--radius-surface);
   padding: 20px;
   display: flex;
@@ -2179,7 +2334,7 @@
   align-items: center;
   gap: 12px;
   padding: 10px 16px;
-  background: var(--color-surface-2);
+  background: var(--color-card, var(--color-surface-2));
   border-bottom: 1px solid var(--color-border-strong);
   flex-wrap: wrap;
 }
@@ -2275,8 +2430,8 @@
 }
 
 .launchpadCard {
-  background: var(--color-surface-1);
-  border: 1px solid var(--color-border-subtle);
+  background: var(--color-card, var(--color-surface-1));
+  border: 1px solid var(--color-card-border, var(--color-border-subtle));
   border-radius: var(--radius-surface);
   padding: 12px 14px;
   cursor: pointer;
@@ -2291,7 +2446,7 @@
 
 .launchpadCard:hover:not(:disabled) {
   border-color: var(--color-border-strong);
-  background: var(--color-surface-2);
+  background: var(--color-card-hover, var(--color-surface-2));
 }
 
 .launchpadCard:focus-visible {

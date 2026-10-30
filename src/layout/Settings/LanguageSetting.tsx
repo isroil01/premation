@@ -74,8 +74,8 @@ export function LanguageSetting(): JSX.Element | null {
       <div className={styles.settingCard}>
         <div className={styles.settingRow}>
           <div className={styles.settingInfo}>
-            <span className={styles.settingTitle}>{t('settings.language.label', 'Interface Language')}</span>
-            <span className={styles.settingDesc}>{t('settings.language.desc', 'Project content, expressions and effect names are never translated.')}</span>
+            <span className={styles.settingTitle}>{t('settings.language.label', 'Interface language')}</span>
+            <span className={styles.settingDesc}>{t('settings.language.desc', 'Project content and effect names stay as they are.')}</span>
           </div>
           {/* Menus and this row redraw on the switch; the panels read t() once per
               render and do not subscribe (no per-string hooks across the editor),

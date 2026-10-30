@@ -29,8 +29,8 @@
   gap: 4px;
   padding: 12px 14px;
   border-radius: var(--radius-surface);
-  border: 1px solid var(--color-border-subtle);
-  background: var(--color-surface-2);
+  border: 1px solid var(--color-card-border, var(--color-border-subtle));
+  background: var(--color-card, var(--color-surface-2));
   cursor: pointer;
   transition: border-color 160ms ease, background-color 160ms ease, transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
 }
@@ -100,8 +100,8 @@
   gap: 12px;
   padding: 10px 14px;
   border-radius: var(--radius-surface);
-  border: 1px solid var(--color-border-subtle);
-  background: var(--color-surface-2);
+  border: 1px solid var(--color-card-border, var(--color-border-subtle));
+  background: var(--color-card, var(--color-surface-2));
   transition: border-color 160ms ease, background-color 160ms ease;
 }
 
@@ -160,7 +160,7 @@
 
 .input,
 .select {
-  background: var(--color-surface-3);
+  background: var(--color-surface-0);
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-control);
   color: var(--color-text-primary);

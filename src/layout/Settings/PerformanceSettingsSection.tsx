@@ -36,8 +36,8 @@ export function PerformanceSettingsSection(): JSX.Element {
   return (
     <div className={styles.sectionGroup}>
       <div className={styles.sectionHeading}>
-        <span className={styles.sectionTitle}>{t('settings.performance.title', 'Performance Recording')}</span>
-        <span className={styles.hint}>{t('settings.performance.hint', 'How a recorded take (Animation ▸ Motion Sketch) becomes keyframes.')}</span>
+        <span className={styles.sectionTitle}>{t('settings.performance.title', 'Motion recording')}</span>
+        <span className={styles.hint}>{t('settings.performance.hint', 'How a recorded take becomes keyframes.')}</span>
       </div>
 
       <div className={styles.settingCard}>
@@ -69,7 +69,7 @@ export function PerformanceSettingsSection(): JSX.Element {
         <div className={styles.settingRow}>
           <div className={styles.settingInfo}>
             <span className={styles.settingTitle}>{t('performance.detail', 'Detail')}</span>
-            <span className={styles.settingDesc}>{t('settings.performance.detailDesc', 'Fewer keys ↔ more faithful. Can be changed after each take from the Performance bar.')}</span>
+            <span className={styles.settingDesc}>{t('settings.performance.detailDesc', 'Fewer keys, or a closer match.')}</span>
           </div>
           <div className={styles.settingRight}>
             <Slider size="sm" min={0} max={100} step={1} value={detail} disabled={!smart} showValue onChange={(v) => setPref('performanceDetail', v)} />
@@ -79,7 +79,7 @@ export function PerformanceSettingsSection(): JSX.Element {
         <div className={styles.switchRow}>
           <div className={styles.settingInfo}>
             <span className={styles.settingTitle}>{t('performance.wholeFrames', 'Keys on whole frames')}</span>
-            <span className={styles.settingDesc}>{t('settings.performance.wholeFramesDesc', 'Every key lands on a frame, as keys set by hand do.')}</span>
+            <span className={styles.settingDesc}>{t('settings.performance.wholeFramesDesc', 'Snap every key to a frame.')}</span>
           </div>
           <Switch
             checked={wholeFrames}
@@ -107,7 +107,7 @@ export function PerformanceSettingsSection(): JSX.Element {
         <div className={styles.settingRow}>
           <div className={styles.settingInfo}>
             <span className={styles.settingTitle}>{t('performance.preRoll', 'Pre-roll')}</span>
-            <span className={styles.settingDesc}>{t('settings.performance.preRollDesc', 'Start playback this long before the playhead, so you are already moving when the take begins.')}</span>
+            <span className={styles.settingDesc}>{t('settings.performance.preRollDesc', 'Playback starts this long before the take.')}</span>
           </div>
           <div className={styles.settingRight}>
             <Segmented
@@ -126,7 +126,7 @@ export function PerformanceSettingsSection(): JSX.Element {
         <div className={styles.settingRow}>
           <div className={styles.settingInfo}>
             <span className={styles.settingTitle}>{t('performance.hold', 'Hold after')}</span>
-            <span className={styles.settingDesc}>{t('settings.performance.holdDesc', 'Stillness at least this long (seconds) becomes a hold keyframe.')}</span>
+            <span className={styles.settingDesc}>{t('settings.performance.holdDesc', 'Stillness this long (s) becomes a hold.')}</span>
           </div>
           <div className={styles.settingRight}>
             <Slider size="sm" min={0.1} max={1} step={0.05} value={hold} disabled={!smart} showValue onChange={(v) => setPref('performanceHoldSeconds', v)} />
@@ -165,8 +165,8 @@ export function PerformanceSettingsSection(): JSX.Element {
 
         <div className={cn(styles.settingRow, styles.settingRowWide)}>
           <div className={styles.settingInfo}>
-            <span className={styles.settingTitle}>{t('settings.handModel.title', 'Hand Tracking Model')}</span>
-            <span className={styles.settingDesc}>{t('settings.handModel.desc', 'Lets your hand drive animation through the camera. Runs on this computer.')}</span>
+            <span className={styles.settingTitle}>{t('settings.handModel.title', 'Hand tracking')}</span>
+            <span className={styles.settingDesc}>{t('settings.handModel.desc', 'Drive animation with your hand through the camera.')}</span>
           </div>
           <div className={styles.settingRight}>
             <HandModelControl onChange={setHandModel} />
@@ -178,7 +178,7 @@ export function PerformanceSettingsSection(): JSX.Element {
             <div className={styles.settingRow}>
               <div className={styles.settingInfo}>
                 <span className={styles.settingTitle}>{t('performance.hand.gain', 'Hand gain')}</span>
-                <span className={styles.settingDesc}>{t('settings.performance.handGainDesc', 'How far the layer moves for a hand movement: at 1, a hand crossing the camera frame crosses the composition.')}</span>
+                <span className={styles.settingDesc}>{t('settings.performance.handGainDesc', 'At 1, crossing the camera crosses the composition.')}</span>
               </div>
               <div className={styles.settingRight}>
                 <Slider size="sm" min={0.25} max={4} step={0.25} value={handGain} showValue onChange={(v) => setPref('performanceHandGain', v)} />
@@ -187,7 +187,7 @@ export function PerformanceSettingsSection(): JSX.Element {
             <div className={styles.settingRow}>
               <div className={styles.settingInfo}>
                 <span className={styles.settingTitle}>{t('performance.hand.which', 'Hand')}</span>
-                <span className={styles.settingDesc}>{t('settings.performance.handDesc', 'Which hand drives; Either follows the nearer one.')}</span>
+                <span className={styles.settingDesc}>{t('settings.performance.handDesc', 'Either follows the nearer hand.')}</span>
               </div>
               <div className={styles.settingRight}>
                 <Segmented
@@ -205,7 +205,7 @@ export function PerformanceSettingsSection(): JSX.Element {
             <div className={styles.switchRow}>
               <div className={styles.settingInfo}>
                 <span className={styles.settingTitle}>{t('performance.hand.mirror', 'Mirror')}</span>
-                <span className={styles.settingDesc}>{t('settings.performance.handMirrorDesc', 'Moving right in front of the camera moves right on screen.')}</span>
+                <span className={styles.settingDesc}>{t('settings.performance.handMirrorDesc', 'Right in front of the camera is right on screen.')}</span>
               </div>
               <Switch
                 checked={handMirror}
@@ -215,8 +215,8 @@ export function PerformanceSettingsSection(): JSX.Element {
             </div>
           <div className={cn(styles.settingRow, styles.settingRowWide)}>
             <div className={styles.settingInfo}>
-              <span className={styles.settingTitle}>{t('settings.cameraTest.title', 'Camera Test')}</span>
-              <span className={styles.settingDesc}>{t('settings.cameraTest.desc', 'Check hand tracking on this machine. The camera turns off when you leave Settings.')}</span>
+              <span className={styles.settingTitle}>{t('settings.cameraTest.title', 'Camera test')}</span>
+              <span className={styles.settingDesc}>{t('settings.cameraTest.desc', 'The camera turns off when you leave this page.')}</span>
             </div>
             <div className={styles.settingRight}>
               <CameraTestControl />

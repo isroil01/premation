@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Icon } from '@components/Icon';
 import { IconButton } from '@components/IconButton';
+import { RangeInput } from '@components/RangeInput';
 import { secondsToFlicks } from '@motion/engine-api';
 import { engine } from '@core/engine/engineInstance';
 import { t } from '@core/i18n';
@@ -216,8 +217,7 @@ export function ExportPreview({
           >
             <Icon name="chevron-left" size="sm" />
           </IconButton>
-          <input
-            type="range"
+          <RangeInput
             className={styles.scrub}
             min={0}
             max={frameCount - 1}

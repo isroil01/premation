@@ -13,6 +13,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Button } from '@components/Button';
 import { DialogFooter } from '@components/Modal';
 import { Progress } from '@components/Progress';
+import { RangeInput } from '@components/RangeInput';
 import { openModal } from '@stores/modalStore';
 import { useProjectStore } from '@stores/projectStore';
 import { useVersionHistoryStore } from '@stores/versionHistoryStore';
@@ -153,9 +154,8 @@ function VersionCompare({ version, close }: CompareProps): JSX.Element {
       </div>
       <label className={styles.wipeRow}>
         <span className={styles.wipeLabel}>{t('history.compare.wipe', 'Wipe')}</span>
-        <input
+        <RangeInput
           className={styles.wipe}
-          type="range"
           min={0}
           max={100}
           value={wipe}

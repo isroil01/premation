@@ -40,7 +40,7 @@ describe('version compare wiring', () => {
   it('the wipe is a clip on the version frame, driven by a range input', () => {
     const dialog = read('VersionCompareDialog.tsx');
     expect(dialog).toContain('clipPath');
-    expect(dialog).toContain('type="range"');
+    expect(dialog).toContain('<RangeInput');
     // The slider owns Enter — dragging it must not fire the restore.
     expect(dialog).toContain('data-enter-safe');
   });

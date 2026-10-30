@@ -56,8 +56,8 @@ export function ExportSettingsSection(): JSX.Element | null {
   return (
     <div className={styles.sectionGroup}>
       <div className={styles.sectionHeading}>
-        <span className={styles.sectionTitle}>{t('settings.exportPipeline.title', 'Export Pipeline')}</span>
-        <span className={styles.hint}>{t('settings.exportPipeline.hint', 'How rendered frames reach the video encoder on this machine.')}</span>
+        <span className={styles.sectionTitle}>{t('settings.exportPipeline.title', 'Rendering')}</span>
+        <span className={styles.hint}>{t('settings.exportPipeline.hint', 'How frames reach the encoder.')}</span>
       </div>
 
       <div className={styles.settingCard}>
@@ -65,7 +65,7 @@ export function ExportSettingsSection(): JSX.Element | null {
           <div className={styles.settingInfo}>
             <span className={styles.settingTitle}>{t('settings.exportPipeline.rawPipe', 'Stream frames to the encoder')}</span>
             <span className={styles.settingDesc}>
-              {t('settings.exportPipeline.rawPipeDesc', 'Pipe raw RGBA straight into ffmpeg and encode while the composition renders. Off stages every frame as an image file first — slower, and MP4/WebM lose a JPEG generation.')}
+              {t('settings.exportPipeline.rawPipeDesc', 'Encode while rendering. Off writes image files first, which is slower.')}
             </span>
           </div>
           <Switch
@@ -80,7 +80,7 @@ export function ExportSettingsSection(): JSX.Element | null {
             <div className={styles.settingInfo}>
               <span className={styles.settingTitle}>{t('settings.exportPipeline.inProcess', 'Render exports in the editor window')}</span>
               <span className={styles.settingDesc}>
-                {t('settings.exportPipeline.inProcessDesc', 'Off: each export renders in a hidden window the app owns, so closing or crashing the editor cannot lose it and a failed render cannot take the editor down. On: the export runs inside this window, as it did before.')}
+                {t('settings.exportPipeline.inProcessDesc', 'Off renders in a separate window, so a crash cannot lose the export.')}
               </span>
             </div>
             <Switch
@@ -96,10 +96,10 @@ export function ExportSettingsSection(): JSX.Element | null {
             <span className={styles.settingTitle}>{t('settings.exportPipeline.encoder', 'MP4 video encoder')}</span>
             <span className={styles.settingDesc}>
               {hardware === null
-                ? t('settings.exportPipeline.encoderDescChecking', 'Software is the reference encode. A hardware encoder is faster at the same quality tier and falls back to software, with a notice, if it cannot start. Checking this machine…')
+                ? t('settings.exportPipeline.encoderDescChecking', 'Hardware is faster and falls back to software. Checking this machine…')
                 : hardware.length === 0
-                  ? t('settings.exportPipeline.encoderDescNone', 'Software is the reference encode. A hardware encoder is faster at the same quality tier and falls back to software, with a notice, if it cannot start. No working hardware encoder was found here.')
-                  : t('settings.exportPipeline.encoderDesc', 'Software is the reference encode. A hardware encoder is faster at the same quality tier and falls back to software, with a notice, if it cannot start.')}
+                  ? t('settings.exportPipeline.encoderDescNone', 'No working hardware encoder was found here.')
+                  : t('settings.exportPipeline.encoderDesc', 'Hardware is faster and falls back to software if it cannot start.')}
             </span>
           </div>
           <div className={styles.segmented} role="radiogroup" aria-label={t('settings.exportPipeline.encoder', 'MP4 video encoder')}>

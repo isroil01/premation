@@ -25,6 +25,8 @@ import { baselineHistoryEdit } from '@core/engine/historyBaseline';
 import { useWorkspaceStore } from '@stores/index';
 import { clearRecovery, readRecovery } from '@core/persistence/recovery';
 import { takePendingFootage } from '@core/project/pendingFootage';
+import { takePendingTemplate } from '@core/project/pendingTemplate';
+import { insertPremiumItem } from '@layout/EditorLayout/premiumInsertEdits';
 import { clearLastFootagePreview } from '@layout/Assets/FootagePreviewDialog';
 import { insertMediaEdit } from '@layout/Workspace/footageEdits';
 import { setActiveCompFrameRateEdit } from '@layout/Composition/compositionEdits';
@@ -104,6 +106,14 @@ function ProjectLoader({ projectId }: { projectId: string }): null {
               durationMs: 5000,
             });
           }
+        }
+        // Started from the dashboard's Library page: the project was created
+        // for the item (a scene template at its own size), and it lands in
+        // the still-empty comp.
+        const template = takePendingTemplate();
+        if (template) {
+          const r = await insertPremiumItem(template);
+          useUIStore.getState().notify({ level: r.ok ? 'success' : 'warning', message: r.message, durationMs: r.ok ? 2200 : 5000 });
         }
       } catch (err) {
         if (cancelled) return;

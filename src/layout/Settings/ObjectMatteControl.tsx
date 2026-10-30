@@ -127,7 +127,7 @@ export function ObjectMatteControl(): JSX.Element {
       </div>
       {status.kind === 'failed' ? <div className={styles.error}>{status.message}</div> : null}
       <div className={styles.hint}>
-        {t('settings.objectMatte.hint', 'Optional. The app already bundles a model, and the Roto tool uses it with nothing installed. Install downloads another encoder/decoder pair — about {size} for the suggested one, from the hosts above, once — and keeps it on this computer, where the engine uses it instead.', { size: megabytes(SUGGESTED_MODEL.approxBytes) })}
+        {t('settings.objectMatte.hint', 'Optional: Roto already works with the built-in model. Install fetches a larger one (about {size}).', { size: megabytes(SUGGESTED_MODEL.approxBytes) })}
       </div>
     </div>
   );

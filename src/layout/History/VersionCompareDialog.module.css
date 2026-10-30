@@ -93,5 +93,5 @@
 .wipe {
   flex: 1;
   min-width: 0;
-  accent-color: var(--color-primary);
+  width: auto;
 }

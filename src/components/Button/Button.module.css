@@ -95,21 +95,25 @@
   filter: none;
 }
 
+/* The outline is a tint of the text colour, not the text colour itself: a
+   full-strength 2px ring read heavier than the primary button beside it. */
 .root[data-variant="secondary"] {
-  --btn-bg:        transparent;
-  --btn-bg-hover:  var(--color-hover);
-  --btn-bg-active: var(--color-active);
-  --btn-border:    var(--color-text-secondary);
+  --btn-bg:        color-mix(in srgb, var(--color-text-primary) 4%, transparent);
+  --btn-bg-hover:  color-mix(in srgb, var(--color-text-primary) 9%, transparent);
+  --btn-bg-active: color-mix(in srgb, var(--color-text-primary) 13%, transparent);
+  --btn-border:    color-mix(in srgb, var(--color-text-primary) 22%, transparent);
   --btn-fg:        var(--color-text-primary);
 }
 
 .root[data-variant="secondary"]:hover:not(:disabled) {
-  border-color: var(--color-text-primary);
+  border-color: color-mix(in srgb, var(--color-text-primary) 42%, transparent);
 }
 
 .root[data-variant="primary"]:active:not(:disabled),
-.root[data-variant="secondary"]:active:not(:disabled) {
+.root[data-variant="secondary"]:active:not(:disabled),
+.root[data-variant="ghost"]:active:not(:disabled) {
   box-shadow: none;
+  transform: scale(0.97);
 }
 
 .root[data-variant="ghost"] {

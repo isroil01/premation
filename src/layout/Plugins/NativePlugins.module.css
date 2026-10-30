@@ -25,8 +25,8 @@
   gap: 12px;
   padding: 16px 18px;
   border-radius: var(--radius-surface);
-  border: 1px solid var(--color-border-subtle);
-  background: var(--color-surface-1);
+  border: 1px solid var(--color-card-border, var(--color-border-subtle));
+  background: var(--color-card, var(--color-surface-1));
 }
 
 .cardTitle {
@@ -96,7 +96,7 @@
   gap: 10px;
   padding: 10px 12px;
   border-top: 1px solid var(--color-border-subtle);
-  background: var(--color-surface-1);
+  background: var(--color-card, var(--color-surface-1));
 }
 
 .row:first-child {
@@ -371,8 +371,8 @@
   min-width: 0;
   overflow: hidden;
   border-radius: var(--radius-control);
-  border: 1px solid var(--color-border-subtle);
-  background: var(--color-surface-1);
+  border: 1px solid var(--color-card-border, var(--color-border-subtle));
+  background: var(--color-card, var(--color-surface-1));
   transition: border-color 120ms ease;
 }
 

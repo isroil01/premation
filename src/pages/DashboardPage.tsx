@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, useMemo } from 'react';
+import { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuthStore } from '@stores/authStore';
@@ -21,7 +21,7 @@ import { BILLING_QUERY_KEY, BillingSection, fetchBillingPage } from '@layout/Set
 import { SESSIONS_QUERY_KEY } from '@layout/Settings/AccountSection';
 import { billingEnabled } from '@core/config/edition';
 import { t } from '@core/i18n';
-import { hasDesktopChrome } from '@core/config/uiPlatform';
+import { getUiPlatform, hasDesktopChrome } from '@core/config/uiPlatform';
 import { TITLE_BAR_ROUTE_SLOT_ID } from '@layout/TitleBar/routeSlot';
 import { ColorPicker } from '@components/ColorPicker';
 import { cn } from '@utils/cn';
@@ -50,7 +50,10 @@ import { usePagedList } from '@hooks/usePagedList';
 import { prefetchQuery, useCachedQuery } from '@hooks/useCachedQuery';
 import { useProSalesOpen } from '@hooks/useProSalesOpen';
 import { clearRecovery } from '@core/persistence/recovery';
-import { DashboardCustomizeTab } from './DashboardCustomizeTab';
+import { DashboardPreferencePage, normalizePreferencePage, preferencePages, type PreferencePage } from './DashboardCustomizeTab';
+import { DashboardTemplates } from './DashboardTemplates';
+import { setPendingTemplate } from '@core/project/pendingTemplate';
+import type { PremiumCatalogItem } from '@core/library/premium/packFormat';
 import { APP_VERSION } from '@layout/Help/whatsNew';
 import { openWhatsNew } from '@layout/Help/WhatsNewDialog';
 import { ReviewPrompt } from '@layout/Reviews/ReviewPrompt';
@@ -190,6 +193,7 @@ function writePref(key: string, value: string): void {
 type TabType =
   | 'home'
   | 'projects'
+  | 'templates'
   | 'assets'
   | 'renders'
   | 'trash'
@@ -200,7 +204,7 @@ type TabType =
   | 'settings';
 
 const TABS: readonly TabType[] = [
-  'home', 'projects', 'assets', 'renders', 'trash', 'customize', 'billing', 'plugins', 'connections', 'settings',
+  'home', 'projects', 'templates', 'assets', 'renders', 'trash', 'customize', 'billing', 'plugins', 'connections', 'settings',
 ];
 
 /**
@@ -229,6 +233,7 @@ function navLibrary(): readonly NavItem[] {
   return [
     { tab: 'home', label: t('dashboard.nav.home', 'Home'), icon: 'home' },
     { tab: 'projects', label: t('dashboard.nav.projects', 'Projects'), icon: 'folder' },
+    { tab: 'templates', label: t('dashboard.nav.library', 'Library'), icon: 'sparkles' },
     { tab: 'assets', label: t('dashboard.nav.assets', 'Assets'), icon: 'image' },
     { tab: 'renders', label: t('dashboard.nav.renders', 'Render queue'), icon: 'queue' },
     { tab: 'trash', label: t('dashboard.nav.trash', 'Trash'), icon: 'trash' },
@@ -433,6 +438,13 @@ export function DashboardPage(): JSX.Element {
   }, [searchParams]);
 
   /** Go to a dashboard page, keeping the URL and the view in step. */
+  /** `?section=` picks the Preferences page; the other tabs ignore it. */
+  const prefPage = normalizePreferencePage(searchParams.get('section'));
+  const openPreference = useCallback((page: PreferencePage): void => {
+    setActiveTab('customize');
+    navigate(`/dashboard?tab=customize&section=${page}`);
+  }, [navigate]);
+
   const openTab = useCallback(
     (tab: TabType): void => {
       setActiveTab(tab);
@@ -444,6 +456,19 @@ export function DashboardPage(): JSX.Element {
   // Search & Filter States for Projects. The orientation filter lives in the
   // store because it is part of the server query, not a view of loaded rows.
   const [searchQuery, setSearchQuery] = useState('');
+  const searchRef = useRef<HTMLInputElement | null>(null);
+  // Ctrl/Cmd+K: the search, from anywhere on the dashboard.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        searchRef.current?.focus();
+        searchRef.current?.select();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectedTrashIds, setSelectedTrashIds] = useState<Set<string>>(new Set());
 
@@ -708,6 +733,37 @@ export function DashboardPage(): JSX.Element {
       chooseSetupFootage(f);
     };
     input.click();
+  };
+
+  /**
+   * Library page → a new project, opened in the editor, which inserts the item
+   * into its still-empty comp. A scene template brings its own size; an
+   * element, a Lottie animation or a sound gets the standard 1080p comp.
+   */
+  const onUseTemplate = async (item: PremiumCatalogItem): Promise<void> => {
+    if (creating) return;
+    setCreating(true);
+    try {
+      clearRecovery();
+      // Only a scene template brings its own size; everything else lands in a standard comp.
+      const scene = item.kind === 'template' && item.mode !== 'element';
+      const fallback = item.kind !== 'template' ? [1920, 1080] : item.aspect === '9:16' ? [1080, 1920] : item.aspect === '1:1' ? [1080, 1080] : [1920, 1080];
+      const width = clampDimension(scene && item.width ? item.width : fallback[0]!);
+      const height = clampDimension(scene && item.height ? item.height : fallback[1]!);
+      const durationSeconds = clampDuration(Math.max(scene ? 1 : 10, Math.ceil(item.durationSec)));
+      const initialDoc = newProjectDocument({ name: item.name, width, height, fps: 30, durationSeconds, background: '#101014', transparent: false });
+      const p = await create(item.name, initialDoc);
+      if (!p?.id) throw new Error(t('dashboard.create.noId', 'The server did not return a project id.'));
+      setPendingTemplate(item);
+      navigate(`/editor/${p.id}`);
+    } catch (err) {
+      const message = err instanceof Error && err.message
+        ? err.message
+        : t('dashboard.create.failed', 'Could not create the composition. Check your connection and try again.');
+      useUIStore.getState().notify({ level: 'error', message, durationMs: 6000 });
+    } finally {
+      setCreating(false);
+    }
   };
 
   const onLaunchWorkspace = async (e: React.FormEvent) => {
@@ -1691,11 +1747,10 @@ export function DashboardPage(): JSX.Element {
         );
 
       case 'customize':
-        return (
-          <div className={styles.customizePanel}>
-            <DashboardCustomizeTab />
-          </div>
-        );
+        return <DashboardPreferencePage key={prefPage} page={prefPage} />;
+
+      case 'templates':
+        return <DashboardTemplates creating={creating} onUse={(item) => { void onUseTemplate(item); }} onOpenBilling={() => openTab('billing')} />;
 
       case 'connections':
         return (
@@ -1712,7 +1767,7 @@ export function DashboardPage(): JSX.Element {
             onAccountChanged={refreshOverview}
             onOpenBilling={() => openTab('billing')}
             onOpenConnections={() => openTab('connections')}
-            onOpenPreferences={() => openTab('customize')}
+            onOpenPreferences={() => openPreference('general')}
           />
         );
     }
@@ -2010,10 +2065,18 @@ export function DashboardPage(): JSX.Element {
           title: t('dashboard.nav.plugins', 'Plugins'),
           desc: t('dashboard.header.pluginsDesc', 'Native plugins installed on this machine, and how to add more.'),
         };
-      case 'customize':
+      case 'customize': {
+        const page = preferencePages().find((pg) => pg.id === prefPage);
         return {
-          title: t('dashboard.nav.preferences', 'Preferences'),
-          desc: t('dashboard.header.customizeDesc', 'Workspaces, keyboard shortcuts, appearance, audio hardware, and editor behaviors.'),
+          title: page?.label ?? t('dashboard.nav.preferences', 'Preferences'),
+          desc: page?.desc ?? '',
+          eyebrow: t('dashboard.nav.preferences', 'Preferences'),
+        };
+      }
+      case 'templates':
+        return {
+          title: t('dashboard.nav.library', 'Library'),
+          desc: t('dashboard.header.libraryDesc', 'Templates, transitions, Lottie animations and sounds. Preview anything, then start a project with it.'),
         };
       case 'settings':
         return {
@@ -2021,7 +2084,7 @@ export function DashboardPage(): JSX.Element {
           desc: t('dashboard.header.settingsDesc', 'Your account, and the devices signed in to it.'),
         };
     }
-  }, [activeTab]);
+  }, [activeTab, prefPage]);
 
   const displayName = user?.name || user?.email?.split('@')[0] || t('dashboard.account.fallbackName', 'Account');
   const displayInitial = displayName.trim().charAt(0).toUpperCase() || '?';
@@ -2085,22 +2148,32 @@ export function DashboardPage(): JSX.Element {
     One search for the dashboard. It searches projects — the query is the
     server's — so typing from any page lands on the list it filters.
   */
+  const searchField = (
+    <div className={styles.topSearch}>
+      <Icon name="search" size="sm" className={styles.topSearchIcon} />
+      <input
+        ref={searchRef}
+        type="search"
+        placeholder={t('dashboard.search.placeholder', 'Search projects')}
+        className={styles.topSearchInput}
+        value={searchQuery}
+        onChange={(e) => {
+          setSearchQuery(e.target.value);
+          if (activeTab !== 'projects') openTab('projects');
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') { setSearchQuery(''); e.currentTarget.blur(); }
+        }}
+        aria-label={t('dashboard.search.placeholder', 'Search projects')}
+        aria-keyshortcuts="Control+K Meta+K"
+      />
+      {searchQuery ? null : <kbd className={styles.topSearchKey} aria-hidden>{getUiPlatform() === 'mac' ? '⌘K' : 'Ctrl K'}</kbd>}
+    </div>
+  );
+
   const topControls = (
     <>
-      <div className={styles.topSearch}>
-        <Icon name="search" size="sm" className={styles.topSearchIcon} />
-        <input
-          type="search"
-          placeholder={t('dashboard.search.placeholder', 'Search projects')}
-          className={styles.topSearchInput}
-          value={searchQuery}
-          onChange={(e) => {
-            setSearchQuery(e.target.value);
-            if (activeTab !== 'projects') openTab('projects');
-          }}
-          aria-label={t('dashboard.search.placeholder', 'Search projects')}
-        />
-      </div>
+      {searchField}
       <Dropdown
         placement="bottom-end"
         items={accountMenu}
@@ -2124,7 +2197,6 @@ export function DashboardPage(): JSX.Element {
         !hasDesktopChrome() && (
           <header className={styles.topBar}>
             <Logo variant="lockup" size={22} />
-            <div className={styles.topBarSpacer} />
             {topControls}
           </header>
         )
@@ -2144,7 +2216,37 @@ export function DashboardPage(): JSX.Element {
         <nav className={styles.sidebarNav} aria-label={t('dashboard.nav.aria', 'Dashboard')}>
           {navLibrary().map((item) => navButton(item))}
           <div className={styles.navDivider} role="separator" />
-          {navApp().map((item) => navButton(item))}
+          {navApp().map((item) => (
+            item.tab === 'customize' ? (
+              <div key={item.tab} className={styles.navGroup}>
+                <button
+                  type="button"
+                  className={styles.navLink}
+                  aria-expanded={activeTab === 'customize'}
+                  onClick={() => openTab('customize')}
+                >
+                  <Icon name={item.icon} size="md" className={styles.navIcon} />
+                  <span>{item.label}</span>
+                  <Icon name="chevron-down" size="sm" className={cn(styles.navChevron, activeTab === 'customize' && styles.navChevronOpen)} />
+                </button>
+                {activeTab === 'customize' && (
+                  <div className={styles.navSub}>
+                    {preferencePages().map((pg) => (
+                      <button
+                        key={pg.id}
+                        type="button"
+                        className={cn(styles.navSubLink, prefPage === pg.id && styles.navSubLinkActive)}
+                        aria-current={prefPage === pg.id ? 'page' : undefined}
+                        onClick={() => openPreference(pg.id)}
+                      >
+                        {pg.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : navButton(item)
+          ))}
           <div className={styles.navDivider} role="separator" />
           {accountNav().map((item) => navButton(item))}
         </nav>
@@ -2181,6 +2283,7 @@ export function DashboardPage(): JSX.Element {
           ) : (
             <div className={styles.pageTitleRow}>
               <div className={styles.pageTitleBlock}>
+                {'eyebrow' in headerDetails && headerDetails.eyebrow ? <span className={styles.pageEyebrow}>{headerDetails.eyebrow}</span> : null}
                 <h1 className={styles.pageTitle}>{headerDetails.title}</h1>
                 {headerDetails.desc ? <p className={styles.pageSubtitle}>{headerDetails.desc}</p> : null}
               </div>

@@ -61,7 +61,7 @@ export function AudioHardwareSection(): JSX.Element {
 
   return (
     <div className={styles.section}>
-      <h3 className={styles.sectionTitle}>{t('settings.audio.title', 'Audio Hardware')}</h3>
+      <h3 className={styles.sectionTitle}>{t('settings.audio.title', 'Audio hardware')}</h3>
 
       <div className={styles.row}>
         <span className={styles.rowLabel}>{t('settings.audio.outputDevice', 'Output device')}</span>
@@ -84,7 +84,7 @@ export function AudioHardwareSection(): JSX.Element {
       )}
       {supported && unlabelled && (
         <p className={styles.rowHint}>
-          {t('settings.audio.namesHidden', 'Device names are hidden until this app has been granted microphone access — an operating-system privacy rule, not a fault. The outputs are still listed and still work; pick by number if you need a specific one.')}
+          {t('settings.audio.namesHidden', 'Device names appear once the app has microphone access. The outputs still work.')}
         </p>
       )}
 
@@ -102,7 +102,7 @@ export function AudioHardwareSection(): JSX.Element {
         </select>
       </div>
       <p className={styles.rowHint}>
-        {t('settings.audio.latencyHint', 'A larger buffer is steadier on a busy machine and responds to the transport a little later. Latency is fixed when the audio engine starts, so a change here applies from the next playback.')}
+        {t('settings.audio.latencyHint', 'Larger is steadier on a busy machine. Applies from the next playback.')}
       </p>
 
       <div className={styles.row}>
@@ -112,7 +112,7 @@ export function AudioHardwareSection(): JSX.Element {
         </span>
       </div>
       <p className={styles.rowHint}>
-        {t('settings.audio.sampleRateHint', 'Reported by the audio device. Exported audio is rendered at its own fixed rate, so this affects monitoring only.')}
+        {t('settings.audio.sampleRateHint', 'Set by the device. Affects monitoring only.')}
       </p>
     </div>
   );

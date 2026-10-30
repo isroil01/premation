@@ -16,7 +16,7 @@ it('shows an empty state whose action clears the query', () => {
   const search = screen.getByRole('searchbox', { name: 'Search shortcuts' });
   fireEvent.change(search, { target: { value: 'zzzz-no-such-command' } });
 
-  expect(screen.getByText('No matching shortcuts found')).toBeTruthy();
+  expect(screen.getByText('No matching commands')).toBeTruthy();
 
   fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
 

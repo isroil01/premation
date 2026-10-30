@@ -103,7 +103,7 @@ export function FaceModelControl(): JSX.Element {
       </div>
       {status.kind === 'failed' ? <div className={styles.error}>{status.message}</div> : null}
       <div className={styles.hint}>
-        {t('settings.faceModel.hintPinned', 'MediaPipe Face Mesh V2 (Apache-2.0, 4.9 MB). It normally ships with the app; Install fetches the same pinned, checksum-verified file.')}
+        {t('settings.faceModel.hintPinned', 'MediaPipe Face Mesh V2, 4.9 MB. Usually built in.')}
       </div>
     </div>
   );

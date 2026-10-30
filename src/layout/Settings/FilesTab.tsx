@@ -89,13 +89,13 @@ export function FilesTab(): JSX.Element {
     <div className={styles.section} data-testid="files-tab">
       <h3 className={styles.sectionTitle}>{t('settings.files.autosave', 'Autosave')}</h3>
       <p className={styles.hint}>
-        {t('settings.files.autosaveHint', 'A crash-recovery snapshot of the open project, written in the background while there are unsaved edits. It never replaces Save: the unsaved dot stays until you save for real.')}
+        {t('settings.files.autosaveHint', 'A recovery snapshot of the open project, written while it has unsaved edits. It never replaces Save.')}
       </p>
 
       <div className={styles.settingRow}>
         <div className={styles.settingInfo}>
           <span className={styles.settingTitle}>{t('settings.files.interval', 'Interval')}</span>
-          <span className={styles.settingDesc}>{t('settings.files.intervalDesc', 'How often a snapshot is written while the project is dirty.')}</span>
+          <span className={styles.settingDesc}>{t('settings.files.intervalDesc', 'How often a snapshot is written.')}</span>
         </div>
         <div className={styles.settingRight}>
           <Segmented<IntervalChoice>
@@ -125,7 +125,7 @@ export function FilesTab(): JSX.Element {
         <div className={styles.settingInfo}>
           <span className={styles.settingTitle}>{t('settings.files.keep', 'Keep')}</span>
           <span className={styles.settingDesc}>
-            {t('settings.files.keepDesc', 'How many snapshots to keep. The newest is the one offered after a crash; the rest are there in case it captured a mistake.')}
+            {t('settings.files.keepDesc', 'The newest is offered after a crash.')}
           </span>
         </div>
         <div className={styles.settingRight}>
@@ -152,10 +152,10 @@ export function FilesTab(): JSX.Element {
           <span className={styles.settingTitle}>{t('settings.files.location', 'Location')}</span>
           <span className={styles.settingDesc}>
             {location
-              ? t('settings.files.locationSet', 'A JSON copy of every snapshot also lands in this folder.')
+              ? t('settings.files.locationSet', 'Each snapshot is also copied here.')
               : pickerAvailable()
-                ? t('settings.files.locationPick', 'Snapshots live in the app’s settings. Choose a folder to also keep a JSON copy on disk.')
-                : t('settings.files.locationNoPicker', 'Snapshots live in the app’s settings. A folder copy needs the desktop app.')}
+                ? t('settings.files.locationPick', 'Optionally keep a copy of each snapshot in a folder.')
+                : t('settings.files.locationNoPicker', 'A folder copy needs the desktop app.')}
           </span>
           {location ? <code className={styles.kbd} title={location}>{location}</code> : null}
         </div>
@@ -182,7 +182,7 @@ export function FilesTab(): JSX.Element {
             title={lastAutosaveAt ? new Date(lastAutosaveAt).toLocaleString() : undefined}
             data-testid="last-autosave"
           >
-            {lastAutosaveAt ? formatAgo(lastAutosaveAt, now) : t('settings.files.notYet', 'Not yet this session — it writes once there are unsaved edits.')}
+            {lastAutosaveAt ? formatAgo(lastAutosaveAt, now) : t('settings.files.notYet', 'Not yet this session.')}
           </span>
         </div>
         <div className={styles.settingRight}>

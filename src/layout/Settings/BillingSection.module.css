@@ -14,8 +14,8 @@
   align-items: center;
   gap: 20px;
   padding: 18px 22px;
-  background: var(--color-surface-1);
-  border: 1px solid var(--color-border);
+  background: var(--color-card, var(--color-surface-1));
+  border: 1px solid var(--color-card-border, var(--color-border-subtle));
   border-radius: var(--radius-surface);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
   flex-wrap: wrap;
@@ -257,8 +257,8 @@
   gap: 14px;
   padding: 20px;
   border-radius: var(--radius-surface);
-  border: 1px solid var(--color-border);
-  background: var(--color-surface-1);
+  border: 1px solid var(--color-card-border, var(--color-border-subtle));
+  background: var(--color-card, var(--color-surface-1));
   min-width: 0;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
   transition: border-color 160ms ease, box-shadow 160ms ease;
@@ -328,8 +328,8 @@
 /* The cloud allowance card, between the plan hero and the notices. */
 .usageCard {
   padding: 16px 22px;
-  background: var(--color-surface-1);
-  border: 1px solid var(--color-border);
+  background: var(--color-card, var(--color-surface-1));
+  border: 1px solid var(--color-card-border, var(--color-border-subtle));
   border-radius: var(--radius-surface);
 }
 
@@ -401,9 +401,9 @@
 /* 4. Comparison Table */
 .comparisonWrap {
   overflow-x: auto;
-  border: 1px solid var(--color-border-subtle);
+  border: 1px solid var(--color-card-border, var(--color-border-subtle));
   border-radius: var(--radius-surface);
-  background: var(--color-surface-1);
+  background: var(--color-card, var(--color-surface-1));
 }
 
 .comparison {

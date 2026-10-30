@@ -68,7 +68,7 @@ export function DiskCacheSettings(): JSX.Element {
         <div className={styles.settingInfo}>
           <span className={styles.settingTitle}>{t('settings.diskCache.title', 'Disk Cache')}</span>
           <span className={styles.settingDesc}>
-            {t('settings.diskCache.desc', 'Rendered preview frames also kept in a folder on disk, so frames video memory let go — and frames from an earlier session — play back without rendering again. Frames on disk show as the blue bar under the timeline ruler.')}
+            {t('settings.diskCache.desc', 'Keeps rendered frames on disk, across sessions.')}
           </span>
         </div>
         <div className={styles.settingRight}>
@@ -80,16 +80,16 @@ export function DiskCacheSettings(): JSX.Element {
           <Switch
             checked={enabled}
             onChange={(e) => setPref('diskCacheEnabled', e.currentTarget.checked)}
-            aria-label={t('settings.diskCache.enable', 'Enable Disk Cache')}
+            aria-label={t('settings.diskCache.enableShort', 'Enable disk cache')}
           />
         </div>
       </div>
 
       <div className={styles.settingRow}>
         <div className={styles.settingInfo}>
-          <span className={styles.settingTitle}>{t('settings.diskCache.folder', 'Disk Cache Folder')}</span>
+          <span className={styles.settingTitle}>{t('settings.diskCache.folder', 'Cache folder')}</span>
           <span className={styles.settingDesc}>
-            {t('settings.diskCache.folderDesc', "A fast local drive is best. Only the cache's own files are ever deleted from it.")}
+            {t('settings.diskCache.folderDesc', 'A fast local drive works best.')}
           </span>
           {shownFolder ? <code className={styles.kbd} title={shownFolder}>{shownFolder}</code> : null}
         </div>
@@ -97,12 +97,12 @@ export function DiskCacheSettings(): JSX.Element {
           {pickerAvailable() ? (
             <Button variant="secondary" size="sm" disabled={!enabled} onClick={() => void chooseFolder()}>
               <Icon name="folder-open" size="sm" />
-              <span>{t('settings.diskCache.chooseFolder', 'Choose Folder…')}</span>
+              <span>{t('settings.diskCache.chooseShort', 'Choose…')}</span>
             </Button>
           ) : null}
           {folder ? (
             <Button variant="ghost" size="sm" disabled={!enabled} onClick={() => setPref('diskCacheFolder', null)}>
-              {t('settings.diskCache.useDefault', 'Use Default')}
+              {t('settings.diskCache.useDefaultShort', 'Default')}
             </Button>
           ) : null}
         </div>
@@ -110,9 +110,9 @@ export function DiskCacheSettings(): JSX.Element {
 
       <div className={styles.settingRow}>
         <div className={styles.settingInfo}>
-          <span className={styles.settingTitle}>{t('settings.diskCache.maxSize', 'Maximum Disk Cache Size')}</span>
+          <span className={styles.settingTitle}>{t('settings.diskCache.maxSizeShort', 'Maximum size')}</span>
           <span className={styles.settingDesc}>
-            {t('settings.diskCache.maxSizeDesc', 'Past this, the least recently used frames are deleted first.')}
+            {t('settings.diskCache.maxSizeDesc', 'Oldest frames are removed first.')}
           </span>
         </div>
         <div className={styles.settingRight}>
@@ -138,7 +138,7 @@ export function DiskCacheSettings(): JSX.Element {
             onClick={() => purgeDiskCache()}
           >
             <Icon name="trash" size="sm" />
-            <span>{t('settings.diskCache.empty', 'Empty Disk Cache')}</span>
+            <span>{t('settings.diskCache.empty', 'Empty')}</span>
           </Button>
         </div>
       </div>

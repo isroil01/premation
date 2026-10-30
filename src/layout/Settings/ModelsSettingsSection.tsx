@@ -117,9 +117,9 @@ export function ModelsSettingsSection(): JSX.Element {
     <div className={styles.section}>
       <div className={styles.sectionGroup}>
         <div className={styles.sectionHeading}>
-          <span className={styles.sectionTitle}>{t('settings.models.title', 'Models')}</span>
+          <span className={styles.sectionTitle}>{t('settings.models.title', 'Engine models')}</span>
           <span className={styles.hint}>
-            {t('settings.models.hint', 'The neural models the engine runs, all on this computer. Built-in ones ship with the app; the rest are fetched once, from a pinned, checksum-verified source, the first time a tool needs them — or here.')}
+            {t('settings.models.hint', 'Neural models the engine runs on this computer. Missing ones download the first time a tool needs them.')}
           </span>
         </div>
 

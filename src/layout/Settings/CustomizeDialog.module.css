@@ -147,17 +147,17 @@
 }
 
 .categoryChip {
-  height: var(--control-height-sm);
-  padding: 0 var(--space-3);
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--color-border);
-  background: var(--color-surface-1);
+  height: 26px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent;
   color: var(--color-text-secondary);
   font-size: var(--font-size-xs);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   cursor: pointer;
   white-space: nowrap;
-  transition: all var(--motion-duration-fast);
+  transition: background-color var(--motion-duration-fast), color var(--motion-duration-fast);
 }
 
 .categoryChip:hover {
@@ -166,10 +166,8 @@
 }
 
 .categoryChipActive {
-  background: var(--color-surface-2);
-  border-color: var(--color-primary);
-  color: var(--color-text-primary);
-  font-weight: 600;
+  background: var(--color-text-primary);
+  color: var(--color-surface-0);
 }
 
 .shortcutsContainer {
@@ -177,22 +175,20 @@
   flex-direction: column;
   flex: 1;
   min-height: 0;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface-0);
+  border: 1px solid var(--color-card-border, var(--color-border-subtle));
+  border-radius: var(--radius-surface);
+  background: var(--color-card, var(--color-surface-0));
   overflow: hidden;
 }
 
 .tableHeader {
   display: flex;
   align-items: center;
-  padding: 6px 12px;
-  background: var(--color-surface-1);
-  border-bottom: 1px solid var(--color-border);
+  padding: 8px 16px;
+  background: var(--color-card, var(--color-surface-1));
+  border-bottom: 1px solid var(--color-border-subtle);
   font-size: var(--font-size-micro);
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-weight: var(--font-weight-medium);
   color: var(--color-text-tertiary);
   flex-shrink: 0;
 }
@@ -209,11 +205,10 @@
 .shortcutRow {
   display: flex;
   align-items: center;
-  padding: 6px 12px;
+  padding: 6px 16px;
   border-bottom: 1px solid var(--color-border-subtle);
   transition: background var(--motion-duration-fast);
-  /* ~260 rows: let the browser skip layout and paint for the off-screen ones.
-     `auto` remembers each row's real height once it has been rendered. */
+  /* ~260 rows: let the browser skip layout and paint for the off-screen ones. */
   content-visibility: auto;
   contain-intrinsic-size: auto 44px;
 }
@@ -271,12 +266,7 @@
 .categoryTag {
   display: inline-block;
   font-size: var(--font-size-micro);
-  font-weight: 500;
   color: var(--color-text-tertiary);
-  background: var(--color-surface-2);
-  padding: 1px 6px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--color-border);
 }
 
 .keyCombo {
@@ -315,17 +305,17 @@
 .shortcutChip {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   min-width: 80px;
-  height: var(--control-height-row);
-  padding: 0 var(--space-2);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface-1);
-  border: 1px solid var(--color-border);
+  height: 28px;
+  padding: 0 8px;
+  border-radius: var(--radius-control);
+  background: transparent;
+  border: 1px solid transparent;
   color: var(--color-text-primary);
   font-size: var(--font-size-xs);
   cursor: pointer;
-  transition: all var(--motion-duration-fast);
+  transition: background-color var(--motion-duration-fast), border-color var(--motion-duration-fast);
 }
 
 .shortcutChip:hover {
@@ -334,12 +324,10 @@
 }
 
 .shortcutOverridden {
-  border-color: var(--color-primary);
-  background: var(--color-surface-2);
+  border-color: color-mix(in srgb, var(--color-primary) 55%, transparent);
 }
 
 .shortcutEmpty {
-  border-style: dashed;
   color: var(--color-text-muted);
 }
 
@@ -388,8 +376,7 @@
 
 .unassigned {
   font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
-  font-style: italic;
+  color: var(--color-text-tertiary);
 }
 
 .rowActionBtn {
@@ -469,7 +456,8 @@
 .workspaceGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-3);
+  align-content: start;
+  gap: 8px;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -478,41 +466,42 @@
 
 .workspaceCard {
   display: flex;
-  flex-direction: column;
-  justify-content: space-between;
+  align-items: center;
   gap: var(--space-3);
-  padding: var(--space-4);
-  background: var(--color-surface-1);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  transition: all var(--motion-duration-fast);
+  min-height: 52px;
+  padding: 8px 10px 8px 12px;
+  background: var(--color-card, var(--color-surface-1));
+  border: 1px solid var(--color-card-border, var(--color-border-subtle));
+  border-radius: var(--radius-surface);
+  transition: border-color var(--motion-duration-fast), background-color var(--motion-duration-fast);
 }
 
 .workspaceCard:hover {
   border-color: var(--color-border-strong);
-  background: var(--color-surface-2);
+  background: var(--color-card-hover, var(--color-surface-2));
 }
 
 .workspaceCardActive {
-  border-color: var(--color-primary);
-  background: var(--color-surface-2);
+  border-color: color-mix(in srgb, var(--color-primary) 60%, transparent);
+  background: color-mix(in srgb, var(--color-primary) 6%, var(--color-surface-1));
 }
 
 .workspaceCardHeader {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: var(--space-3);
+  flex: 1;
+  min-width: 0;
 }
 
 .workspaceCardIcon {
   display: grid;
   place-items: center;
-  width: var(--control-height-lg);
-  height: var(--control-height-lg);
+  width: 28px;
+  height: 28px;
   background: var(--color-surface-0);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  color: var(--color-text-secondary);
+  border-radius: var(--radius-control);
+  color: var(--color-text-tertiary);
   flex-shrink: 0;
 }
 
@@ -530,9 +519,12 @@
 }
 
 .workspaceCardName {
-  font-size: var(--font-size-sm);
-  font-weight: 600;
+  overflow: hidden;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
   color: var(--color-text-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .customBadge {
@@ -541,35 +533,34 @@
 }
 
 .workspaceCardSub {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
+  padding: 0 8px;
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-primary-text, var(--color-primary));
 }
 
 .workspaceCardActions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  padding-top: var(--space-2);
-  border-top: 1px solid var(--color-border-subtle);
+  gap: 4px;
+  flex-shrink: 0;
 }
 
 .saveWorkspaceCard {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
-  background: var(--color-surface-1);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  gap: 10px;
+  padding: 14px 16px;
+  background: var(--color-card, var(--color-surface-1));
+  border: 1px solid var(--color-card-border, var(--color-border-subtle));
+  border-radius: var(--radius-surface);
   flex-shrink: 0;
 }
 
 .saveWorkspaceMeta {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
+  flex-direction: column;
+  gap: 2px;
 }
 
 .saveWorkspaceTitle {
@@ -582,7 +573,7 @@
 .appearanceScroll {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  gap: 32px;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -592,29 +583,30 @@
 .sectionGroup {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: 10px;
 }
 
 .sectionHeading {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
+  padding: 0 2px;
 }
 
 .sectionTitle {
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--color-text-tertiary);
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: -0.005em;
+  color: var(--color-text-primary);
 }
 
 .settingCard {
   display: flex;
   flex-direction: column;
-  background: var(--color-surface-1);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  background: var(--color-card, var(--color-surface-1));
+  border: 1px solid var(--color-card-border, var(--color-border-subtle));
+  border-radius: var(--radius-surface);
   overflow: hidden;
 }
 
@@ -623,7 +615,8 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
-  padding: var(--space-3) var(--space-4);
+  min-height: 52px;
+  padding: 10px 16px;
   border-bottom: 1px solid var(--color-border-subtle);
 }
 
@@ -641,14 +634,15 @@
 
 .settingTitle {
   font-size: var(--font-size-xs);
-  font-weight: 600;
+  font-weight: var(--font-weight-medium);
   color: var(--color-text-primary);
 }
 
 .settingDesc {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
-  line-height: var(--line-height-normal);
+  font-size: var(--font-size-micro);
+  color: var(--color-text-tertiary);
+  line-height: 1.45;
+  max-width: 60ch;
 }
 
 .settingRight {
@@ -694,12 +688,12 @@
 }
 
 .colorSwatch {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
-  border: 2px solid transparent;
+  border: none;
   cursor: pointer;
-  transition: transform var(--motion-duration-fast);
+  transition: transform var(--motion-duration-fast) var(--motion-ease-standard);
   padding: 0;
 }
 
@@ -708,34 +702,33 @@
 }
 
 .colorSwatchActive {
-  border-color: var(--color-text-primary);
-  box-shadow: 0 0 0 1px var(--color-border);
+  box-shadow: 0 0 0 2px var(--color-surface-1), 0 0 0 3.5px var(--color-text-primary);
 }
 
 .segmented {
   display: flex;
-  background: var(--color-surface-2);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  background: var(--color-surface-0);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-control);
   padding: 2px;
   gap: 2px;
   flex-shrink: 0;
 }
 
 .segItem {
-  height: var(--control-height-row);
-  padding: 0 var(--space-3);
-  border: 1px solid transparent;
+  height: 24px;
+  padding: 0 10px;
+  border: none;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-tertiary);
   font-size: var(--font-size-xs);
-  font-weight: 500;
+  font-weight: var(--font-weight-medium);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all var(--motion-duration-fast);
+  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard), color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .segItem:hover {
@@ -743,10 +736,8 @@
 }
 
 .segItemActive {
-  background: var(--color-surface-1);
-  border-color: var(--color-border);
+  background: var(--color-surface-3);
   color: var(--color-text-primary);
-  font-weight: 600;
 }
 
 .sliderWrap {
@@ -757,8 +748,7 @@
 }
 
 .rangeInput {
-  width: 120px;
-  cursor: pointer;
+  width: 140px;
 }
 
 .rangeVal {
@@ -774,7 +764,8 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
-  padding: var(--space-3) var(--space-4);
+  min-height: 52px;
+  padding: 10px 16px;
   border-bottom: 1px solid var(--color-border-subtle);
 }
 
@@ -805,7 +796,8 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
+  min-height: 52px;
+  padding: 10px 16px;
   border-bottom: 1px solid var(--color-border-subtle);
 }
 
@@ -839,9 +831,10 @@
 }
 
 .hint {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-muted);
-  line-height: var(--line-height-normal);
+  margin: 0;
+  font-size: var(--font-size-micro);
+  color: var(--color-text-tertiary);
+  line-height: 1.45;
 }
 
 .saveRow {

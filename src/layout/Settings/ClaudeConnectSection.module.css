@@ -6,8 +6,8 @@
   gap: 16px;
   padding: 18px 22px;
   border-radius: var(--radius-surface);
-  border: 1px solid var(--color-border);
-  background: var(--color-surface-1);
+  border: 1px solid var(--color-card-border, var(--color-border-subtle));
+  background: var(--color-card, var(--color-surface-1));
   font-size: 0.74rem;
   line-height: 1.45;
   color: var(--color-text-primary);
@@ -219,8 +219,8 @@
   text-align: left;
   padding: 8px 12px;
   border-radius: var(--radius-control);
-  border: 1px solid var(--color-border-subtle);
-  background: var(--color-surface-2);
+  border: 1px solid var(--color-card-border, var(--color-border-subtle));
+  background: var(--color-card, var(--color-surface-2));
   color: var(--color-text-primary);
   font: inherit;
   font-size: 0.72rem;
@@ -230,7 +230,7 @@
 }
 
 .example:hover {
-  background: var(--color-surface-3);
+  background: var(--color-card-hover, var(--color-surface-3));
   border-color: color-mix(in srgb, var(--color-accent) 50%, transparent);
 }
 

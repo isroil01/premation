@@ -83,8 +83,8 @@
   gap: 6px;
   padding: 8px 10px;
   border-radius: var(--radius-control);
-  border: 1px solid var(--color-border);
-  background: var(--color-surface-2);
+  border: 1px solid var(--color-card-border, var(--color-border-subtle));
+  background: var(--color-card, var(--color-surface-2));
 }
 
 .pendingText {

@@ -82,10 +82,6 @@
 .scrub {
   flex: 1;
   min-width: 0;
-  accent-color: var(--color-primary);
-  height: 4px;
-  cursor: pointer;
-  border-radius: 2px;
 }
 
 .timecode {

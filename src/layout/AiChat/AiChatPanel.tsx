@@ -40,6 +40,7 @@ import { CRITIQUE_AXES } from '@motion/author';
 import { Icon } from '@components/Icon';
 import { Button } from '@components/Button';
 import { IconButton } from '@components/IconButton';
+import { RangeInput } from '@components/RangeInput';
 import { useAiProviderStore } from '@stores/aiProviderStore';
 
 import type { GatewayProviderId, AiProviderId } from '@core/api/client';
@@ -935,8 +936,8 @@ export function AiChatPanel(): JSX.Element {
                   <div className={styles.popover} onClick={(e) => e.stopPropagation()}>
                     <div className={styles.popoverHeader}>{t('aiChat.shape.energy', 'Energy')}</div>
                     <div className={styles.popoverRow}>
-                      <input
-                        type="range"
+                      <RangeInput
+                        className={styles.popoverRange}
                         min={0}
                         max={100}
                         aria-label={t('aiChat.shape.energy', 'Energy')}
@@ -947,8 +948,8 @@ export function AiChatPanel(): JSX.Element {
                     </div>
                     <div className={styles.popoverHeader}>{t('aiChat.shape.length', 'Length')}</div>
                     <div className={styles.popoverRow}>
-                      <input
-                        type="range"
+                      <RangeInput
+                        className={styles.popoverRange}
                         min={4}
                         max={60}
                         aria-label={t('aiChat.shape.length', 'Length')}

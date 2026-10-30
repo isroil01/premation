@@ -1,92 +1,88 @@
-.customizeRoot {
+/*
+ * A Preferences page: one column at the dashboard panel width, sections
+ * separated by space rather than boxes inside boxes.
+ */
+.page {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: 32px;
+  width: 100%;
   max-width: 1040px;
-  width: 100%;
+  animation: enter var(--motion-duration-slow) var(--motion-ease-decelerate) both;
 }
 
-.viewSwitch {
+/* The sections inside manage their own scroll in the editor dialog; here the
+   page scrolls. Doubled class: outranks those sections' own rules whatever
+   order the stylesheets load in. */
+.page.page > * {
+  flex: none;
+  overflow: visible;
+}
+
+/* Shortcuts and Workspaces are lists with their own scroll: give them the window's height. */
+.fill {
   display: flex;
-  margin-bottom: 4px;
+  flex-direction: column;
+  width: 100%;
+  max-width: 1040px;
+  height: clamp(420px, calc(100vh - 200px), 900px);
+  animation: enter var(--motion-duration-slow) var(--motion-ease-decelerate) both;
 }
 
-.tabList {
+.fill > * {
+  flex: 1;
+  min-height: 0;
+}
+
+@keyframes enter {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
+.aside {
   display: flex;
   align-items: center;
-  gap: 3px;
-  padding: 3px;
-  background: var(--color-surface-1);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  width: 100%;
-  flex-wrap: wrap;
-}
-
-.tabBtn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  flex: 1 1 0;
-  min-width: 120px;
-  height: var(--control-height-row);
-  padding: 0 var(--space-3);
-  border-radius: var(--radius-sm);
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--color-text-tertiary);
-  font-size: var(--font-size-xs);
-  font-weight: 500;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: all var(--motion-duration-fast) var(--motion-ease-standard);
-}
-
-.tabBtn:hover {
-  background: var(--color-surface-2);
-  color: var(--color-text-primary);
-}
-
-.tabBtnActive {
-  background: var(--color-surface-2);
-  border-color: var(--color-border);
-  color: var(--color-text-primary);
-  font-weight: 600;
-}
-
-.panelHost {
-  background: var(--color-surface-1);
-  border: 1px solid var(--color-border-subtle);
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--color-card-border, var(--color-border-subtle));
+  background: var(--color-card, var(--color-surface-1));
   border-radius: var(--radius-surface);
-  overflow: hidden;
-  min-height: 480px;
-  height: clamp(480px, calc(100vh - 220px), 940px);
-  display: flex;
-  flex-direction: column;
-  padding: var(--space-4);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
-}
-
-.panelHost > * {
-  flex: 1;
-  min-height: 0;
-}
-
-.aiContainer {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-6);
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding-right: var(--space-2);
-}
-
-.connectionsNote {
-  margin: 0;
-  max-width: 62ch;
   color: var(--color-text-secondary);
   font-size: var(--font-size-xs);
   line-height: 1.5;
+}
+
+.linkButton {
+  flex-shrink: 0;
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid color-mix(in srgb, var(--color-text-primary) 22%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-text-primary) 4%, transparent);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard), transform var(--motion-duration-fast) var(--motion-ease-standard);
+}
+
+.linkButton:hover {
+  background: var(--color-surface-2);
+}
+
+.linkButton:active {
+  transform: translateY(1px);
+}
+
+.linkButton:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page,
+  .fill {
+    animation: none;
+  }
 }

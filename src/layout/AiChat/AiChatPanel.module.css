@@ -1214,9 +1214,9 @@
   padding: var(--space-1) var(--space-2);
 }
 
-.popoverRow input[type='range'] {
+.popoverRange {
   flex: 1;
-  accent-color: var(--color-primary);
+  min-width: 0;
 }
 
 .popoverRow input[type='color'] {
