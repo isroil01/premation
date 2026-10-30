@@ -135,6 +135,90 @@ int subject_hole(std::span<std::uint8_t> hole, int w, int h, const std::string& 
   return count;
 }
 
+/// A clean plate for a subject fill: the background behind the subject from the frames where
+/// it is uncovered. Each pixel is the median (by luma) of up to kPlateSamples frames spread over
+/// the range in which the pixel is outside the (grown) hole; `known` marks pixels some frame
+/// showed. Built only for a camera that holds still — the picture outside the holes must agree
+/// across the samples (mean |Δluma| under kStillCamera levels) — else empty.
+struct CleanPlate {
+  std::vector<std::uint8_t> rgba;
+  std::vector<std::uint8_t> known;
+  [[nodiscard]] bool empty() const { return rgba.empty(); }
+};
+constexpr int kPlateSamples = 24;
+/// A plate pixel needs this many frames showing it, whose luma interquartile spread is at most kPlateMaxSpread levels.
+constexpr std::size_t kPlateMinShown = 3;
+constexpr double kPlateMaxSpread = 18.0;
+constexpr double kStillCamera = 10.0;
+
+CleanPlate build_clean_plate(const std::vector<std::vector<std::uint8_t>>& rgba, const std::vector<std::vector<std::uint8_t>>& holes, int w, int h) {
+  CleanPlate plate;
+  const std::size_t n = rgba.size();
+  if (n < 2) return plate;
+  const auto px = static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
+  const auto luma = [&](std::size_t s, std::size_t p) {
+    return 0.299 * rgba[s][p * 4] + 0.587 * rgba[s][p * 4 + 1] + 0.114 * rgba[s][p * 4 + 2];
+  };
+  // The camera: consecutive samples compared where neither has a hole (every 7th pixel).
+  double diff = 0;
+  std::size_t cnt = 0;
+  for (std::size_t s = 1; s < n; ++s)
+    for (std::size_t p = 0; p < px; p += 7)
+      if (holes[s][p] == 0 && holes[s - 1][p] == 0) {
+        diff += std::abs(luma(s, p) - luma(s - 1, p));
+        ++cnt;
+      }
+  if (cnt == 0 || diff / static_cast<double>(cnt) > kStillCamera) return plate;
+  plate.rgba.assign(px * 4, 0);
+  plate.known.assign(px, 0);
+  std::vector<std::pair<double, std::size_t>> vals;
+  vals.reserve(n);
+  for (std::size_t p = 0; p < px; ++p) {
+    vals.clear();
+    for (std::size_t s = 0; s < n; ++s)
+      if (holes[s][p] == 0) vals.emplace_back(luma(s, p), s);
+    // Trusted only when several frames show the pixel and they agree: a pixel uncovered once or
+    // twice is often the subject itself where its matte missed a part (a ghost of it in the plate).
+    if (vals.size() < kPlateMinShown) continue;
+    std::ranges::sort(vals, {}, &std::pair<double, std::size_t>::first);
+    const double spread = vals[vals.size() * 3 / 4].first - vals[vals.size() / 4].first;
+    if (spread > kPlateMaxSpread) continue;
+    const std::size_t s = vals[vals.size() / 2].second;
+    for (std::size_t c = 0; c < 3; ++c) plate.rgba[p * 4 + c] = rgba[s][p * 4 + c];
+    plate.rgba[p * 4 + 3] = 255;
+    plate.known[p] = 1;
+  }
+  return plate;
+}
+
+/// The plate laid into a frame's hole where the plate knows the background (those pixels leave
+/// the hole), shifted per channel by the mean difference between the frame and the plate on a
+/// ring just outside the hole — exposure drifts over a shot. What no frame showed stays a hole
+/// for the fill. Returns the pixels laid.
+int lay_clean_plate(caf::SequenceFrame& fr, const CleanPlate& plate, int w, int h) {
+  const auto px = static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
+  std::vector<std::uint8_t> ring(fr.hole);
+  caf::dilate_hole(ring, w, h, std::max(4, std::max(w, h) / 100));
+  std::array<double, 3> off{};
+  std::size_t cnt = 0;
+  for (std::size_t p = 0; p < px; ++p) {
+    if (ring[p] == 0 || fr.hole[p] != 0 || plate.known[p] == 0) continue;
+    for (std::size_t c = 0; c < 3; ++c) off[c] += static_cast<double>(fr.rgba[p * 4 + c]) - plate.rgba[p * 4 + c];
+    ++cnt;
+  }
+  if (cnt > 0)
+    for (double& o : off) o /= static_cast<double>(cnt);
+  int laid = 0;
+  for (std::size_t p = 0; p < px; ++p) {
+    if (fr.hole[p] == 0 || plate.known[p] == 0) continue;
+    for (std::size_t c = 0; c < 3; ++c) fr.rgba[p * 4 + c] = static_cast<std::uint8_t>(std::clamp(plate.rgba[p * 4 + c] + off[c], 0.0, 255.0));
+    fr.rgba[p * 4 + 3] = 255;
+    fr.hole[p] = 0;
+    ++laid;
+  }
+  return laid;
+}
+
 /// Frames held at once. 1080p RGBA is ~8 MB a frame.
 constexpr std::int64_t kWindow = 48;
 
@@ -312,6 +396,36 @@ PreparedJob prepare_content_aware_fill(const api::ContentAwareFillJob& spec, con
 
     std::vector<FillFrame> out;
     caf::SequenceStats total;
+
+    // A subject fill over a still camera: the background the subject uncovers somewhere in the
+    // range, as a clean plate (the fill alone carries one frame's guess through the shot).
+    CleanPlate plate;
+    if (subjectHole) {
+      std::vector<std::vector<std::uint8_t>> sampleRgba;
+      std::vector<std::vector<std::uint8_t>> sampleHole;
+      // Sampled over the subject's whole tracked span (and the range): the more of the shot, the
+      // more background some frame uncovers.
+      const std::int64_t p0 = std::min(first, static_cast<std::int64_t>(std::llround(subjectHole->frames.front().first * fps)));
+      const std::int64_t p1 = std::max(last, static_cast<std::int64_t>(std::llround(subjectHole->frames.back().first * fps)));
+      const std::int64_t span = p1 - p0 + 1;
+      const std::int64_t step = std::max<std::int64_t>(1, span / kPlateSamples);
+      const int g = static_cast<int>(std::lround(grow > 0 ? grow * w / layerW : std::max(w, h) * 0.01));
+      for (std::int64_t f = p0; f <= p1; f += step) {
+        if (control.cancelled()) return nullptr;
+        const double t = static_cast<double>(f) / fps;
+        if (t < fl.in_seconds() || t >= fl.out_seconds()) continue;
+        const std::int64_t sf = frame_at(fl.source_seconds(t), src->fps(), src->frame_count());
+        if (sf < 0) continue;
+        RgbaImage s;
+        if (!src->read(sf, s, error)) fail(ErrorCode::decode, "frame " + std::to_string(sf) + ": " + error, {.layer = fl.layer});
+        std::vector<std::uint8_t> hole(px, 0);
+        if (const std::string* matte = subjectHole->at(t, fps); matte != nullptr) (void)subject_hole(hole, w, h, *matte, g, fl.layer);
+        sampleRgba.push_back(std::move(s.rgba));
+        sampleHole.push_back(std::move(hole));
+        control.progress(0.1 * static_cast<double>(f - p0 + 1) / static_cast<double>(span), "Finding the background behind the subject");
+      }
+      plate = build_clean_plate(sampleRgba, sampleHole, w, h);
+    }
     std::optional<caf::SequenceFrame> carry;  // the previous window's last frame, filled
     std::int64_t carryFrame = -2;
     const std::int64_t count = last - first + 1;
@@ -350,14 +464,21 @@ PreparedJob prepare_content_aware_fill(const api::ContentAwareFillJob& spec, con
         }
         fr.rgba = std::move(img.rgba);
         img = RgbaImage{};
-        // A frame with no hole is a clean source for its neighbours.
-        fr.anchor = holes == 0;
-        if (holes > 0) fr.reference = reference_for(f);
+        // What the clean plate covers leaves the hole now; the rest is the fill's. The frame is
+        // still written (it had a hole) even when the plate covered all of it.
+        bool remaining = holes > 0;
+        if (holes > 0 && !plate.empty()) {
+          total.fromReference += lay_clean_plate(fr, plate, w, h);
+          remaining = std::ranges::any_of(fr.hole, [](std::uint8_t v) { return v != 0; });
+        }
+        // A frame with nothing left to fill is a clean source for its neighbours.
+        fr.anchor = !remaining;
+        if (remaining) fr.reference = reference_for(f);
         frames.push_back(std::move(fr));
         index.push_back(holes > 0 ? f : -1);
         times.push_back(flicks_of(t));
         compFrame.push_back(f);
-        control.progress(0.9 * static_cast<double>(f - first + 1) / static_cast<double>(count),
+        control.progress((subjectHole ? 0.1 : 0.0) + (subjectHole ? 0.8 : 0.9) * static_cast<double>(f - first + 1) / static_cast<double>(count),
                          "Filling frame " + std::to_string(f - first + 1) + " of " + std::to_string(count));
       }
       if (frames.empty()) continue;

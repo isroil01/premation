@@ -199,7 +199,8 @@ gpuSuite('subject view modes in the viewport', () => {
   it('overlay: the subject tinted see-through, the rest as it is', async () => {
     await view('overlay');
     // The subject's colour mixed with the orange footage: neither the plain footage nor a flat tint.
-    const tinted = (c: Rgb): boolean => !orange(c) && c[2] > 80 && c[0] > 150;
+    // (Green stays low under a magenta tint over orange: a white frame left by the Alpha view is not it.)
+    const tinted = (c: Rgb): boolean => !orange(c) && c[2] > 80 && c[0] > 150 && c[1] < 150;
     const inside = await pixelBecomes(60, tinted);
     expect(tinted(inside)).toBe(true);
     expect(inside[2]).toBeLessThan(200);  // not the solid #ff3fd4 tint (b 212)
@@ -249,6 +250,51 @@ gpuSuite('subject view modes in the viewport', () => {
     await h.run({ type: 'setLayerMatte', layer: video, frames: [], merge: false, subject: 'gap' } as Command);
     await h.run({ type: 'setContentAwareFill', layer: video, frames: [] } as Command);
   }, 120_000);
+
+  it('a subject crossing a still shot: the gap is the real background (the clean plate)', async () => {
+    // Colour bars (still) with a white box crossing left to right over 1 s; the box is the subject.
+    const crossing = path.join(DIR, 'subject_crossing_bars_320x180.mp4');
+    if (!fs.existsSync(crossing)) {
+      execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', `smptebars=s=${W}x${H}:r=30:d=1`,
+        '-vf', 'drawbox=x=20+t*200:y=50:w=60:h=80:color=white:t=fill', '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '4', '-pix_fmt', 'yuv420p', crossing],
+      { stdio: 'ignore', timeout: 120_000 });
+    }
+    const items = (await h.run({ type: 'importFiles', files: [{ path: crossing, asSequence: false, createComposition: false }] } as Command)) as unknown as { items: string[] };
+    const bars = ((await h.run({ type: 'createLayer', comp: activeCompRootId() as string, kind: 'video', source: items.items[0], init: [] } as Command)) as unknown as { layer: string }).layer;
+    // The box's matte on each frame (x = 20 + t·200, 60 wide), a little generous as a tracked matte is.
+    const frames = Array.from({ length: 30 }, (_, i) => {
+      const x0 = 20 + (i / 30) * 200 - 3;
+      const png = new PNG({ width: W, height: H });
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+        const k = (y * W + x) * 4;
+        png.data[k] = png.data[k + 1] = png.data[k + 2] = 255;
+        png.data[k + 3] = x >= x0 && x < x0 + 66 && y >= 47 && y < 133 ? 255 : 0;
+      }
+      const f = path.join(dir, `box_${i}.png`);
+      fs.writeFileSync(f, PNG.sync.write(png));
+      return { time: sec(i / 30), src: f };
+    });
+    await h.run({ type: 'setLayerMatte', layer: bars, frames, merge: false, cut: false, subject: 'box' } as Command);
+    await settleEdits();
+    const handle = await startContentAwareFill({ layer: bars, subject: 'box', start: 15 / 30, end: 16 / 30, fps: 30, mode: 'object', lighting: 'off', expansion: 0, references: [] });
+    const out = await handle.done;
+    expect(out.status).toBe('done');
+    // Frame 15: the box covers x ≈ 120…180. The fill there must be the bars, as frame 0 shows them.
+    const truth = path.join(dir, 'truth.png');
+    execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', `smptebars=s=${W}x${H}:r=30:d=1`, '-frames:v', '1', truth], { stdio: 'ignore' });
+    const want = PNG.sync.read(fs.readFileSync(truth));
+    const filled = fs.readdirSync(path.join(os.tmpdir(), 'premation-content-aware-fill', bars)).find((f) => f.endsWith('00015.png'))!;
+    const got = PNG.sync.read(fs.readFileSync(path.join(os.tmpdir(), 'premation-content-aware-fill', bars, filled)));
+    let err = 0;
+    let n = 0;
+    for (let y = 60; y < 120; y++) for (let x = 125; x < 175; x++) {
+      const k = (y * W + x) * 4;
+      for (let c = 0; c < 3; c++) err += Math.abs(got.data[k + c]! - want.data[k + c]!);
+      n += 3;
+    }
+    expect(err / n).toBeLessThan(12);  // the real bars (codec noise aside), not a synthesised guess
+    await h.run({ type: 'deleteLayers', layers: [bars] } as Command);
+  }, 180_000);
 
   it('is a viewer aid: the comp still is untouched', async () => {
     await view('alpha');
