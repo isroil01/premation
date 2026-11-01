@@ -124,8 +124,6 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
     return textureSample(tex, smp, uv);
   }
   let dir = obj.blurParams.xy;
-  var c = vec4<f32>(0.0);
-  var total = 0.0;
 
   // CSS blur semantics: the radius IS the Gaussian sigma (what Canvas2D's
   // filter uses, so both backends match). Taps span ±3.5σ; when that exceeds
@@ -133,8 +131,10 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   // old kernel used σ = r/2 truncated at ±r — visibly tighter than Canvas2D
   // at every radius (profiled: tail died 2–3× sooner).
   //
-  // Accumulate in linear-premul so glow/blur falloff matches lit light rather
-  // than gamma-space grey. Helpers are identity when LINEAR_WORKING_SPACE is off.
+  // The sum is linear in the texels: premultiplied colour in the storage
+  // space, which is the working space here (storageToWorking and
+  // workingToStorage are the identity in every shader of the library), so
+  // two neighbouring taps can share one bilinear fetch below.
   let sigma = r;
   // ±3.5σ, not 2.5σ: at 2.5σ the Gaussian is still 4% of its peak, and the two
   // separable passes cut a wide glow off at a RECTANGLE — a faint box around
@@ -146,24 +146,36 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   // further apart skip texels, and on a hard edge that aliases: a bevel's lighting
   // (the slope of this blur) rippled ±6 levels at σ 30 when the 30 taps were
   // stretched over 3.5σ (bevel-below-cap / -above-cap goldens, 2026-10-13).
+  //
+  // The taps stop at ±3.5σ. They used to run to at least ±30 whatever σ, so a
+  // σ 4 drop shadow paid 61 fetches a pixel a pass for 29 taps of weight
+  // under 1e-12 (renderArtifacts / manyEffects benches, 2026-11-01).
   let spacing = max(1.0, (sigma * 2.5) / 30.0);
-  let steps = max(30, i32(ceil((sigma * 3.5) / spacing - 0.001)));
-  for(var i = -steps; i <= steps; i = i + 1) {
-    let off = f32(i) * spacing;
-    let w = exp(-0.5 * (off * off) / (sigma * sigma));
-    let t = textureSample(tex, smp, uv + dir * off);
-    var lin = t;
-    if (t.a > 0.0001) {
-      let straight = t.rgb / t.a;
-      lin = vec4<f32>(storageToWorking(straight) * t.a, t.a);
+  let steps = max(1, i32(ceil((sigma * 3.5) / spacing - 0.001)));
+  let k = 0.5 / (sigma * sigma);
+  var c = textureSample(tex, smp, uv);
+  var total = 1.0;
+  if (spacing <= 1.0) {
+    // One texel apart: taps i and i + 1 are one fetch between them, at the
+    // weight-centred offset (the bilinear filter returns exactly
+    // (w1·t1 + w2·t2) / (w1 + w2) there) — half the fetches, the same sum.
+    for (var i = 1; i <= steps; i = i + 2) {
+      let o1 = f32(i);
+      let o2 = o1 + 1.0;
+      let w1 = exp(-(o1 * o1) * k);
+      let w2 = select(0.0, exp(-(o2 * o2) * k), i + 1 <= steps);
+      let w = w1 + w2;
+      let o = (o1 * w1 + o2 * w2) / w;
+      c = c + (textureSample(tex, smp, uv + dir * o) + textureSample(tex, smp, uv - dir * o)) * w;
+      total = total + 2.0 * w;
     }
-    c = c + lin * w;
-    total = total + w;
+  } else {
+    for (var i = 1; i <= steps; i = i + 1) {
+      let off = f32(i) * spacing;
+      let w = exp(-(off * off) * k);
+      c = c + (textureSample(tex, smp, uv + dir * off) + textureSample(tex, smp, uv - dir * off)) * w;
+      total = total + 2.0 * w;
+    }
   }
-  let avg = c / total;
-  if (avg.a > 0.0001) {
-    let straight = avg.rgb / avg.a;
-    return vec4<f32>(workingToStorage(straight) * avg.a, avg.a);
-  }
-  return avg;
+  return c / total;
 }

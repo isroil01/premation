@@ -30,10 +30,11 @@ FxReach spread(const PxBox& in, double x, double y) {
   return {g, g};
 }
 
-/// blur.wgsl: taps max(1, 2.5σ / 30) texels apart, max(30, ⌈3.5σ / spacing⌉) a side —
-/// the last one max(30, 3.5σ) out (+ under one texel of the ceil, inside the slack).
-/// σ <= 0 samples the centre only.
-double blur_reach(double sigma) { return sigma > 0 ? std::max(30.0, 3.5 * sigma) + kTapSlack : 0; }
+/// blur.wgsl: taps max(1, 2.5σ / 30) texels apart, ⌈3.5σ / spacing⌉ a side (one
+/// bilinear fetch per pair of neighbours at spacing 1, never past the pair's
+/// outer tap) — the last one under 3.5σ + spacing out; the slack holds its
+/// fractional second texel. σ <= 0 samples the centre only.
+double blur_reach(double sigma) { return sigma > 0 ? 3.5 * sigma + std::max(1.0, sigma * 2.5 / 30) + kTapSlack : 0; }
 
 /// Every number the entry carries is finite. A NaN radius reaches the shaders
 /// as NaN weights over the whole frame: such an entry is not measured.

@@ -245,7 +245,7 @@ const wgpu::TextureView& Device::depth_view(const RenderTarget& t) {
   if (t.depthView == nullptr && t.wantsDepth) {
     wgpu::TextureDescriptor dd{};
     dd.size = {t.width, t.height, 1};
-    dd.format = wgpu::TextureFormat::Depth24Plus;
+    dd.format = kDepthFormat;
     dd.sampleCount = t.samples;
     dd.usage = t.samples > 1 ? wgpu::TextureUsage::RenderAttachment
                              : wgpu::TextureUsage::RenderAttachment | wgpu::TextureUsage::TextureBinding;
@@ -604,10 +604,10 @@ const Device::Pipeline& Device::pipeline(Mat material, Blend blend, wgpu::Textur
         desc.multisample.count = samples > 1 ? samples : 1;
         wgpu::DepthStencilState ds{};
         if (m.hasDepth && m.depthTest) {
-          ds.format = wgpu::TextureFormat::Depth24Plus;
+          ds.format = kDepthFormat;
           const bool write = depthWrite == DrawItem::kDepthWriteMaterial ? m.depthWrite : depthWrite != 0;
           ds.depthWriteEnabled = write ? wgpu::OptionalBool::True : wgpu::OptionalBool::False;
-          ds.depthCompare = wgpu::CompareFunction::LessEqual;
+          ds.depthCompare = wgpu::CompareFunction::GreaterEqual;  // reversed depth: near = 1
           desc.depthStencil = &ds;
         }
         p.pipeline = device_.CreateRenderPipeline(&desc);
@@ -667,7 +667,7 @@ wgpu::RenderPassEncoder Device::begin_pass(const Attachment& att, std::uint32_t 
   const RenderTarget* dt = att.depthFrom != nullptr ? att.depthFrom : t;
   if (depth && t != nullptr && depth_view(*dt) != nullptr) {
     da.view = dt->depthView;
-    da.depthClearValue = 1.0F;
+    da.depthClearValue = 0.0F;  // reversed depth: the far plane
     da.depthLoadOp = att.loadDepth ? wgpu::LoadOp::Load : wgpu::LoadOp::Clear;
     da.depthStoreOp = wgpu::StoreOp::Store;
     rp.depthStencilAttachment = &da;

@@ -6,6 +6,7 @@
 #include "threed.hpp"
 
 #include "scene_cache3d.hpp"
+#include "coplanar.hpp"
 
 #include <algorithm>
 #include <array>
@@ -265,11 +266,37 @@ void pack_shade(Packer& p, const Shade* s, const FogBlock* fog) {
   for (std::size_t i = 0; i < kShadeFloats; i += 4) p.vec4(out.at(i), out.at(i + 1), out.at(i + 2), out.at(i + 3));
 }
 
-/// mvp3dFor: lift(camera2D VP) · projection3d · view3d · model.
-Mat4 mvp3d(const ViewportState& vp, const api::RenderCamera3D& cam, const std::vector<double>& model) {
+/// The camera's projection with its depth reversed (clip z' = w − z: the near
+/// plane at 1, the far plane at 0), for the reversed float depth buffer
+/// (device.hpp kDepthFormat). Done in double on the projection itself: the
+/// reversed z row is tiny (1 − f/(f − n) ≈ −1e-5) and subtracting two float
+/// rows of a finished mvp would cancel most of its digits.
+Mat4 reversed_projection(const std::vector<double>& p) {
+  std::vector<double> r(16, 0.0);
+  std::ranges::copy(p.begin(), p.begin() + static_cast<std::ptrdiff_t>(std::min<std::size_t>(16, p.size())), r.begin());
+  for (std::size_t c = 0; c < 4; ++c) r.at(c * 4 + 2) = r.at(c * 4 + 3) - r.at(c * 4 + 2);
+  return mat4_of(r);
+}
+
+/// mvp3dFor: lift(camera2D VP) · projection3d · view3d · model, depth reversed.
+/// `depthScale` > 1 lifts the layer towards the camera by that fraction of its
+/// depth (a coplanar stack's level, coplanar.hpp).
+Mat4 mvp3d(const ViewportState& vp, const api::RenderCamera3D& cam, const std::vector<double>& model, double depthScale = 1) {
   const Mat4 cam2d = mat4_from_mat3(vp.viewProjection);
-  const Mat4 pv = mul(mat4_of(cam.projection), mat4_of(cam.view));
-  return mul(cam2d, mul(pv, mat4_of(model)));
+  const Mat4 pv = mul(reversed_projection(cam.projection), mat4_of(cam.view));
+  Mat4 out = mul(cam2d, mul(pv, mat4_of(model)));
+  if (depthScale != 1) {
+    for (std::size_t c = 0; c < 4; ++c) out.m.at(c * 4 + 2) = f32(static_cast<double>(out.m.at(c * 4 + 2)) * depthScale);
+  }
+  return out;
+}
+
+/// The forward (unreversed) view-projection: the sky unprojects two depths of a
+/// pixel's ray and takes their difference as the direction, which assumes the
+/// smaller depth is the nearer point.
+Mat4 view_projection3d_forward(const ViewportState& vp, const api::RenderCamera3D& cam) {
+  const Mat4 cam2d = mat4_from_mat3(vp.viewProjection);
+  return mul(cam2d, mul(mat4_of(cam.projection), mat4_of(cam.view)));
 }
 
 void pack_textured3d(Packer& p, const Mat4& mvp, const Rect& uv, const Color& tint, double opacity, const ColorTransform& ct,
@@ -1555,6 +1582,29 @@ void render_3d_group(PassContext& ctx, std::span<const api::Renderable* const> g
   bool inReflectionPass = false;
   const Mat4 screenOfWorld = mvp3d(vp, cam, kIdentity16);
 
+  // Coplanar layers stack in draw order (the scene's sort keeps each coplanar
+  // cluster in layer order): each level is lifted a hair towards the camera.
+  // By id: a gathered DOF group draws stripped copies of its renderables.
+  std::unordered_map<std::string_view, double> depthScaleOf;
+  {
+    std::vector<QuadModel> quads(group.size());
+    std::vector<const QuadModel*> models(group.size(), nullptr);
+    for (std::size_t i = 0; i < group.size(); ++i) {
+      const api::Renderable& r = *group[i];
+      if (!r.three_d || r.extruded_mesh || r.matte_source || r.opacity <= 0 || r.three_d->model.size() != 16) continue;
+      std::ranges::copy(r.three_d->model, quads[i].begin());
+      models[i] = &quads[i];
+    }
+    const std::vector<std::uint32_t> levels = coplanar_levels(models);
+    for (std::size_t i = 0; i < group.size(); ++i) {
+      if (levels[i] > 0) depthScaleOf.emplace(group[i]->id, 1 + kCoplanarDepthStep * levels[i]);
+    }
+  }
+  const auto depth_scale = [&](const api::Renderable& r) {
+    const auto it = depthScaleOf.find(r.id);
+    return it != depthScaleOf.end() ? it->second : 1.0;
+  };
+
   /// One renderable's draws into `out` (the run, or an offscreen step).
   struct DrawOpts {
     const std::vector<double>* model = nullptr;  ///< null = the renderable's own
@@ -1566,7 +1616,7 @@ void render_3d_group(PassContext& ctx, std::span<const api::Renderable* const> g
     const std::vector<double>& model = o.model != nullptr ? *o.model : r.three_d->model;
     const double opacity = o.opacity;
     const Blend blend = o.blend.value_or(blend_of(r.blend));
-    const Mat4 mvp = mvp3d(vp, cam, model);
+    const Mat4 mvp = mvp3d(vp, cam, model, depth_scale(r));
     const Rect uv = r.uv_rect ? rect_of(*r.uv_rect) : Rect{0, 0, 1, 1};
     Shade shade;
     const bool shaded = shade_for(r, shade);
@@ -1720,7 +1770,7 @@ void render_3d_group(PassContext& ctx, std::span<const api::Renderable* const> g
                                        solid_shape(r.sdf), {});
       if (!res) return;
       const std::vector<double> fxModel = expand_model(model, res->ex, res->ey);
-      const Mat4 fxMvp = mvp3d(vp, cam, fxModel);
+      const Mat4 fxMvp = mvp3d(vp, cam, fxModel, depth_scale(r));
       Shade fxShade = shade;
       fxShade.model = fxModel;
       const Color tint = lit_color(r, Color::white(), shaded);
@@ -1967,7 +2017,9 @@ void render_3d_group(PassContext& ctx, std::span<const api::Renderable* const> g
     Packer p = ctx.packer();
     p.mat3(screen_mvp()).rect(targetUv);
     p.vec4(1.0 / std::max(1U, vp.pixelWidth), 1.0 / std::max(1U, vp.pixelHeight), dof.iris_blades.value_or(0), dof.iris_roundness.value_or(0.65));
-    p.vec4(dof.highlight_gain.value_or(0), dof.strength, cam.projection[10], cam.projection[14]);
+    // dof-gather's viewZ = w / (depth − z): with the depth reversed (1 − (a + b / z)),
+    // z = −b / (depth − (1 − a)).
+    p.vec4(dof.highlight_gain.value_or(0), dof.strength, 1 - cam.projection[10], -cam.projection[14]);
     p.vec4(dof.focus, dof.aperture, dof.strength, dof.focal_length.value_or(dof.focus));
     p.vec4(dof.f_stop.value_or(0), dof.iris_rotation.value_or(0) * std::numbers::pi / 180, dof.iris_aspect.value_or(1),
            dof.highlight_threshold.value_or(0));
@@ -1993,7 +2045,7 @@ void render_sky(PassContext& ctx, std::string_view out, const TexFor& texFor) {
   const EnvBinding eb = env_binding(ctx, env, texFor);
   if (!eb.tex) return;
   std::array<double, 16> inv{};
-  if (!invert4(mvp3d(ctx.viewport, cam, kIdentity16), inv)) return;
+  if (!invert4(view_projection3d_forward(ctx.viewport, cam), inv)) return;
   Mat4 im;
   for (std::size_t i = 0; i < 16; ++i) im.m.at(i) = f32(inv.at(i));
   Packer p = ctx.packer();

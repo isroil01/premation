@@ -93,24 +93,27 @@ TEST_CASE("content_box: no bound for a deformed mesh or a quad projected through
   CHECK_FALSE(content_box(broken, vp, 64, 64));
 }
 
-TEST_CASE("fx_reach: blurs reach their last tap — max(30, 3.5 sigma) texels, plus two") {
-  // 3.5 sigma since S4 (docs/PROGRAM_PERFORMANCE.md): radius 10 reaches 35 + 2.
+TEST_CASE("fx_reach: blurs reach their last tap — 3.5 sigma plus one tap spacing, plus two") {
+  // 3.5 sigma since S4 (docs/PROGRAM_PERFORMANCE.md); the 30-texel floor went with the
+  // shader's 30-tap minimum (2026-11-01): radius 10 reaches 35 + 1 + 2.
   const auto g = fx_reach(entry("gaussian-blur", {{"radiusPx", 10}}), kIn, kView);
   REQUIRE(g);
-  check_box(g->out, 63, 63, 237, 187);
-  check_box(g->passes, 63, 63, 237, 187);
+  check_box(g->out, 62, 62, 238, 188);
+  check_box(g->passes, 62, 62, 238, 188);
 
+  // Radius 40: taps 40 × 2.5 / 30 apart, the last under 140 + 3.33 out.
+  const double r40 = 140 + 40 * 2.5 / 30 + 2;
   const auto wide = fx_reach(entry("blur", {{"radiusPx", 40}}), kIn, kView);
   REQUIRE(wide);
-  check_box(wide->out, -42, -42, 342, 292);
+  check_box(wide->out, 100 - r40, 100 - r40, 200 + r40, 150 + r40);
 
   // dims 1 = horizontal only, 2 = vertical only.
   const auto h = fx_reach(entry("fast-box-blur", {{"radiusPx", 40}, {"dims", 1}}), kIn, kView);
   REQUIRE(h);
-  check_box(h->out, -42, 100, 342, 150);
+  check_box(h->out, 100 - r40, 100, 200 + r40, 150);
   const auto v = fx_reach(entry("gaussian-blur", {{"radiusPx", 40}, {"dims", 2}}), kIn, kView);
   REQUIRE(v);
-  check_box(v->out, 100, -42, 200, 292);
+  check_box(v->out, 100, 100 - r40, 200, 150 + r40);
 
   // No radius: blur.wgsl samples the centre only.
   const auto none = fx_reach(entry("gaussian-blur", {{"radiusPx", 0}}), kIn, kView);
@@ -119,32 +122,33 @@ TEST_CASE("fx_reach: blurs reach their last tap — max(30, 3.5 sigma) texels, p
 }
 
 TEST_CASE("fx_reach: a glow adds its spread and its wide pass (2.2 x the radius)") {
-  // radius 10 → rPx 11.5 ≥ 6: the wide pass at 25.3 reaches 3.5 × 25.3 + 2.
+  // radius 10 → rPx 11.5 ≥ 6: the wide pass at 25.3 reaches 3.5 × 25.3 + 25.3 × 2.5 / 30 + 2.
+  const double r = 3.5 * 25.3 + 25.3 * 2.5 / 30 + 2;
   const auto g = fx_reach(entry("glow", {{"radiusPx", 10}}), kIn, kView);
   REQUIRE(g);
-  check_box(g->out, 100 - 90.55, 100 - 90.55, 200 + 90.55, 150 + 90.55);
+  check_box(g->out, 100 - r, 100 - r, 200 + r, 150 + r);
   // A spread dilates first (spread + 1 + 2).
   const auto spread = fx_reach(entry("glow", {{"radiusPx", 10}, {"spreadPx", 4}}), kIn, kView);
   REQUIRE(spread);
-  check_box(spread->out, 100 - 97.55, 100 - 97.55, 200 + 97.55, 150 + 97.55);
-  // A small glow has no wide pass: the 30-texel tap floor.
+  check_box(spread->out, 100 - r - 7, 100 - r - 7, 200 + r + 7, 150 + r + 7);
+  // A small glow has no wide pass: rPx 4.6 reaches 16.1 + 1 + 2.
   const auto small = fx_reach(entry("glow", {{"radiusPx", 4}}), kIn, kView);
   REQUIRE(small);
-  check_box(small->out, 68, 68, 232, 182);
+  check_box(small->out, 80.9, 80.9, 219.1, 169.1);
 }
 
 TEST_CASE("fx_reach: a drop shadow reaches its offset plus its softness, on its side") {
   const auto s = fx_reach(entry("drop-shadow", {{"radiusPx", 5}, {"offsetX", 10}, {"offsetY", 0}}), kIn, kView);
   REQUIRE(s);
-  // The blurred silhouette (±32) moved 10 right and sampled ±1, with the contents.
-  check_box(s->out, 100 - 23, 100 - 33, 200 + 43, 150 + 33);
+  // The blurred silhouette (±20.5) moved 10 right and sampled ±1, with the contents.
+  check_box(s->out, 100 - 11.5, 100 - 21.5, 200 + 31.5, 150 + 21.5);
   // The unmoved silhouette is drawn too.
-  check_box(s->passes, 100 - 32, 100 - 33, 200 + 43, 150 + 33);
+  check_box(s->passes, 100 - 20.5, 100 - 21.5, 200 + 31.5, 150 + 21.5);
 
   // The offset is in world units: zoom 2 doubles it.
   const auto zoomed = fx_reach(entry("drop-shadow", {{"radiusPx", 5}, {"offsetX", 10}}), kIn, FxBoundsView{2, 2});
   REQUIRE(zoomed);
-  CHECK(zoomed->out.x1 == Approx(200 + 32 + 20 + 1));
+  CHECK(zoomed->out.x1 == Approx(200 + 20.5 + 20 + 1));
 
   // A shadow far below: the contents stay inside, the shadow's own box is added.
   const auto far = fx_reach(entry("drop-shadow", {{"offsetY", 500}}), kIn, kView);
@@ -175,7 +179,7 @@ TEST_CASE("fx_reach: strokes, sharpen, inner styles and per-texel entries") {
   // An inner style blurs a copy (its passes reach) but lights only the layer's alpha.
   const auto inner = fx_reach(entry("inner-shadow", {{"sigmaPx", 8}}), kIn, kView);
   REQUIRE(inner);
-  check_box(inner->passes, 68, 68, 232, 182);
+  check_box(inner->passes, 69, 69, 231, 181);
   check_box(inner->out, 100, 100, 200, 150);
   for (const char* t : {"fill-opacity", "color-matrix", "channel-lut", "fill", "noise", "gradient-ramp", "fractal-noise"}) {
     const auto r = fx_reach(entry(t, {}), kIn, kView);

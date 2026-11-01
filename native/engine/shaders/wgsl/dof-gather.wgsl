@@ -126,7 +126,8 @@ fn texelAt(uv : vec2<f32>) -> vec2<i32> {
   return clamp(vec2<i32>(uv * vec2<f32>(size)), vec2<i32>(0), size - vec2<i32>(1));
 }
 fn viewZAtTexel(c : vec2<i32>) -> f32 {
-  // WebGPU stores NDC z directly (depth range [0,1]).
+  // NDC z as stored (reversed: near 1, far 0); params2 carries the reversed
+  // projection's terms, so z = w / (ndc − z) holds either way (threed.cpp).
   let ndc = textureLoad(depthTex, c, 0).x;
   return obj.params2.w / (ndc - obj.params2.z);
 }

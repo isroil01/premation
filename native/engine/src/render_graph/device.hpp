@@ -58,6 +58,13 @@ struct SamplerRef {
   std::uint64_t id = 0;
 };
 
+/// The 3D depth buffer: reversed float depth (near plane 1, far plane 0,
+/// cleared to 0, compared GreaterEqual — threed.cpp reversed_projection).
+/// Float precision then follows the distance (~1e-7 of it at any depth);
+/// the standard mapping with a 1 px near plane left 0.4 px of resolution at
+/// 2 700 px and 6 px at 10 000 px, so close surfaces fought and blinked.
+inline constexpr wgpu::TextureFormat kDepthFormat = wgpu::TextureFormat::Depth32Float;
+
 /// A render target (RenderTargetHandle): colour, optional MSAA pair, optional depth.
 struct RenderTarget {
   wgpu::Texture texture;

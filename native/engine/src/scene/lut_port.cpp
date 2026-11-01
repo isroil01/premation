@@ -5,6 +5,7 @@
 #include <functional>
 #include <limits>
 #include <string>
+#include <unordered_map>
 #include <utility>
 
 #include "effects/effect_chain.hpp"
@@ -40,15 +41,47 @@ Table identity_table() {
   return t;
 }
 
+/// Answers computed from a grade's parameters, per thread and bounded, keyed
+/// by the type and the parameters as JSON text. The frame build asks them of
+/// every colour effect of every layer on every frame, and each answer
+/// re-parsed the parameters (and rebuilt 256-entry tables): 1 400 grades
+/// were ~100 ms of a 155 ms frame build (manyEffects.bench, 2026-11-01). A
+/// stack's parameters change far less often than frames are built.
+template <class T>
+class ParamMemo {
+ public:
+  template <class F>
+  T get(const std::string& key, F&& compute) {
+    if (const auto it = map_.find(key); it != map_.end()) return it->second;
+    if (map_.size() >= kMax) map_.clear();  // animated parameters: a new key a frame, so bounded
+    return map_.emplace(key, std::forward<F>(compute)()).first->second;
+  }
+
+ private:
+  static constexpr std::size_t kMax = 512;
+  std::unordered_map<std::string, T> map_;
+};
+
+std::string params_key(std::string_view type, const Json& e) {
+  std::string k(type);
+  k += '|';  // the parameters start after the type and this
+  k += js::stringify(doc::params_of(e));
+  return k;
+}
+
 }  // namespace
 
 bool color_grade_needs_pixels(const Json& e) {
   const std::string t = type_of(e);
   if (t != "lumetri" && t != "levels" && t != "hue-saturation") return false;
-  rj::Value params;
-  std::string err;
-  if (!rj::parse(js::stringify(doc::params_of(e)), params, err)) return false;
-  return effects::color_grade_needs_pixels(t, params);
+  thread_local ParamMemo<bool> memo;
+  const std::string key = params_key(t, e);
+  return memo.get(key, [&] {
+    rj::Value params;
+    std::string err;
+    if (!rj::parse(std::string_view(key).substr(t.size() + 1), params, err)) return false;
+    return effects::color_grade_needs_pixels(t, params);
+  });
 }
 
 std::vector<float> lumetri_curves_for(const Json& e, std::array<bool, 4>& present) {
@@ -64,10 +97,14 @@ std::vector<float> lumetri_curves_for(const Json& e, std::array<bool, 4>& presen
 bool color_grade_gpu_capable(const Json& e) {
   const std::string t = type_of(e);
   if (t != "lumetri" && t != "levels" && t != "hue-saturation") return false;
-  rj::Value params;
-  std::string err;
-  if (!rj::parse(js::stringify(doc::params_of(e)), params, err)) return false;
-  return effects::color_grade_gpu_capable(t, params);
+  thread_local ParamMemo<bool> memo;
+  const std::string key = params_key(t, e);
+  return memo.get(key, [&] {
+    rj::Value params;
+    std::string err;
+    if (!rj::parse(std::string_view(key).substr(t.size() + 1), params, err)) return false;
+    return effects::color_grade_gpu_capable(t, params);
+  });
 }
 
 namespace {
@@ -77,17 +114,21 @@ namespace {
 std::optional<ChannelLut> tables_for(const Json& e) {
   const std::string t = type_of(e);
   if (!effects::is_lut_effect(t)) return std::nullopt;
-  rj::Value params;
-  std::string err;
-  if (!rj::parse(js::stringify(doc::params_of(e)), params, err)) return std::nullopt;
-  const effects::ChannelLut c = effects::build_channel_lut(t, params);
-  ChannelLut out;
-  for (std::size_t i = 0; i < 256; ++i) {
-    out.r[i] = c.r[i];
-    out.g[i] = c.g[i];
-    out.b[i] = c.b[i];
-  }
-  return out;
+  thread_local ParamMemo<std::optional<ChannelLut>> memo;
+  const std::string key = params_key(t, e);
+  return memo.get(key, [&]() -> std::optional<ChannelLut> {
+    rj::Value params;
+    std::string err;
+    if (!rj::parse(std::string_view(key).substr(t.size() + 1), params, err)) return std::nullopt;
+    const effects::ChannelLut c = effects::build_channel_lut(t, params);
+    ChannelLut out;
+    for (std::size_t i = 0; i < 256; ++i) {
+      out.r[i] = c.r[i];
+      out.g[i] = c.g[i];
+      out.b[i] = c.b[i];
+    }
+    return out;
+  });
 }
 
 /// `lutStripByte(v)`.

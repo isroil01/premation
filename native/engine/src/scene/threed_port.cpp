@@ -8,6 +8,7 @@
 #include <cstring>
 #include <limits>
 #include <numbers>
+#include <numeric>
 #include <utility>
 
 #include "anim.hpp"
@@ -32,6 +33,7 @@
 #include "per_char3d.hpp"
 #include "timeline.hpp"
 #include "worldxf.hpp"
+#include "render_graph/coplanar.hpp"
 
 namespace premation::scene {
 
@@ -145,6 +147,22 @@ std::vector<double> mat_vec(const xf::Mat4& m) { return {m.begin(), m.end()}; }
 
 bool has_world3d(const std::vector<RLayer>& ls) {
   return std::ranges::any_of(ls, [](const RLayer& l) { return l.world3d.has_value() || (l.precompLayers && has_world3d(*l.precompLayers)); });
+}
+
+/// A planar 3D layer's unit-quad model for the depth sort's coplanar clusters
+/// (threed_frame.cpp model3d_for, without the raster padding: the clusters
+/// only need the layer's plane and roughly its box).
+std::optional<rg::QuadModel> sort_quad_model(const RLayer& l) {
+  if (!l.world3d || !l.matrix || l.extrudedMesh || l.deformedMesh || l.light || !(l.width > 0) || !(l.height > 0)) return std::nullopt;
+  const double w = l.width;
+  const double h = l.height;
+  const xf::Mat4 bridge = {w, 0, 0, 0, 0, h, 0, 0, 0, 0, 1, 0, (-0.5 - l.anchorX / w) * w, (-0.5 - l.anchorY / h) * h, 0, 1};
+  xf::Mat4 world{};
+  std::ranges::copy(*l.world3d, world.begin());
+  const xf::Mat4 m = xf::multiply(world, bridge);
+  rg::QuadModel q{};
+  std::ranges::copy(m, q.begin());
+  return q;
 }
 
 }  // namespace
@@ -1989,9 +2007,31 @@ void Scene3D::finish(std::vector<RLayer>& layers) {
   };
   std::vector<Parked> parked;
   std::vector<RLayer> run;
+  // Far to near; ties keep layer order. A cluster of coplanar, overlapping
+  // layers (rg::coplanar_clusters) sorts as one at its farthest member's depth
+  // and keeps layer order inside, so the upper layer is drawn after the lower
+  // and blends over it at its edge (the renderer lifts it to win the depth test).
   const auto flushRun = [&]() {
-    std::ranges::stable_sort(run, [](const RLayer& p, const RLayer& q) { return q.depth - p.depth < 0; });
-    for (RLayer& l : run) sorted.push_back(std::move(l));
+    if (run.size() < 2) {
+      for (RLayer& l : run) sorted.push_back(std::move(l));
+      run.clear();
+      return;
+    }
+    std::vector<std::optional<rg::QuadModel>> quads;
+    quads.reserve(run.size());
+    std::vector<const rg::QuadModel*> models(run.size(), nullptr);
+    for (std::size_t i = 0; i < run.size(); ++i) {
+      quads.push_back(sort_quad_model(run[i]));
+      if (quads.back()) models[i] = &*quads.back();
+    }
+    const std::vector<std::size_t> cluster = rg::coplanar_clusters(models);
+    std::vector<double> key(run.size());
+    for (std::size_t i = 0; i < run.size(); ++i) key[i] = run[i].depth;
+    for (std::size_t i = 0; i < run.size(); ++i) key[cluster[i]] = std::max(key[cluster[i]], run[i].depth);
+    std::vector<std::size_t> order(run.size());
+    std::iota(order.begin(), order.end(), std::size_t{0});
+    std::ranges::stable_sort(order, [&](std::size_t p, std::size_t q) { return key[cluster[q]] - key[cluster[p]] < 0; });
+    for (const std::size_t i : order) sorted.push_back(std::move(run[i]));
     run.clear();
   };
   for (std::size_t i = 0; i < layers.size(); ++i) {
