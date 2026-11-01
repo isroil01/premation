@@ -12,6 +12,10 @@ import { Button } from '@components/Button';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { useUIStore } from '@stores/uiStore';
 import { setPendingFootage } from '@core/project/pendingFootage';
+import { setPendingRender } from '@core/project/pendingRender';
+import { isFinishedStatus } from '@core/export/exportSupervisorClient';
+import { useExportQueueStore } from '@stores/exportQueueStore';
+import { DashboardRenders } from './DashboardRenders';
 import { DashboardSettings } from './DashboardSettings';
 import { DashboardConnections } from './DashboardConnections';
 import { newProjectDocument } from '@core/project/newProjectDocument';
@@ -538,7 +542,18 @@ export function DashboardPage(): JSX.Element {
     tags: ['account', 'projects', 'renders'],
   });
   const account: AccountRecord | null = overviewQuery.data?.account ?? null;
-  const overview = overviewQuery.data?.overview ?? EMPTY_OVERVIEW;
+  const serverOverview = overviewQuery.data?.overview ?? EMPTY_OVERVIEW;
+  // Renders on this computer count beside the server's: they are the ones
+  // that really run. Numbers, so a progress tick re-renders nothing here.
+  const connectRenders = useExportQueueStore((s) => s.connect);
+  useEffect(() => { void connectRenders(); }, [connectRenders]);
+  const localActive = useExportQueueStore((s) => s.jobs.filter((j) => !isFinishedStatus(j.status)).length);
+  const localFailed = useExportQueueStore((s) => s.jobs.filter((j) => j.status === 'failed').length);
+  const overview = useMemo(() => ({
+    ...serverOverview,
+    activeRenders: serverOverview.activeRenders + localActive,
+    failedRenders: serverOverview.failedRenders + localFailed,
+  }), [serverOverview, localActive, localFailed]);
   /** The Home numbers could not be loaded — so Home states none, rather than zeroes. */
   const overviewFailed = !overviewQuery.data && overviewQuery.error !== null;
   const refreshOverview = overviewQuery.reload;
@@ -1013,6 +1028,12 @@ export function DashboardPage(): JSX.Element {
     }
   };
 
+  /** Render: the project opens with the Export dialog up (`pendingRender`). */
+  const renderProject = (id: string): void => {
+    setPendingRender(id);
+    navigate(`/editor/${id}`);
+  };
+
   const handleCancelRender = async (id: string): Promise<void> => {
     try {
       await api.cancelRender(id);
@@ -1421,29 +1442,21 @@ export function DashboardPage(): JSX.Element {
 
       case 'renders':
         return (
-          <div className={styles.tableCard}>
+          <div className={styles.rendersPage}>
+            <DashboardRenders
+              projects={projects}
+              cloudLoading={renders.status === 'loading'}
+              hasCloudRenders={renders.items.length > 0}
+              onRenderProject={renderProject}
+              onOpenProject={(id) => navigate(`/editor/${id}`)}
+              onBrowseProjects={() => openTab('projects')}
+              timeAgo={timeAgo}
+            />
             {dataError ? <p className={styles.emptyHint}>{dataError}</p> : null}
             {renders.status === 'error' ? <p className={styles.emptyHint}>{renders.error}</p> : null}
-            {renders.status === 'loading' ? (
-              <div className={styles.loadingState}>
-                <p>{t('dashboard.renders.loading', 'Loading render queue…')}</p>
-              </div>
-            ) : renders.items.length === 0 ? (
-              <div className={styles.emptyState}>
-                <Icon name="queue" size={48} className={styles.emptyStateIcon} />
-                <h3>{t('dashboard.renders.emptyTitle', 'No renders in queue')}</h3>
-                <p>{t('dashboard.renders.emptyText', 'Export a project from the composition editor to send render jobs to the queue.')}</p>
-                <button
-                  type="button"
-                  className={styles.btnSecondary}
-                  onClick={() => openTab('projects')}
-                >
-                  <Icon name="folder" size="md" />
-                  <span>{t('dashboard.renders.goToProjects', 'Go to projects')}</span>
-                </button>
-              </div>
-            ) : (
-              <>
+            {renders.items.length > 0 ? (
+              <div className={styles.tableCard}>
+              <h2 className={styles.sectionTitle}>{t('dashboard.renders.cloudTitle', 'Cloud renders')}</h2>
               <table className={styles.table}>
                 <thead>
                   <tr>
@@ -1554,8 +1567,8 @@ export function DashboardPage(): JSX.Element {
                 onChange={renders.setPage}
                 itemLabel="render"
               />
-              </>
-            )}
+              </div>
+            ) : null}
           </div>
         );
 
@@ -1931,6 +1944,7 @@ export function DashboardPage(): JSX.Element {
                 const open = (): void => navigate(`/editor/${p.id}`);
                 const menu: DropdownItem[] = [
                   { type: 'item', id: 'open', label: t('dashboard.projects.menuOpen', 'Open'), onSelect: open },
+                  { type: 'item', id: 'render', label: t('dashboard.projects.menuRender', 'Render…'), onSelect: () => renderProject(p.id) },
                   { type: 'separator' },
                   { type: 'item', id: 'trash', label: t('dashboard.projects.trashTitle', 'Move to Trash'), danger: true, onSelect: () => { void onDelete(p.id, p.name); } },
                 ];
@@ -2048,7 +2062,7 @@ export function DashboardPage(): JSX.Element {
       case 'renders':
         return {
           title: t('dashboard.nav.renders', 'Render queue'),
-          desc: t('dashboard.header.rendersDesc', 'Track exports in progress, finished downloads, and queued jobs.'),
+          desc: t('dashboard.header.rendersDesc', 'Everything rendered on this computer, from every project. Start a new render, or follow the ones in progress.'),
         };
       case 'billing':
         return {

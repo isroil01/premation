@@ -15,6 +15,12 @@
 // the queue.
 jest.mock('@core/export/exportManager', () => ({ downloadBlob: jest.fn() }));
 
+let openProject: { id: string; name: string; path: string | null } | null = null;
+jest.mock('@core/export/renderProject', () => ({
+  ...jest.requireActual('@core/export/renderProject'),
+  currentProjectRef: () => openProject,
+}));
+
 import { render, screen } from '@testing-library/react';
 import { RenderQueuePanel } from './RenderQueuePanel';
 import { useRenderQueueStore } from '@stores/renderQueueStore';
@@ -22,6 +28,7 @@ import { resetExportQueueForTest, useExportQueueStore } from '@stores/exportQueu
 import type { ExportJobRecord } from '@core/export/exportSupervisorClient';
 
 beforeEach(() => {
+  openProject = null;
   for (const job of [...useRenderQueueStore.getState().jobs]) {
     useRenderQueueStore.getState().removeJob(job.id);
   }
@@ -95,6 +102,34 @@ describe('background (supervisor) jobs', () => {
     expect((renderBtn as HTMLButtonElement).disabled).toBe(false);
     renderBtn.click();
     expect(retry.mock.calls.map((c) => (c as unknown[])[0])).toEqual(['bad-1']);
+  });
+
+  it("lists, counts and acts on only the open project's renders", () => {
+    openProject = { id: 's1', name: 'Mine', path: 'cloud-mine' };
+    const retry = jest.fn(async () => {});
+    const remove = jest.fn(async () => {});
+    const spec = bg().spec;
+    useExportQueueStore.setState({
+      jobs: [
+        bg({ id: 'mine-done', status: 'completed', spec: { ...spec, label: 'Mine → a.mp4', projectKey: 'cloud-mine' } }),
+        bg({ id: 'other-done', status: 'completed', spec: { ...spec, label: 'Other → b.mp4', projectKey: 'cloud-other' } }),
+        bg({ id: 'other-bad', status: 'failed', spec: { ...spec, label: 'Other → c.mp4', projectKey: 'cloud-other' } }),
+        bg({ id: 'old', status: 'completed', spec: { ...spec, label: 'Old → d.mp4' } }),
+      ],
+      retry,
+      remove,
+    });
+    render(<RenderQueuePanel />);
+    expect(screen.getByText('Mine → a.mp4')).toBeTruthy();
+    expect(screen.queryByText('Other → b.mp4')).toBeNull();
+    expect(screen.queryByText('Old → d.mp4')).toBeNull();
+    expect(screen.getByText(/1 item · 0 queued · 1 done/)).toBeTruthy();
+
+    screen.getByRole('button', { name: /^Clear done$/ }).click();
+    expect(remove.mock.calls.map((c) => (c as unknown[])[0])).toEqual(['mine-done']);
+    // Nothing of this project's left to run: another project's failure is not this Render's.
+    expect((screen.getByRole('button', { name: /^Render$/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect(retry).not.toHaveBeenCalled();
   });
 
   it('shows in-window (legacy) jobs alongside them', () => {

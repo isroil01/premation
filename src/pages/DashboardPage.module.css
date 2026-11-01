@@ -905,6 +905,14 @@
  * file browser shows it. The bordered, shadowed box this used to be made
  * every page a panel inside a panel.
  */
+/** The Renders page: this computer's renders, then any cloud history. */
+.rendersPage {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  min-width: 0;
+}
+
 .tableCard {
   min-width: 0;
 }

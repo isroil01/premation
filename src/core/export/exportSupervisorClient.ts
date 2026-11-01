@@ -108,6 +108,8 @@ export interface SupervisorSpecInput {
   /** Extra output modules on the same render, each with its absolute output path. */
   extraOutputs?: ReadonlyArray<ExtraOutput & { outPath: string }>;
   postRender?: PostRenderAction;
+  /** Which project this job belongs to (`renderProject.ts`). */
+  projectKey?: string;
 }
 
 /**
@@ -159,6 +161,7 @@ export function buildSupervisorSpec(input: SupervisorSpecInput): ExportJobSpec {
     }));
   }
   if (input.postRender) spec.postRender = input.postRender;
+  if (input.projectKey) spec.projectKey = input.projectKey;
   return spec;
 }
 

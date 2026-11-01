@@ -124,6 +124,12 @@ export interface ExportJobSpec {
   extraOutputs?: Array<{ format: 'mp4' | 'mov' | 'webm' | 'gif'; outPath: string; quality?: 'high' | 'medium' | 'draft'; proresProfile?: 'proxy' | 'lt' | '422' | 'hq' | '4444' | 'dnxhr-lb' | 'dnxhr-sq' | 'dnxhr-hq' | 'dnxhr-hqx' | 'dnxhr-444'; videoEncoder?: string }>;
   /** What the editor does with the finished file(s): import them, or import and replace the comp's usage. */
   postRender?: 'import' | 'importReplace';
+  /**
+   * Which project this job belongs to (`core/export/renderProject.ts`). Main's
+   * queue is one machine-wide list: the editor shows a project its own jobs and
+   * the dashboard shows all of them. Absent on jobs queued before it existed.
+   */
+  projectKey?: string;
   /** What the UI calls this job — "Promo → promo.mp4". */
   label: string;
   /** Frames in the range, for progress. */
@@ -328,6 +334,8 @@ export function validateSpec(raw: unknown): ExportJobSpec {
     if (post !== 'import' && post !== 'importReplace') throw new Error('Export job: "postRender" must be import or importReplace.');
     out.postRender = post;
   }
+  const projectKey = optStr('projectKey');
+  if (projectKey !== undefined) out.projectKey = projectKey;
   const m = s['hdrMastering'];
   if (m && typeof m === 'object') {
     const mm: NonNullable<ExportJobSpec['hdrMastering']> = {};

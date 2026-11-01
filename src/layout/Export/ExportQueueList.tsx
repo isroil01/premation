@@ -10,10 +10,12 @@
  * mid-render.
  */
 
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { cn } from '@utils/cn';
 import { Button } from '@components/Button';
 import { Icon } from '@components/Icon';
+import { useCurrentProjectRef } from '@hooks/useCurrentProjectRef';
+import { belongsToProject } from '@core/export/renderProject';
 import { failureAction, useExportQueueStore } from '@stores/exportQueueStore';
 import { describeProgress, isFinishedStatus, type ExportJobRecord } from '@core/export/exportSupervisorClient';
 import { t } from '@core/i18n';
@@ -149,7 +151,10 @@ export interface ExportQueueListProps {
 }
 
 export function ExportQueueList({ priorityControls = false }: ExportQueueListProps = {}): JSX.Element | null {
-  const jobs = useExportQueueStore((s) => s.jobs);
+  const allJobs = useExportQueueStore((s) => s.jobs);
+  const project = useCurrentProjectRef();
+  // This project's renders; the dashboard's Renders page lists every project's.
+  const jobs = useMemo(() => allJobs.filter((j) => belongsToProject(j.spec.projectKey, project)), [allJobs, project]);
   const connect = useExportQueueStore((s) => s.connect);
   useEffect(() => { void connect(); }, [connect]);
   if (jobs.length === 0) return null;

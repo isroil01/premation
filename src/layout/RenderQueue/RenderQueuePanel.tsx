@@ -16,7 +16,7 @@
  * (Discard) with its own confirmation, because it is a separate decision.
  */
 
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { Icon } from '@components/Icon';
 import { Button } from '@components/Button';
 import {
@@ -26,6 +26,8 @@ import {
   type RenderJob,
 } from '@stores/renderQueueStore';
 import { canEncodeLocally } from '@core/export/renderSpec';
+import { belongsToProject } from '@core/export/renderProject';
+import { useCurrentProjectRef } from '@hooks/useCurrentProjectRef';
 import { customConfirm } from '@components/Modal/Dialogs';
 import { failureAction, useExportQueueStore } from '@stores/exportQueueStore';
 import { describeProgress, isFinishedStatus, isLiveStatus, type ExportJobRecord } from '@core/export/exportSupervisorClient';
@@ -80,7 +82,7 @@ export function RenderQueuePanel(): JSX.Element {
   // Scoped selectors: subscribing to the WHOLE store (no selector) re-rendered
   // the entire panel on every per-frame progress tick. Actions are stable refs,
   // so selecting them never triggers a render; only `jobs`/`isRunning` do.
-  const jobs = useRenderQueueStore((s) => s.jobs);
+  const allPending = useRenderQueueStore((s) => s.jobs);
   const isRunning = useRenderQueueStore((s) => s.isRunning);
   const removeJob = useRenderQueueStore((s) => s.removeJob);
   const duplicateJob = useRenderQueueStore((s) => s.duplicateJob);
@@ -98,7 +100,12 @@ export function RenderQueuePanel(): JSX.Element {
   // Jobs main is rendering in their own windows (desktop). Listed beside the
   // in-window jobs, not merged into them: they have different verbs (no
   // pause/resume — an interrupted one restarts) and a different owner.
-  const backgroundJobs = useExportQueueStore((s) => s.jobs);
+  const allBackground = useExportQueueStore((s) => s.jobs);
+  // Both lists are machine-wide; this panel is the open project's. The dashboard's
+  // Renders page is where every project's renders are listed together.
+  const project = useCurrentProjectRef();
+  const jobs = useMemo(() => allPending.filter((j) => belongsToProject(j.projectKey, project)), [allPending, project]);
+  const backgroundJobs = useMemo(() => allBackground.filter((j) => belongsToProject(j.spec.projectKey, project)), [allBackground, project]);
 
   /*
     Read back what the last session left, the first time anyone opens the queue.

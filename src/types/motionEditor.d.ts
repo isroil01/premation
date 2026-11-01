@@ -230,6 +230,8 @@ export interface ExportJobSpec {
   extraOutputs?: Array<{ format: 'mp4' | 'mov' | 'webm' | 'gif'; outPath: string; quality?: 'high' | 'medium' | 'draft'; proresProfile?: 'proxy' | 'lt' | '422' | 'hq' | '4444' | 'dnxhr-lb' | 'dnxhr-sq' | 'dnxhr-hq' | 'dnxhr-hqx' | 'dnxhr-444'; videoEncoder?: string }>;
   /** What the editor does with the finished file(s): import them, or import and replace the comp's usage. */
   postRender?: 'import' | 'importReplace';
+  /** Which project the job belongs to (`core/export/renderProject.ts`); absent on older jobs. */
+  projectKey?: string;
   label: string;
   totalFrames: number;
 }

@@ -26,10 +26,15 @@ import { useWorkspaceStore } from '@stores/index';
 import { clearRecovery, readRecovery } from '@core/persistence/recovery';
 import { takePendingFootage } from '@core/project/pendingFootage';
 import { takePendingTemplate } from '@core/project/pendingTemplate';
+import { takePendingRender } from '@core/project/pendingRender';
 import { insertPremiumItem } from '@layout/EditorLayout/premiumInsertEdits';
 import { clearLastFootagePreview } from '@layout/Assets/FootagePreviewDialog';
 import { insertMediaEdit } from '@layout/Workspace/footageEdits';
 import { setActiveCompFrameRateEdit } from '@layout/Composition/compositionEdits';
+import { openExportDialog } from '@layout/Export/ExportDialog';
+import { documentMirror } from '@stores/documentMirror';
+import { activeCompIdNow } from '@hooks/useMirror';
+import { settingsDurationSeconds, settingsFps } from '@core/mirror/compFacts';
 
 /**
  * Opens the:projectId project into the already-booted editor, once, through
@@ -114,6 +119,13 @@ function ProjectLoader({ projectId }: { projectId: string }): null {
         if (template) {
           const r = await insertPremiumItem(template);
           useUIStore.getState().notify({ level: r.ok ? 'success' : 'warning', message: r.message, durationMs: r.ok ? 2200 : 5000 });
+        }
+        // Render from the dashboard's Renders page: the Export dialog, on this project.
+        if (takePendingRender(projectId)) {
+          // The mirror refetches after an open; the dialog describes the new document.
+          await documentMirror().whenIdle();
+          const settings = documentMirror().comp(activeCompIdNow() ?? '')?.settings;
+          openExportDialog(settingsDurationSeconds(settings), settingsFps(settings));
         }
       } catch (err) {
         if (cancelled) return;

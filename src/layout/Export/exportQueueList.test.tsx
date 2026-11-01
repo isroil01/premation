@@ -3,6 +3,12 @@
  * priority controls the Render Queue panel shows on waiting jobs.
  */
 
+let openProject: { id: string; name: string; path: string | null } | null = null;
+jest.mock('@core/export/renderProject', () => ({
+  ...jest.requireActual('@core/export/renderProject'),
+  currentProjectRef: () => openProject,
+}));
+
 import { fireEvent, render, screen } from '@testing-library/react';
 import { ExportQueueList, orderForDisplay, SUPERVISOR_RESTART_NOTE } from './ExportQueueList';
 import { resetExportQueueForTest, useExportQueueStore } from '@stores/exportQueueStore';
@@ -21,7 +27,10 @@ function record(over: Partial<ExportJobRecord> = {}): ExportJobRecord {
   };
 }
 
-beforeEach(() => resetExportQueueForTest());
+beforeEach(() => {
+  openProject = null;
+  resetExportQueueForTest();
+});
 
 describe('orderForDisplay', () => {
   it('running, then waiting in run order (priority, then first-come), then finished newest first', () => {
@@ -72,6 +81,29 @@ describe('ExportQueueList', () => {
     expect(setPriority).toHaveBeenNthCalledWith(1, 'w', 2);
     expect(setPriority).toHaveBeenNthCalledWith(2, 'w', 0);
     expect(screen.getByText(/priority \+1/)).toBeTruthy();
+  });
+
+  it("shows only the open project's renders: the dashboard is where all of them are", () => {
+    openProject = { id: 's1', name: 'Mine', path: 'cloud-mine' };
+    const spec = record().spec;
+    useExportQueueStore.setState({
+      jobs: [
+        record({ id: 'mine', spec: { ...spec, label: 'Mine → a.mp4', projectKey: 'cloud-mine' } }),
+        record({ id: 'other', spec: { ...spec, label: 'Other → b.mp4', projectKey: 'cloud-other' } }),
+        record({ id: 'old', spec: { ...spec, label: 'Old → c.mp4' } }),
+      ],
+    });
+    render(<ExportQueueList />);
+    expect(screen.getByText('Mine → a.mp4')).toBeTruthy();
+    expect(screen.queryByText('Other → b.mp4')).toBeNull();
+    expect(screen.queryByText('Old → c.mp4')).toBeNull();
+  });
+
+  it("renders nothing when every queued job is another project's", () => {
+    openProject = { id: 's1', name: 'Mine', path: 'cloud-mine' };
+    useExportQueueStore.setState({ jobs: [record({ spec: { ...record().spec, projectKey: 'cloud-other' } })] });
+    const { container } = render(<ExportQueueList />);
+    expect(container.textContent).toBe('');
   });
 
   it('finished jobs offer Retry (not when completed) and Remove', () => {

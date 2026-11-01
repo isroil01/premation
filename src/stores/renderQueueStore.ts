@@ -23,6 +23,7 @@ import {
   toPersistedJob,
   type PersistedRenderJob,
 } from '@core/export/renderQueuePersist';
+import { belongsToProject, currentProjectKey, currentProjectRef } from '@core/export/renderProject';
 import { readPersisted, writePersisted } from '@core/settings/persistedValue';
 import { documentMirror, type DocumentMirror } from './documentMirror';
 import { useUIStore } from './uiStore';
@@ -246,7 +247,8 @@ export const useRenderQueueStore = create<RenderQueueState>((set, get) => {
 
     addJob(job) {
       const id = `rq_${Date.now()}_${jobSeq++}`;
-      set((s) => ({ jobs: [...s.jobs, { ...job, id, status: 'queued', progress: 0 }] }));
+      const projectKey = job.projectKey ?? currentProjectKey();
+      set((s) => ({ jobs: [...s.jobs, { ...job, ...(projectKey ? { projectKey } : {}), id, status: 'queued', progress: 0 }] }));
       return id;
     },
 
@@ -273,8 +275,11 @@ export const useRenderQueueStore = create<RenderQueueState>((set, get) => {
     },
 
     startAll() {
-      set((s) => ({ jobs: s.jobs.map((j) => (j.status === 'failed' ? { ...j, status: 'queued', error: undefined } : j)) }));
-      void handOver(get().jobs.map((j) => j.id));
+      // Only the open project's jobs: a job is snapshotted from the open document.
+      const ref = currentProjectRef();
+      const mine = (j: RenderJob): boolean => belongsToProject(j.projectKey, ref);
+      set((s) => ({ jobs: s.jobs.map((j) => (j.status === 'failed' && mine(j) ? { ...j, status: 'queued', error: undefined } : j)) }));
+      void handOver(get().jobs.filter(mine).map((j) => j.id));
     },
 
     pauseAll() {

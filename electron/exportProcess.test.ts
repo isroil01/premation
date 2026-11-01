@@ -141,6 +141,12 @@ describe('validateSpec', () => {
     expect(() => validateSpec({ ...spec(), format: 'png-sequence', extraOutputs: [extra()] })).toThrow(/main output/);
     expect(() => validateSpec({ ...spec(), postRender: 'delete' })).toThrow(/postRender/);
   });
+
+  it('keeps which project a job belongs to', () => {
+    expect(validateSpec({ ...spec(), projectKey: 'cloud-1' }).projectKey).toBe('cloud-1');
+    expect(validateSpec(spec()).projectKey).toBeUndefined();
+    expect(() => validateSpec({ ...spec(), projectKey: 7 })).toThrow(/projectKey/);
+  });
 });
 
 describe('the state machine', () => {

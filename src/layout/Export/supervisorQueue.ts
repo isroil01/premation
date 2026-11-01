@@ -24,6 +24,7 @@ import { uncarriableMedia } from '@core/export/snapshotPortability';
 import { engine } from '@core/engine/engineInstance';
 import { engineCanReadFootage, materializeUnreadableFootage } from '@core/engine/sessionFootage';
 import { getProjectManager } from '@core/services/coreServices';
+import { currentProjectKey } from '@core/export/renderProject';
 import { documentMirror } from '@stores/documentMirror';
 import { setExportCompletedHandler, useExportQueueStore } from '@stores/exportQueueStore';
 import { runPostRenderAction } from './postRender';
@@ -176,7 +177,8 @@ export async function queueEngineRender(
   if (!(await ensureFfmpegFor(input.format))) throw new FfmpegNotReadyError();
   const { id, projectPath } = await exportSupervisorClient.reserve();
   await getProjectManager().snapshotTo(projectPath);
-  const spec = buildSupervisorSpec({ ...input, projectPath });
+  const projectKey = currentProjectKey();
+  const spec = buildSupervisorSpec({ ...input, projectPath, ...(projectKey ? { projectKey } : {}) });
   await useExportQueueStore.getState().connect();
   await exportSupervisorClient.enqueue(id, spec, priority);
   return id;

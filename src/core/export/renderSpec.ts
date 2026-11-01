@@ -91,6 +91,12 @@ export type OutputFormat = VideoFormat | 'png-sequence' | 'jpg-sequence' | 'exr-
 export interface RenderJobSpec {
   compositionName: string;
   /**
+   * Which project this job belongs to (`core/export/renderProject.ts`). Main's
+   * queue is one machine-wide list: the editor shows a project its own jobs and
+   * the dashboard shows all of them. Absent on jobs queued before it existed.
+   */
+  projectKey?: string;
+  /**
    * WHICH composition to render.
    *
    * Only `compositionName` existed — a label — so every job rendered whatever

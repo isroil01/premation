@@ -16,6 +16,7 @@
 import { engine } from '@core/engine/engineInstance';
 import { reportEngineError } from '@core/engine/uiEdits';
 import type { ExportJobRecord } from '@core/export/exportSupervisorClient';
+import { belongsToProject, currentProjectRef } from '@core/export/renderProject';
 import { documentMirror } from '@stores/documentMirror';
 import { useUIStore } from '@stores/uiStore';
 import { t } from '@core/i18n';
@@ -38,6 +39,11 @@ export async function runPostRenderAction(job: ExportJobRecord): Promise<void> {
   if (!action || ran.has(job.id)) return;
   ran.add(job.id);
   const ui = useUIStore.getState();
+  // The action edits the open document, so it only applies to the project the job came from.
+  if (job.spec.projectKey && !belongsToProject(job.spec.projectKey, currentProjectRef())) {
+    ui.notify({ level: 'info', message: t('export.postRender.otherProject', 'Render finished, but its project is not open, so the file was not imported: {path}', { path: job.spec.outPath }), durationMs: 6000 });
+    return;
+  }
   const files = deliveredFiles(job).filter((f) => !/\.zip$/i.test(f));
   if (files.length === 0) {
     ui.notify({ level: 'info', message: t('export.postRender.nothing', 'Post-render: an image-sequence archive is not imported — unzip it and import the frames.'), durationMs: 6000 });
