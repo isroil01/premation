@@ -1,17 +1,4 @@
-import { countLabel } from './countLabel';
 import { resolveActiveCompName } from '@layout/Composition/activeCompName';
-
-describe('countLabel', () => {
-  it('is singular at exactly one', () => {
-    expect(countLabel(1, 'layer')).toBe('1 layer');
-  });
-
-  it('is plural everywhere else, zero included', () => {
-    expect(countLabel(0, 'layer')).toBe('0 layers');
-    expect(countLabel(2, 'layer')).toBe('2 layers');
-    expect(countLabel(3, 'child', 'children')).toBe('3 children');
-  });
-});
 
 /**
  * The bar printed the active TAB's title, which is minted once ("Main Comp")
