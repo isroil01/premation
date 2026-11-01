@@ -247,8 +247,9 @@ const wgpu::TextureView& Device::depth_view(const RenderTarget& t) {
     dd.size = {t.width, t.height, 1};
     dd.format = kDepthFormat;
     dd.sampleCount = t.samples;
-    dd.usage = t.samples > 1 ? wgpu::TextureUsage::RenderAttachment
-                             : wgpu::TextureUsage::RenderAttachment | wgpu::TextureUsage::TextureBinding;
+    // Bindable at any sample count: the DOF gather reads the run's depth, and
+    // its target is multisampled like the scene's (threed.cpp).
+    dd.usage = wgpu::TextureUsage::RenderAttachment | wgpu::TextureUsage::TextureBinding;
     t.depth = device_.CreateTexture(&dd);
     t.depthView = t.depth.CreateView();
   }
@@ -544,6 +545,11 @@ const Device::Pipeline& Device::pipeline(Mat material, Blend blend, wgpu::Textur
               le.texture.sampleType = wgpu::TextureSampleType::UnfilterableFloat;
               le.texture.viewDimension = wgpu::TextureViewDimension::e2D;
               break;
+            case BindingType::depth_multisampled:
+              le.texture.sampleType = wgpu::TextureSampleType::Depth;
+              le.texture.viewDimension = wgpu::TextureViewDimension::e2D;
+              le.texture.multisampled = true;
+              break;
             case BindingType::sampler: le.sampler.type = wgpu::SamplerBindingType::Filtering; break;
           }
           entries.push_back(le);
@@ -585,6 +591,7 @@ const Device::Pipeline& Device::pipeline(Mat material, Blend blend, wgpu::Textur
         wgpu::ColorTargetState target{};
         target.format = format;
         target.blend = blended ? &bs : nullptr;
+        if (blend == Blend::depthOnly) target.writeMask = wgpu::ColorWriteMask::None;
         wgpu::FragmentState fragment{};
         fragment.module = module;
         fragment.entryPoint = "fs";

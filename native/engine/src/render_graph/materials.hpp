@@ -17,7 +17,9 @@ namespace premation::rg {
 
 /// `unfilterable`: a float texture read with textureLoad only (engine-owned
 /// shaders: rgba32float LUT lattices, exact mip taps) — needs no float32-filterable.
-enum class BindingType : std::uint8_t { uniform, storage, texture, sampler, depth, unfilterable };
+/// `depth_multisampled`: a multisampled depth buffer read with textureLoad
+/// (texture_depth_multisampled_2d) — the DOF gather of an MSAA 3D run.
+enum class BindingType : std::uint8_t { uniform, storage, texture, sampler, depth, unfilterable, depth_multisampled };
 inline constexpr std::uint8_t kStageVertex = 1;
 inline constexpr std::uint8_t kStageFragment = 2;
 inline constexpr std::uint8_t kStageCompute = 4;

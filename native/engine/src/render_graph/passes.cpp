@@ -279,7 +279,10 @@ std::unique_ptr<RenderGraph> build_default_graph() {
   g->declare_target("plugin-quarter2", scaled(4));
   g->declare_target(std::string(kGeneratorTarget), full("rgba16float"));
   g->declare_target(std::string(kPluginOrigin), full("rgba16float"));
-  g->declare_target(std::string(kDofTarget), full("rgba16float", true, 1));
+  // Multisampled like the scene colour: a 3D run under camera DOF draws here,
+  // and single-sampled its meshes lost every antialiased edge (the DOF gather
+  // reads the multisampled depth, threed.cpp dof_gather_material).
+  g->declare_target(std::string(kDofTarget), full("rgba16float", true, kMsaaSamples));
   for (const std::string_view n : {kFxHist, kFxLut}) {
     g->declare_target(std::string(n), [](std::uint32_t, std::uint32_t) { return TargetDesc{256, 1, "rgba16float", false, 1}; });
   }

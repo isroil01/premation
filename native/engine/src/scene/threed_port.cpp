@@ -936,6 +936,30 @@ std::optional<std::string> primitive_key_of(const doc::Node& n) {
   tube = clampNum("tube", 0.01, 100000, tube);
   radial = motion::js::round(clampNum("radialSegments", 3, 256, radial));
   heightSeg = motion::js::round(clampNum("heightSegments", 2, 256, heightSeg));
+  // The authored counts are a floor: a curve of radius r (px) gets enough
+  // segments that each chord strays under 0.1 px from it (π·√(r / 0.2)), so a
+  // big ring is round and not a polygon of 46–73 px kinks (a 560 px torus at
+  // its 48 default; "NextGen Cinematic Short", 2026-11-01). Not under a height
+  // map: there the vertex count is also the displacement's detail, which the
+  // author chose (mesh_displacement.cpp).
+  const doc::Component* tc = n.comp("Transform");
+  const bool heightMapped = tc != nullptr && ((tc->props.at("heightMapAssetId").is_string() && !tc->props.at("heightMapAssetId").str().empty()) ||
+                                              (tc->props.at("heightMapSrc").is_string() && !tc->props.at("heightMapSrc").str().empty()));
+  if (!heightMapped) {
+    const auto round_for = [](double r, double authored) {
+      const double need = std::ceil(std::numbers::pi * std::sqrt(std::max(0.0, r) / 0.2));
+      return std::min(256.0, std::max(authored, need));
+    };
+    if (type == "torus") {
+      radial = round_for(radius + tube, radial);  // around the ring (the outer edge is the longest)
+      heightSeg = round_for(tube, heightSeg);     // around the tube
+    } else if (type == "sphere") {
+      radial = round_for(radius, radial);
+      heightSeg = std::min(256.0, std::max(heightSeg, std::ceil(radial / 2)));
+    } else if (type == "cylinder" || type == "cone" || type == "capsule") {
+      radial = round_for(std::max(radius, radiusTop), radial);
+    }
+  }
   const bool capped = !(p.at("capped").is_bool() && !p.at("capped").b());
   const auto nn = [](double v) { return js::number_to_string(motion::js::round(v * 1000) / 1000); };
   const auto ii = [](double v) { return js::number_to_string(v); };

@@ -949,6 +949,42 @@ void add_ground_grid(PassContext& ctx, const api::RenderCamera3D& cam, Commands&
   cmds.add(Mat::GROUND_GRID_MATERIAL, Blend::normal, pk.span());
 }
 
+
+/// The DOF gather for a run drawn at `samples`: the builtin material reads a
+/// single-sample depth buffer; a multisampled run's (passes.cpp kDofTarget) is
+/// read through the same shader with its depth binding multisampled, one depth
+/// per texel (texelAt snaps colour and depth to one texel).
+Mat dof_gather_material(PassContext& ctx, std::uint32_t samples) {
+  if (samples <= 1) return Mat::DOF_GATHER_MATERIAL;
+  static const std::string wgsl = [] {
+    std::string s = builtin_wgsl("dof-gather");
+    const auto swap = [&s](std::string_view from, std::string_view to) {
+      const std::size_t at = s.find(from);
+      if (at != std::string::npos) s.replace(at, from.size(), to);
+    };
+    swap("var depthTex : texture_2d<f32>;", "var depthTex : texture_depth_multisampled_2d;");
+    swap("textureDimensions(depthTex, 0)", "textureDimensions(depthTex)");
+    swap("textureLoad(depthTex, c, 0).x", "nearestDepthMs(c)");
+    // A texel's nearest sample (reversed depth: the largest): an antialiased
+    // silhouette texel, its colour a blend of the object and what lies behind,
+    // counts as the object and keeps its blend. Sample 0 alone handed half of
+    // every edge to the background, which refilled it — the edge was stepped.
+    s += R"wgsl(
+fn nearestDepthMs(c : vec2<i32>) -> f32 {
+  var d = 0.0;
+  for (var i = 0; i < i32(textureNumSamples(depthTex)); i = i + 1) { d = max(d, textureLoad(depthTex, c, i)); }
+  return d;
+}
+)wgsl";
+    return s;
+  }();
+  static constexpr std::array<LayoutEntry, 4> kLayout{{{0, BindingType::uniform, kStageVertex | kStageFragment},
+                                                       {1, BindingType::texture, kStageFragment},
+                                                       {2, BindingType::sampler, kStageFragment},
+                                                       {3, BindingType::depth_multisampled, kStageFragment}}};
+  return ctx.dev.dynamic_material("dof-gather-ms", wgsl, kLayout);
+}
+
 }  // namespace
 
 void render_ground_grid(PassContext& ctx, std::string_view out) {
@@ -1685,6 +1721,7 @@ void render_3d_group(PassContext& ctx, std::span<const api::Renderable* const> g
         fx = resolve_surface(r, std::max(1.0, w * (sx != 0 ? sx : 1)), std::max(1.0, h * (sy != 0 ? sy : 1)), false,
                              texturedContent, !texturedContent, fill, uvSpace ? SolidShape{} : solid_shape(r.sdf), mesh.key);
       }
+      const std::size_t firstMeshItem = out.size();
       for (const auto& range : mesh.ranges) {
         if (range.count == 0) continue;
         const Color c = color_of(range.color);
@@ -1756,6 +1793,13 @@ void render_3d_group(PassContext& ctx, std::span<const api::Renderable* const> g
           geo(it);
         }
       }
+      // AE: a layer's Opacity fades the object as rendered. Drawn surface by
+      // surface, a 45 % torus showed its own far wall and its overlapping
+      // facets through itself — a dark blotch at every segment ("NextGen
+      // Cinematic Short", 2026-11-01). Below full opacity the mesh lays its
+      // depth first and then lands only its nearest surface. Not for motion
+      // blur's samples (depth-tested, never written, by design).
+      if (opacity < 0.999 && o.depthWrite == DrawItem::kDepthWriteMaterial && !inReflectionPass) out.prepass_depth(firstMeshItem);
       return;
     }
 
@@ -2027,7 +2071,7 @@ void render_3d_group(PassContext& ctx, std::span<const api::Renderable* const> g
     const double rings = ctx.file.scene.renderer ? std::clamp<double>(ctx.file.scene.renderer->dof_rings, 3, 7) : 0;
     p.vec4(dof.highlight_saturation.value_or(0), dof.diffraction_fringe.value_or(0), rings, 0);
     Commands gc;
-    DrawItem& it = gc.add(Mat::DOF_GATHER_MATERIAL, Blend::normal, p.span());
+    DrawItem& it = gc.add(dof_gather_material(ctx, dt->samples), Blend::normal, p.span());
     it.texture = dt->tex();
     it.sampler = clamp;
     it.mask = TexRef{ctx.dev.depth_view(*dt), dt->id | (std::uint64_t{1} << 62U), dt->width, dt->height, false, 0, 0};

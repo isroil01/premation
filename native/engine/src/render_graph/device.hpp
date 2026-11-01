@@ -35,7 +35,8 @@ namespace premation::rg {
 /// `atop` are Canvas2D's premultiplied `lighter` (colour AND alpha added) and
 /// `source-atop` (Co = Cs·Ab + Cb·(1 − As), Ao = Ab); `dstIn` is
 /// `destination-in` (Co = Cb·As, Ao = Ab·As) — E4's drawn-effect overlays.
-enum class Blend : std::uint8_t { normal, multiply, screen, overlay, add, subtract, darken, lighten, none, lighter, atop, dstIn };
+/// `depthOnly` writes no colour (Commands::prepass_depth's first pass).
+enum class Blend : std::uint8_t { normal, multiply, screen, overlay, add, subtract, darken, lighten, none, lighter, atop, dstIn, depthOnly };
 
 /// A sampled texture: view + a stable identity for bind-group keys.
 struct TexRef {
@@ -170,6 +171,21 @@ class Commands {
   /// Set the depth-write override of every item from `first` on.
   void set_depth_write(std::size_t first, std::uint8_t depthWrite) noexcept {
     for (std::size_t i = first; i < items_.size(); ++i) items_[i].depthWrite = depthWrite;
+  }
+  /// The items from `first` on, drawn twice: first depth only (no colour,
+  /// depth written), then as they were, tested against that depth and not
+  /// writing it — so each pixel takes only its nearest surface, once (a
+  /// translucent mesh's layer Opacity, threed.cpp).
+  void prepass_depth(std::size_t first) {
+    if (first >= items_.size()) return;
+    const auto at = items_.begin() + static_cast<std::ptrdiff_t>(first);
+    std::vector<DrawItem> pre(at, items_.end());
+    for (DrawItem& it : pre) {
+      it.blend = Blend::depthOnly;
+      it.depthWrite = 1;
+    }
+    for (std::size_t i = first; i < items_.size(); ++i) items_[i].depthWrite = 0;
+    items_.insert(items_.begin() + static_cast<std::ptrdiff_t>(first), pre.begin(), pre.end());
   }
   [[nodiscard]] std::size_t size() const noexcept { return items_.size(); }
   [[nodiscard]] bool empty() const noexcept { return items_.empty(); }
