@@ -804,7 +804,7 @@ export const addEffectDef: AiToolDef = {
           'exposure', 'vibrance', 'colorama', 'lumetri', 'selective-color', 'shadow-highlight',
           'color-balance', 'gamma-pedestal-gain', 'photo-filter', 'black-and-white', 'tritone',
           // Generate
-          'gradient-ramp', 'fractal-noise', 'fill', 'four-color-gradient', 'stroke', 'beam',
+          'gradient-ramp', 'fractal-noise', 'fill', 'image-fill', 'four-color-gradient', 'stroke', 'beam',
           'checkerboard', 'grid', 'cell-pattern', 'vegas', 'lens-flare', 'numbers', 'timecode',
           'audio-spectrum',
           // Distort

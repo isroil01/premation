@@ -40,6 +40,7 @@ export type EffectType =
   | 'cylinder'
   | 'arithmetic'
   | 'fill'
+  | 'image-fill'
   | 'four-color-gradient'
   | 'stroke'
   | 'beam'
@@ -565,7 +566,13 @@ export interface EffectParamDef {
    * mask (maskAnim) re-resolves per frame, which is what makes an effect
    * follow a tracked object for free.
    */
-  type: 'number' | 'color' | 'checkbox' | 'curve' | 'layer' | 'resolved' | 'enum' | 'maskPath' | 'data';
+  /**
+   * `'file'` holds a project item (its id, '' = none chosen): a picker over the
+   * project's items of `fileTypes`. Static, as a plugin's FILE param is.
+   */
+  type: 'number' | 'color' | 'checkbox' | 'curve' | 'layer' | 'resolved' | 'enum' | 'maskPath' | 'data' | 'file';
+  /** A `'file'` param: the extensions its picker offers, '|'-separated. */
+  fileTypes?: string;
   /** The choices for an `'enum'` param, in menu order. Ignored for other types. */
   options?: ReadonlyArray<{ value: number; label: string }>;
   /**
@@ -2437,6 +2444,20 @@ export const EFFECT_DEFS: EffectDef[] = [
     label: 'Fill',
     params: [
       { key: 'color', label: 'Color', type: 'color', default: '#ff2d55' },
+      { key: 'opacity', label: 'Opacity', type: 'number', unit: '%', min: 0, max: 100, default: 100 },
+    ],
+    css: () => '',
+  },
+
+  // Image Fill: a project image over the layer's content, respecting its alpha.
+  // Applied To the Background it replaces what is behind a subject (subject styles).
+  {
+    type: 'image-fill',
+    label: 'Image Fill',
+    gpuOnly: true,
+    params: [
+      { key: 'image', label: 'Image', type: 'file', fileTypes: 'png|jpg|jpeg|webp|bmp|tif|tiff|tga|exr|hdr|gif|avif', default: '' },
+      { key: 'fit', label: 'Fit', type: 'enum', options: [{ value: 0, label: 'Fill Frame' }, { value: 1, label: 'Fit Inside' }, { value: 2, label: 'Stretch' }], default: 0 },
       { key: 'opacity', label: 'Opacity', type: 'number', unit: '%', min: 0, max: 100, default: 100 },
     ],
     css: () => '',

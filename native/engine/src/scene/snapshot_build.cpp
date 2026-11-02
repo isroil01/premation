@@ -41,6 +41,7 @@
 #include "readers.hpp"
 #include "rigid_body.hpp"
 #include "readmodel.hpp"
+#include "handlers_native.hpp"
 #include "scene.hpp"
 #include "scene_math.hpp"
 #include "subjects.hpp"
@@ -821,6 +822,21 @@ std::vector<Json> Walk::effects_of(const doc::Node& n, const Values& a, std::opt
         if (std::string_view(why) == kPluginLockedReason) unported(*note, n, std::string(why) + " (" + type + ")");
         else warning(*note, n, std::string(why) + " (" + type + ")");
       }
+    }
+  }
+  // Image Fill: the project item it names, as a file (a plugin FILE param's rule: its live source,
+  // then a collected copy, then the recorded path). A missing one draws nothing, and is said.
+  for (Json& e : resolved) {
+    if (!e.at("type").is_string() || e.at("type").str() != "image-fill" || !e.at("params").is_object()) continue;
+    const Json& item = e.at("params").at("image");
+    if (!item.is_string() || item.str().empty()) continue;
+    const doc::NativeActionRequest::File file = doc::native_file_of(d_, "image", item.str());
+    if (!file.missing) {
+      Json p = e.at("params");
+      p.set(kImageFillFile, Json::string(file.path));
+      e.set("params", std::move(p));
+    } else if (note != nullptr) {
+      warning(*note, n, "Image Fill: the image '" + (file.name.empty() ? file.item : file.name) + "' is missing — the layer draws without it");
     }
   }
   // Camera program D2: a Lens Flare linked to a light sits where the light

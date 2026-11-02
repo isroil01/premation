@@ -104,10 +104,10 @@ std::optional<FxReach> reach_of(const Fx& fx, std::string_view t, const PxBox& i
   }
   // Per-texel entries whose result is zero wherever their input is: the fill
   // fade and silhouette copy, textured-srgb-grade / lut-textured-linear /
-  // fill / gradient-ramp / fractal-noise (all × the input's alpha), noise.wgsl
-  // (returns a transparent texel unchanged).
+  // fill / gradient-ramp / fractal-noise (all × the input's alpha), image-fill (drawn
+  // source-atop), noise.wgsl (returns a transparent texel unchanged).
   if (t == "fill-opacity" || t == "color-matrix" || t == "channel-lut" || t == "fill" || t == "noise" || t == "gradient-ramp" ||
-      t == "fractal-noise") {
+      t == "fractal-noise" || t == "image-fill") {
     return same(in);
   }
   // sharpen.wgsl: the four neighbours one texel out (its alpha stays, its colour

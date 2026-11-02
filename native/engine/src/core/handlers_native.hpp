@@ -4,6 +4,7 @@
 
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "engine_ctx.hpp"
 #include "layer_geometry.hpp"
@@ -65,7 +66,10 @@ void native_use_layer_frame(NativeActionRequest& req, const std::optional<Native
 /// missing. An empty `item` is "none chosen" (not missing).
 [[nodiscard]] NativeActionRequest::File native_file_of(const Document& d, std::string_view key, std::string_view item);
 
-/// Is `item` the value of a FILE param of a native effect on `node`? (removeUnusedItems, collect).
+/// The FILE params of builtin effect `type` (Image Fill's picture): keys that hold a project item.
+[[nodiscard]] std::vector<std::string> builtin_file_params(std::string_view type);
+
+/// Is `item` the value of a FILE param of an effect on `node`? (removeUnusedItems, collect).
 [[nodiscard]] bool native_effects_use_item(const Node& node, std::string_view item);
 
 /// SDK 1.2 (plugin layer time): a layer's own clock — the mapping its keyframes are

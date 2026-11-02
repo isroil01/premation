@@ -16,15 +16,22 @@ export interface SubjectStyleInfo {
   kind: string;
 }
 
+export interface SubjectStyleOptions {
+  /** The project image (item id). */
+  image?: string;
+  fit?: 'fill' | 'fit' | 'stretch';
+}
+
 export interface SubjectPort {
   /** The Subjects panel's style presets. */
   styles(): SubjectStyleInfo[];
   /**
    * The commands that add preset `styleId` for one subject of `layer`
    * (`subject` null: every subject), to send inside the caller's own edit.
-   * Empty for an unknown preset.
+   * Empty for an unknown preset. `options` carries what a preset that shows a
+   * picture needs (the project image, its fit).
    */
-  styleCommands(layer: string, subject: string | null, styleId: string): Command[];
+  styleCommands(layer: string, subject: string | null, styleId: string, options?: SubjectStyleOptions): Command[];
 }
 
 let port: SubjectPort | null = null;

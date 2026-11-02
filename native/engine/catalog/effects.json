@@ -4730,6 +4730,49 @@
     ]
   },
   {
+    "type": "image-fill",
+    "label": "Image Fill",
+    "gpuOnly": true,
+    "params": [
+      {
+        "key": "image",
+        "label": "Image",
+        "type": "file",
+        "fileTypes": "png|jpg|jpeg|webp|bmp|tif|tiff|tga|exr|hdr|gif|avif",
+        "default": ""
+      },
+      {
+        "key": "fit",
+        "label": "Fit",
+        "type": "enum",
+        "options": [
+          {
+            "value": 0,
+            "label": "Fill Frame"
+          },
+          {
+            "value": 1,
+            "label": "Fit Inside"
+          },
+          {
+            "value": 2,
+            "label": "Stretch"
+          }
+        ],
+        "default": 0
+      },
+      {
+        "key": "opacity",
+        "label": "Opacity",
+        "type": "number",
+        "unit": "%",
+        "min": 0,
+        "max": 100,
+        "default": 100
+      }
+    ]
+  },
+  {
     "type": "four-color-gradient",
     "label": "4-Color Gradient",
     "params": [

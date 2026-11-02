@@ -18,7 +18,7 @@ import { playheadSeconds } from '@core/timeline/timelineView';
 import { t } from '@core/i18n';
 import { SUBJECT_STYLES, defaultParams, type StyleContext, type StyleParams, type SubjectStylePreset } from './subjectStylePresets';
 
-export { SUBJECT_STYLES, defaultParams, presetById, type StyleParams, type StyleContext, type SubjectStylePreset, type StyleKind } from './subjectStylePresets';
+export { SUBJECT_STYLES, IMAGE_FITS, defaultParams, presetById, type ImageFit, type StyleParams, type StyleContext, type SubjectStylePreset, type StyleKind } from './subjectStylePresets';
 
 let seq = 0;
 

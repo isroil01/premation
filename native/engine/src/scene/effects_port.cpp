@@ -150,7 +150,7 @@ bool gpu_blends_effect_opacity(std::string_view t) {
       "alpha-levels", "solid-composite", "channel-combiner", "remove-color-matting", "unmult", "cc-composite",
       "color-difference-key", "wire-removal",
       "turbulent-noise", "add-grain", "median", "dust-scratches", "noise-alpha", "noise", "cell-pattern",
-      "gradient-ramp", "fractal-noise", "checkerboard", "grid", "fill", "four-color-gradient", "stroke",
+      "gradient-ramp", "fractal-noise", "checkerboard", "grid", "fill", "image-fill", "four-color-gradient", "stroke",
       "beam", "beam-path", "lens-flare", "circle", "ellipse", "radio-waves", "light-rays", "light-sweep",
       "star-burst", "snowfall", "rainfall", "write-on", "light-burst", "particle-systems", "cc-bubbles"};
   // G1: the chain blends a native effect's opacity back; Program X: so it does a deep effect's.
@@ -159,8 +159,8 @@ bool gpu_blends_effect_opacity(std::string_view t) {
 
 /// The chain entries this port writes (extract_spatial_effects below).
 bool is_ported_spatial(std::string_view t) {
-  static constexpr std::array<std::string_view, 8> k = {"blur", "glow", "drop-shadow", "gradient-ramp",
-                                                        "fill", "stroke", "sharpen", "noise"};
+  static constexpr std::array<std::string_view, 9> k = {"blur", "glow", "drop-shadow", "gradient-ramp",
+                                                        "fill", "image-fill", "stroke", "sharpen", "noise"};
   return std::ranges::find(k, t) != k.end();
 }
 
@@ -682,6 +682,19 @@ void effect_entries(const Json& e, const RLayer& l, std::vector<api::RenderEffec
   if (t == "fill") {
     spatial.push_back(FxWriter("fill").color("color", c("color", n("opacity") / 100)).done());
   }
+  if (t == "image-fill") {
+    // No file (none chosen, or missing: said by the snapshot): no entry, the layer stays as it is.
+    if (const std::string file = image_fill_file(e); !file.empty()) {
+      spatial.push_back(FxWriter("image-fill")
+                            .text("imageKey", image_fill_key(file))
+                            .num("fit", n("fit"))
+                            .num("amount", std::max(0.0, std::min(1.0, n("opacity") / 100)))
+                            .num("lw", l.width)
+                            .num("lh", l.height)
+                            .num("pad", raster_padding(l))
+                            .done());
+    }
+  }
   if (t == "stroke") {
     const Json& posRaw = param_of(params, "position");
     int position = 0;
@@ -957,6 +970,17 @@ void add_text(api::RenderEffect& fx, std::string name, std::string v) {
 }
 
 }  // namespace
+
+std::string image_fill_file(const Json& e) {
+  const Json& f = e.at("params").at(kImageFillFile);
+  return f.is_string() ? f.str() : std::string();
+}
+
+std::string image_fill_key(std::string_view file) {
+  std::string k = "fximage:";
+  k += file;
+  return k;
+}
 
 std::string scope_mask_key(std::string_view layerId, std::string_view maskId) {
   std::string k = "fxmask:";

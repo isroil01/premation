@@ -20,7 +20,7 @@ import { registerPlaceBehindSubject } from '@core/workspace/placeBehindSubjectPo
 import { registerSubjectPort } from '@core/workspace/subjectPort';
 import { planPlaceBehindSubject, placeBehindSubjectEdit } from './placeBehindSubject';
 import { createSubjectTrackEdit } from './subjectTrack';
-import { SUBJECT_STYLES, subjectStyleCommands } from './subjectStyles';
+import { SUBJECT_STYLES, defaultParams, subjectStyleCommands } from './subjectStyles';
 
 export interface PlaceBehindOptions {
   /** A point on the subject, footage px from the top-left, on the frame at the playhead. */
@@ -81,9 +81,9 @@ registerPlaceBehindSubject((layers, opts) => runPlaceBehindSubject(layers, opts)
 // The Assistant's `apply_subject_style`: the Subjects panel's presets, as commands it sends in its own edit.
 registerSubjectPort({
   styles: () => SUBJECT_STYLES.map((s) => ({ id: s.id, label: s.label(), hint: s.hint(), kind: s.kind })),
-  styleCommands: (layer, subject, styleId) => {
+  styleCommands: (layer, subject, styleId, options) => {
     const preset = SUBJECT_STYLES.find((s) => s.id === styleId);
-    return preset ? subjectStyleCommands(layer, subject, preset) : [];
+    return preset ? subjectStyleCommands(layer, subject, preset, { ...defaultParams(preset), ...options }) : [];
   },
 });
 

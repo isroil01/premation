@@ -491,6 +491,28 @@ std::array<double, 4> ramp_points(double angleDeg, const Rect& box, double w, do
   return {(cx - dx * half) / w, (cy - dy * half) / h, (cx + dx * half) / w, (cy + dy * half) / h};
 }
 
+/// Image Fill's fit inside a unit quad: where the picture lands and which part of it shows, with
+/// its pixels square. 0 fill frame (cropped to the layer's shape), 1 fit inside, 2 stretch.
+struct ImageFit {
+  Rect quad{0, 0, 1, 1};
+  Rect uv{0, 0, 1, 1};
+};
+ImageFit image_fit(double fit, double imageW, double imageH, double layerW, double layerH) {
+  ImageFit out;
+  if (fit == 2 || !(imageW > 0) || !(imageH > 0) || !(layerW > 0) || !(layerH > 0)) return out;
+  const double wide = (imageW / imageH) / (layerW / layerH);  // > 1: the picture is the wider shape
+  if (fit == 1) {
+    const double w = wide > 1 ? 1 : wide;
+    const double h = wide > 1 ? 1 / wide : 1;
+    out.quad = {(1 - w) / 2, (1 - h) / 2, w, h};
+  } else {
+    const double w = wide > 1 ? 1 / wide : 1;
+    const double h = wide > 1 ? 1 : wide;
+    out.uv = {(1 - w) / 2, (1 - h) / 2, w, h};
+  }
+  return out;
+}
+
 bool known_single(std::string_view t) {
   static constexpr auto kSpecial = std::to_array<std::string_view>({"gradient-ramp", "fractal-noise", "displacement-map", "compound-blur",
                                          "set-matte",     "motion-tile",   "fill",             "stroke",
@@ -500,7 +522,7 @@ bool known_single(std::string_view t) {
                                          "channel-blur", "minimax",       "cross-blur",       "unsharp-mask",
                                          "shadow-highlight", "equalize", "auto-levels",     "auto-contrast",
                                          "auto-color",   "plastic",       "glass",            "vector-blur",
-                                         "radial-shadow", "plugin",
+                                         "radial-shadow", "plugin", "image-fill",
                                          // AE parity 5.3: the multi-pass keying / matte / deformation passes.
                                          "keylight-ex", "key-cleaner", "remove-grain", "refine-matte", "reshape-tps"});
   return std::ranges::find(kSpecial, t) != kSpecial.end();
@@ -811,6 +833,8 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
     if (type == "channel-lut" && !ctx.texture(fx.text("lutKey"))) continue;
     if (type == "stamp-field" && !ctx.texture(fx.text("stampKey"))) continue;
     if (type == "fx-overlay" && !ctx.texture(fx.text("overlayKey"))) continue;
+    // An image that did not decode leaves the layer as it was, scope and all.
+    if (type == "image-fill" && !ctx.texture(fx.text("imageKey"))) continue;
     // AE parity 5.3: an entry whose data texture (a curve table, a mesh, a spline) did not arrive.
     if (!fx.text("dataKey").empty() && !ctx.texture(fx.text("dataKey"))) continue;
 
@@ -923,6 +947,34 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
                          : mode == 12 ? Blend::dstIn
                                       : Blend::normal;
       emit_textured(ctx, comp, layerMvp, Color::white(), 1, onto, ov, ctx.linear_clamp(), layerUv, kIdentityColor, ov.sampleLinear);
+      ctx.draw_into(f0, comp, true);
+      curTex = texOf(f0);
+      curName = f0;
+      continue;
+    }
+
+    if (type == "image-fill") {
+      // The picture in the layer's box: source-atop, so the layer's alpha stays (where a Fit
+      // Inside shows no picture the layer shows through). Apply To blends it back as any entry.
+      const TexRef image = ctx.texture(fx.text("imageKey"));
+      if (!image || selfR == nullptr) {
+        note.set(FxPath::skipped);
+        touch.keep();
+        continue;
+      }
+      const Mat3 layerMvp = space != nullptr ? mul(mvp, model_from_rect(space->box)) : mvp_for(vp, mat3_of(selfR->model_matrix));
+      // The layer's quad is its box plus the raster padding (a text / shape layer's bleed): the picture fills the box.
+      const double lw = fx.num("lw");
+      const double lh = fx.num("lh");
+      const double pad = fx.num("pad");
+      const Rect box = lw > 0 && lh > 0 ? Rect{pad / (lw + 2 * pad), pad / (lh + 2 * pad), lw / (lw + 2 * pad), lh / (lh + 2 * pad)}
+                                        : Rect{0, 0, 1, 1};
+      const ImageFit fit = image_fit(fx.num("fit"), image.width, image.height, lw, lh);
+      const Rect quad{box.x + fit.quad.x * box.width, box.y + fit.quad.y * box.height, fit.quad.width * box.width, fit.quad.height * box.height};
+      Commands comp;
+      emit_textured(ctx, comp, mvp, Color::white(), 1, Blend::none, curTex, ctx.linear_clamp(), targetUv, kIdentityColor, true);
+      emit_textured(ctx, comp, mul(layerMvp, model_from_rect(quad)), Color::white(), fx.num("amount", 1), Blend::atop, image,
+                    ctx.linear_clamp(), fit.uv, kIdentityColor, image.sampleLinear);
       ctx.draw_into(f0, comp, true);
       curTex = texOf(f0);
       curName = f0;

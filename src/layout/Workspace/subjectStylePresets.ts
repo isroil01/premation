@@ -12,6 +12,9 @@
  *
  * Keyed presets (Draw-on Outline) also set keyframes on their effect: the
  * reveal starts at the playhead the style is applied at.
+ *
+ * A preset that shows a picture (Background Image) also takes a project image
+ * and how it fits: it cannot be applied until one is chosen.
  */
 
 import { secondsToFlicks, type Keyframe, type PropertyInit } from '@motion/engine-api';
@@ -26,6 +29,25 @@ export interface StyleParams {
   intensity: number;
   /** Hex colour (`#rrggbb`), used by presets that declare a `color`. */
   color: string;
+  /** The project image (item id), used by presets that declare `image`. */
+  image?: string;
+  /** How that image fits the layer's box. */
+  fit?: ImageFit;
+}
+
+export type ImageFit = 'fill' | 'fit' | 'stretch';
+
+/** Image Fill's Fit choices (native/engine/catalog/effects.json), by the value a style stores. */
+const IMAGE_FIT_CHOICE: Record<ImageFit, string> = { fill: 'Fill Frame', fit: 'Fit Inside', stretch: 'Stretch' };
+
+export const IMAGE_FITS: ReadonlyArray<{ id: ImageFit; label: () => string }> = [
+  { id: 'fill', label: () => t('subjects.style.fitFill', 'Fill frame') },
+  { id: 'fit', label: () => t('subjects.style.fitInside', 'Fit inside') },
+  { id: 'stretch', label: () => t('subjects.style.fitStretch', 'Stretch') },
+];
+
+export function isImageFit(v: unknown): v is ImageFit {
+  return typeof v === 'string' && v in IMAGE_FIT_CHOICE;
 }
 
 /** Where and when a style is applied: frames at `fps`, the playhead at `time` (comp seconds). */
@@ -61,6 +83,8 @@ export interface SubjectStylePreset {
   intensity?: number;
   /** The swatch's default; absent = no colour to pick. */
   color?: string;
+  /** Shows a project image: the tile picks one (and its fit), and nothing applies without it. */
+  image?: boolean;
   parts: (p: StyleParams, ctx: StyleContext) => StylePart[];
 }
 
@@ -211,6 +235,13 @@ export const SUBJECT_STYLES: readonly SubjectStylePreset[] = [
   { id: 'bgColor', kind: 'background', intensity: 100, color: '#101418',
     label: () => t('subjects.style.bgColor', 'Background Colour'), hint: () => t('subjects.style.bgColorHint', 'The picture behind the subject replaced by a flat colour'),
     parts: (p) => [{ effect: 'fill', scope: 'background', params: [{ path: 'color', value: hex(p.color) }, { path: 'opacity', value: values.scalar(clamp(p.intensity, 0, 100)) }] }] },
+  { id: 'bgImage', kind: 'background', intensity: 100, image: true,
+    label: () => t('subjects.style.bgImage', 'Background Image'), hint: () => t('subjects.style.bgImageHint', 'The picture behind the subject replaced by a project image'),
+    parts: (p) => [{ effect: 'image-fill', scope: 'background', params: [
+      { path: 'image', value: values.string(p.image ?? '') },
+      { path: 'fit', value: values.choice(IMAGE_FIT_CHOICE[p.fit ?? 'fill']) },
+      { path: 'opacity', value: values.scalar(clamp(p.intensity, 0, 100)) },
+    ] }] },
   { id: 'paper', kind: 'outline', intensity: 50, color: '#ffffff',
     label: () => t('subjects.style.paper', 'Cut-out Paper'), hint: () => t('subjects.style.paperHint', 'A paper border with a small offset shadow, as if cut out and glued on'),
     parts: (p) => [

@@ -92,7 +92,8 @@ describe('footage, rig and style schemas', () => {
   it('apply_subject_style lists every preset and the background switches', () => {
     const def = MEDIA_TOOL_DEFS.find((d) => d.name === 'apply_subject_style')!;
     const styles = def.inputSchema.properties!.style!.enum as string[];
-    expect(styles).toEqual(expect.arrayContaining(['sticker', 'neon', 'spotlight', 'splash', 'duotone', 'comic', 'halo', 'dashes', 'portrait', 'warm', 'background_blur', 'remove_background', 'keep_background']));
+    expect(styles).toEqual(expect.arrayContaining(['sticker', 'neon', 'spotlight', 'splash', 'duotone', 'comic', 'halo', 'dashes', 'portrait', 'warm', 'bgImage', 'background_blur', 'remove_background', 'keep_background']));
+    expect(def.inputSchema.properties!.fit!.enum).toEqual(['fill', 'fit', 'stretch']);
   });
 
   it('create_puppet_rig takes pin kinds, scale, overlap, mesh settings and append', () => {
