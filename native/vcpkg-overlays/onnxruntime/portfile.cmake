@@ -150,6 +150,17 @@ if("coreml" IN_LIST FEATURES)
         "-DFETCHCONTENT_SOURCE_DIR_PSIMD=${PSIMD_PATH}"
         "-DFETCHCONTENT_SOURCE_DIR_FP16=${FP16_PATH}"
         "-DFETCHCONTENT_SOURCE_DIR_COREMLTOOLS=${COREMLTOOLS_PATH}")
+    # A static build exports onnxruntime and onnxruntime_providers_coreml, which link
+    # coreml_proto; upstream installs coreml_proto in a static build but outside the
+    # export set, so CMake refuses to generate ("requires target coreml_proto that is
+    # not in any export set"). Put that install into the same export set.
+    set(coreml_cmake "${SOURCE_PATH}/cmake/onnxruntime_providers_coreml.cmake")
+    file(READ "${coreml_cmake}" coreml_text)
+    string(REGEX REPLACE "install\\(TARGETS coreml_proto[ \t\r\n]" "install(TARGETS coreml_proto EXPORT \${PROJECT_NAME}Targets\n" coreml_patched "${coreml_text}")
+    if(coreml_patched STREQUAL coreml_text AND NOT coreml_text MATCHES "coreml_proto EXPORT")
+        message(FATAL_ERROR "onnxruntime_providers_coreml.cmake changed: coreml_proto's install was not found")
+    endif()
+    file(WRITE "${coreml_cmake}" "${coreml_patched}")
 endif()
 
 if("cuda" IN_LIST FEATURES)
