@@ -26,6 +26,11 @@
 
 namespace premation::rg {
 
+/// The glow's wide pass (2.2 x the radius, screened at 0.4) runs blur.wgsl with
+/// its taps this many times further apart (pack_blur spacingMul): a soft halo
+/// at a third of the fetches. The chain and the reach must agree on it.
+constexpr double kGlowWideSpacing = 3;
+
 /// A region of the chain buffer in texels, x right and y down: [x0, x1) × [y0, y1).
 /// Fractional and unclamped (a reach may run off the frame).
 struct PxBox {

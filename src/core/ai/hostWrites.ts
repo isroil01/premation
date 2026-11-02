@@ -15,9 +15,10 @@
 import { AiEngineError, type AiEngineSession } from '@motion/ai-tools';
 import { secondsToFlicks, type BezierPath, type Command, type MaskMode as ApiMaskMode, type PropertyInfo, type PropertyWrite, type Value } from '@motion/engine-api';
 import { pathOpPropPath, type PathOpType } from '@core/scene/pathOps';
-import { layerStyleEffectId, LAYER_STYLE_COLOR_PARAMS, LAYER_STYLE_NUMBER_PARAMS, type LayerStyles } from '@core/effects/layerStyles';
+import { layerStyleEffectId, LAYER_STYLE_COLOR_PARAMS, LAYER_STYLE_NUMBER_PARAMS, type GlassStyle, type LayerStyles } from '@core/effects/layerStyles';
 import { effectPropPath, parseColorChannels } from '@core/effects/effects';
-import { STYLE_FIELDS } from '@core/engine/effectFieldSpecs';
+import { glassPropPath } from '@core/effects/glassResolve';
+import { GLASS_PROPERTIES, STYLE_FIELDS } from '@core/engine/effectFieldSpecs';
 import { memberWrites } from '@core/engine/propRefs';
 import { activePlayheadSeconds, apiColorOfHex } from '@core/engine/trackWrites';
 import type { MaskPath } from '@core/effects/mask';
@@ -255,6 +256,9 @@ export async function ensurePathOperator(session: AiEngineSession, layer: string
  * field writes, numbers and colours at the playhead. STORED units (opacity
  * 0..1, hex colours), as the style object holds them.
  */
+/** The liquid-glass fields (GlassStyle) that are not in GLASS_PROPERTIES' flat-pane list. */
+const LIQUID_GLASS_FIELDS: ReadonlySet<string> = new Set(['surface', 'thickness', 'ior', 'dispersion', 'caustic', 'fresnel', 'bumpLayerId']);
+
 export async function patchLayerStyle(session: AiEngineSession, layer: string, styleKey: keyof LayerStyles, patch: Readonly<Record<string, unknown>>): Promise<void> {
   const key = styleKey as string;
   // The style group as the engine reports it (`styles/<key>`, `enabled` = its switch).
@@ -274,6 +278,28 @@ export async function patchLayerStyle(session: AiEngineSession, layer: string, s
       const path = `styles/${key}/${field}`;
       if (sw.type === 'bool' && typeof v === 'boolean') fields.push({ prop: { layer, path }, value: { kind: 'bool', value: v } });
       else if (sw.type === 'choice' && typeof v === 'string') fields.push({ prop: { layer, path }, value: { kind: 'choice', value: v } });
+      else bad.push(field);
+      continue;
+    }
+    // Glass keys its own `glass.<param>` tracks (glassResolve.ts), not a compiled effect's params.
+    const glass = key === 'glass' ? GLASS_PROPERTIES.find((g) => g.key === field) : undefined;
+    if (glass) {
+      const track = glassPropPath(field as keyof GlassStyle);
+      if (glass.type === 'scalar' && typeof v === 'number' && Number.isFinite(v)) nums[track] = v;
+      else if (glass.type === 'color' && typeof v === 'string') {
+        const [r, g, b, a] = parseColorChannels(v);
+        Object.assign(nums, { [`${track}_r`]: r, [`${track}_g`]: g, [`${track}_b`]: b, [`${track}_a`]: a });
+      } else bad.push(field);
+      continue;
+    }
+    // Liquid glass (layerStyles.ts GlassStyle, stream D): the surface choice and
+    // its bump layer are fields of the style group; the numbers are glass.<field>
+    // tracks like the rest (refused by the engine where it lacks them yet).
+    if (key === 'glass' && LIQUID_GLASS_FIELDS.has(field)) {
+      const path = `styles/glass/${field}`;
+      if (field === 'surface' && typeof v === 'string') fields.push({ prop: { layer, path }, value: { kind: 'choice', value: v } });
+      else if (field === 'bumpLayerId' && typeof v === 'string') fields.push({ prop: { layer, path }, value: { kind: 'layer', value: v } });
+      else if (typeof v === 'number' && Number.isFinite(v)) nums[glassPropPath(field as keyof GlassStyle)] = v;
       else bad.push(field);
       continue;
     }

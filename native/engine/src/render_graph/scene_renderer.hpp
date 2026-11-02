@@ -132,6 +132,9 @@ class SceneRenderer {
   /// E1: 3D surface chains run in layer-sized buffers (render_context.hpp
   /// fxLayerBuffers). Off = viewport-sized, the golden references' pixels.
   void set_effect_layer_buffers(bool on) noexcept { effectLayerBuffers_ = on; }
+  /// The transport is playing (ViewportState::playing): effect chains of moving
+  /// layers are reused through a fractional composite. Off for stills and exports.
+  void set_playing(bool on) noexcept { playing_ = on; }
 
  private:
   SceneRenderer() = default;
@@ -149,6 +152,7 @@ class SceneRenderer {
   bool effectFields_ = false;
   bool effectBounds_ = true;
   bool effectLayerBuffers_ = false;
+  bool playing_ = false;
   wgpu::Texture surface_;
   wgpu::TextureView surfaceView_;
   std::uint32_t surfaceW_ = 0;

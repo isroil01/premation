@@ -107,6 +107,61 @@ class GateBuilder final : public FrameBuilder {
   int built_ = 0;
 };
 
+/// A gated builder that honours the session's cancel flag the way the real
+/// one does between layers: while held, it watches the flag and throws
+/// BuildCancelled the moment an edit is waiting for the lock.
+class CancelGateBuilder final : public FrameBuilder {
+ public:
+  std::shared_ptr<BuiltFrame> build(const doc::Document& /*d*/, const doc::EditorView& /*view*/,
+                                    const doc::ExprEnv& /*expr*/, doc::ExprCache& /*cache*/, std::string_view /*comp*/,
+                                    api::Time /*time*/, const ViewportConfig& /*viewport*/, bool /*playing*/,
+                                    std::vector<api::LayerError>& /*errors*/) override {
+    std::unique_lock<std::mutex> lock(m_);
+    ++started_;
+    cv_.notify_all();
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!open_ && std::chrono::steady_clock::now() < until) {
+      if (cancel_ != nullptr && cancel_->load(std::memory_order_acquire) != 0) {
+        ++cancelled_;
+        throw BuildCancelled{};
+      }
+      (void)cv_.wait_for(lock, std::chrono::milliseconds(1));
+    }
+    open_ = false;
+    ++built_;
+    return nullptr;
+  }
+  void set_cancel_flag(const std::atomic<std::uint32_t>* flag) noexcept override { cancel_ = flag; }
+  void release() {
+    {
+      const std::lock_guard<std::mutex> lock(m_);
+      open_ = true;
+    }
+    cv_.notify_all();
+  }
+  bool wait_started(int n) {
+    std::unique_lock<std::mutex> lock(m_);
+    return cv_.wait_for(lock, std::chrono::seconds(10), [this, n] { return started_ >= n; });
+  }
+  int built() const {
+    const std::lock_guard<std::mutex> lock(m_);
+    return built_;
+  }
+  int cancelled() const {
+    const std::lock_guard<std::mutex> lock(m_);
+    return cancelled_;
+  }
+
+ private:
+  mutable std::mutex m_;
+  std::condition_variable cv_;
+  const std::atomic<std::uint32_t>* cancel_ = nullptr;
+  bool open_ = false;
+  int started_ = 0;
+  int built_ = 0;
+  int cancelled_ = 0;
+};
+
 }  // namespace
 
 TEST_CASE("session perf: a 500-command batch of createLayer and addKeyframes succeeds (one entry, one revision)",
@@ -226,5 +281,51 @@ TEST_CASE("session perf: a frame builds on the build worker; queries answer mean
   std::size_t announced = 0;
   for (const api::Event& e : h.events_since(from)) announced += std::holds_alternative<api::LayerErrorsEvent>(e.v) ? 1 : 0;
   REQUIRE(announced == 1);
+  h.session.set_frame_builder(nullptr);
+}
+
+TEST_CASE("session perf: an edit cancels the stale frame build in flight instead of waiting for it; the frame is built again",
+          "[session][perf][frames]") {
+  Harness h(64);
+  h.drainBuilds = false;
+  CancelGateBuilder builder;
+  h.session.set_frame_builder(&builder);
+  (void)h.hello();
+  const api::ItemId comp = make_comp(h);
+  api::SetActiveComposition active;
+  active.comp = comp;
+  REQUIRE(is_ok(h.run(cmd(active))));
+  api::SetViewport v;
+  v.viewport = 1;
+  v.width = 640;
+  v.height = 360;
+  v.device_pixel_ratio = 1.0;
+  REQUIRE(is_ok(h.run(cmd(v))));
+  // The viewport's first frame is building — and held — on the worker.
+  REQUIRE(builder.wait_started(1));
+  REQUIRE(builder.built() == 0);
+
+  // An edit does not wait for the held build: the builder sees the edit
+  // waiting (editsWaiting_) and throws BuildCancelled; the edit lands at once.
+  const auto t0 = std::chrono::steady_clock::now();
+  api::CreateLayer l;
+  l.comp = comp;
+  l.kind = api::LayerKind::solid;
+  REQUIRE(is_ok(h.run(cmd(l))));
+  REQUIRE(std::chrono::steady_clock::now() - t0 < std::chrono::seconds(2));
+  REQUIRE(builder.cancelled() == 1);
+  REQUIRE(builder.built() == 0);
+  REQUIRE(h.sink.submitted() == 0);
+
+  // The cancelled task is a skip: the core thread queues the frame of the
+  // edited document, which builds once released.
+  REQUIRE(builder.wait_started(2));
+  builder.release();
+  h.session.drain_builds();
+  REQUIRE(builder.built() == 1);
+  REQUIRE(h.sink.submitted() == 1);
+  const std::vector<api::FrameReady> frames = h.frames_ready();
+  REQUIRE(frames.size() == 1);
+  REQUIRE(frames[0].revision == h.session.revision());
   h.session.set_frame_builder(nullptr);
 }

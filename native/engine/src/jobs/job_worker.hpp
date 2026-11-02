@@ -8,11 +8,17 @@
 //
 // Protocol — one JSON object per line each way:
 //   stdin   {"id":N,"work":NAME,"input":{...}}
+//           {"id":N,"cancel":true}            stop request N (in flight or still queued)
 //   stdout  {"id":N,"ev":"progress","fraction":F,"message":S}
 //           {"id":N,"ev":"result","result":{...}}
 //           {"id":N,"ev":"error","code":S,"message":S}
+//           {"id":N,"ev":"cancelled"}         the work stopped at a cancel check
 // The worker answers requests one at a time, in order, and exits when stdin
-// closes. Lines that are not this shape are ignored (a library printing).
+// closes. Its stdin is read on a thread of its own, so a cancel line is seen
+// while the work runs: WorkerControl::cancelled() reads the in-flight
+// request's flag, and the work returns early at its next check (the answer is
+// then `cancelled`). Lines that are not this shape are ignored (a library
+// printing).
 //
 // Parent side (JobWorker): started lazily on the first call, reused after.
 //   crash      the stream ends without the answer: that call fails with
@@ -21,14 +27,22 @@
 //   hang       neither an answer nor a progress line within the call's
 //              timeout: the worker is killed, the call fails the same way.
 //   cancel     a call still waiting for its turn returns cancelled at once; a
-//              call already sent is answered and its result discarded (killing
-//              the worker would throw away the loaded model) — unless it asked
-//              for killOnCancel (a walk): then the worker is killed.
+//              call already sent gets a cancel line and returns as soon as the
+//              worker answers (the loaded models and the warm frames survive).
+//              With `killOnCancel` (a walk) the call also stops waiting after
+//              `cancelGrace` without an answer and kills the worker instead: a
+//              work that never checks its control still ends.
 //   supersede  calls with the same non-empty `supersedeKey` are latest-wins: a
 //              call whose `generation` is no longer the key's newest (claimed
 //              with claim_generation when the job is SUBMITTED, so a job still
 //              queued in the JobRunner counts) returns cancelled instead of
 //              running. The one in flight finishes. The hover preview keys by layer.
+//   lanes      run_in_worker keeps TWO workers (WorkerCall::lane): `interactive`
+//              answers hovers, proposals and edits; `batch` runs walks. A walk of
+//              minutes never queues a hover behind it. The cost: a second
+//              process with its own copy of every model it loads (SlimSAM ~150 MB
+//              RAM, SAM 2 tiny ~400 MB, ViTMatte ~120 MB) while both are warm;
+//              the batch lane idles out after `idle` like the other.
 //   idle       after `idle` without a call the worker's stdin is closed, so a
 //              model is not held in RAM forever.
 //   plugins    the worker starts with the engine's plugin set of that moment
@@ -53,6 +67,9 @@
 
 namespace premation::jobs {
 
+/// Which of the engine's two workers a call runs on (run_in_worker).
+enum class WorkerLane { interactive, batch };
+
 /// One call's terms.
 struct WorkerCall {
   /// Latest-wins group ('' = never superseded, never supersedes).
@@ -61,9 +78,14 @@ struct WorkerCall {
   std::uint64_t generation = 0;
   /// How long the worker may stay silent (no answer, no progress line) once the request is sent.
   std::chrono::milliseconds timeout{std::chrono::seconds(90)};
-  /// Cancelled while in flight: kill the worker so the call returns at once (a long walk),
-  /// instead of letting the answer arrive and discarding it (a short hover keeps the model).
+  /// Cancelled while in flight: after `cancelGrace` without an answer to the cancel line, kill
+  /// the worker so the call returns (a long walk whose work may sit inside one model call).
+  /// Without it the call waits for the worker's answer (a short hover keeps the model warm).
   bool killOnCancel = false;
+  /// How long a killOnCancel call waits for the worker to answer its cancel before killing it.
+  std::chrono::milliseconds cancelGrace{std::chrono::seconds(5)};
+  /// The worker this call runs on (run_in_worker only; a JobWorker is one lane).
+  WorkerLane lane = WorkerLane::interactive;
 };
 
 class JobWorker {
@@ -110,6 +132,8 @@ class JobWorker {
   void stop_proc(std::unique_ptr<Proc> p, bool kill);
   void reader_loop(Proc* p);
   void idle_loop();
+  /// Write one line to the worker's stdin (the lock is NOT held: a blocking write).
+  static bool write_line(Proc* p, std::string line);
 
   Options opt_;
   mutable std::mutex mu_;
@@ -130,10 +154,10 @@ class JobWorker {
 /// True while `generation` is still `key`'s newest.
 [[nodiscard]] bool is_latest(const std::string& key, std::uint64_t generation);
 
-/// The engine's shared worker on child_executable() (child_job.hpp), started
-/// on its first call. With no executable known (tests, tools) the work runs
-/// in-process, as run_child does. PREMATION_JOB_WORKER=0 sends every call to
-/// a one-shot run_child instead (a measurement baseline).
+/// The engine's shared workers on child_executable() (child_job.hpp), one per
+/// WorkerLane, each started on its first call. With no executable known (tests,
+/// tools) the work runs in-process, as run_child does. PREMATION_JOB_WORKER=0
+/// sends every call to a one-shot run_child instead (a measurement baseline).
 [[nodiscard]] std::optional<std::string> run_in_worker(const std::string& work, const std::string& inputJson, JobControl& control,
                                                        const WorkerCall& call = {});
 

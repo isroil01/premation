@@ -16,9 +16,14 @@ import { Button } from '@components/Button';
 import { Icon } from '@components/Icon';
 import { useUIStore } from '@stores/uiStore';
 import { useActiveWorkspace } from '@stores/projectStore';
+import { useThrottledTime } from '@stores/playbackClockStore';
 import { edit } from '@core/engine/uiEdits';
-import { useMirrorLayer } from '@hooks/useMirror';
+import { compTime } from '@core/engine/propRefs';
+import { rigPaths } from '@core/engine/rigPaths';
+import { useMirrorKeyframes, useMirrorLayer, useMirrorTree, useMirrorValueAt } from '@hooks/useMirror';
 import { useMirrorJson } from '@hooks/useMirrorFields';
+import { numbersOfValue } from '@core/mirror/trackIndex';
+import { useRigSelectionStore } from '@stores/rigSelectionStore';
 import {
   PIN_KIND_CATALOG,
   pinKindOf,
@@ -28,8 +33,11 @@ import {
 } from '@core/rig/puppet';
 import { maxExactMeshDensity, SMOOTH_PLAYBACK_MAX_DENSITY } from '@core/rig/arap';
 import { t } from '@core/i18n';
-import { useEngineEdit } from './useEngineEdit';
-import { deletePinCommands, pinKindCommands, pinPropCommands, puppetMeshCommands } from './rigEdits';
+import { useEngineEdit, type EngineEdit } from './useEngineEdit';
+import { AnimToggle } from './AnimToggle';
+import { stopwatchCommands } from './inspectorEdits';
+import { deletePinCommands, pinKindCommands, pinPositionCommands, pinPropCommands, puppetMeshCommands } from './rigEdits';
+import type { PuppetPin } from '@core/rig/puppet';
 import styles from './BoneControls.module.css';
 
 /** Shared <select> chrome — every dropdown here must look identical. */
@@ -52,6 +60,10 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
   // B4: the layer header and its whole rig (`layer/puppet` = fx.puppet verbatim) from the document mirror.
   const layer = useMirrorLayer(nodeId);
   const rig = useMirrorJson<PuppetRig>(nodeId, 'layer/puppet');
+  // C1's mesh settings (`puppet/mesh/traceAccuracy`, `puppet/mesh/alphaThreshold`) appear once the engine lists them.
+  const tree = useMirrorTree(layer ? nodeId : null);
+  const hasTrace = !!tree?.nodes.has('puppet/mesh/traceAccuracy');
+  const hasAlpha = !!tree?.nodes.has('puppet/mesh/alphaThreshold');
   if (!layer) return null;
 
   const meshLabel = 'Edit Puppet Mesh';
@@ -61,6 +73,8 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
   const pinProp = (pinId: string, prop: Parameters<typeof pinPropCommands>[2], v: number): void =>
     eng.send(pinLabel, pinPropCommands(nodeId, pinId, prop, v, time));
 
+  // Stored keys as C1 names them (optional chaining: tsc passes before and after C1 lands).
+  const meshAny = rig as (PuppetRig & { traceAccuracy?: number; alphaThreshold?: number }) | undefined;
   const density = rig?.meshDensity ?? 22;
   const expansion = rig?.meshExpansion ?? 0;
   const solver = rig?.solver ?? 'arap';
@@ -202,6 +216,38 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
           </span>
         </div>
 
+        {hasTrace && (
+          <div className={styles.paramRow}>
+            <span className={styles.paramLabel} title={t('inspector.puppet.traceAccuracyHint', "How closely the outline mesh follows the artwork's edge (0–100). Higher keeps small notches; lower smooths them away.")}>
+              {t('inspector.puppet.traceAccuracy', 'Trace Accuracy')}
+            </span>
+            <ValueField
+              value={meshAny?.traceAccuracy ?? 60}
+              min={0}
+              max={100}
+              {...eng.scrub(meshLabel)}
+              onChange={(v) => mesh(meshLabel, { traceAccuracy: Math.max(0, Math.min(100, Math.round(v))) })}
+              aria-label={t('inspector.puppet.traceAccuracy', 'Trace Accuracy')}
+            />
+          </div>
+        )}
+
+        {hasAlpha && (
+          <div className={styles.paramRow}>
+            <span className={styles.paramLabel} title={t('inspector.puppet.alphaThresholdHint', 'Alpha below this (0–255) counts as outside the artwork when the outline is traced.')}>
+              {t('inspector.puppet.alphaThreshold', 'Alpha Threshold')}
+            </span>
+            <ValueField
+              value={meshAny?.alphaThreshold ?? 32}
+              min={0}
+              max={255}
+              {...eng.scrub(meshLabel)}
+              onChange={(v) => mesh(meshLabel, { alphaThreshold: Math.max(0, Math.min(255, Math.round(v))) })}
+              aria-label={t('inspector.puppet.alphaThreshold', 'Alpha Threshold')}
+            />
+          </div>
+        )}
+
         <div className={styles.paramRow}>
           <span className={styles.paramLabel}>{t('inspector.puppet.solver', 'Solver')}</span>
           <select
@@ -254,159 +300,234 @@ export function PuppetControls({ nodeId }: { nodeId: string }): JSX.Element | nu
         </div>
       )}
 
-      {pins.map((pin) => {
-        const kind = pinKindOf(pin);
-        const showRotate = kind === 'advanced' || kind === 'bend';
-        const showScale = kind === 'advanced' || kind === 'bend';
-        const showStiffness = kind === 'starch' || kind === 'advanced' || (pin.stiffness ?? 0) > 0;
-        const showOverlap = kind === 'overlap' || (pin.overlap ?? 0) !== 0;
-        const isAnchored = (pin.stiffness ?? 0) >= 5;
-        return (
-          <div key={pin.id} className={styles.card}>
-            <div className={styles.cardHeader}>
-              <div className={styles.cardTitle}>
-                <span
-                  aria-hidden
-                  style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: '50%',
-                    background: kind === 'bend' ? 'transparent' : pinColor(kind),
-                    border: `2px solid ${pinColor(kind)}`,
-                    flexShrink: 0,
-                  }}
-                />
-                <span>{pin.name || pin.id}</span>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <button
-                  type="button"
-                  className={`${styles.anchorToggle} ${isAnchored ? styles.anchorToggleActive : ''}`}
-                  title={isAnchored ? t('inspector.puppet.anchorActive', 'Anchor lock active (body stays rigid)') : t('inspector.puppet.anchorLock', 'Lock as rigid anchor (Stiffness: 10)')}
-                  onClick={() => pinProp(pin.id, 'stiffness', isAnchored ? 0 : 10)}
-                >
-                  <Icon
-                    name={isAnchored ? 'lock' : 'anchor'}
-                    size="sm"
-                    style={{ color: isAnchored ? '#f5b041' : 'inherit' }}
-                  />
-                  <span>{isAnchored ? t('inspector.puppet.locked', 'Locked') : t('inspector.puppet.anchor', 'Anchor')}</span>
-                </button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => { void edit('Delete Puppet Pin', deletePinCommands(nodeId, pin.id)); }}
-                  aria-label={t('inspector.puppet.deletePinNamed', 'Delete pin {name}', { name: pin.name || pin.id })}
-                  title={t('inspector.puppet.deletePin', 'Delete pin')}
-                >
-                  <Icon name="trash" size="sm" />
-                </Button>
-              </div>
-            </div>
+      {pins.map((pin) => (
+        <PinCard key={pin.id} nodeId={nodeId} pin={pin} seconds={time} eng={eng} pinProp={pinProp} />
+      ))}
+    </div>
+  );
+}
 
-            <div className={styles.paramRow}>
-              <span className={styles.paramLabel}>{t('inspector.puppet.type', 'Type')}</span>
-              <select
-                value={kind}
-                aria-label={t('inspector.puppet.pinTypeLabel', '{name} pin type', { name: pin.name || pin.id })}
-                onChange={(e) => { void edit(pinLabel, pinKindCommands(nodeId, pin.id, e.target.value as PinKind)); }}
-                style={selectStyle}
-              >
-                {PIN_KIND_CATALOG.map((k) => (
-                  <option key={k.kind} value={k.kind}>{k.short}</option>
-                ))}
-              </select>
-            </div>
+/** The stopwatch (+ ◀ ◆ ▶ once animated) of ONE rig property, over its keyframe track(s). */
+export function RigAnimToggle({ nodeId, path, tracks, label, seconds }: { nodeId: string; path: string; tracks: readonly string[]; label: string; seconds: number }): JSX.Element {
+  const animated = useMirrorKeyframes(nodeId, path).length > 0;
+  return (
+    <AnimToggle
+      nodeId={nodeId}
+      tracks={tracks}
+      label={label}
+      animated={animated}
+      onToggle={() => { void edit(animated ? `Stop ${label} animation` : `Animate ${label}`, stopwatchCommands([nodeId], tracks, seconds)); }}
+    />
+  );
+}
 
-            {kind === 'bend' && (
-              <div className={styles.subText} style={{ margin: '2px 0 6px' }}>
-                {t('inspector.puppet.bendHint', 'Position is derived from the advanced pins around it. Rotation and scale act on the motion they already produce — at 0° and 1× this pin does nothing.')}
-              </div>
-            )}
-            {kind === 'starch' && (
-              <div className={styles.subText} style={{ margin: '2px 0 6px' }}>
-                {t('inspector.puppet.starchHint', 'Keeps this region rigid so nearby pins cannot fold it.')}
-              </div>
-            )}
-            {kind === 'overlap' && (
-              <div className={styles.subText} style={{ margin: '2px 0 6px' }}>
-                {t('inspector.puppet.overlapKindHint', 'Sets which part draws in front when the mesh folds over itself.')}
-              </div>
-            )}
+/**
+ * One pin: After Effects' Puppet Pin N twirl as inspector rows — Position
+ * (X / Y), Rotation, Scale, Stiffness, Overlap, each with its stopwatch and,
+ * once animated, the keyframe navigator. The values are the LIVE ones at the
+ * playhead (the mirror's `valueAt`, which samples the keys), not the stored
+ * static numbers: a field that showed the rest value while the pin visibly
+ * moved was the old behaviour. A typed value follows the one keying rule
+ * (rigEdits `rigAutoKey`): a key when animated, under auto-keyframe or the
+ * Puppet tool's "Always key pins", else the static value.
+ */
+function PinCard({ nodeId, pin, seconds, eng, pinProp }: {
+  nodeId: string;
+  pin: PuppetPin;
+  seconds: number;
+  eng: EngineEdit;
+  pinProp: (pinId: string, prop: Parameters<typeof pinPropCommands>[2], v: number) => void;
+}): JSX.Element {
+  const pinLabel = 'Edit Puppet Pin';
+  const name = pin.name || pin.id;
+  // The display time: throttled during playback (never the raw clock per frame).
+  const shown = compTime(useThrottledTime());
+  // Hooks in a fixed order: every property is read whether or not its row shows.
+  const position = numbersOfValue(useMirrorValueAt(nodeId, rigPaths.pinProp(pin.id, 'position'), shown));
+  const rotation = numbersOfValue(useMirrorValueAt(nodeId, rigPaths.pinProp(pin.id, 'rotation'), shown))[0] ?? pin.rotation ?? 0;
+  const scale = (numbersOfValue(useMirrorValueAt(nodeId, rigPaths.pinProp(pin.id, 'scale'), shown))[0] ?? (pin.scale ?? 1) * 100) / 100;
+  const stiffness = numbersOfValue(useMirrorValueAt(nodeId, rigPaths.pinProp(pin.id, 'stiffness'), shown))[0] ?? pin.stiffness ?? 0;
+  const overlap = numbersOfValue(useMirrorValueAt(nodeId, rigPaths.pinProp(pin.id, 'overlap'), shown))[0] ?? pin.overlap ?? 0;
+  const px = position[0] ?? pin.position?.x ?? pin.x;
+  const py = position[1] ?? pin.position?.y ?? pin.y;
+  const selected = useRigSelectionStore((s) => s.nodeId === nodeId && s.pinIds.includes(pin.id));
 
-            {showRotate && (
-              <div className={styles.paramRow}>
-                <span className={styles.paramLabel}>{t('inspector.puppet.rotation', 'Rotation')}</span>
-                <ValueField
-                  value={pin.rotation ?? 0}
-                  unit="°"
-                  {...eng.scrub(pinLabel)}
-                  onChange={(v) => pinProp(pin.id, 'rotation', v)}
-                  aria-label={t('inspector.puppet.pinRotationLabel', '{name} rotation', { name: pin.name || pin.id })}
-                />
-              </div>
-            )}
+  const kind = pinKindOf(pin);
+  const showRotate = kind === 'advanced' || kind === 'bend';
+  const showScale = kind === 'advanced' || kind === 'bend';
+  const showStiffness = kind === 'starch' || kind === 'advanced' || stiffness > 0;
+  const showOverlap = kind === 'overlap' || overlap !== 0;
+  const isAnchored = stiffness >= 5;
+  const track = (prop: string): string => `puppet.${pin.id}.${prop}`;
+  const row = (prop: 'rotation' | 'scale' | 'stiffness' | 'overlap', label: string, field: JSX.Element, hint?: string): JSX.Element => (
+    <div className={styles.paramRow}>
+      <RigAnimToggle nodeId={nodeId} path={rigPaths.pinProp(pin.id, prop)} tracks={[track(prop)]} label={`${name} ${label}`} seconds={seconds} />
+      <span className={styles.paramLabel} title={hint}>{label}</span>
+      {field}
+    </div>
+  );
 
-            {showStiffness && (
-              <div className={styles.paramRow}>
-                <span className={styles.paramLabel}>{t('inspector.puppet.stiffness', 'Stiffness')}</span>
-                <ValueField
-                  value={pin.stiffness ?? 0}
-                  min={0}
-                  {...eng.scrub(pinLabel)}
-                  onChange={(v) => pinProp(pin.id, 'stiffness', Math.max(0, v))}
-                  aria-label={t('inspector.puppet.pinStiffnessLabel', '{name} stiffness', { name: pin.name || pin.id })}
-                />
-              </div>
-            )}
+  return (
+    <div
+      className={styles.card}
+      style={selected ? { outline: '1px solid var(--color-accent)', outlineOffset: -1 } : undefined}
+      onClick={(e) => {
+        // Click the card to select the pin on the canvas (Shift extends), as a row click selects a bone.
+        if ((e.target as HTMLElement).closest('input, select, button')) return;
+        const st = useRigSelectionStore.getState();
+        if (e.shiftKey) st.togglePin(nodeId, pin.id);
+        else st.selectPins(nodeId, [pin.id]);
+      }}
+    >
+      <div className={styles.cardHeader}>
+        <div className={styles.cardTitle}>
+          <span
+            aria-hidden
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: '50%',
+              background: kind === 'bend' ? 'transparent' : pinColor(kind),
+              border: `2px solid ${pinColor(kind)}`,
+              flexShrink: 0,
+            }}
+          />
+          <span>{name}</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <button
+            type="button"
+            className={`${styles.anchorToggle} ${isAnchored ? styles.anchorToggleActive : ''}`}
+            title={isAnchored ? t('inspector.puppet.anchorActive', 'Anchor lock active (body stays rigid)') : t('inspector.puppet.anchorLock', 'Lock as rigid anchor (Stiffness: 10)')}
+            onClick={() => pinProp(pin.id, 'stiffness', isAnchored ? 0 : 10)}
+          >
+            <Icon
+              name={isAnchored ? 'lock' : 'anchor'}
+              size="sm"
+              style={{ color: isAnchored ? '#f5b041' : 'inherit' }}
+            />
+            <span>{isAnchored ? t('inspector.puppet.locked', 'Locked') : t('inspector.puppet.anchor', 'Anchor')}</span>
+          </button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => { void edit('Delete Puppet Pin', deletePinCommands(nodeId, pin.id)); }}
+            aria-label={t('inspector.puppet.deletePinNamed', 'Delete pin {name}', { name })}
+            title={t('inspector.puppet.deletePin', 'Delete pin')}
+          >
+            <Icon name="trash" size="sm" />
+          </Button>
+        </div>
+      </div>
 
-            {showScale && (
-              <div className={styles.paramRow}>
-                <span className={styles.paramLabel}>{t('inspector.puppet.scale', 'Scale')}</span>
-                <ValueField
-                  value={pin.scale ?? 1}
-                  min={0.01}
-                  {...eng.scrub(pinLabel)}
-                  onChange={(v) => pinProp(pin.id, 'scale', Math.max(0.01, v))}
-                  aria-label={t('inspector.puppet.pinScaleLabel', '{name} scale', { name: pin.name || pin.id })}
-                />
-              </div>
-            )}
+      <div className={styles.paramRow}>
+        <span className={styles.paramLabel}>{t('inspector.puppet.type', 'Type')}</span>
+        <select
+          value={kind}
+          aria-label={t('inspector.puppet.pinTypeLabel', '{name} pin type', { name })}
+          onChange={(e) => { void edit(pinLabel, pinKindCommands(nodeId, pin.id, e.target.value as PinKind)); }}
+          style={selectStyle}
+        >
+          {PIN_KIND_CATALOG.map((k) => (
+            <option key={k.kind} value={k.kind}>{k.short}</option>
+          ))}
+        </select>
+      </div>
 
-            {showOverlap && (
-              <div className={styles.paramRow}>
-                <span
-                  className={styles.paramLabel}
-                  title={t('inspector.puppet.overlapHint', 'Depth ordering where the mesh folds over itself — positive draws this region in front.')}
-                >
-                  {t('inspector.puppet.overlap', 'Overlap')}
-                </span>
-                <ValueField
-                  value={pin.overlap ?? 0}
-                  min={-100}
-                  max={100}
-                  {...eng.scrub(pinLabel)}
-                  onChange={(v) => pinProp(pin.id, 'overlap', Math.max(-100, Math.min(100, v)))}
-                  aria-label={t('inspector.puppet.pinOverlapLabel', '{name} overlap', { name: pin.name || pin.id })}
-                />
-              </div>
-            )}
+      {kind === 'bend' && (
+        <div className={styles.subText} style={{ margin: '2px 0 6px' }}>
+          {t('inspector.puppet.bendHint', 'Position is derived from the advanced pins around it. Rotation and scale act on the motion they already produce — at 0° and 1× this pin does nothing.')}
+        </div>
+      )}
+      {kind === 'starch' && (
+        <div className={styles.subText} style={{ margin: '2px 0 6px' }}>
+          {t('inspector.puppet.starchHint', 'Keeps this region rigid so nearby pins cannot fold it.')}
+        </div>
+      )}
+      {kind === 'overlap' && (
+        <div className={styles.subText} style={{ margin: '2px 0 6px' }}>
+          {t('inspector.puppet.overlapKindHint', 'Sets which part draws in front when the mesh folds over itself.')}
+        </div>
+      )}
 
-            {showOverlap && (pin.overlap ?? 0) !== 0 && (
-              <div className={styles.paramRow}>
-                <span className={styles.paramLabel}>{t('inspector.puppet.overlapExtent', 'Overlap Extent')}</span>
-                <ValueField
-                  value={pin.overlapExtent ?? 1}
-                  min={0.05}
-                  {...eng.scrub(pinLabel)}
-                  onChange={(v) => pinProp(pin.id, 'overlapExtent', Math.max(0.05, v))}
-                  aria-label={t('inspector.puppet.pinOverlapExtentLabel', '{name} overlap extent', { name: pin.name || pin.id })}
-                />
-              </div>
-            )}
+      {kind !== 'bend' && (
+        <div className={styles.paramRow}>
+          <RigAnimToggle nodeId={nodeId} path={rigPaths.pinProp(pin.id, 'position')} tracks={[track('position')]} label={`${name} ${t('inspector.puppet.position', 'Position')}`} seconds={seconds} />
+          <span className={styles.paramLabel} title={t('inspector.puppet.positionHint', "Where the pin is at the playhead (the layer's rest space, px).")}>
+            {t('inspector.puppet.position', 'Position')}
+          </span>
+          <div style={{ display: 'flex', gap: 4 }}>
+            <ValueField
+              value={px}
+              unit="px"
+              {...eng.scrub(pinLabel)}
+              onChange={(x) => eng.send(pinLabel, pinPositionCommands(nodeId, pin.id, { x, y: py }, seconds))}
+              aria-label={t('inspector.puppet.pinXLabel', '{name} x', { name })}
+            />
+            <ValueField
+              value={py}
+              unit="px"
+              {...eng.scrub(pinLabel)}
+              onChange={(y) => eng.send(pinLabel, pinPositionCommands(nodeId, pin.id, { x: px, y }, seconds))}
+              aria-label={t('inspector.puppet.pinYLabel', '{name} y', { name })}
+            />
           </div>
-        );
-      })}
+        </div>
+      )}
+
+      {showRotate && row('rotation', t('inspector.puppet.rotation', 'Rotation'), (
+        <ValueField
+          value={rotation}
+          unit="°"
+          {...eng.scrub(pinLabel)}
+          onChange={(v) => pinProp(pin.id, 'rotation', v)}
+          aria-label={t('inspector.puppet.pinRotationLabel', '{name} rotation', { name })}
+        />
+      ))}
+
+      {showStiffness && row('stiffness', t('inspector.puppet.stiffness', 'Stiffness'), (
+        <ValueField
+          value={stiffness}
+          min={0}
+          {...eng.scrub(pinLabel)}
+          onChange={(v) => pinProp(pin.id, 'stiffness', Math.max(0, v))}
+          aria-label={t('inspector.puppet.pinStiffnessLabel', '{name} stiffness', { name })}
+        />
+      ))}
+
+      {showScale && row('scale', t('inspector.puppet.scale', 'Scale'), (
+        <ValueField
+          value={scale}
+          min={0.01}
+          {...eng.scrub(pinLabel)}
+          onChange={(v) => pinProp(pin.id, 'scale', Math.max(0.01, v))}
+          aria-label={t('inspector.puppet.pinScaleLabel', '{name} scale', { name })}
+        />
+      ))}
+
+      {showOverlap && row('overlap', t('inspector.puppet.overlap', 'Overlap'), (
+        <ValueField
+          value={overlap}
+          min={-100}
+          max={100}
+          {...eng.scrub(pinLabel)}
+          onChange={(v) => pinProp(pin.id, 'overlap', Math.max(-100, Math.min(100, v)))}
+          aria-label={t('inspector.puppet.pinOverlapLabel', '{name} overlap', { name })}
+        />
+      ), t('inspector.puppet.overlapHint', 'Depth ordering where the mesh folds over itself — positive draws this region in front.'))}
+
+      {showOverlap && overlap !== 0 && (
+        <div className={styles.paramRow}>
+          <span className={styles.paramLabel}>{t('inspector.puppet.overlapExtent', 'Overlap Extent')}</span>
+          <ValueField
+            value={pin.overlapExtent ?? 1}
+            min={0.05}
+            {...eng.scrub(pinLabel)}
+            onChange={(v) => pinProp(pin.id, 'overlapExtent', Math.max(0.05, v))}
+            aria-label={t('inspector.puppet.pinOverlapExtentLabel', '{name} overlap extent', { name })}
+          />
+        </div>
+      )}
     </div>
   );
 }

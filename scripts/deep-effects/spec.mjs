@@ -211,6 +211,7 @@ export const DEEP_EFFECTS = [
     params: [
       layer('heightLayer', 'Height Layer', { noneLabel: 'None (this layer)' }),
       menu('heightSource', 'Height From', ['Luminance', 'Alpha', 'Red', 'Green', 'Blue']),
+      menu('source', 'Refract', ['This Layer', 'Backdrop (the scene below)']),
       chk('invertHeight', 'Invert Height'),
       px('depth', 'Depth', 30, 500),
       px('smoothness', 'Smoothness', 4, 100),
@@ -1124,6 +1125,28 @@ export const DEEP_EFFECTS = [
       pct('shiftEdge', 'Shift Edge', 0, 100, -100, { group: 'Roto Brush Matte' }),
       pct('chatterAmount', 'Reduce Chatter', 30, 100, 0, { group: 'Roto Brush Matte' }),
       chk('renderRefineEdge', 'Render Refine Edge', true),
+    ],
+  },
+  // ── Stream D: liquid & glass (2026-11-02) ────────────────────────────────
+  {
+    type: 'goo',
+    label: 'Goo',
+    category: 'Distort',
+    desc: 'Liquid merge (the metaball / "gooey" filter): the layer\'s alpha blurred and thresholded so nearby shapes fuse into one blob with a soft meniscus, then shaded from the blob\'s distance field — a dome normal with a light, specular highlight and Fresnel rim, tinted. Works on a precomp of many blobs, or on a masked adjustment layer over the whole scene.',
+    params: [
+      px('blur', 'Blur', 12, 200, 0),
+      pct('threshold', 'Threshold', 50, 100, 1),
+      pct('softness', 'Softness', 10, 100, 0),
+      menu('color', 'Color', ['Layer', 'Tint'], 0, { group: 'Shading' }),
+      col('tint', 'Tint', '#36c6ff', { group: 'Shading' }),
+      pct('shine', 'Shine', 50, 400, 0, { group: 'Shading' }),
+      col('highlight', 'Highlight Color', '#ffffff', { group: 'Shading' }),
+      num('shininess', 'Shininess', 40, 1, 400, { group: 'Shading' }),
+      deg('lightAngle', 'Light Direction', -45, -3600, 3600, { group: 'Shading' }),
+      deg('lightElevation', 'Light Elevation', 50, 0, 90, { group: 'Shading' }),
+      pct('rim', 'Fresnel Rim', 20, 200, 0, { group: 'Shading' }),
+      pct('ambient', 'Ambient', 85, 200, 0, { group: 'Shading' }),
+      px('dome', 'Dome Radius', 0, 500, 0, { group: 'Shading' }),
     ],
   },
 ];

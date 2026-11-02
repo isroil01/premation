@@ -195,6 +195,30 @@ TEST_CASE("SAM 2: the tracker seeds from feats2_no_mem, then tracks through memo
   CHECK(r.conditioning);
 }
 
+TEST_CASE("SAM 2: a second walk starts from the first one's origin without encoding it again", "[sam2]") {
+  FakeModels m;
+  s2::Tracker forward(m, constants_rows(), 4);
+  std::vector<std::uint8_t> rgba(64 * 36 * 4, 100);
+  std::string error;
+  s2::FrameResult r;
+  CHECK_FALSE(forward.origin().has_value());
+  const std::vector<s2::Prompt> click{{32, 18, 1}};
+  REQUIRE(forward.step(rgba, 64, 36, click, r, error));
+  REQUIRE(forward.origin().has_value());
+  CHECK(forward.origin()->alpha == r.alpha);
+  CHECK(m.encodes == 1);
+  s2::Tracker backward(m, constants_rows(), 4);
+  REQUIRE(backward.start_from(*forward.origin()));
+  CHECK(backward.steps() == 1);
+  CHECK(m.encodes == 1);  // nothing encoded for the origin again
+  CHECK_FALSE(backward.start_from(*forward.origin()));  // only a fresh tracker
+  // Its next frame tracks through memory (the origin is a conditioning frame), no prompt needed.
+  REQUIRE(backward.step(rgba, 64, 36, {}, r, error));
+  CHECK(m.attends == 1);
+  CHECK(m.lastLabels == std::vector<std::int32_t>{-1});
+  CHECK_FALSE(r.conditioning);
+}
+
 TEST_CASE("SAM 2: the installed model follows a moving disc", "[sam2][ort]") {
   const std::string dir = env("PREMATION_SAM2_TEST_DIR");
   if (dir.empty() || !s2::installed(dir)) SKIP("no SAM 2 model (set PREMATION_SAM2_TEST_DIR to the sam2.1-tiny-video-onnx folder)");

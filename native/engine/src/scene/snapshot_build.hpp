@@ -12,6 +12,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -26,6 +27,7 @@
 #include "frame_scene.hpp"
 #include "model.hpp"
 #include "scene_types.hpp"
+#include "subjects.hpp"
 #include "text_measure.hpp"
 #include "timeline.hpp"
 
@@ -69,6 +71,11 @@ class WalkCache {
   [[nodiscard]] std::shared_ptr<const WalkTopology> topology(const doc::Document& d, const std::string& rootId,
                                                              const std::map<std::string, Json, std::less<>>& overrides,
                                                              const std::optional<std::string>& layerViewId);
+  /// Stream B3: a layer's stored subject frames indexed (core/subjects.hpp SubjectIndex), memoised
+  /// with the topology — rebuilt when the document changes, never per snapshot. `alphaMatte` and
+  /// `entries` are the node's own values (the index keeps pointers into them).
+  [[nodiscard]] std::shared_ptr<const doc::SubjectIndex> subject_index(const std::string& layerId, const Json& alphaMatte,
+                                                                        const Json& entries, double fps);
   /// Topologies built — each one a flatten (tests and benches read it).
   [[nodiscard]] std::uint64_t flattens() const noexcept { return flattens_; }
   /// Times the document was found changed and the memo dropped.
@@ -167,6 +174,11 @@ struct BuildContext {
   /// Program X1: build the time taps temporal deep effects read (off inside a
   /// tap's own build, so taps never nest).
   bool timeTaps = true;
+  /// Non-zero = an edit is waiting for the build lock (Session::BuildLock):
+  /// the walk stops at its next layer with BuildCancelled instead of finishing
+  /// a frame of a document that is about to change. Null = never cancelled
+  /// (stills, thumbnails, exports — the core thread's own builds).
+  const std::atomic<std::uint32_t>* cancel = nullptr;
   /// The frame builder's walk memo (flatten / instance expansion / by-id map
   /// across frames); null = every walk builds its own (tests, one-off builds).
   WalkCache* walkCache = nullptr;

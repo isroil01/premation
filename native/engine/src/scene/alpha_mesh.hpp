@@ -6,13 +6,24 @@
 // back to the region), line for line.
 //
 // An image layer's rest mesh is culled by (grid mode) or traced from
-// (silhouette mode) a 64² alpha coverage grid of its decoded bitmap. Pure; the
-// decode (imageAlphaCoverage.ts: the bitmap drawn into ≤64² and read back) is
-// the caller's. Pinned by tests/data/alpha_mesh_parity.json
-// (alphaMeshCrossEngine.test.ts).
+// (silhouette mode) an alpha coverage grid of its decoded bitmap. Pure; the
+// decode (rig_coverage.cpp) is the caller's.
+//
+// Two mask builders:
+//   coverage_mask_from_image_data  the TypeScript's 64²/max-alpha mask, kept for
+//                                  tests/data/alpha_mesh_parity.json;
+//   coverage_mask_from_alpha       what the engine uses (R2, 2026-11-02): the
+//                                  decoded alpha (`AlphaPlane`, ≤ 1024 px on its
+//                                  long side) cut into cells of ~coverage_cell_px
+//                                  (traceAccuracy) px up to 512 across, a cell kept
+//                                  when at least kCoverageMinFill of its area has
+//                                  alpha ≥ alphaThreshold. The mask carries its
+//                                  plane so a layer's own trace settings re-derive
+//                                  it (rig_mesh.cpp, cached by value).
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -22,18 +33,46 @@
 
 namespace premation::scene::rig {
 
+/// A decoded image's alpha, box-reduced to at most kCoverageSourceMax on its long side.
+struct AlphaPlane {
+  int width = 0, height = 0;
+  std::vector<std::uint8_t> alpha;  ///< row-major, row 0 = top
+  std::string key;                  ///< value digest (dims + bytes)
+};
+
 /// PuppetCoverageMask: row-major (row 0 = top) 1 / 0 cells + the cache identity.
 struct CoverageMask {
   int cols = 0, rows = 0;
   std::vector<std::uint8_t> cells;
   std::string key;
+  /// The alpha this mask was cut from (null: a legacy / synthetic mask — no re-derivation).
+  std::shared_ptr<const AlphaPlane> source;
 };
 
-/// imageAlphaCoverage.ts COVERAGE_SAMPLES / ALPHA_THRESHOLD.
+/// imageAlphaCoverage.ts COVERAGE_SAMPLES / ALPHA_THRESHOLD (the legacy mask).
 inline constexpr int kCoverageSamples = 64;
 inline constexpr int kCoverageAlphaThreshold = 12;
 
-/// `coverageMaskFromImageData({data, width, height}, {maxSamples, alphaThreshold})`.
+/// The mesh settings of a rig that shape an image layer's coverage
+/// (`traceAccuracy`, `alphaThreshold` on `fx.puppet` / `fx.skeleton`).
+inline constexpr double kTraceAccuracyDefault = 60;  ///< 0–100 → coverage_cell_px 16 … 2 px
+inline constexpr double kAlphaThresholdDefault = 32; ///< 0–255: a pixel counts as covered at or above it
+inline constexpr int kCoverageSourceMax = 1024;      ///< the alpha plane's long side
+inline constexpr int kCoverageMaxCells = 512;        ///< cells across the long side, at most
+inline constexpr double kCoverageMinFill = 0.35;     ///< the share of a cell's area that must be covered
+struct CoverageSettings {
+  double traceAccuracy = kTraceAccuracyDefault;
+  double alphaThreshold = kAlphaThresholdDefault;
+};
+
+/// The alpha of `rgba` (straight or premultiplied — only alpha is read), reduced to ≤ kCoverageSourceMax.
+[[nodiscard]] std::shared_ptr<const AlphaPlane> alpha_plane_from_rgba(std::span<const std::uint8_t> rgba, int width, int height);
+/// Cell size in source pixels for a trace accuracy: 16 px at 0, ~4.6 px at 60, 2 px at 100.
+[[nodiscard]] double coverage_cell_px(double traceAccuracy);
+/// The engine's mask: `plane` cut into cells by `s` (see the header comment).
+[[nodiscard]] CoverageMask coverage_mask_from_alpha(std::shared_ptr<const AlphaPlane> plane, const CoverageSettings& s);
+
+/// `coverageMaskFromImageData({data, width, height}, {maxSamples, alphaThreshold})` — the legacy mask.
 [[nodiscard]] CoverageMask coverage_mask_from_image_data(std::span<const std::uint8_t> rgba, int width, int height,
                                                          double maxSamples = kCoverageSamples,
                                                          double alphaThreshold = kCoverageAlphaThreshold);

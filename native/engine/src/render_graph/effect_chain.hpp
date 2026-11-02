@@ -33,6 +33,12 @@ class MapLayerSource {
   MapLayerSource(MapLayerSource&&) = delete;
   MapLayerSource& operator=(MapLayerSource&&) = delete;
   virtual TexRef map_layer(PassContext& ctx, const ById& byId, std::string_view mapLayerId, std::string_view selfId) = 0;
+  /// Stream D (2026-11-02): the scene under the layer whose chain is running —
+  /// copied into kFxBackdrop by the composition pass before the chain of a
+  /// layer flagged `readsBackdrop` (an effect with Source: Backdrop, the
+  /// fx-graph's BACKDROP slot). Empty = unavailable (the 3D route's layer-space
+  /// chains, a chain run without the flag): such an effect reads transparent black.
+  virtual TexRef backdrop(PassContext& /*ctx*/) { return {}; }
   /// Camera program D1: the composition's scene depth (camera-space z of the
   /// nearest 3D surface other than `selfId`, comp px, +inf where none; an
   /// r32float read with textureLoad) in a w × h buffer placed by `compToWorld`

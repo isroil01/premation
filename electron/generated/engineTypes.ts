@@ -3180,11 +3180,13 @@ export interface ObjectMatteJob {
   keepOutside?: boolean;
 }
 
+/** `hardness` 0–100 (absent = 100): the brush's edge for `paint` — 100 a hard disc, lower a soft falloff over the outer part of the radius. */
 export interface SubjectEdit {
   tool: SubjectTool;
   op: SubjectOp;
   radius: number;
   cut: boolean;
+  hardness?: number;
 }
 
 /** A correction stroke on one frame (AE parity 3.1). */
@@ -5350,6 +5352,22 @@ export interface RenderGlass {
   specularIntensity: number;
   specularFalloff: number;
   grain: number;
+  /**
+   * Liquid glass (stream D, 2026-11-02): where the surface normal comes from — 0 the alpha-edge gradient
+   * (the original glass), 1 a dome over the alpha's distance field, 2 the layer's luminance as height,
+   * 3 another layer's luminance (`bumpLayerId`). 0 with caustic = fresnel = 0 is the original shader, bit for bit.
+   */
+  bumpSource: number;
+  /**
+   * Dome radius / height scale, px; the refractive index and its per-channel spread (fraction);
+   * the inner caustic highlight and the Fresnel rim, 0..1.
+   */
+  thickness: number;
+  ior: number;
+  dispersion: number;
+  caustic: number;
+  fresnel: number;
+  bumpLayerId?: string;
 }
 
 export interface RenderMotionSample {

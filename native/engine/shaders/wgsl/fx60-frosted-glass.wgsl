@@ -4,12 +4,15 @@ struct Object { mvp: mat3x3<f32>, uvRect: vec4<f32>, p0: vec4<f32>, p1: vec4<f32
 @group(0) @binding(0) var<uniform> obj : Object;
 @group(0) @binding(1) var tex : texture_2d<f32>;
 @group(0) @binding(2) var smp : sampler;
+// Stream D (2026-11-02): p1.y = 1 scatters the scene under the layer (`tex` is then the
+// backdrop) and cuts the result by the layer's own alpha (binding 3).
+@group(0) @binding(3) var alphaTex : texture_2d<f32>;
 struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
 @vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
   var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
 }
-struct Prm { amt: f32, sm: f32, seed: f32, lw: f32, lh: f32 };
-fn prm() -> Prm { return Prm(obj.p0.x, obj.p0.y, obj.p0.z, obj.p0.w, obj.p1.x); }
+struct Prm { amt: f32, sm: f32, seed: f32, lw: f32, lh: f32, source: f32 };
+fn prm() -> Prm { return Prm(obj.p0.x, obj.p0.y, obj.p0.z, obj.p0.w, obj.p1.x, obj.p1.y); }
 const PI : f32 = 3.14159265358979;
 const TAU : f32 = 6.28318530717959;
 var<private> gLwh : vec2<f32>;
@@ -144,7 +147,8 @@ fn blendMode(a : vec3<f32>, b : vec3<f32>, m : i32) -> vec3<f32> {
   let lwh = gLwh;
   let pp = (fieldQ(uv) - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001)) * lwh;
   let src = textureSampleLevel(tex, smp, uv, 0.0);
-  if (P.amt <= 0.0) { return src; }
+  let cut = select(1.0, textureSampleLevel(alphaTex, smp, uv, 0.0).a, P.source > 0.5);
+  if (P.amt <= 0.0) { return src * cut; }
   let cell = floor(pp);
   var acc = vec4<f32>(0.0);
   for (var i = 0; i < 6; i++) {
@@ -154,5 +158,5 @@ fn blendMode(a : vec3<f32>, b : vec3<f32>, m : i32) -> vec3<f32> {
     acc += samplePx(pp + vec2<f32>(cos(th), sin(th)) * sqrt(hx) * P.amt);
   }
   let one = samplePx(pp + (vec2<f32>(hcell(cell, P.seed + 9.0), hcell(cell, P.seed + 11.0)) - 0.5) * 2.0 * P.amt);
-  return mix(one, acc / 6.0, P.sm);
+  return mix(one, acc / 6.0, P.sm) * cut;
 }

@@ -3372,6 +3372,7 @@ struct SubjectEdit {
   SubjectOp op = SubjectOp::replace;
   double radius = 0.0;
   bool cut = false;
+  std::optional<double> hardness;
   bool operator==(const SubjectEdit&) const = default;
 };
 
@@ -6394,6 +6395,13 @@ struct RenderGlass {
   double specular_intensity = 0.0;
   double specular_falloff = 0.0;
   double grain = 0.0;
+  double bump_source = 0.0;
+  double thickness = 0.0;
+  double ior = 0.0;
+  double dispersion = 0.0;
+  double caustic = 0.0;
+  double fresnel = 0.0;
+  std::optional<std::string> bump_layer_id;
   bool operator==(const RenderGlass&) const = default;
 };
 

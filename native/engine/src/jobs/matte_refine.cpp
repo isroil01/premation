@@ -636,17 +636,24 @@ Seeds seeds_from_matte(std::span<const float> alpha, int width, int height, int 
     const bool near = std::any_of(s.points.begin(), s.points.end(), [&](const sam::Point& p) { return std::hypot(p.x - px0, p.y - py0) < spacing; });
     if (!near) s.points.push_back(sam::Point{px0 + 0.5, py0 + 0.5, 1});
   }
-  // Background: just outside, around the box (a ring at ~6–10 % of its size).
+  // Background: just outside, around the subject (a ring at ~6–10 % of its size). The march
+  // starts from the DEEPEST interior point, not the box's centre: a C-shaped subject's box
+  // centre lies in its mouth, and a march from there met "outside" at once — a negative point
+  // in the subject's own concavity, a hand's width from its edge.
   std::vector<std::uint8_t> out(n);
   for (std::size_t i = 0; i < n; ++i) out[i] = in[i] ? 0 : 1;
   const std::vector<float> dout = distance_inside(out, width, height);
   const double ring = std::max(6.0, std::max(x1 - x0, y1 - y0) * 0.08);
-  const double cx = (x0 + x1) / 2;
-  const double cy = (y0 + y1) / 2;
+  double cx = (x0 + x1) / 2;
+  double cy = (y0 + y1) / 2;
+  if (!cand.empty()) {
+    cx = cand.front().second % width + 0.5;
+    cy = cand.front().second / width + 0.5;
+  }
   int added = 0;
   for (int k = 0; k < 16 && added < maxBg; ++k) {
     const double ang = (k * 4 % 16) * 3.14159265358979323846 / 8;  // spread the first picks around
-    // March outward from the centre along the angle to the first pixel `ring` px outside.
+    // March outward from the deep point along the angle to the first pixel `ring` px outside.
     for (double r = 0; r < std::hypot(width, height); r += 1) {
       const int x = static_cast<int>(std::lround(cx + r * std::cos(ang)));
       const int y = static_cast<int>(std::lround(cy + r * std::sin(ang)));
@@ -658,6 +665,38 @@ Seeds seeds_from_matte(std::span<const float> alpha, int width, int height, int 
       }
     }
   }
+  return s;
+}
+
+Seeds seeds_from_matte_fast(std::span<const float> alpha, int width, int height, int maxEdge, int maxFg, int maxBg) {
+  const int edge = std::max(width, height);
+  if (edge <= maxEdge || maxEdge <= 0 || width <= 0 || height <= 0) return seeds_from_matte(alpha, width, height, maxFg, maxBg);
+  // Box-filter the matte down (2×2, 3×3, … cells averaged: a pixel's share of the subject), seed
+  // there, and scale the points and the box back up. A seed is a prompt the model reads on its
+  // own 64² grid: a quarter-pixel of placement is nothing to it.
+  const int k = (edge + maxEdge - 1) / maxEdge;
+  const int sw = std::max(1, (width + k - 1) / k);
+  const int sh = std::max(1, (height + k - 1) / k);
+  std::vector<float> small(px(sw, sh), 0.0f);
+  for (int sy = 0; sy < sh; ++sy)
+    for (int sx = 0; sx < sw; ++sx) {
+      double sum = 0;
+      int cnt = 0;
+      for (int y = sy * k; y < std::min(height, (sy + 1) * k); ++y)
+        for (int x = sx * k; x < std::min(width, (sx + 1) * k); ++x) {
+          sum += alpha[at(y * width + x)];
+          ++cnt;
+        }
+      small[at(sy * sw + sx)] = cnt > 0 ? static_cast<float>(sum / cnt) : 0.0f;
+    }
+  Seeds s = seeds_from_matte(small, sw, sh, maxFg, maxBg);
+  if (s.empty) return s;
+  const double f = k;
+  for (sam::Point& p : s.points) {
+    p.x = std::clamp(p.x * f, 0.0, width - 0.5);
+    p.y = std::clamp(p.y * f, 0.0, height - 0.5);
+  }
+  s.box = sam::Box{s.box.x0 * f, s.box.y0 * f, std::min(static_cast<double>(width), s.box.x1 * f), std::min(static_cast<double>(height), s.box.y1 * f)};
   return s;
 }
 

@@ -54,6 +54,11 @@ struct ViewportState {
   std::uint32_t pixelWidth = 1, pixelHeight = 1;
   Mat3 viewProjection;
   Rect visibleWorldRect;
+  /// The transport is playing (SceneRenderer::set_playing): a 2D layer's effect
+  /// chain is drawn on a whole pixel and composited through the fraction, so a
+  /// layer in motion reuses its chain every frame (composition_pass.cpp P8b).
+  /// Paused, the layer is drawn at its own phase: exact, never resampled.
+  bool playing = false;
 
   static ViewportState from(const api::RenderView& v) noexcept;
 };

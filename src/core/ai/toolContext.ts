@@ -707,6 +707,18 @@ async function trackExpressionOf(nodeId: string, prop: string): Promise<{ source
   return r ? expressionOf(r.info, r.member, r.members.length) : null;
 }
 
+/** Paths of the layer's properties an enabled expression drives (any member of a vector). */
+function expressionPaths(tree: Awaited<ReturnType<typeof treeOf>>): string[] {
+  if (!tree) return [];
+  const out: string[] = [];
+  for (const [path, info] of tree.nodes) {
+    if (info.kind !== 'property') continue;
+    const whole = info.expression !== '' && info.expressionEnabled;
+    if (whole || info.memberExpressions?.some((e) => e.enabled)) out.push(path);
+  }
+  return out;
+}
+
 export function createAnimFacade(session: AiEngineSession = freeSession()): AnimFacade {
   const anim: AnimFacade = {
     isValidProp: async (_nodeId, prop) => isAnimatableProp(prop),
@@ -776,7 +788,7 @@ export function createAnimFacade(session: AiEngineSession = freeSession()): Anim
       for (const k of slow) await anim.setKeyframe(k.nodeId, k.prop, k.t, k.value, k.easing);
     },
 
-    setPointsKeyframe: async (nodeId, prop, t, points) => {
+    setPointsKeyframe: async (nodeId, prop, t, points, opts) => {
       await treeOf(nodeId);
       // A puppet pin's Position (`puppet/pins/<pin>/position`): one vec2 key at
       // comp time t, the pin's data track in the TS engine.
@@ -785,7 +797,20 @@ export function createAnimFacade(session: AiEngineSession = freeSession()): Anim
       if (!r || !r.animatable || r.valueType !== 'vec2' || !p || points.length !== 1) {
         throw new AiEngineError('unsupported', `${LEGACY_GAPS.pointsKey}: ${prop}`);
       }
-      await session.apply([{ type: 'addKeyframes', keys: [{ prop: r.ref, time: secondsToFlicks(t), value: { kind: 'vec2', value: { x: p.x, y: p.y } }, spatialIn: [], spatialOut: [] }] } as Command]);
+      // The key's temporal ease and its spatial handles (path tangents, layer px
+      // relative to the value) ride the same insert — one write per key.
+      const bez = opts?.bezier && opts.bezier.length >= 4 ? opts.bezier : null;
+      const easing = bez ? 'bezier' : opts?.easing && opts.easing !== 'linear' ? opts.easing : null;
+      if (easing && !ENGINE_EASINGS.has(easing)) throw new AiEngineError('invalidArgument', `unknown easing '${easing}' for '${prop}'`);
+      const tangent = (v: readonly number[] | undefined): number[] => (v && v.length >= 2 && v.every((n) => Number.isFinite(n)) ? [v[0]!, v[1]!] : []);
+      const spatialIn = tangent(opts?.tangentIn), spatialOut = tangent(opts?.tangentOut);
+      await session.apply([{ type: 'addKeyframes', keys: [{
+        prop: r.ref, time: secondsToFlicks(t), value: { kind: 'vec2', value: { x: p.x, y: p.y } },
+        ...(easing ? { easing: easing as Easing } : {}),
+        ...(bez ? { bezier: { x1: bez[0]!, y1: bez[1]!, x2: bez[2]!, y2: bez[3]! } } : {}),
+        ...(spatialIn.length || spatialOut.length ? { spatialInterp: 'bezier' } : {}),
+        spatialIn, spatialOut,
+      }] } as Command]);
     },
 
     removeKeyframe: async (nodeId, prop, t) => {
@@ -865,11 +890,20 @@ export function createAnimFacade(session: AiEngineSession = freeSession()): Anim
       }
       return out;
     },
+    expressionProps: async (nodeId) => {
+      const tree = await treeOf(nodeId);
+      const out: string[] = [];
+      for (const path of expressionPaths(tree)) {
+        const info = tree?.nodes.get(path);
+        if (info) out.push(...membersOf(info));
+      }
+      return out;
+    },
     evaluate: async (nodeId, t) => {
       await treeOf(nodeId);
       // The animated members' evaluated values at comp time t, asked of the engine.
       const tree = await treeOf(nodeId);
-      const paths = [...documentMirror().layerKeyframes(nodeId).keys()].filter((p) => tree?.nodes.has(p));
+      const paths = [...new Set([...documentMirror().layerKeyframes(nodeId).keys(), ...expressionPaths(tree)])].filter((p) => tree?.nodes.has(p));
       if (paths.length === 0) return {};
       const res = await session.query({ type: 'getPropertyValues', props: paths.map((path) => ({ layer: nodeId, path })), time: secondsToFlicks(t), evaluated: true });
       const out: Record<string, number> = {};

@@ -131,6 +131,8 @@ class Session {
   /// Heartbeat from the frame channel; answered from this (the core) thread.
   void on_ping(std::uint64_t nonce, std::uint32_t queued);
   /// The client went away (stdin closed). An open gesture is committed (§5.1).
+  /// A Hello on an open session is a client RECONNECT (a reloaded page on a
+  /// surviving engine) and settles the old client's gesture the same way.
   void on_disconnect();
 
   /// When the clock next needs `tick` (a frame is due); nullopt when stopped.
@@ -185,6 +187,9 @@ class Session {
 
   // ── envelope ──
   void handle_hello(const api::Hello& hello);
+  /// Close the open gesture as ONE committed history entry (§5.1: disconnect,
+  /// reconnect). True when a gesture was open.
+  bool commit_open_gesture();
   void handle_request(api::Request request, Clock::time_point now);
   void respond(api::Seq seq, api::Outcome outcome);
   void send_events(api::Revision from, api::Revision to, std::vector<api::Event> events, std::optional<api::Seq> seq,
@@ -367,11 +372,14 @@ class Session {
     std::optional<std::string> activeComp;
     std::vector<doc::OverlaySubscription> overlays;  ///< this viewport's subscriptions
     std::uint64_t writes = 0;                        ///< docWrites_ when queued
+    std::uint64_t seq = 0;                           ///< enqueue order (buildSeq_): pump_builds dedupes skipped tasks by it
   };
   struct BuildReport {
     std::string comp;
     std::vector<api::LayerError> errors;
     double ms = 0;
+    std::uint32_t viewport = 0;  ///< the task's viewport (a skip is re-requested only if nothing newer was queued for it)
+    std::uint64_t seq = 0;       ///< the task's BuildTask::seq
     bool announce = false;
     bool skipped = false;  ///< the document moved on before the build began: build again
     bool cached = false;   ///< a cached frame (RenderJob::cachedKey): no build ran
@@ -382,7 +390,13 @@ class Session {
   class BuildLock {
    public:
     BuildLock(Session& s, bool write) : s_(s) {
-      if (s_.buildLockDepth_++ == 0) s_.buildMu_.lock();
+      if (s_.buildLockDepth_++ == 0) {
+        // A write announces itself before waiting: the build in flight is of a
+        // document about to change, and stops at its next layer (BuildCancelled).
+        if (write) s_.editsWaiting_.fetch_add(1, std::memory_order_acq_rel);
+        s_.buildMu_.lock();
+        if (write) s_.editsWaiting_.fetch_sub(1, std::memory_order_acq_rel);
+      }
       s_.buildLockWrote_ = s_.buildLockWrote_ || write;
     }
     ~BuildLock() {
@@ -425,6 +439,12 @@ class Session {
   std::uint32_t buildLockDepth_ = 0;
   bool buildLockWrote_ = false;
   std::atomic<std::uint64_t> docWrites_{0};
+  /// Write locks waiting for buildMu_ (a BuildLock{write} between asking and
+  /// holding it). The builder watches it between layers (FrameBuilder::
+  /// set_cancel_flag): a build in flight stops at its next layer rather than
+  /// make the edit wait for the whole frame, and the worker skips a queued task
+  /// while it is non-zero rather than take the lock ahead of the edit.
+  std::atomic<std::uint32_t> editsWaiting_{0};
   /// The worker's expression cache (anim.hpp ExprCache memoises compiled sources; the
   /// core thread's `exprCache_` is written by its own queries). Under buildMu_.
   doc::ExprCache buildExprCache_;
@@ -432,6 +452,14 @@ class Session {
   std::condition_variable buildCv_;
   std::deque<BuildTask> buildQueue_;
   std::vector<BuildReport> buildReports_;
+  /// Core thread only (enqueue_build and pump_builds both run there): the
+  /// enqueue counter, and per viewport the seq of the newest frame task (not a
+  /// prefetch) queued for it. A skipped task is built again only while it is
+  /// still that newest task: the edit that cancelled it has usually queued the
+  /// fresh frame already (flush_render after the command), and re-requesting
+  /// it from the report as well built the same frame twice.
+  std::uint64_t buildSeq_ = 0;
+  std::map<std::uint32_t, std::uint64_t> lastFrameSeq_;
   bool buildBusy_ = false;
   bool buildStop_ = false;
   std::unique_ptr<TextQueries> lockedText_;

@@ -167,11 +167,28 @@ struct FrameResult {
   double encodeMs = 0, attendMs = 0, decodeMs = 0, memoryMs = 0;
 };
 
+/// What a walk's first (origin) frame left: its memory, pointer and matte. A
+/// second walk from the same origin (the other direction) starts from it
+/// instead of encoding and segmenting the origin frame again.
+struct Origin {
+  Memory mem;
+  std::vector<float> pointer;
+  std::vector<float> alpha;
+  float iou = 0;
+  float objectScore = 0;
+};
+
 /// The walk: frames in the order they are tracked, prompts where the user gave them.
 class Tracker {
  public:
   Tracker(Models& models, Constants constants, std::size_t frameCount)
       : models_(models), constants_(std::move(constants)), bank_(frameCount) {}
+
+  /// After the first step: the origin frame's memory and matte (nullopt before it).
+  [[nodiscard]] const std::optional<Origin>& origin() const noexcept { return origin_; }
+  /// Start this (fresh) tracker from another walk's origin: its memory is the first conditioning
+  /// frame and the step count is 1, as if step() had run on that frame. False when not fresh.
+  bool start_from(const Origin& o);
 
   /// Track the next frame of the walk (RGBA8 width×height). `prompts` non-empty
   /// makes it a conditioning frame (required on the first). `mask` (width×height,
@@ -187,6 +204,7 @@ class Tracker {
   Constants constants_;
   MemoryBank bank_;
   std::int64_t step_ = 0;
+  std::optional<Origin> origin_;
   // Reused buffers: a walk runs hundreds of frames.
   std::vector<float> pixels_, tokens_, posTokens_, conditioned_, pointerPos_;
   Vision vision_;

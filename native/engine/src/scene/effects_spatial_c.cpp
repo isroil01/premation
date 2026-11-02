@@ -382,6 +382,7 @@ bool pack(std::string_view t, const Params& P, double lw, double lh, Out& out) {
     w.nums("p", std::move(p));
     w.num("sigmaPx", jmax(0, P.n("softness") * 0.5));
     w.num("reachPx", P.n("softness") * 1.5);
+    if (const std::string blob = P.layer("blobLayerId"); !blob.empty()) w.text("blobLayerId", blob);  // stream D L6
     out.push_back(w.done());
     return true;
   }
@@ -448,9 +449,16 @@ bool pack(std::string_view t, const Params& P, double lw, double lh, Out& out) {
     p.push_back(P.e("seed"));  // seed
     p.push_back(lw);  // lw
     p.push_back(lh);  // lh
+    // Stream D L6: row 3 = (bottom set, water set, water gain, 0); the chain
+    // fills the first two once it knows which layers arrived.
+    p.push_back(0);  // useBottom
+    p.push_back(0);  // useWater
+    p.push_back(jmax(0, P.pct("waterGain")));  // water gain
     while (p.size() % 4 != 0) p.push_back(0);
     w.nums("p", std::move(p));
     w.num("reachPx", 0);
+    if (const std::string bottom = P.layer("bottomLayerId"); !bottom.empty()) w.text("bottomLayerId", bottom);
+    if (const std::string water = P.layer("waterLayerId"); !water.empty()) w.text("waterLayerId", water);
     out.push_back(w.done());
     return true;
   }
@@ -1007,9 +1015,12 @@ bool pack(std::string_view t, const Params& P, double lw, double lh, Out& out) {
     p.push_back(P.e("seed"));  // seed
     p.push_back(lw);  // lw
     p.push_back(lh);  // lh
+    const bool fromBackdrop = P.e("source") == 1;  // stream D: frost the scene under the layer
+    p.push_back(fromBackdrop ? 1 : 0);  // source
     while (p.size() % 4 != 0) p.push_back(0);
     w.nums("p", std::move(p));
     w.num("reachPx", P.n("amount"));
+    if (fromBackdrop) w.flag("readsBackdrop", true);
     out.push_back(w.done());
     return true;
   }

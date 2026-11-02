@@ -64,6 +64,14 @@ export type EventListener = (batch: EventBatch) => void;
 export interface EngineClient {
   /** The newest document revision this client has seen (responses and event batches). */
   readonly revision: Revision;
+  /**
+   * The gesture THIS client opened and has not ended (§5.1), or null. The
+   * engine has one gesture slot and no notion of who holds it: a `gestureOpen`
+   * refusal while this is null means the slot belongs to someone that is not
+   * this client — a page that was reloaded away, typically — not to a drag of
+   * ours that is still going.
+   */
+  readonly heldGesture: number | null;
 
   /** The wire-level primitive every helper is built on. */
   request(request: Request): Promise<Response>;
@@ -134,9 +142,14 @@ export function engineError(code: ErrorCode, message: string, extra: Partial<Omi
 export abstract class EngineClientBase implements EngineClient {
   private seq = 0;
   protected lastRevision: Revision = 0;
+  private openGesture: number | null = null;
 
   get revision(): Revision {
     return this.lastRevision;
+  }
+
+  get heldGesture(): number | null {
+    return this.openGesture;
   }
 
   abstract request(request: Request): Promise<Response>;
@@ -168,6 +181,9 @@ export abstract class EngineClientBase implements EngineClient {
       return { ok: false, error: engineError('internal', `unexpected outcome '${res.outcome.kind}' for a command`), revision: res.revision };
     }
     const { type: _type, ...value } = res.outcome.value as CommandResult & Record<string, unknown>;
+    // The one gesture slot, as far as this client is concerned (`heldGesture`).
+    if (command.type === 'beginGesture') this.openGesture = (value as { gesture?: number }).gesture ?? null;
+    else if (command.type === 'endGesture') this.openGesture = null;
     return { ok: true, value: value as unknown as CommandResults[T], revision: res.revision };
   }
 

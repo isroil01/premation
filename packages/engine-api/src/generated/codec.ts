@@ -8711,6 +8711,7 @@ function encS_SubjectEdit(w: Writer, v: T.SubjectEdit): void {
   w.byte(16); w.varint(enc_SubjectOp(v.op));
   w.byte(25); w.f64(v.radius);
   w.byte(32); w.bool(v.cut);
+  if (v.hardness !== undefined) { w.byte(41); w.f64(v.hardness); }
 }
 function decS_SubjectEdit(r: Reader, end: number, o: any): T.SubjectEdit {
   let h_tool = false;
@@ -8721,6 +8722,7 @@ function decS_SubjectEdit(r: Reader, end: number, o: any): T.SubjectEdit {
   let v_op: T.SubjectOp | undefined;
   let v_radius: number | undefined;
   let v_cut: boolean | undefined;
+  let v_hardness: number | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -8728,6 +8730,7 @@ function decS_SubjectEdit(r: Reader, end: number, o: any): T.SubjectEdit {
       case 16: v_op = dec_SubjectOp(r.varint()); h_op = true; break;
       case 25: v_radius = r.f64(); h_radius = true; break;
       case 32: v_cut = r.bool(); h_cut = true; break;
+      case 41: v_hardness = r.f64(); break;
       default: r.skip(key);
     }
   }
@@ -8740,6 +8743,7 @@ function decS_SubjectEdit(r: Reader, end: number, o: any): T.SubjectEdit {
   o.op = v_op;
   o.radius = v_radius;
   o.cut = v_cut;
+  if (v_hardness !== undefined) o.hardness = v_hardness;
   return o;
 }
 function encS_ObjectMatteStroke(w: Writer, v: T.ObjectMatteStroke): void {
@@ -16890,6 +16894,13 @@ function encS_RenderGlass(w: Writer, v: T.RenderGlass): void {
   w.byte(97); w.f64(v.specularIntensity);
   w.byte(105); w.f64(v.specularFalloff);
   w.byte(113); w.f64(v.grain);
+  w.byte(121); w.f64(v.bumpSource);
+  w.varint(129); w.f64(v.thickness);
+  w.varint(137); w.f64(v.ior);
+  w.varint(145); w.f64(v.dispersion);
+  w.varint(153); w.f64(v.caustic);
+  w.varint(161); w.f64(v.fresnel);
+  if (v.bumpLayerId !== undefined) { w.varint(170); w.str(v.bumpLayerId); }
 }
 function decS_RenderGlass(r: Reader, end: number, o: any): T.RenderGlass {
   let h_refraction = false;
@@ -16906,6 +16917,12 @@ function decS_RenderGlass(r: Reader, end: number, o: any): T.RenderGlass {
   let h_specularIntensity = false;
   let h_specularFalloff = false;
   let h_grain = false;
+  let h_bumpSource = false;
+  let h_thickness = false;
+  let h_ior = false;
+  let h_dispersion = false;
+  let h_caustic = false;
+  let h_fresnel = false;
   let v_refraction: number | undefined;
   let v_edgeWidth: number | undefined;
   let v_aberration: number | undefined;
@@ -16920,6 +16937,13 @@ function decS_RenderGlass(r: Reader, end: number, o: any): T.RenderGlass {
   let v_specularIntensity: number | undefined;
   let v_specularFalloff: number | undefined;
   let v_grain: number | undefined;
+  let v_bumpSource: number | undefined;
+  let v_thickness: number | undefined;
+  let v_ior: number | undefined;
+  let v_dispersion: number | undefined;
+  let v_caustic: number | undefined;
+  let v_fresnel: number | undefined;
+  let v_bumpLayerId: string | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -16937,6 +16961,13 @@ function decS_RenderGlass(r: Reader, end: number, o: any): T.RenderGlass {
       case 97: v_specularIntensity = r.f64(); h_specularIntensity = true; break;
       case 105: v_specularFalloff = r.f64(); h_specularFalloff = true; break;
       case 113: v_grain = r.f64(); h_grain = true; break;
+      case 121: v_bumpSource = r.f64(); h_bumpSource = true; break;
+      case 129: v_thickness = r.f64(); h_thickness = true; break;
+      case 137: v_ior = r.f64(); h_ior = true; break;
+      case 145: v_dispersion = r.f64(); h_dispersion = true; break;
+      case 153: v_caustic = r.f64(); h_caustic = true; break;
+      case 161: v_fresnel = r.f64(); h_fresnel = true; break;
+      case 170: v_bumpLayerId = r.str(); break;
       default: r.skip(key);
     }
   }
@@ -16955,6 +16986,12 @@ function decS_RenderGlass(r: Reader, end: number, o: any): T.RenderGlass {
   if (!h_specularIntensity) throw new DecodeError('RenderGlass.specularIntensity: missing', 'missingField');
   if (!h_specularFalloff) throw new DecodeError('RenderGlass.specularFalloff: missing', 'missingField');
   if (!h_grain) throw new DecodeError('RenderGlass.grain: missing', 'missingField');
+  if (!h_bumpSource) throw new DecodeError('RenderGlass.bumpSource: missing', 'missingField');
+  if (!h_thickness) throw new DecodeError('RenderGlass.thickness: missing', 'missingField');
+  if (!h_ior) throw new DecodeError('RenderGlass.ior: missing', 'missingField');
+  if (!h_dispersion) throw new DecodeError('RenderGlass.dispersion: missing', 'missingField');
+  if (!h_caustic) throw new DecodeError('RenderGlass.caustic: missing', 'missingField');
+  if (!h_fresnel) throw new DecodeError('RenderGlass.fresnel: missing', 'missingField');
   o.refraction = v_refraction;
   o.edgeWidth = v_edgeWidth;
   o.aberration = v_aberration;
@@ -16969,6 +17006,13 @@ function decS_RenderGlass(r: Reader, end: number, o: any): T.RenderGlass {
   o.specularIntensity = v_specularIntensity;
   o.specularFalloff = v_specularFalloff;
   o.grain = v_grain;
+  o.bumpSource = v_bumpSource;
+  o.thickness = v_thickness;
+  o.ior = v_ior;
+  o.dispersion = v_dispersion;
+  o.caustic = v_caustic;
+  o.fresnel = v_fresnel;
+  if (v_bumpLayerId !== undefined) o.bumpLayerId = v_bumpLayerId;
   return o;
 }
 function encS_RenderMotionSample(w: Writer, v: T.RenderMotionSample): void {

@@ -95,6 +95,8 @@ constexpr auto kHandled = std::to_array<std::string_view>({
     "matte-stroke",
     "selective-color-ai",
     "object-matte",
+    // Stream D - liquid & glass.
+    "goo",
 });
 
 /// The deep effects whose pixels move with the layer clock (`time`) — kept as
@@ -378,9 +380,13 @@ api::RenderEffect refraction(const Params& P, Box b) {
   if (!hl.empty()) g.map(0, hl);
   g.pass("fxx-height", fxg::X0, {hl.empty() ? fxg::IN : fxg::MAP, -1, -1, -1}, Rows().r(P.e("heightSource"), P.on("invertHeight") ? 1 : 0, 0, 0));
   if (P.n("smoothness") > 0) g.blur(fxg::X0, fxg::X0, P.n("smoothness"), fxg::X1);
-  int src = fxg::IN;
+  // Stream D: Source: Backdrop — the picture refracted is the scene under the
+  // layer (its own height still shapes the surface), cut by the layer's alpha.
+  const bool fromBackdrop = P.e("source") == 1;
+  if (fromBackdrop) g.backdrop();
+  int src = fromBackdrop ? fxg::BACKDROP : fxg::IN;
   if (P.n("frost") > 0) {
-    g.blur(fxg::X1, fxg::IN, P.n("frost"), fxg::A);
+    g.blur(fxg::X1, src, P.n("frost"), fxg::A);
     src = fxg::X1;
   }
   const double az = P.rad("lightAngle");
@@ -388,8 +394,42 @@ api::RenderEffect refraction(const Params& P, Box b) {
   g.pass("fxx-refract", fxg::B, {fxg::IN, fxg::X0, src, -1},
          Rows()
              .r(std::max(0.0, P.n("depth")), clampd(P.n("ior"), 1, 3), std::max(0.0, P.pct("dispersion")), std::max(0.0, P.pct("specular")))
-             .r(std::cos(az) * std::cos(el), std::sin(az) * std::cos(el), std::sin(el), std::max(1.0, P.n("shininess"))));
+             .r(std::cos(az) * std::cos(el), std::sin(az) * std::cos(el), std::sin(el), std::max(1.0, P.n("shininess")))
+             .r(fromBackdrop ? 1 : 0, 0, 0, 0));
   return g.done(fxg::B);
+}
+
+// ── Goo (stream D L3, 2026-11-02) ─────────────────────────────────────────────
+// The metaball / "gooey" filter as an engine effect: the layer blurred, its
+// alpha thresholded (soft) so nearby shapes fuse into one blob, then the blob
+// shaded from its alpha distance field (op 4): a dome normal — flat inside,
+// sideways at the edge, over `dome` px — lit by a direction, with a Blinn
+// highlight and a Fresnel rim in the highlight colour. Colour is the blurred
+// layer's own (merged blobs blend) or a tint. On a precomp of many blobs or,
+// with L1, on a masked adjustment layer over the scene.
+api::RenderEffect goo(const Params& P, Box b) {
+  Graph g("goo", b.lw, b.lh);
+  const double blur = std::max(0.0, P.n("blur"));
+  int src = fxg::IN;
+  if (blur > 0) {
+    g.blur(fxg::X0, fxg::IN, blur, fxg::X1);
+    src = fxg::X0;
+  }
+  g.pass("fxx-goo-shape", fxg::A, {src, fxg::IN, -1, -1},
+         Rows().r(clampd(P.pct("threshold"), 0.01, 1), clampd(P.pct("softness"), 0, 1), P.e("color"), 0).c3(P.l3("tint", {0.03, 0.55, 1})));
+  const double dome = P.n("dome") > 0 ? P.n("dome") : std::max(4.0, blur);
+  g.field(fxg::X1, fxg::A, dome + 2);
+  const double az = P.rad("lightAngle");
+  const double el = clampd(P.rad("lightElevation"), 0, kPi / 2);
+  g.pass("fxx-goo-shade", fxg::B, {fxg::A, fxg::X1, -1, -1},
+         Rows()
+             .r(dome, std::max(0.0, P.pct("shine")), std::max(1.0, P.n("shininess")), std::max(0.0, P.pct("rim")))
+             .r(std::cos(az) * std::cos(el), std::sin(az) * std::cos(el), std::sin(el), clampd(P.pct("ambient"), 0, 2))
+             .c3(P.l3("highlight", {1, 1, 1})));
+  // The blurred alpha (blur.wgsl: taps to 3.5 sigma) is all that can light a
+  // texel past the input; the field and the shading stay inside the shape.
+  g.measured();
+  return g.done(fxg::B, blur > 0 ? blur * 3.5 + 3 : 0.0);
 }
 
 api::RenderEffect compound_arithmetic(const Params& P, Box b) {
@@ -1638,7 +1678,7 @@ api::RenderEffect selective_color_ai(const Params& P, Box b, const Ctx& c) {
 void object_matte(const Params& P, Box b, const Ctx& c, Out& out) {
   if (!c.l.objectMatteSrc) return;
   Graph g("object-matte", b.lw, b.lh);
-  g.mask(0, object_matte_key(c.l.id));  // every shown subject: the cut-out is all of them
+  g.mask(0, object_matte_key(c.l.id), true);  // every shown subject; required: no frame texture → the layer shows uncut
   const int src = fxg::MASK0;
   const bool fine = P.on("fineTune");
   const double feather = fine ? std::max(0.0, P.n("feather")) : 0.0;
@@ -1648,9 +1688,11 @@ void object_matte(const Params& P, Box b, const Ctx& c, Out& out) {
   g.pass("fxx-selcol-matte", fxg::X1, {src, shifted ? fxg::X0 : src, -1, -1}, Rows().r(-shift, shifted ? 1 : 0, 0, 0));
   if (feather > 0) g.blur(fxg::X1, fxg::X1, feather * 0.5, fxg::X2);
   const bool invert = P.on("invert");
-  // The subject keeps the cut-out's own colour (decontaminated or not, as the
-  // propagation made it); inverted, the background is the footage's.
-  g.pass("fxx-omatte", fxg::A, {fxg::IN, fxg::X1, src, -1}, Rows().r(fine ? clampd(P.pct("contrast"), 0, 1) : 0, invert ? 1 : 0, invert ? 0 : 1, 0));
+  // Stream B1: the stored frame is coverage alone; the footage keeps its colour and the
+  // card's Decontaminate unmixes the soft edge as it composites (fxx-omatte.wgsl). Inverted,
+  // the background is the footage's, untouched.
+  const double decontaminate = P.on("decontaminate") ? clampd(P.pct("decontaminationAmount"), 0, 1) : 0.0;
+  g.pass("fxx-omatte", fxg::A, {fxg::IN, fxg::X1, src, -1}, Rows().r(fine ? clampd(P.pct("contrast"), 0, 1) : 0, invert ? 1 : 0, decontaminate, 0));
   out.push_back(g.done(fxg::A, 0.0));
 }
 
@@ -1719,6 +1761,7 @@ bool pack(std::string_view t, const Params& P, Box b, const Ctx& c, Out& out) {
   else if (t == "matte-stroke") out.push_back(matte_stroke(P, b, c));
   else if (t == "selective-color-ai") out.push_back(selective_color_ai(P, b, c));
   else if (t == "object-matte") object_matte(P, b, c, out);
+  else if (t == "goo") out.push_back(goo(P, b));
   else return false;
   return true;
 }

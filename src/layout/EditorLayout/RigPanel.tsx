@@ -20,6 +20,10 @@ import { SearchField } from '@components/SearchField';
 import type { AccordionItem } from '@components/Accordion';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
+import { useActiveWorkspace } from '@stores/projectStore';
+import { useRigSelectionStore } from '@stores/rigSelectionStore';
+import { edit } from '@core/engine/uiEdits';
+import { keyRigAtPlayheadCommands } from '@layout/Inspector/rigEdits';
 import { getEventBus } from '@core/events/EventBus';
 import { useMirrorLayer, useMirrorTree } from '@hooks/useMirror';
 import { BoneControls } from '@layout/Inspector/BoneControls';
@@ -51,8 +55,49 @@ export function RigPanel(): JSX.Element {
           />
         </div>
       )}
+      {primary && <KeyPoseRow nodeId={primary} />}
       <RigPanelContent nodeId={primary} query={query} />
     </Panel>
+  );
+}
+
+/**
+ * "Key selected" / "Key all" (C2): one keyframe at the playhead on the pose of
+ * the selected pins and the selected bone, or of every pin and bone — AE's
+ * "set a keyframe here" over a whole pose, one undo entry (rigEdits
+ * `keyRigAtPlayheadCommands`). Hidden while the layer has no rig.
+ */
+function KeyPoseRow({ nodeId }: { nodeId: string }): JSX.Element | null {
+  const layer = useMirrorLayer(nodeId);
+  const tree = useMirrorTree(layer ? nodeId : null);
+  const seconds = useActiveWorkspace()?.time ?? 0;
+  const pinIds = useRigSelectionStore((s) => (s.nodeId === nodeId ? s.pinIds : []));
+  const boneId = useRigSelectionStore((s) => (s.nodeId === nodeId ? s.boneId : null));
+  const hasRig = !!tree && (tree.nodes.has('puppet') || tree.nodes.has('skeleton'));
+  if (!layer || !hasRig) return null;
+  const anySelected = pinIds.length > 0 || !!boneId;
+  return (
+    <div className={styles.searchRow} style={{ display: 'flex', gap: 6 }}>
+      <Button
+        size="sm"
+        variant="secondary"
+        disabled={!anySelected}
+        title={t('editor.rig.keySelectedHint', 'Keyframe the selected pins and bone at the playhead')}
+        onClick={() => {
+          void edit('Key Selected Rig', keyRigAtPlayheadCommands(nodeId, seconds, { pins: pinIds, bones: boneId ? [boneId] : [] }));
+        }}
+      >
+        <Icon name="diamond" size="sm" /> {t('editor.rig.keySelected', 'Key selected')}
+      </Button>
+      <Button
+        size="sm"
+        variant="secondary"
+        title={t('editor.rig.keyAllHint', 'Keyframe every pin and bone at the playhead')}
+        onClick={() => { void edit('Key Rig Pose', keyRigAtPlayheadCommands(nodeId, seconds, { pins: null, bones: null })); }}
+      >
+        <Icon name="diamond" size="sm" /> {t('editor.rig.keyAll', 'Key all')}
+      </Button>
+    </div>
   );
 }
 

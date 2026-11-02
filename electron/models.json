@@ -28,6 +28,25 @@
       ]
     },
     {
+      "id": "object-matte-gpu",
+      "ipc": "objectMatteGpu",
+      "env": "SAM_GPU",
+      "name": "Object Matte GPU encoder (SlimSAM-77, float)",
+      "description": "The float export of the bundled Object Matte encoder, for the GPU: the bundled int8 pair runs on the CPU only (DirectML cannot build its integer-quantized graph). With this file installed the engine runs the frame encoder on the GPU (DirectML, Core ML or CUDA) and keeps the bundled decoder; without a GPU provider it is ignored. Downloaded on demand; the user may point it at another float SAM-class encoder.",
+      "licence": "Apache-2.0",
+      "bundled": false,
+      "source": "user",
+      "files": [
+        {
+          "name": "vision_encoder.onnx",
+          "url": "https://huggingface.co/Xenova/slimsam-77-uniform/resolve/main/onnx/vision_encoder.onnx",
+          "sha256": null,
+          "bytes": null,
+          "minBytes": 20000000
+        }
+      ]
+    },
+    {
       "id": "face-landmarks",
       "ipc": "faceModel",
       "env": "FACE",

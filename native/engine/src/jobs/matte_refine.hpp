@@ -72,8 +72,14 @@ struct Seeds {
 };
 
 /// Up to `maxFg` points spread over the matte's interior (deepest first),
-/// `maxBg` points in a ring just outside it, and its bounds.
+/// `maxBg` points in a ring just outside it (marched from its deepest point),
+/// and its bounds.
 [[nodiscard]] Seeds seeds_from_matte(std::span<const float> alpha, int width, int height, int maxFg = 4, int maxBg = 4);
+
+/// seeds_from_matte on the matte box-filtered to at most `maxEdge` px on its
+/// long side (a walk calls it per frame; the distance transforms are the cost),
+/// the seeds scaled back to frame px. The same matte under `maxEdge` is seeded as is.
+[[nodiscard]] Seeds seeds_from_matte_fast(std::span<const float> alpha, int width, int height, int maxEdge = 512, int maxFg = 4, int maxBg = 4);
 
 /// The stored frame: the picture with the matte as its alpha (straight).
 [[nodiscard]] std::vector<std::uint8_t> cutout(std::span<const std::uint8_t> rgba, std::span<const float> alpha, int width, int height);

@@ -34,8 +34,27 @@ import { planChainSwitch, type ChainMode } from '@core/rig/ikfk';
 import type { IkTargetResolved } from '@core/rig/rigDeform';
 import type { RigController } from '@core/rig/controllers';
 import { documentMirror } from '@stores/documentMirror';
+import { jsonField } from '@core/mirror/layerFields';
+import { usePreferenceStore } from '@stores/preferenceStore';
+import { useUIStore } from '@stores/uiStore';
+import type { PuppetRig } from '@core/rig/puppet';
+import { pinHasTransformGizmo } from '@core/rig/puppet';
 
 const DEG = 180 / Math.PI;
+
+/**
+ * The ONE keying rule for rig values (C2): a key at the playhead when the
+ * property is animated or auto-keyframe is on, else the static value — the
+ * inspector's fields, the Bone tool and the timeline all decide this way.
+ * `puppetTool` adds the Puppet TOOL's "Always key pins" option (on by default:
+ * After Effects' pins are animated from the moment they move), which the
+ * Puppet overlay's drags pass; a typed value in the Rig panel stays a static
+ * edit until the property is animated.
+ */
+export function rigAutoKey(puppetTool = false): boolean {
+  const auto = usePreferenceStore.getState().timelineAutoKeyframe;
+  return puppetTool ? auto || useUIStore.getState().puppetAlwaysKey : auto;
+}
 
 function set(layer: string, path: string, value: Value, seconds?: number): Command {
   return { type: 'setProperty', prop: { layer, path }, value, ...(seconds !== undefined ? { time: compTime(seconds) } : {}) };
@@ -67,6 +86,9 @@ export interface PuppetMeshPatch {
   solver?: 'arap' | 'lbs';
   /** 0 = unlimited. */
   rotationRefinement?: number;
+  /** C1 mesh settings (`puppet/mesh/traceAccuracy` 0–100, `puppet/mesh/alphaThreshold` 0–255): written only once the engine lists them. */
+  traceAccuracy?: number;
+  alphaThreshold?: number;
 }
 
 /** Mesh settings as ONE action; creates the (empty) rig first when the layer has none, as the legacy writer did. */
@@ -81,6 +103,8 @@ export function puppetMeshCommands(nodeId: string, patch: PuppetMeshPatch): Comm
   if (patch.mode !== undefined) out.push(set(nodeId, rigPaths.puppetMesh('mode'), values.choice(patch.mode)));
   if (patch.solver !== undefined) out.push(set(nodeId, rigPaths.puppetMesh('solver'), values.choice(patch.solver)));
   if (patch.rotationRefinement !== undefined) out.push(set(nodeId, rigPaths.puppetMesh('rotationRefinement'), values.scalar(Math.max(0, patch.rotationRefinement))));
+  if (patch.traceAccuracy !== undefined) out.push(set(nodeId, 'puppet/mesh/traceAccuracy', values.scalar(patch.traceAccuracy)));
+  if (patch.alphaThreshold !== undefined) out.push(set(nodeId, 'puppet/mesh/alphaThreshold', values.scalar(patch.alphaThreshold)));
   return out;
 }
 
@@ -91,10 +115,86 @@ export function pinPropCommands(
   prop: 'rotation' | 'scale' | 'stiffness' | 'overlap' | 'overlapExtent',
   value: number,
   seconds: number,
+  autoKey = rigAutoKey(),
 ): Command[] {
   const api = prop === 'scale' ? value * 100 : value;
   const path = rigPaths.pinProp(pinId, prop);
-  return prop === 'overlapExtent' ? [set(nodeId, path, values.scalar(api))] : rigValueCommands(nodeId, path, values.scalar(api), seconds);
+  return prop === 'overlapExtent' ? [set(nodeId, path, values.scalar(api))] : rigValueCommands(nodeId, path, values.scalar(api), seconds, autoKey);
+}
+
+/** A pin's Position (rest space, px) at the playhead — the overlay's drag and the inspector's X / Y fields. */
+export function pinPositionCommands(nodeId: string, pinId: string, at: { x: number; y: number }, seconds: number, autoKey = rigAutoKey()): Command[] {
+  return rigValueCommands(nodeId, rigPaths.pinProp(pinId, 'position'), values.vec2(at.x, at.y), seconds, autoKey);
+}
+
+/**
+ * A bone's POSE at the playhead (the keyframeable `bone.<id>.*` tracks, not the
+ * bind pose): rotation in degrees, position in px, scale as multipliers.
+ */
+export function bonePoseCommands(
+  nodeId: string,
+  boneId: string,
+  prop: 'rotation' | 'position' | 'scale',
+  value: number | { x: number; y: number },
+  seconds: number,
+  autoKey = rigAutoKey(),
+): Command[] {
+  const v: Value = typeof value === 'number'
+    ? values.scalar(value)
+    : prop === 'scale' ? values.vec2(value.x * 100, value.y * 100) : values.vec2(value.x, value.y);
+  return rigValueCommands(nodeId, rigPaths.boneProp(boneId, prop), v, seconds, autoKey);
+}
+
+/** The rig properties "Key at playhead" writes, by part (keys hold the evaluated value — the engine fills it). */
+function keyablePinPaths(nodeId: string, pin: PuppetRig['pins'][number]): string[] {
+  const has = (p: string): boolean => isRigAnimated(nodeId, p);
+  const out = [rigPaths.pinProp(pin.id, 'position')];
+  const gizmo = pinHasTransformGizmo(pin.kind ?? 'advanced');
+  for (const p of ['rotation', 'scale'] as const) if (gizmo || has(rigPaths.pinProp(pin.id, p))) out.push(rigPaths.pinProp(pin.id, p));
+  for (const p of ['stiffness', 'overlap'] as const) if (has(rigPaths.pinProp(pin.id, p))) out.push(rigPaths.pinProp(pin.id, p));
+  return out;
+}
+
+function keyableBonePaths(nodeId: string, bone: Bone, ik: IKTarget | undefined): string[] {
+  const has = (p: string): boolean => isRigAnimated(nodeId, p);
+  const out = [rigPaths.boneProp(bone.id, 'rotation')];
+  for (const p of ['position', 'scale'] as const) if (has(rigPaths.boneProp(bone.id, p))) out.push(rigPaths.boneProp(bone.id, p));
+  if (ik && ik.enabled !== false) {
+    out.push(rigPaths.ikProp(bone.id, 'target'));
+    if (ik.pole || has(rigPaths.ikProp(bone.id, 'pole'))) out.push(rigPaths.ikProp(bone.id, 'pole'));
+    if (has(rigPaths.ikProp(bone.id, 'mode'))) out.push(rigPaths.ikProp(bone.id, 'mode'));
+  }
+  return out;
+}
+
+/**
+ * "Key selected at playhead" / "Key all" (RigPanel): one key at `seconds` on
+ * every pose property of the given pins and bones (null = all of them) — a
+ * pin's Position (and Rotation / Scale for an Advanced / Bend pin), a bone's
+ * Rotation and its IK goal; a property already animated is keyed whatever
+ * the part. The keys hold the evaluated value at the playhead, so this is AE's
+ * "set a keyframe here" over a whole pose. ONE command = one undo entry.
+ */
+export function keyRigAtPlayheadCommands(
+  nodeId: string,
+  seconds: number,
+  sel: { pins?: readonly string[] | null; bones?: readonly string[] | null },
+): Command[] {
+  const m = documentMirror();
+  const puppet = jsonField<PuppetRig>(m, nodeId, 'layer/puppet');
+  const skel = jsonField<{ bones?: Bone[]; ikTargets?: IKTarget[] }>(m, nodeId, 'layer/skeleton');
+  const paths: string[] = [];
+  for (const pin of puppet?.pins ?? []) {
+    if (sel.pins === undefined || (sel.pins !== null && !sel.pins.includes(pin.id))) continue;
+    paths.push(...keyablePinPaths(nodeId, pin));
+  }
+  for (const bone of skel?.bones ?? []) {
+    if (sel.bones === undefined || (sel.bones !== null && !sel.bones.includes(bone.id))) continue;
+    paths.push(...keyableBonePaths(nodeId, bone, skel?.ikTargets?.find((t) => t.boneId === bone.id)));
+  }
+  if (paths.length === 0) return [];
+  const time = compTime(seconds);
+  return [{ type: 'addKeyframes', keys: paths.map((path) => ({ prop: { layer: nodeId, path }, time, spatialIn: [], spatialOut: [] })) }];
 }
 
 export function pinKindCommands(nodeId: string, pinId: string, kind: string): Command[] {
@@ -107,11 +207,17 @@ export function deletePinCommands(nodeId: string, pinId: string): Command[] {
 
 // ── Skeleton ─────────────────────────────────────────────────────────
 
-export function skeletonMeshCommands(nodeId: string, patch: { density?: number; expansion?: number; mode?: 'grid' | 'silhouette' }): Command[] {
+export function skeletonMeshCommands(
+  nodeId: string,
+  patch: { density?: number; expansion?: number; mode?: 'grid' | 'silhouette'; traceAccuracy?: number; alphaThreshold?: number },
+): Command[] {
   const out: Command[] = [];
   if (patch.density !== undefined) out.push(set(nodeId, rigPaths.skeletonMesh('density'), values.scalar(patch.density)));
   if (patch.expansion !== undefined) out.push(set(nodeId, rigPaths.skeletonMesh('expansion'), values.scalar(patch.expansion)));
   if (patch.mode !== undefined) out.push(set(nodeId, rigPaths.skeletonMesh('mode'), values.choice(patch.mode)));
+  // C1's mesh settings — written only once the engine lists them (the panels guard on the tree).
+  if (patch.traceAccuracy !== undefined) out.push(set(nodeId, 'skeleton/mesh/traceAccuracy', values.scalar(patch.traceAccuracy)));
+  if (patch.alphaThreshold !== undefined) out.push(set(nodeId, 'skeleton/mesh/alphaThreshold', values.scalar(patch.alphaThreshold)));
   return out;
 }
 
@@ -172,8 +278,8 @@ export function ikChainLengthCommands(nodeId: string, boneId: string, n: number)
 }
 
 /** The goal's position at the playhead (a key when it is keyframed). */
-export function ikTargetCommands(nodeId: string, boneId: string, target: { x: number; y: number }, seconds: number): Command[] {
-  return rigValueCommands(nodeId, rigPaths.ikProp(boneId, 'target'), values.vec2(target.x, target.y), seconds);
+export function ikTargetCommands(nodeId: string, boneId: string, target: { x: number; y: number }, seconds: number, autoKey = rigAutoKey()): Command[] {
+  return rigValueCommands(nodeId, rigPaths.ikProp(boneId, 'target'), values.vec2(target.x, target.y), seconds, autoKey);
 }
 
 /** Add Pole: the optional property, set to `pole` — one action. */

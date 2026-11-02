@@ -18,6 +18,7 @@
     "sharpen",
     "noise",
     "set-matte",
+    "subject-edge",
     "beam",
     "light-sweep",
     "ground-grid",
@@ -407,7 +408,10 @@
     "fxx-selcol-matte",
     "fxx-omatte",
     "fxx-sfill-pre",
-    "fxx-sfill-post"
+    "fxx-sfill-post",
+    "fxx-goo-shape",
+    "fxx-goo-shade",
+    "glass-liquid"
   ],
   "materials": [
     {
@@ -2116,6 +2120,13 @@
           "stages": [
             "fragment"
           ]
+        },
+        {
+          "binding": 4,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
         }
       ]
     },
@@ -2885,6 +2896,13 @@
         },
         {
           "binding": 3,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 4,
           "type": "texture",
           "stages": [
             "fragment"
@@ -6296,6 +6314,48 @@
       ]
     },
     {
+      "name": "SUBJECT_EDGE_MATERIAL",
+      "shader": "subject-edge",
+      "layout": [
+        {
+          "binding": 0,
+          "type": "uniform-buffer",
+          "stages": [
+            "vertex",
+            "fragment"
+          ]
+        },
+        {
+          "binding": 1,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 2,
+          "type": "sampler",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 3,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 4,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        }
+      ]
+    },
+    {
       "name": "SHADOW_DEPTH_ALPHA_MATERIAL",
       "shader": "shadow-depth-alpha",
       "layout": [
@@ -9480,6 +9540,20 @@
           "stages": [
             "fragment"
           ]
+        },
+        {
+          "binding": 3,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 4,
+          "type": "texture",
+          "stages": [
+            "fragment"
+          ]
         }
       ]
     },
@@ -10401,6 +10475,13 @@
         {
           "binding": 2,
           "type": "sampler",
+          "stages": [
+            "fragment"
+          ]
+        },
+        {
+          "binding": 3,
+          "type": "texture",
           "stages": [
             "fragment"
           ]

@@ -79,6 +79,10 @@ struct ResolvedGlass {
   std::string rimColor;
   double rimOpacity = 0, rimWidth = 0, rimAngle = 0, specularAngle = 0, specularIntensity = 0, specularFalloff = 0,
          grain = 0;
+  /// Liquid glass (stream D L4): 0 edge (the original), 1 dome, 2 luma, 3 another layer (`bumpLayerId`).
+  int bumpSource = 0;
+  double thickness = 24, ior = 1.5, dispersion = 0, caustic = 0, fresnel = 0;
+  std::string bumpLayerId;
 };
 
 /// RenderLayer.light — a light layer's screen-blended glow quad.
@@ -137,6 +141,9 @@ struct SubjectPart {
   bool invert = false;
   /// Hidden in the Subjects panel, or outside the range it was tracked over: it covers nothing now.
   bool hidden = false;
+  /// Stream B5: the stored frames playback reaches next (their `src`, in time order), for the
+  /// texture feed to decode ahead of the playhead — like footage read-ahead. Empty when not playing.
+  std::vector<std::string> ahead;
   /// Neutral: the stored picture as it is.
   [[nodiscard]] bool plain() const { return blend.empty() && feather <= 0 && choke == 0 && contrast <= 0 && !invert && !hidden; }
 };
@@ -261,6 +268,9 @@ struct RLayer {
   std::vector<std::string> behindSubjects;
   /// Behind Subject's softness (layer/behindSubjectSoftness, px): the subject's edge feathered where it covers this layer.
   double behindSubjectSoftness = 0;
+  /// Behind Subject's choke (layer/behindSubjectChoke, px): the subject's edge shrunk (+) or grown (−)
+  /// where it covers this layer, so a soft edge's halo does not hide the text. 0 = as stored.
+  double behindSubjectChoke = 0;
   std::optional<std::array<double, 4>> uvRect;
   bool premultipliedSource = false;
   /// Interpret Footage > Color > Assign Profile: the input space over the file's own tags.

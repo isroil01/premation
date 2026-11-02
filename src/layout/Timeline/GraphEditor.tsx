@@ -56,7 +56,7 @@ import { useKeyframeSelectionStore } from '@stores/keyframeSelectionStore';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import { useEaseClipboardStore } from '@stores/easeClipboardStore';
 import { EaseLibrarySection } from '@layout/Motion/EaseLibrarySection';
-import { flicksToSeconds, secondsToFlicks, type KeyframePatch } from '@motion/engine-api';
+import { flicksToSeconds, secondsToFlicks, type KeyframePatch, type LayerInfo } from '@motion/engine-api';
 import { GestureSession, edit } from '@core/engine/uiEdits';
 import { engineIdle } from '@core/engine/engineInstance';
 import { compTime } from '@core/engine/propRefs';
@@ -83,8 +83,9 @@ import { ValueField } from '@components/ValueField';
 import { documentMirror } from '@stores/documentMirror';
 import { useMirrorLayersWatch } from '@hooks/useMirror';
 import { memberKeysOf, type MemberKey, type StoredTimeOf } from '@core/mirror/memberKeys';
-import { membersOf } from '@core/mirror/trackIndex';
+import { isPinPositionPath, membersOf, pinPositionAxes, trackRefIn, type MirrorTreeLike } from '@core/mirror/trackIndex';
 import { mirrorPropertyMeta } from '@core/mirror/metaFacts';
+import { isRigTrack } from '@core/timeline/propertyTree';
 import {
   withOutgoingSpeed,
   withIncomingSpeed,
@@ -462,9 +463,28 @@ function graphTracksOf(nodeId: string): string[] {
     if (keys.length === 0) continue;
     const info = tree?.nodes.get(path);
     if (!info || isDataProperty(info)) continue;
-    for (const t of membersOf(info)) if (!out.includes(t)) out.push(t);
+    const members = membersOf(info);
+    // A puppet pin's Position is ONE data track holding a point (C2): plotted
+    // as its X and Y views (trackIndex `pinPositionAxes`), each a curve of its own.
+    const tracks = members.length === 1 && info.dimensions === 2 && isPinPositionPath(path) ? pinPositionAxes(members[0]!) : members;
+    for (const t of tracks) if (!out.includes(t)) out.push(t);
   }
   return out;
+}
+
+/**
+ * A plotted track's name. The registry labels the TypeScript track names
+ * (`x`, `effect.fx_1.radius`); a rig track (`puppet.pin_1.rotation`,
+ * `bone.b1.x`, a pin Position's `.x` view) has none there and would read as
+ * its path, so it takes its property's name from the mirror tree ("Rotation",
+ * "Position" — the axis letter is added by the curve list).
+ */
+function graphTrackLabel(prop: string, layer: LayerInfo | undefined, tree: MirrorTreeLike | undefined): string {
+  if (isRigTrack(prop)) {
+    const name = trackRefIn(tree, prop)?.info.name;
+    if (name) return name;
+  }
+  return mirrorPropertyMeta(prop, layer, tree).label;
 }
 
 function findKfIndex(kfs: ReadonlyArray<{ t: number }>, t: number): number {
@@ -749,7 +769,7 @@ export function GraphEditor({
           nodeId,
           prop,
           layerName,
-          label: mirrorPropertyMeta(prop, layer, tree).label,
+          label: graphTrackLabel(prop, layer, tree),
           color: COLORS[colorIdx++ % COLORS.length] ?? '#2988ff',
         });
       }

@@ -150,7 +150,10 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   // The taps stop at ±3.5σ. They used to run to at least ±30 whatever σ, so a
   // σ 4 drop shadow paid 61 fetches a pixel a pass for 29 taps of weight
   // under 1e-12 (renderArtifacts / manyEffects benches, 2026-11-01).
-  let spacing = max(1.0, (sigma * 2.5) / 30.0);
+  // blurParams.w: a spacing multiplier for a pass that draws a soft halo (a
+  // glow's wide pass at 2.2x the radius ran 85 fetches a pixel a pass); 0 or 1
+  // keeps the lattice above.
+  let spacing = max(1.0, (sigma * 2.5) / 30.0) * max(obj.blurParams.w, 1.0);
   let steps = max(1, i32(ceil((sigma * 3.5) / spacing - 0.001)));
   let k = 0.5 / (sigma * sigma);
   var c = textureSample(tex, smp, uv);

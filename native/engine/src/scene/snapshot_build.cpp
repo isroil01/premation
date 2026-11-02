@@ -1855,6 +1855,7 @@ void Walk::build_node(const doc::Node& n) {  const std::string kind = n.kind();
     for (const Json& id : ids.arr())
       if (id.is_string() && !id.str().empty() && std::ranges::find(l.behindSubjects, id.str()) == l.behindSubjects.end()) l.behindSubjects.push_back(id.str());
   if (const Json& soft = n.fx().at("behindSubjectSoftness"); soft.is_number() && std::isfinite(soft.num())) l.behindSubjectSoftness = std::clamp(soft.num(), 0.0, 100.0);
+  if (const Json& choke = n.fx().at("behindSubjectChoke"); choke.is_number() && std::isfinite(choke.num())) l.behindSubjectChoke = std::clamp(choke.num(), -100.0, 100.0);
   l.isAdjustment = read_node_adjustment(n);
   l.draft = read_node_quality_s(n) == "draft";
   if (doc::read_node_paint(n)) {  // paint_port.cpp: the frame's live strokes
@@ -1883,56 +1884,44 @@ void Walk::build_node(const doc::Node& n) {  const std::string kind = n.kind();
     }
     if (best->at("dataUrl").is_string()) l.contentAwareFillSrc = best->at("dataUrl").str();
   }
-  // A per-frame soft matte (AE parity 3.2, setLayerMatte): each frame is the
-  // layer's cut-out picture, so the nearest one stands in for the footage the
-  // same way — and over a fill, since it was cut from the footage itself.
+  // A per-frame soft matte (AE parity 3.2, setLayerMatte): each stored frame is
+  // the layer's matte at that time (stream B1: an alpha plane; a legacy file's
+  // alpha is read), applied to the footage as it composites — the footage is
+  // always the source, the matte its coverage.
   if (const Json& am = fx.at("alphaMatte"); am.is_object() && am.at("frames").is_array() && !am.at("frames").arr().empty()) {
     // Each visible subject (core/subjects.hpp): its frame nearest the layer's time, its live edge,
     // and for Temporal Smooth its neighbouring frames (the stored frames either side, within 2.5 frames).
+    // Stream B3: the frames are indexed once per document revision (sorted per subject, the tracked
+    // span read off the index) and the nearest frame is a binary search — a walk's thousands of
+    // frames are not scanned per subject per snapshot.
     const Json& entries = fx.at("subjects");
     const auto num = [](const Json& e, const char* k) { return e.at(k).is_number() && std::isfinite(e.at(k).num()) ? e.at(k).num() : 0.0; };
-    for (const std::string& sid : doc::subject_ids(am, entries)) {
-      const Json& en = doc::subject_entry(entries, sid);
-      const Json* best = doc::nearest_subject_frame(am, sid, layerTimeNow);
-      if (best == nullptr) continue;
+    std::shared_ptr<const doc::SubjectIndex> index = c_.walkCache != nullptr ? c_.walkCache->subject_index(n.id, am, entries, fps_) : nullptr;
+    if (index == nullptr) index = std::make_shared<const doc::SubjectIndex>(am, entries, fps_);
+    constexpr std::size_t kAhead = 8;  // stream B5: frames handed to the texture feed's read-ahead
+    for (const doc::SubjectIndex::Subject& s : index->subjects()) {
+      const std::size_t at = doc::SubjectIndex::nearest(s, layerTimeNow);
+      if (at == doc::SubjectIndex::npos) continue;
+      const Json& en = doc::subject_entry(entries, s.id);
+      const Json* best = s.frames[at].json;
       SubjectPart p;
-      p.id = sid;
+      p.id = s.id;
       p.src = best->at("src").str();
-      p.hidden = en.at("hidden").is_bool() && en.at("hidden").b();
-      // A tracked subject (frames every frame or so, Follow's) is there over its frames' span (and a
-      // frame either side); one selected on a frame, or edited on a few far apart, holds everywhere.
-      {
-        double lo = std::numeric_limits<double>::infinity();
-        double hi = -lo;
-        int count = 0;
-        for (const Json& f : am.at("frames").arr())
-          if (f.at("t").is_number() && doc::frame_subject(f) == sid) {
-            lo = std::min(lo, f.at("t").num());
-            hi = std::max(hi, f.at("t").num());
-            ++count;
-          }
-        const double pad = 1.0 / std::max(1.0, fps_);
-        const bool tracked = count >= 3 && (hi - lo) / (count - 1) <= 1.5 * pad;
-        if (tracked && (layerTimeNow < lo - pad || layerTimeNow > hi + pad)) p.hidden = true;
-      }
+      // Hidden in the panel; or a tracked subject (frames every frame or so, Follow's) outside its
+      // frames' span (and a frame either side) — one selected on a frame, or edited on a few far
+      // apart, holds everywhere.
+      p.hidden = (en.at("hidden").is_bool() && en.at("hidden").b()) || doc::SubjectIndex::away(s, layerTimeNow, fps_);
       p.feather = std::clamp(num(en, "feather"), 0.0, 200.0);
       p.choke = std::clamp(num(en, "choke"), -200.0, 200.0);
       p.contrast = std::clamp(num(en, "contrast"), 0.0, 100.0) / 100;
       p.invert = en.at("invert").is_bool() && en.at("invert").b();
       if (const double smooth = std::clamp(num(en, "smooth"), 0.0, 100.0) / 100; smooth > 0) {
-        const double t0 = best->at("t").num();
+        const double t0 = s.frames[at].t;
         const double reach = 2.5 / std::max(1.0, fps_);
-        const Json* before = nullptr;
-        const Json* after = nullptr;
-        for (const Json& f : am.at("frames").arr()) {
-          if (!f.at("t").is_number() || !f.at("src").is_string() || doc::frame_subject(f) != sid) continue;
-          const double dt = f.at("t").num() - t0;
-          if (dt < 0 && dt >= -reach && (before == nullptr || dt > before->at("t").num() - t0)) before = &f;
-          if (dt > 0 && dt <= reach && (after == nullptr || dt < after->at("t").num() - t0)) after = &f;
-        }
-        for (const Json* f : {before, after})
-          if (f != nullptr) p.blend.emplace_back(f->at("src").str(), smooth / 3);
+        if (at > 0 && t0 - s.frames[at - 1].t <= reach) p.blend.emplace_back(s.frames[at - 1].json->at("src").str(), smooth / 3);
+        if (at + 1 < s.frames.size() && s.frames[at + 1].t - t0 <= reach) p.blend.emplace_back(s.frames[at + 1].json->at("src").str(), smooth / 3);
       }
+      for (std::size_t k = at + 1; k < s.frames.size() && k <= at + kAhead; ++k) p.ahead.push_back(s.frames[k].json->at("src").str());
       l.subjects.push_back(std::move(p));
     }
     // Read as a matte by an effect (the Object Matte effect, which cuts the
@@ -1940,15 +1929,29 @@ void Walk::build_node(const doc::Node& n) {  const std::string kind = n.kind();
     // texture and the footage stays whole. A matte stored with its Object
     // Matte effect (`cutByEffect`, setLayerMatte) cuts only through it: that
     // effect disabled or removed, the layer shows uncut. A record from before
-    // the effect existed still stands in for the footage.
+    // the effect existed (no card, not stored for one) cuts the layer through
+    // an implicit card: the stored frame is coverage alone (stream B1), so it
+    // can no longer stand in for the footage — the footage stays the source
+    // and the card applies the matte, decontaminating the edge as it goes.
     if (!l.subjects.empty()) {
       const std::string& first = l.subjects.front().src;
       l.subjectSrc = first;
       const Json& by = am.at("cutByEffect");
       const bool byEffect = by.is_bool() && by.b();
       const bool hasCard = std::ranges::any_of(l.effects, [](const Json& e) { return e.at("type").is_string() && e.at("type").str() == "object-matte"; });
-      if (reads_own_object_matte(l)) l.objectMatteSrc = first;
-      else if (!byEffect && !hasCard) l.contentAwareFillSrc = first;
+      if (reads_own_object_matte(l)) {
+        l.objectMatteSrc = first;
+      } else if (!byEffect && !hasCard) {
+        Json card = Json::object();
+        card.set("id", Json::string("object-matte:stored"));
+        card.set("type", Json::string("object-matte"));
+        Json params = Json::object();
+        params.set("decontaminate", Json::boolean(true));
+        params.set("decontaminationAmount", Json::number(50));
+        card.set("params", std::move(params));
+        l.effects.insert(l.effects.begin(), std::move(card));
+        l.objectMatteSrc = first;
+      }
     }
   }
   l.sourceTime = retimed_source_at(n.id, t_);  // its own Speed % / Time Remap (retime_port.cpp)
@@ -2407,6 +2410,10 @@ Snapshot Walk::run() {
 
   for (const doc::Node* n : walked()) {
     if (n->id == comp_.rootId) continue;  // the composition root is the frame, not a layer
+    // An edit waits for this build's lock: the frame would describe a document
+    // that is about to change. Stop here (one layer's work at most) rather than
+    // make the edit wait for the whole frame — at 4000 effects, 125 ms per edit.
+    if (c_.cancel != nullptr && c_.cancel->load(std::memory_order_relaxed) != 0) throw BuildCancelled{};
     const std::size_t markTop = layers_.size();
     std::map<std::string, std::size_t, std::less<>> markInner;
     for (const auto& [k, v] : precompInner_) markInner[k] = v.size();
@@ -2715,6 +2722,8 @@ struct WalkCache::State {
   /// "<rootId>\x1f[L<layerViewId>]" → the entries for each override set.
   std::unordered_map<std::string, std::vector<Entry>> entries;
   std::size_t count = 0;
+  /// Stream B3: layer id → its subject frames indexed (dropped with the memo when the document changes).
+  std::unordered_map<std::string, std::shared_ptr<const doc::SubjectIndex>> subjectIndexes;
 };
 
 WalkCache::WalkCache() : s_(std::make_unique<State>()) {}
@@ -2725,6 +2734,16 @@ void WalkCache::clear() noexcept {
   s_->count = 0;
   s_->nodePins.clear();
   s_->compPins.clear();
+  s_->subjectIndexes.clear();
+}
+
+std::shared_ptr<const doc::SubjectIndex> WalkCache::subject_index(const std::string& layerId, const Json& alphaMatte, const Json& entries,
+                                                                  double fps) {
+  std::shared_ptr<const doc::SubjectIndex>& slot = s_->subjectIndexes[layerId];
+  // The memo is dropped when the document changes (revalidate); the pointer check covers a node
+  // replaced between revalidations inside one Scope (a nested build) and a comp at another rate.
+  if (slot == nullptr || !slot->built_from(alphaMatte, fps)) slot = std::make_shared<const doc::SubjectIndex>(alphaMatte, entries, fps);
+  return slot;
 }
 
 void WalkCache::revalidate(const Document& d) {

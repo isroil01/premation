@@ -40,6 +40,7 @@ inline constexpr int TAP1 = 20;
 inline constexpr int TAP2 = 21;
 inline constexpr int TAP3 = 22;
 inline constexpr int SIM0 = 23;  ///< SIM0..SIM7 = 23..30: a simulation's slots (Program X2)
+inline constexpr int BACKDROP = 31;  ///< the scene under the layer (stream D; needs Graph::backdrop())
 inline constexpr int NONE = -1;
 
 // Pass blends (fx_graph.cpp blend_of).
@@ -149,15 +150,36 @@ class Graph {
     taps_.at(static_cast<std::size_t>(std::clamp(k, 0, 3))) = std::move(layerId);
     return *this;
   }
-  /// The mask raster a MASK slot reads (`k` 0..1; a scope_mask_key).
-  Graph& mask(int k, std::string key) {
-    masks_.at(static_cast<std::size_t>(std::clamp(k, 0, 1))) = std::move(key);
+  /// The mask raster a MASK slot reads (`k` 0..1; a scope_mask_key). `required`: the effect is
+  /// meaningless without it (an Object Matte card and its stored frame) — the graph then runs
+  /// nothing and the chain keeps its input when the texture did not arrive, instead of reading
+  /// the slot as transparent black and cutting the whole layer away (fx_graph.cpp).
+  Graph& mask(int k, std::string key, bool required = false) {
+    const auto i = static_cast<std::size_t>(std::clamp(k, 0, 1));
+    masks_.at(i) = std::move(key);
+    maskRequired_.at(i) = required;
+    return *this;
+  }
+  /// Stream D: the graph reads BACKDROP — the composition pass copies the
+  /// scene under the layer before the chain (`readsBackdrop`), and the
+  /// chain's result is never kept across frames.
+  Graph& backdrop() {
+    backdrop_ = true;
+    return *this;
+  }
+  /// Stream D: `reachPx` > 0 is MEASURED — read off the passes' farthest tap
+  /// in layer px — so fx_bounds may scissor the chain to it (`reachMeasured`);
+  /// without this a non-zero reach runs the chain full frame.
+  Graph& measured() {
+    measured_ = true;
     return *this;
   }
   /// The chain entry; `reachPx` 0 = per-pixel (bounded to the input), absent = full frame.
   [[nodiscard]] api::RenderEffect done(int out, std::optional<double> reachPx = std::nullopt) {
     FxWriter w("fx-graph");
     w.text("fxType", type_);
+    if (backdrop_) w.flag("readsBackdrop", true);
+    if (measured_ && reachPx && *reachPx > 0) w.flag("reachMeasured", true);
     std::string names;
     for (const std::string& m : mats_) {
       if (!names.empty()) names += ',';
@@ -183,6 +205,8 @@ class Graph {
     if (!dataKey_.empty()) w.text("dataKey", dataKey_);
     if (!masks_[0].empty()) w.text("maskKey0", masks_[0]);
     if (!masks_[1].empty()) w.text("maskKey1", masks_[1]);
+    if (maskRequired_[0]) w.flag("maskRequired0", true);
+    if (maskRequired_[1]) w.flag("maskRequired1", true);
     static constexpr std::array<const char*, 4> kTaps = {"tapId0", "tapId1", "tapId2", "tapId3"};
     for (std::size_t k = 0; k < taps_.size(); ++k) {
       if (!taps_.at(k).empty()) w.text(kTaps.at(k), taps_.at(k));
@@ -215,8 +239,11 @@ class Graph {
   Sim sim_;
   std::array<std::string, 3> maps_{};
   std::array<std::string, 2> masks_{};
+  std::array<bool, 2> maskRequired_{};
   std::array<std::string, 4> taps_{};
   std::string dataKey_;
+  bool backdrop_ = false;
+  bool measured_ = false;
 };
 
 }  // namespace premation::scene::fxg

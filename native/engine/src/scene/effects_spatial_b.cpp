@@ -553,8 +553,9 @@ void round_eleven(const std::string& t, const Fx& f, std::vector<api::RenderEffe
   if (t == "glass") {
     const double la = rad(n("lightAngle"));
     const double hgt = n("height") / 100;
-    out.push_back(FxWriter("glass")
-                      .num("dispK", hgt * n("displacement"))
+    FxWriter gw("glass");
+    if (jround(n("source")) == 1) gw.flag("readsBackdrop", true);  // stream D: refract the scene under the layer
+    out.push_back(gw.num("dispK", hgt * n("displacement"))
                       .num("hgt", hgt)
                       .num("lx", mjs::cos(la))
                       .num("ly", -mjs::sin(la))
@@ -1238,8 +1239,24 @@ void outer(const std::string& t, const Fx& f, const RLayer& layer, std::vector<a
   const double h = jmax(1.0, or_num(layer.height, 1));
   if (t == "fractal-noise") out.push_back(FxWriter("fractal-noise").num("scale", n("scale")).done());
   if (t == "displacement-map") {
+    // Stream D L5 (AE parity): `amount` IS Max Horizontal. `linkVertical`
+    // (default on — read_node_effects fills every absent param with its
+    // catalog default, so a stored-presence test cannot tell an older
+    // document apart) keeps Max Vertical equal to it: the original ±amount on
+    // both axes; off, Max Vertical is its own.
     FxWriter wr("displacement-map");
-    wr.num("amount", n("amount"));
+    const double amount = n("amount");
+    wr.num("amount", amount);
+    wr.num("maxH", amount);
+    wr.num("maxV", f.is_false("linkVertical") ? n("maxVertical") : amount);
+    wr.num("hChannel", jround(n("hChannel")));
+    wr.num("vChannel", jround(n("vChannel")));
+    wr.num("mapMode", jround(n("mapBehavior")));
+    wr.num("edge", jround(n("edgeBehavior")));
+    wr.flag("expand", !f.is_false("expandOutput"));
+    if (jround(n("source")) == 1) wr.flag("readsBackdrop", true);
+    wr.num("lw", w);
+    wr.num("lh", h);
     if (const auto id = f.layer_id("mapLayerId")) wr.text("mapLayerId", *id);
     out.push_back(wr.done());
   }

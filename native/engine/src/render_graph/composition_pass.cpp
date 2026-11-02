@@ -29,6 +29,7 @@
 #include "effect_stats.hpp"
 #include "fx_distance.hpp"
 #include "fx_keys.hpp"
+#include "materials.hpp"
 #include "passes.hpp"
 #include "render_context.hpp"
 #include "scene_depth.hpp"
@@ -142,12 +143,24 @@ namespace {
 /// shifting the result back by the fraction let every move reuse the chain,
 /// but the bilinear shift softened every effected layer on a fractional place,
 /// static ones included: a centred title with an odd height lost its edges.)
+///
+/// While the transport PLAYS (ViewportState::playing) the placement is a whole
+/// pixel instead and the result is composited through the remaining fraction
+/// (one bilinear resample, under half a pixel): every frame of a layer in
+/// motion reuses its chain — before, a layer drifting a fraction per frame ran
+/// every effect every frame, however slow (AE's layer-space cache does the
+/// same resample). The softening the whole-pixel placement was rejected for
+/// (above) is a paused, static picture's: a paused frame keeps the exact phase.
 struct PixelSnap {
   bool on = false;
+  bool fractional = false;  // playing: drawn on a whole pixel, composited through the fraction
   double px = 0;  // the layer origin on screen (viewport px, top-left origin)
   double py = 0;
   double bx = 0;  // where it is drawn in the chain's buffer: px's phase (kPhaseSteps) + whole px
   double by = 0;
+  /// The move from the buffer placement to the screen: whole pixels (exact copy) or, playing, the fraction too.
+  [[nodiscard]] double shift_x() const noexcept { return fractional ? px - bx : std::round(px - bx); }
+  [[nodiscard]] double shift_y() const noexcept { return fractional ? py - by : std::round(py - by); }
 };
 
 /// The phase grid of a buffer placement: 1/1024 px — far under a visible
@@ -193,8 +206,9 @@ PixelSnap pixel_snap(const PassContext& ctx, const api::Renderable& r) {
   s.px = (c.x + 1) * 0.5 * pw;
   s.py = (1 - c.y) * 0.5 * ph;
   if (!std::isfinite(s.px) || !std::isfinite(s.py)) return s;
-  s.bx = std::round(s.px * kPhaseSteps) / kPhaseSteps;
-  s.by = std::round(s.py * kPhaseSteps) / kPhaseSteps;
+  s.fractional = ctx.viewport.playing;
+  s.bx = s.fractional ? std::round(s.px) : std::round(s.px * kPhaseSteps) / kPhaseSteps;
+  s.by = s.fractional ? std::round(s.py) : std::round(s.py * kPhaseSteps) / kPhaseSteps;
   // A reach that would leave the buffer is moved inside it (when it fits), so
   // the kept result is whole and may be moved anywhere later. (Whatever the
   // grow-bounds switch: the result must not depend on it.)
@@ -271,6 +285,9 @@ std::uint64_t layer_fx_key(const PassContext& ctx, const api::Renderable& r, std
   k.u64(static_cast<std::uint64_t>(view.working_space));
   for (const api::RenderEffect& e : r.effects) {
     if (e.type == "native-plugin") return 0;
+    // Stream D: a chain that reads the scene under the layer is a function of
+    // every layer below it too — never kept.
+    if (Fx(e).flag("readsBackdrop")) return 0;
     k.str(e.type);
     for (const api::RenderEffectParam& p : e.params) {
       if (!p.text.empty() || !p.texts.empty()) return 0;
@@ -983,8 +1000,8 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
     const double mx = snap.bx - (*s->at)[0];
     const double my = snap.by - (*s->at)[1];
     if (mx != std::round(mx) || my != std::round(my)) return std::nullopt;
-    const double dx = mx + std::round(snap.px - snap.bx);
-    const double dy = my + std::round(snap.py - snap.by);
+    const double dx = mx + snap.shift_x();
+    const double dy = my + snap.shift_y();
     bool created = false;
     RenderTarget& t = ctx.dev.target(s->name, w, h, s->format, 1, false, &created);
     if (created) {
@@ -1098,6 +1115,40 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
     return TexRef{r->view, id, r->width, r->height, false, 0, 0};
   }
 
+  /// Stream D: the scene under the layer whose chain is running (prepare_backdrop).
+  TexRef backdrop(PassContext& /*ctx*/) override { return backdrop_; }
+
+ private:
+  /// Stream D: set around one layer's chain when an effect reads the backdrop.
+  TexRef backdrop_;
+  struct BackdropScope {
+    TexRef& slot;
+    explicit BackdropScope(TexRef& s, TexRef v) : slot(s) { slot = std::move(v); }
+    ~BackdropScope() { slot = TexRef{}; }
+    BackdropScope(const BackdropScope&) = delete;
+    BackdropScope& operator=(const BackdropScope&) = delete;
+    BackdropScope(BackdropScope&&) = delete;
+    BackdropScope& operator=(BackdropScope&&) = delete;
+  };
+  /// An effect of `r` flagged `readsBackdrop` (Source: Backdrop; the fx-graph's BACKDROP slot).
+  static bool reads_backdrop(const api::Renderable& r) {
+    return std::ranges::any_of(r.effects, [](const api::RenderEffect& e) { return Fx(e).flag("readsBackdrop"); });
+  }
+  /// The list so far, flushed and copied into kFxBackdrop (a raw copy, as the
+  /// chain cache keeps its results); empty when the list has no target.
+  TexRef copy_scene(PassContext& ctx, ListState& st) {
+    flush(ctx, st);
+    RenderTarget* scene = ctx.target(st.out);
+    if (scene == nullptr) return {};
+    Commands copy;
+    emit_textured(ctx, copy, screen_mvp(), Color::white(), 1, Blend::none, scene->tex(), ctx.nearest_clamp(), {0, 0, 1, 1},
+                  kIdentityColor, true);
+    ctx.draw_into(kFxBackdrop, copy, true);
+    RenderTarget* t = ctx.target(kFxBackdrop);
+    return t != nullptr ? t->tex() : TexRef{};
+  }
+
+ public:
   /// displacementMapTexture: render a referenced layer into MATTE_TARGET.
   TexRef map_layer(PassContext& ctx, const ById& byId, std::string_view mapLayerId, std::string_view selfId) override {
     if (mapLayerId.empty() || mapLayerId == selfId) return {};
@@ -1747,6 +1798,7 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
       if (matteIt != st.byId.end()) {
         flush(ctx, st);
         const api::Renderable* source = matteSource;
+        const BackdropScope backdropScope(backdrop_, reads_backdrop(r) ? copy_scene(ctx, st) : TexRef{});
         const TexRef matted = layer_into_target(ctx, r, r.opacity, kLayerTarget, st);
         const TexRef matte = source != nullptr ? layer_into_target(ctx, *source, 1, kMatteTarget, st) : TexRef{};
         if (matte && matted) {
@@ -1762,10 +1814,20 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
     }
 
     if (r.adjustment) {
+      // AE: an adjustment layer at 0 % (or off screen with a mask) leaves the frame alone.
+      if (r.opacity <= 0) return;
       flush(ctx, st);
       RenderTarget* scene = ctx.target(st.out);
       if (scene == nullptr) return;
       const TexRef sceneTex = scene->tex();
+      // Stream D L1: the adjustment is mixed back against the UNTOUCHED frame
+      // by the layer's mask coverage × opacity (as a scoped effect blends,
+      // fx-effect-scope.wgsl), so a masked / faded adjustment layer behaves as
+      // in After Effects. The copy also serves any effect of the chain that
+      // reads the backdrop (the fx-graph's BACKDROP slot = the frame below).
+      const bool scoped = r.mask_texture_key.has_value() || r.opacity < 1;
+      const TexRef before = scoped || reads_backdrop(r) ? copy_scene(ctx, st) : TexRef{};
+      const BackdropScope backdropScope(backdrop_, before);
       Commands copy;
       const TexRef lut = r.adjustment->lut_texture_key ? ctx.texture(*r.adjustment->lut_texture_key) : TexRef{};
       const ColorTransform ct = color_transform(r.adjustment->color_matrix);
@@ -1783,6 +1845,32 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
         const ChainListScope chainList(chainList_, st);
         finalTex = run_effects_chain(ctx, r.effects, finalTex, pool, st.byId, r.id, *this).tex;
       }
+      if (scoped && before) {
+        // The mask raster drawn through the layer's placement into the frame's
+        // space (as effect_chain.cpp scopeOf draws a scope). Without a mask (or
+        // with one that did not reach the GPU) the fade alone applies, through
+        // the effect-opacity shader — never a texture the frame may not carry.
+        TexRef scope;
+        if (r.mask_texture_key) {
+          if (const TexRef maskTex = ctx.texture(*r.mask_texture_key)) {
+            Commands mc;
+            emit_textured(ctx, mc, mvp_for(ctx.viewport, mat3_of(r.model_matrix)), Color::white(), 1, Blend::none, maskTex,
+                          ctx.linear_clamp(), uv_or_full(r), kIdentityColor, maskTex.sampleLinear);
+            ctx.draw_into(kFxScopeMask, mc, true);
+            scope = ctx.target(kFxScopeMask)->tex();
+          }
+        }
+        const std::array<Vec4, 1> rows{{{std::clamp(r.opacity, 0.0, 1.0), 0, 0, 0}}};
+        Commands mix;
+        DrawItem& it = mix.add(scope ? Mat::EFFECT_SCOPE_FX_MATERIAL : Mat::EFFECT_OPACITY_FX_MATERIAL, Blend::none,
+                               pack_fx_block(ctx.packer(), screen_mvp(), targetUv, rows, Rect{0, 0, 1, 1}));
+        it.texture = finalTex;
+        it.sampler = ctx.linear_clamp();
+        it.mask = before;
+        if (scope) it.origin = scope;
+        ctx.draw_into(st.out, mix, true);
+        return;
+      }
       Commands apply;
       emit_textured(ctx, apply, screen_mvp(), Color::white(), 1, Blend::normal, finalTex, ctx.linear_clamp(), targetUv,
                     kIdentityColor, true);
@@ -1798,7 +1886,32 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
       if (scene != nullptr) {
         const TexRef sceneTex = scene->tex();
         const Mat3 fullMvp = screen_mvp();
-        const TexRef layerTex = layer_into_target(ctx, r, r.opacity, kMatteTarget, st);
+        const BackdropScope backdropScope(backdrop_, reads_backdrop(r) ? copy_scene(ctx, st) : TexRef{});
+        // Stream D L4: liquid glass — a surface normal from a bump source. The
+        // layer then lives in the layer target: the matte target is its bump
+        // layer's. The original glass (surface "edge", no caustic / Fresnel)
+        // takes the original path and shader, untouched.
+        const bool liquid = r.glass && (r.glass->bump_source > 0.5 || r.glass->caustic > 0 || r.glass->fresnel > 0);
+        const TexRef layerTex = layer_into_target(ctx, r, r.opacity, liquid ? kLayerTarget : kMatteTarget, st);
+        TexRef bump;
+        double bumpSource = 0;
+        if (liquid && layerTex) {
+          bumpSource = std::clamp(std::round(r.glass->bump_source), 0.0, 3.0);
+          if (bumpSource == 3 && r.glass->bump_layer_id) {
+            bump = map_layer(ctx, st.byId, *r.glass->bump_layer_id, r.id);
+            if (!bump) bumpSource = 2;  // no such layer: the layer's own luminance
+          }
+          if (bumpSource == 2 || bumpSource == 0) bump = layerTex;
+          if (bumpSource == 1) {
+            const double pxPerWorld = ctx.viewport.pixelWidth / std::max(1e-6, ctx.viewport.visibleWorldRect.width);
+            const double range = std::clamp(r.glass->thickness * pxPerWorld + 2, 1.0, kMaxSdfRange);
+            bump = distance_field(ctx, layerTex, range, 0).tex;
+            if (!bump) {
+              bumpSource = 2;  // the field did not build: a height from the layer instead, never a blank panel
+              bump = layerTex;
+            }
+          }
+        }
         const double blurRadius = r.backdrop_blur.value_or(0);
         const bool half = blurRadius > 0;
         const std::uint32_t bw = half ? std::max(1U, ctx.viewport.pixelWidth / kBackdropDownscale) : ctx.viewport.pixelWidth;
@@ -1828,6 +1941,26 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
           blurred = ctx.target(t1)->tex();
         }
         if (blurred && layerTex) {
+          std::optional<Mat> liquidMat;
+          if (liquid && bump) {
+            // glass-liquid.wgsl through a dynamic material (its layout has the
+            // bump source at binding 4); a shader that does not build falls back
+            // to the original glass rather than a blank panel.
+            static constexpr std::array<LayoutEntry, 5> kLiquidLayout{{{0, BindingType::uniform, kStageVertex | kStageFragment},
+                                                                       {1, BindingType::texture, kStageFragment},
+                                                                       {2, BindingType::sampler, kStageFragment},
+                                                                       {3, BindingType::texture, kStageFragment},
+                                                                       {4, BindingType::texture, kStageFragment}}};
+            static const std::string kLiquidWgsl = builtin_wgsl("glass-liquid");  // the render thread is the only caller
+            if (!kLiquidWgsl.empty()) {
+              const Mat m = ctx.dev.dynamic_material("glass-liquid", kLiquidWgsl, kLiquidLayout);
+              if (const std::string& err = ctx.dev.pipeline_error(m, Blend::normal, scene->format); err.empty()) {
+                liquidMat = m;
+              } else {
+                ctx.diagnostics.push_back({"glass-liquid", "Liquid glass on \"" + r.id + "\": " + err.substr(0, 400)});
+              }
+            }
+          }
           if (r.glass) {
             const auto& g = *r.glass;
             Packer p = ctx.packer();
@@ -1837,10 +1970,16 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
             p.vec4(g.rim.r, g.rim.g, g.rim.b, g.rim.a * g.rim_opacity);
             p.vec4(g.rim_width, g.rim_angle, g.specular_intensity, g.specular_falloff);
             p.vec4(g.specular_angle, g.grain, 1.0 / ctx.viewport.pixelWidth, 1.0 / ctx.viewport.pixelHeight);
-            DrawItem& it = st.main.add(Mat::GLASS_MATERIAL, Blend::normal, p.span());
+            if (liquidMat) {
+              const double pxPerWorld = ctx.viewport.pixelWidth / std::max(1e-6, ctx.viewport.visibleWorldRect.width);
+              p.vec4(bumpSource, g.thickness * pxPerWorld, g.ior, g.dispersion);
+              p.vec4(g.caustic, g.fresnel, 1.0 / ctx.viewport.pixelWidth, 1.0 / ctx.viewport.pixelHeight);
+            }
+            DrawItem& it = st.main.add(liquidMat.value_or(Mat::GLASS_MATERIAL), Blend::normal, p.span());
             it.texture = std::move(blurred);
             it.sampler = ctx.linear_clamp();
             it.mask = layerTex;
+            if (liquidMat) it.origin = bump;
           } else {
             emit_masked_textured(ctx, st.main, fullMvp, Color::white(), 1, Blend::normal, blurred, ctx.linear_clamp(),
                                  layerTex, targetUv, kIdentityColor, true);
@@ -1857,6 +1996,7 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
       RenderTarget* scene = ctx.target(st.out);
       if (scene != nullptr) {
         const TexRef sceneTex = scene->tex();
+        const BackdropScope backdropScope(backdrop_, reads_backdrop(r) ? copy_scene(ctx, st) : TexRef{});
         const TexRef layerTex = layer_into_target(ctx, r, r.opacity, kLayerTarget, st);
         Commands copy;
         emit_textured(ctx, copy, screen_mvp(), Color::white(), 1, Blend::normal, sceneTex, ctx.linear_clamp(), targetUv,
@@ -1899,7 +2039,12 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
     // P8b: the input is drawn at its own sub-pixel phase and keyed without its
     // place (with the phase), so a layer that only moves by whole pixels reuses
     // its chain — the result composited where the layer is by a whole-pixel shift.
-    const PixelSnap snap = hasEffects && layerFxEnabled_ ? pixel_snap(ctx, r) : PixelSnap{};
+    // Stream D: an effect reading the scene under the layer gets a copy of the
+    // list so far (kFxBackdrop), drawn where the layer is on screen — so no
+    // buffer placement of its own (P8b) and no kept result (layer_fx_key).
+    const bool backdropRead = hasEffects && reads_backdrop(r);
+    const BackdropScope backdropScope(backdrop_, backdropRead ? copy_scene(ctx, st) : TexRef{});
+    const PixelSnap snap = hasEffects && layerFxEnabled_ && !backdropRead ? pixel_snap(ctx, r) : PixelSnap{};
     // The layer's draw and its chain see the view moved to its buffer placement (restored at scope end).
     const ViewShift shiftView(ctx, snap.on ? snap.bx - snap.px : 0, snap.on ? snap.by - snap.py : 0);
     const std::uint64_t contentKey =
@@ -1951,7 +2096,7 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
     keep_layer_fx(ctx, r.id, fxKey, res.tex, res.name, res.covered, &snap);
     // Outside the chain's reach its result is transparent: the composite covers the reach, not the frame.
     // Drawn at the layer's own phase: the way back is whole pixels (an exact copy).
-    composite(res.tex, res.covered, snap.on ? std::round(snap.px - snap.bx) : 0, snap.on ? std::round(snap.py - snap.by) : 0);
+    composite(res.tex, res.covered, snap.on ? snap.shift_x() : 0, snap.on ? snap.shift_y() : 0);
   }
 
 };

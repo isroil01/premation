@@ -58,13 +58,31 @@ const GESTURE_WAIT_MS = 2000;
 
 async function openGesture(client: EngineClient, label: string, origin: Origin): Promise<number | null> {
   const deadline = Date.now() + GESTURE_WAIT_MS;
+  let reclaimed = false;
   for (;;) {
     const res = await client.beginGesture(label, { origin });
     if (res.ok) return res.value.gesture;
-    // A drag in progress owns the one gesture slot: wait for it rather than
-    // steal it (committing the user's half-finished drag would be a lie).
-    if (res.error.code !== 'gestureOpen' || Date.now() > deadline) return null;
-    await new Promise((r) => setTimeout(r, 25));
+    if (res.error.code !== 'gestureOpen') return null;
+    // The engine has ONE gesture slot and no idea who holds it. When this
+    // client itself holds it (`heldGesture`: a drag of ours still going), wait
+    // for it rather than steal it — committing the user's half-finished drag
+    // would be a lie — and decline once the wait runs out.
+    if (client.heldGesture !== null || reclaimed) {
+      if (Date.now() > deadline) return null;
+      await new Promise((r) => setTimeout(r, 25));
+      continue;
+    }
+    // Nobody on this page opened it: the slot was left behind by a client
+    // that is gone — the page was reloaded while an AI turn or a drag was
+    // open and the engine process lived on, so no disconnect ever closed it,
+    // and every edit would be refused until the engine restarts. Close it the
+    // way a disconnect does (§5.1: COMMIT — its edits were applied and shown,
+    // nothing the user saw is lost, and they stay undoable as one entry;
+    // discarding would silently revert work the user may have gone on from).
+    // `0` names "the open gesture". Once only: a slot that is open again
+    // straight after belongs to someone live.
+    reclaimed = true;
+    await client.endGesture(0, true, { origin });
   }
 }
 

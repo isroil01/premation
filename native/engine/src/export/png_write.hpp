@@ -17,4 +17,9 @@ namespace premation::exporter {
 bool encode_png_rgba8(std::span<const std::uint8_t> rgba, std::uint32_t width, std::uint32_t height,
                       std::vector<std::uint8_t>& out, int zlibLevel = -1);
 
+/// One byte per pixel, rows top-down → a greyscale PNG (colour type 0, 8 bits): an Object Matte's
+/// stored alpha plane (stream B1 — a quarter of the RGBA cut-out's bytes, nothing to decontaminate).
+bool encode_png_gray8(std::span<const std::uint8_t> gray, std::uint32_t width, std::uint32_t height,
+                      std::vector<std::uint8_t>& out, int zlibLevel = -1);
+
 }  // namespace premation::exporter

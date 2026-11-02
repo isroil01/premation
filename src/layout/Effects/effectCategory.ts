@@ -410,6 +410,7 @@ export const EFFECT_CATEGORY: Record<EffectType, string> = {
   'matte-stroke': 'Stylize',
   'selective-color-ai': 'Color Correction',
   'object-matte': 'Keying',
+  'goo': 'Distort',
   // deepfx:category:end
 };
 

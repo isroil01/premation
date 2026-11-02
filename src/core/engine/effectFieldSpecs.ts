@@ -47,6 +47,8 @@ export interface StyleFieldSpec extends Omit<TextFieldSpec, 'kinds'> {
  */
 export const STYLE_FIELDS: readonly StyleFieldSpec[] = [
   { style: 'glass', key: 'useGlobalLight', label: 'Use Global Light', type: 'bool', default: false },
+  // Stream D L4 (liquid glass): where the surface normal comes from; `edge` is the original glass.
+  { style: 'glass', key: 'surface', label: 'Surface', type: 'choice', default: 'edge', choices: ['edge', 'dome', 'luma', 'layer'] },
   { style: 'dropShadow', key: 'useGlobalLight', label: 'Use Global Light', type: 'bool', default: false },
   { style: 'innerShadow', key: 'useGlobalLight', label: 'Use Global Light', type: 'bool', default: false },
   { style: 'satin', key: 'invert', label: 'Invert', type: 'bool', default: false },
@@ -76,6 +78,12 @@ export const GLASS_PROPERTIES: ReadonlyArray<{ key: string; label: string; type:
   { key: 'specularIntensity', label: 'Specular Intensity', type: 'scalar' },
   { key: 'specularFalloff', label: 'Specular Falloff', type: 'scalar' },
   { key: 'grain', label: 'Grain', type: 'scalar' },
+  // Stream D L4 (liquid glass): the surface's own terms (glass_port.cpp reads `glass.<param>`).
+  { key: 'thickness', label: 'Thickness', type: 'scalar' },
+  { key: 'ior', label: 'Index of Refraction', type: 'scalar' },
+  { key: 'dispersion', label: 'Dispersion', type: 'scalar' },
+  { key: 'caustic', label: 'Caustic', type: 'scalar' },
+  { key: 'fresnel', label: 'Fresnel Rim', type: 'scalar' },
   { key: 'tintColor', label: 'Tint Color', type: 'color' },
   { key: 'rimColor', label: 'Rim Color', type: 'color' },
 ];

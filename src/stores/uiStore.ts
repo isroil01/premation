@@ -104,6 +104,13 @@ interface UIState {
    * Default is Position — the same first tool AE's flyout highlights.
    */
   puppetPinKind: PinKind;
+  /**
+   * Puppet tool option: a pin drag / typed pin value always writes a keyframe at
+   * the playhead (After Effects: pins are animated from the moment they move).
+   * Off, pins follow the app's rule — a key when the property is animated or
+   * auto-keyframe is on, else the static value.
+   */
+  puppetAlwaysKey: boolean;
   /** Bone workflow mode: construct, animate, or bind the deformation mesh. */
   boneRigMode: BoneRigMode;
   /** Brush/picker armed while `boneRigMode === 'weights'`. */
@@ -256,6 +263,7 @@ export interface JobOutcome {
 interface UIActions {
   setActiveTool(tool: Tool): void;
   setPuppetPinKind(kind: PinKind): void;
+  setPuppetAlwaysKey(on: boolean): void;
   setBoneRigMode(mode: BoneRigMode): void;
   setBoneWeightMode(mode: BoneWeightMode): void;
   setBoneBrushRadius(radius: number): void;
@@ -373,6 +381,7 @@ export const useUIStore = create<UIStore>()(
     immer((set) => ({
       activeTool: 'select',
       puppetPinKind: 'position',
+      puppetAlwaysKey: true,
       boneRigMode: 'draw',
       boneWeightMode: 'add',
       boneBrushRadius: 40,
@@ -398,6 +407,10 @@ export const useUIStore = create<UIStore>()(
       setPuppetPinKind: (kind) =>
         set((s) => {
           s.puppetPinKind = kind;
+        }),
+      setPuppetAlwaysKey: (on) =>
+        set((s) => {
+          s.puppetAlwaysKey = on;
         }),
       setBoneRigMode: (mode) =>
         set((s) => {

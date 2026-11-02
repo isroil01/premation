@@ -2,7 +2,9 @@
 // (job_worker_fake.cpp, the real worker loop with fake works): one process
 // serves many calls, a kill or a crash fails the call in flight and the next
 // call starts a fresh process, a hang times out, a newer preview of the same
-// key drops an older one still waiting, cancel and idle shutdown. No model.
+// key drops an older one still waiting, cooperative cancel (the worker stops
+// its work and lives on; a work deaf to it is killed after the grace) and idle
+// shutdown. No model.
 #include <catch2/catch_test_macros.hpp>
 
 #include <atomic>
@@ -132,11 +134,12 @@ TEST_CASE("job worker: progress lines keep a long call alive past the timeout", 
   CHECK(w.starts() == 1);
 }
 
-TEST_CASE("job worker: killOnCancel stops a call in flight at once; the next call works", "[job_worker]") {
+TEST_CASE("job worker: a cancel reaches the work in flight, which stops; the worker survives", "[job_worker]") {
   jobs::JobWorker w(fake());
   TestControl c;
   jobs::WorkerCall call;
-  call.killOnCancel = true;
+  call.killOnCancel = true;  // a walk: still no kill when the work honours the cancel
+  REQUIRE(served(w.run("count", "{}", c)) == 1);
   std::optional<std::string> out{"unset"};
   const auto t0 = std::chrono::steady_clock::now();
   std::thread a([&] { out = w.run("sleep", R"({"ms":5000})", c, call); });
@@ -146,9 +149,46 @@ TEST_CASE("job worker: killOnCancel stops a call in flight at once; the next cal
   CHECK(std::chrono::steady_clock::now() - t0 < 2500ms);
   CHECK_FALSE(out);
   TestControl c2;
-  CHECK(served(w.run("count", "{}", c2)) == 1);
+  CHECK(served(w.run("count", "{}", c2)) == 3);  // the same process: the sleep counted too
+  CHECK(w.starts() == 1);
+}
+
+TEST_CASE("job worker: a cancelled hover (no killOnCancel) stops early too, model kept", "[job_worker]") {
+  jobs::JobWorker w(fake());
+  TestControl c;
+  std::optional<std::string> out{"unset"};
+  const auto t0 = std::chrono::steady_clock::now();
+  std::thread a([&] { out = w.run("tick", R"({"n":30})", c); });  // 3 s of ticks
+  std::this_thread::sleep_for(350ms);
+  c.cancel = true;
+  a.join();
+  CHECK(std::chrono::steady_clock::now() - t0 < 2000ms);
+  CHECK_FALSE(out);
+  CHECK(w.alive());
+  CHECK(w.starts() == 1);
+}
+
+TEST_CASE("job worker: killOnCancel kills a work that ignores its cancel after the grace", "[job_worker]") {
+  jobs::JobWorker w(fake());
+  TestControl c;
+  jobs::WorkerCall call;
+  call.killOnCancel = true;
+  call.cancelGrace = 300ms;
+  std::optional<std::string> out{"unset"};
+  const auto t0 = std::chrono::steady_clock::now();
+  std::thread a([&] { out = w.run("hang", R"({"ms":5000})", c, call); });
+  std::this_thread::sleep_for(200ms);
+  c.cancel = true;
+  a.join();
+  const auto took = std::chrono::steady_clock::now() - t0;
+  CHECK(took >= 450ms);  // waited the grace
+  CHECK(took < 2500ms);
+  CHECK_FALSE(out);
+  TestControl c2;
+  CHECK(served(w.run("count", "{}", c2)) == 1);  // a fresh process
   CHECK(w.starts() == 2);
 }
+
 
 TEST_CASE("job worker: latest wins — a newer call of a key drops the older one still waiting", "[job_worker]") {
   jobs::JobWorker w(fake());

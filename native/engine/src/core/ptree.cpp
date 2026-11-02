@@ -1,6 +1,7 @@
 #include "ptree.hpp"
 
 #include <algorithm>
+#include <functional>
 #include <set>
 
 #include "anim.hpp"
@@ -447,6 +448,97 @@ std::vector<StaticPropertyRow> audio_rows(const Node& n) {
   return out;
 }
 
+// ── Rig rows (C2) ───────────────────────────────────────────────────────
+//
+// After Effects lists a puppet under Effects ▸ Puppet ▸ Mesh 1 ▸ Deform ▸ Puppet
+// Pin N ▸ Position / Rotation / Scale …, every pin with an unlit stopwatch from
+// the moment it is placed. These rows are that: one row per keyframeable pin /
+// bone / IK property, in the rig spec's order (rigSpecs.ts → fields.json
+// "rig"), plus the mesh settings as value-only rows. Their `members` are the
+// TRACK names the rig bindings claim (rig.cpp), so a stopwatch here keys the
+// same track the overlays write; the timeline groups them into Puppet ▸ Pins ▸
+// <pin> / Skeleton ▸ Bones ▸ <bone> from the names (rigRowGroups.ts).
+
+/// The rig spec table (rigSpecs.ts `RIG_PROPS`).
+const Json& rig_specs() { return registry().fields.at("rig"); }
+
+/// `{id}` → the part's id.
+std::string with_rig_id(const std::string& s, const std::string& id) {
+  const std::size_t at = s.find("{id}");
+  return at == std::string::npos ? s : s.substr(0, at) + id + s.substr(at + 4);
+}
+
+/// The object entries of `o[key]` that carry a string `idKey`.
+std::vector<const Json*> rig_parts(const Json& o, std::string_view key, std::string_view idKey = "id") {
+  std::vector<const Json*> out;
+  if (!o.is_object()) return out;
+  const Json& v = o.at(key);
+  if (!v.is_array()) return out;
+  for (const Json& x : v.arr()) {
+    if (x.is_object() && x.at(idKey).is_string()) out.push_back(&x);
+  }
+  return out;
+}
+
+StaticPropertyRow rig_row(std::string prop, std::string label, std::vector<std::string> members,
+                          std::vector<std::string> valueProps, const Json& spec) {
+  StaticPropertyRow r;
+  r.prop = std::move(prop);
+  r.label = std::move(label);
+  r.group = std::string(kRigGroup);
+  r.members = std::move(members);
+  r.valueProps = std::move(valueProps);
+  if (spec.at("unit").is_string() && !spec.at("unit").str().empty()) r.valueUnit = spec.at("unit").str();
+  // A vector keyed as one property stays ONE row once animated (as Position does).
+  if (r.members.size() > 1) r.merged = r.prop;
+  return r;
+}
+
+/// The mesh settings of a rig root (`puppet` / `skeleton`): value-only rows on their API paths.
+void rig_mesh_rows(std::vector<StaticPropertyRow>& out, std::string_view owner) {
+  for (const Json& s : rig_specs().arr()) {
+    if (s.at("owner").str() != owner) continue;
+    // Numbers only: a choice (mesh mode, solver) has no scrubbable value; weightPaint is json.
+    if (s.at("type").str() != "scalar") continue;
+    const std::string path = std::string(owner) + "/" + s.at("path").str();
+    out.push_back(rig_row(path, s.at("label").str(), {}, {path}, s));
+  }
+}
+
+/// The keyframeable properties of one part (a pin, a bone, an IK goal) — specs with tracks or a data track.
+void rig_part_rows(std::vector<StaticPropertyRow>& out, std::string_view owner, const std::string& id,
+                   const std::string& apiBase, const std::function<bool(const Json&)>& keep,
+                   const std::function<std::string(const Json&)>& label) {
+  for (const Json& s : rig_specs().arr()) {
+    if (s.at("owner").str() != owner || !keep(s)) continue;
+    const std::string apiPath = apiBase + "/" + s.at("path").str();
+    if (s.at("dataTrack").is_string()) {
+      // A pin's Position: ONE data track holding a point; the value field edits its x / y
+      // (trackIndex.ts registers `<track>.x` / `<track>.y` over the vec2 property).
+      const std::string track = with_rig_id(s.at("dataTrack").str(), id);
+      out.push_back(rig_row(track, label(s), {track}, {track + ".x", track + ".y"}, s));
+      continue;
+    }
+    const Json& tracks = s.at("tracks");
+    if (!tracks.is_array() || tracks.arr().empty()) continue;
+    std::vector<std::string> members;
+    for (const Json& t : tracks.arr()) members.push_back(with_rig_id(t.str(), id));
+    // A scalar is its track; a vector is addressed by its API path (the mirror's
+    // index answers both — the path is the diamond / pick-whip target of a merged row).
+    const std::string prop = members.size() == 1 ? members[0] : apiPath;
+    out.push_back(rig_row(prop, label(s), members, members, s));
+  }
+}
+
+bool pole_present(const Document& d, const Node& n, const Json& target, const std::string& boneId) {
+  if (target.at("pole").is_object()) return true;
+  for (const char* axis : {"x", "y"}) {
+    const auto* k = anim_track(d, n.id, "ikPole." + boneId + "." + axis);
+    if (k != nullptr && !k->empty()) return true;
+  }
+  return false;
+}
+
 void append_group(std::vector<StaticPropertyRow>& out, const std::vector<StaticPropertyRow>& rows, std::string_view group) {
   for (const auto& r : rows) {
     if (r.group == group) out.push_back(r);
@@ -460,8 +552,56 @@ bool text_background_on(const Node& n) {
   return t != nullptr && t->props.at(kTextBackground).is_bool() && t->props.at(kTextBackground).b();
 }
 
+bool is_rig_track(std::string_view prop) noexcept {
+  return prop.starts_with("puppet.") || prop.starts_with("bone.") || prop.starts_with("ikTarget.") ||
+         prop.starts_with("ikPole.") || prop.starts_with("ikMode.");
+}
+
+std::vector<StaticPropertyRow> rig_rows(const Document& d, const Node& n) {
+  std::vector<StaticPropertyRow> out;
+  const Json& puppet = n.fx().at("puppet");
+  if (puppet.is_object()) {
+    rig_mesh_rows(out, "puppet");
+    const auto pinLabel = [](const Json& s) {
+      // AE's twirl names (Stiffness ▸ Amount, Overlap ▸ In Front) read as the group in a flat row.
+      const std::string p = s.at("path").str();
+      return p == "stiffness" ? std::string("Stiffness") : p == "overlap" ? std::string("Overlap") : s.at("label").str();
+    };
+    for (const Json* pin : rig_parts(puppet, "pins")) {
+      const std::string id = pin->at("id").str();
+      rig_part_rows(out, "pin", id, "puppet/pins/" + id, [](const Json&) { return true; }, pinLabel);
+    }
+  }
+  const Json& skel = n.fx().at("skeleton");
+  if (skel.is_object()) {
+    rig_mesh_rows(out, "skeleton");
+    const std::vector<const Json*> targets = rig_parts(skel, "ikTargets", "boneId");
+    const auto plain = [](const Json& s) { return s.at("label").str(); };
+    for (const Json* bone : rig_parts(skel, "bones")) {
+      const std::string id = bone->at("id").str();
+      const std::string base = "skeleton/bones/" + id;
+      rig_part_rows(out, "bone", id, base, [](const Json&) { return true; }, plain);
+      const Json* target = nullptr;
+      for (const Json* t : targets) {
+        if (t->at("boneId").str() == id) target = t;
+      }
+      if (target == nullptr) continue;
+      const bool pole = pole_present(d, n, *target, id);
+      rig_part_rows(
+          out, "ik", id, base + "/ik",
+          [&](const Json& s) { return !(s.at("optional").is_bool() && s.at("optional").b()) || pole; },
+          [](const Json& s) {
+            const std::string p = s.at("path").str();
+            return p == "target" ? std::string("IK Goal") : p == "pole" ? std::string("IK Pole") : std::string("IK/FK");
+          });
+    }
+  }
+  return out;
+}
+
 std::string group_for_prop(const Document& d, std::string_view prop, const Node* node) {
   (void)d;
+  if (is_rig_track(prop)) return std::string(kRigGroup);
   if (prop == kMaskAnimProp || prop.starts_with("mask.")) return "masks";
   if (prop.starts_with("paint.")) return "effects";
   if (prop.starts_with(kGroupPlaceholderPrefix) || prop == kPositionPseudoProp) return "transform";
@@ -526,6 +666,8 @@ std::vector<StaticPropertyRow> build_static_property_tree(const Document& d, std
   for (auto& r : effect_rows(n)) rows.push_back(std::move(r));
   for (auto& r : paint_rows(d, n)) rows.push_back(std::move(r));
   append_group(rows, scanned, "effects");
+  // AE lists the Puppet effect under Effects, above Transform: the rig sits there.
+  for (auto& r : rig_rows(d, n)) rows.push_back(std::move(r));
   rows.insert(rows.end(), transform.begin(), transform.end());
   append_group(rows, scanned, "transform");
   append_group(rows, scanned, "camera");

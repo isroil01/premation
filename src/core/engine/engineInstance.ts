@@ -23,6 +23,7 @@ import { createAppProcessEngine } from './process/processEngine';
 import { OwnedEngineClient } from './ownedEngineClient';
 import { setEngineOwnsDocument } from './engineOwnership';
 import { useUIStore } from '@stores/uiStore';
+import { trackEngineRestart } from '@core/analytics/productEvents';
 import { setHistoryRoute } from '@stores/historyStore';
 import { documentMirror, hasDocumentMirror, setAppMirrorSource } from '@stores/documentMirror';
 
@@ -81,6 +82,11 @@ function installHistoryRoute(): void {
 
 /** The toast for a process-engine notice (main also shows the blocking dialog when it is unavailable). */
 function noticeToUser(n: { kind: 'unavailable'; reason: string } | { kind: 'restarted'; cause: string; replayed: number }): void {
+  // Once per restart: every window mirrors the same engine and hears it, the
+  // editor window reports it (a pop-out is `#/popout/…`).
+  if (typeof window !== 'undefined' && !window.location.hash.startsWith('#/popout/')) {
+    trackEngineRestart(n.kind === 'unavailable' ? 'unavailable' : n.cause);
+  }
   try {
     useUIStore.getState().notify({
       level: n.kind === 'unavailable' ? 'error' : 'info',

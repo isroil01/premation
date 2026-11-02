@@ -24,6 +24,12 @@ export interface RotoStroke {
   /** Composition seconds of the frame it was painted on (AE parity 3.1: a
    *  stroke on another frame is a correction for that frame). */
   time?: number;
+  /**
+   * Brush hardness when it was painted, 0…100 (100 = a hard edge, 0 = the
+   * softest). Carried on the stroke for the engine's paint / refine edits;
+   * the segmenter ignores it (a prompt has no edge).
+   */
+  hardness?: number;
 }
 
 /**
@@ -60,13 +66,30 @@ interface RotoBrushStore {
   kind: RotoStrokeKind;
   /** Brush width in screen px (drawn only; segmentation is point-based). */
   size: number;
+  /** Brush hardness, 0…100 (Selection Brush / Refine Edge footprint edge). */
+  hardness: number;
   /** Soft edge on the produced matte, px. */
   featherPx: number;
   /** Id of the mask path the tool last wrote, so a re-segment REPLACES it. */
   maskPathId: string | null;
+  /**
+   * A SHORT foreground job is in flight (one click, one stroke, one
+   * propagate pressed on the options bar). A press made meanwhile is queued
+   * (`queuePress`) and runs when the job returns — never dropped.
+   */
   busy: boolean;
   /** 0…1 while propagating forward. */
   progress: number;
+  /**
+   * A background walk (Follow / Re-track, subjectActions.ts) is running:
+   * the overlays stay fully interactive and show a small progress chip.
+   * Distinct from `busy`, which blocks nothing either but queues presses.
+   */
+  tracking: boolean;
+  /** 0…1 of the walk. */
+  trackingProgress: number;
+  /** The one press waiting for `busy` to clear (the newest wins). */
+  queued: (() => void) | null;
   status: string | null;
   engine: RotoEngine;
   refine: RotoRefine;
@@ -80,17 +103,31 @@ interface RotoBrushStore {
   setNode: (nodeId: string | null) => void;
   setKind: (k: RotoStrokeKind) => void;
   setSize: (px: number) => void;
+  setHardness: (pct: number) => void;
   setFeather: (px: number) => void;
   begin: (kind: RotoStrokeKind, p: { x: number; y: number }, time?: number) => void;
   extend: (p: { x: number; y: number }) => void;
   /** Commit the live stroke. Returns it (null when there was none). */
   end: () => RotoStroke | null;
+  /**
+   * Commit a whole stroke at once (the overlay keeps the stroke in flight in
+   * a ref and hands it over on release: one store write per stroke, not one
+   * per pointer sample). Carries the brush hardness of the moment.
+   */
+  addStroke: (kind: RotoStrokeKind, points: ReadonlyArray<{ x: number; y: number }>, time?: number) => RotoStroke;
   cancelLive: () => void;
   /** Take one committed stroke back out (a click that became a double-click). */
   removeStroke: (id: string) => void;
   clearStrokes: () => void;
   setMaskPathId: (id: string | null) => void;
   setBusy: (busy: boolean, progress?: number) => void;
+  setTracking: (on: boolean, progress?: number) => void;
+  /**
+   * Run `press` now, or — while `busy` — hold it until the job in flight
+   * returns (a second press meanwhile replaces it: the user corrected the
+   * aim, not asked twice). Returns true when it ran at once.
+   */
+  queuePress: (press: () => void) => boolean;
   setStatus: (s: string | null) => void;
   setBox: (box: RotoBox | null) => void;
   setMarquee: (m: 'rect' | 'lasso') => void;
@@ -162,10 +199,14 @@ export const useRotoBrushStore = create<RotoBrushStore>((set, get) => ({
   live: null,
   kind: 'fg',
   size: 24,
+  hardness: 100,
   featherPx: 2,
   maskPathId: null,
   busy: false,
   progress: 0,
+  tracking: false,
+  trackingProgress: 0,
+  queued: null,
   status: null,
   engine: 'objectMatte',
   refine: { edgeRadius: 6, decontaminate: 50, motionBlur: false, choke: 0, reduceChatter: 30 },
@@ -175,11 +216,13 @@ export const useRotoBrushStore = create<RotoBrushStore>((set, get) => ({
   setEngine: (engine) => set({ engine }),
   setRefine: (patch) => set((s) => ({ refine: { ...s.refine, ...patch } })),
   setNode: (nodeId) =>
-    set((s) => (s.nodeId === nodeId ? s : { nodeId, strokes: [], live: null, maskPathId: null, status: null, box: null })),
+    set((s) => (s.nodeId === nodeId ? s : { nodeId, strokes: [], live: null, maskPathId: null, status: null, box: null, queued: null })),
   setKind: (kind) => set({ kind }),
   setSize: (px) => set({ size: Math.max(2, Math.min(200, Math.round(px))) }),
+  setHardness: (pct) => set({ hardness: Number.isFinite(pct) ? Math.max(0, Math.min(100, Math.round(pct))) : 100 }),
   setFeather: (px) => set({ featherPx: Math.max(0, Math.min(64, Math.round(px))) }),
-  begin: (kind, p, time) => set({ live: { id: `roto_${++seq}`, kind, points: [p], ...(time !== undefined ? { time } : {}) } }),
+  begin: (kind, p, time) =>
+    set((s) => ({ live: { id: `roto_${++seq}`, kind, points: [p], hardness: s.hardness, ...(time !== undefined ? { time } : {}) } })),
   extend: (p) =>
     set((s) => {
       if (!s.live) return s;
@@ -194,11 +237,30 @@ export const useRotoBrushStore = create<RotoBrushStore>((set, get) => ({
     set((s) => ({ live: null, strokes: [...s.strokes, live] }));
     return live;
   },
+  addStroke: (kind, points, time) => {
+    const stroke: RotoStroke = { id: `roto_${++seq}`, kind, points: points.map((p) => ({ x: p.x, y: p.y })), hardness: get().hardness, ...(time !== undefined ? { time } : {}) };
+    set((s) => ({ strokes: [...s.strokes, stroke] }));
+    return stroke;
+  },
   cancelLive: () => set({ live: null }),
   removeStroke: (id) => set((s) => ({ strokes: s.strokes.filter((x) => x.id !== id) })),
   clearStrokes: () => set({ strokes: [], live: null, status: null, box: null }),
   setMaskPathId: (id) => set({ maskPathId: id }),
-  setBusy: (busy, progress = 0) => set({ busy, progress }),
+  setBusy: (busy, progress = 0) => {
+    const queued = busy ? null : get().queued;
+    set({ busy, progress, ...(queued ? { queued: null } : {}) });
+    // The job returned: the press made meanwhile runs now (it may set busy again).
+    if (queued) queued();
+  },
+  setTracking: (tracking, progress = 0) => set({ tracking, trackingProgress: tracking ? Math.max(0, Math.min(1, progress)) : 0 }),
+  queuePress: (press) => {
+    if (!get().busy) {
+      press();
+      return true;
+    }
+    set({ queued: press });
+    return false;
+  },
   setStatus: (status) => set({ status }),
   setBox: (box) => set({ box }),
   setMarquee: (marquee) => set({ marquee }),

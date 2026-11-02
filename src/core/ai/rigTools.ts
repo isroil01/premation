@@ -215,6 +215,32 @@ async function compCorners(ctx: ToolContext, layer: string, t: number): Promise<
   return c && c.length >= 8 ? c : null;
 }
 
+/** Where a layer sits in the frame at a time: what a close-up of it (render_rig_view, the subject previews) is drawn from. */
+export interface FrameGeometry {
+  /** The comp region the image shows (the layer box with a margin), comp px. */
+  crop: Box;
+  /** Layer-local → comp: comp = o + x·ex + y·ey. */
+  affine: { o: Pt; ex: Pt; ey: Pt };
+  /** The layer's own box, layer px. */
+  box: Box;
+}
+
+/** The layer's box, its local → comp affine and a crop round it at `t`; null when it draws nothing then. */
+export async function layerFrameGeometry(ctx: ToolContext, layer: string, t: number): Promise<FrameGeometry | null> {
+  const box = await layerBox(ctx, layer, t);
+  const corners = await compCorners(ctx, layer, t);
+  if (!box || !corners) return null;
+  const c0 = { x: corners[0]!, y: corners[1]! }, c1 = { x: corners[2]!, y: corners[3]! }, c3 = { x: corners[6]!, y: corners[7]! };
+  const ex = { x: (c1.x - c0.x) / box.width, y: (c1.y - c0.y) / box.width };
+  const ey = { x: (c3.x - c0.x) / box.height, y: (c3.y - c0.y) / box.height };
+  const o = { x: c0.x - box.x * ex.x - box.y * ey.x, y: c0.y - box.x * ex.y - box.y * ey.y };
+  const xs = [0, 2, 4, 6].map((i) => corners[i]!), ys = [1, 3, 5, 7].map((i) => corners[i]!);
+  const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+  const margin = Math.max(maxX - minX, maxY - minY) * 0.12;
+  const crop = { x: minX - margin, y: minY - margin, width: maxX - minX + 2 * margin, height: maxY - minY + 2 * margin };
+  return { crop, affine: { o, ex, ey }, box };
+}
+
 async function storedJson(ctx: ToolContext, layer: string, path: string): Promise<Record<string, unknown> | null> {
   try {
     const r = await ctx.engine.query({ type: 'getPropertyValues', props: [{ layer, path }], time: 0, evaluated: false } as never) as { values?: { value: { kind: string; value: unknown } }[] };
@@ -322,17 +348,9 @@ export async function rigViewData(ctx: ToolContext, rawArgs: unknown): Promise<R
   const layer = resolveAlias(ctx, String(a.layerId ?? a.nodeId ?? ''));
   if (!(await ctx.scene.has(layer))) return { error: `No layer '${layer}' (describe_scene).` };
   const t = isNum(a.time) ? Math.max(0, a.time) : ctx.comp.playhead();
-  const box = await layerBox(ctx, layer, t);
-  const corners = await compCorners(ctx, layer, t);
-  if (!box || !corners) return { error: `'${layer}' has no drawn area at ${t}s.` };
-  const c0 = { x: corners[0]!, y: corners[1]! }, c1 = { x: corners[2]!, y: corners[3]! }, c3 = { x: corners[6]!, y: corners[7]! };
-  const ex = { x: (c1.x - c0.x) / box.width, y: (c1.y - c0.y) / box.width };
-  const ey = { x: (c3.x - c0.x) / box.height, y: (c3.y - c0.y) / box.height };
-  const o = { x: c0.x - box.x * ex.x - box.y * ey.x, y: c0.y - box.x * ex.y - box.y * ey.y };
-  const xs = [0, 2, 4, 6].map((i) => corners[i]!), ys = [1, 3, 5, 7].map((i) => corners[i]!);
-  const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
-  const margin = Math.max(maxX - minX, maxY - minY) * 0.12;
-  const crop = { x: minX - margin, y: minY - margin, width: maxX - minX + 2 * margin, height: maxY - minY + 2 * margin };
+  const geom = await layerFrameGeometry(ctx, layer, t);
+  if (!geom) return { error: `'${layer}' has no drawn area at ${t}s.` };
+  const { crop, box, affine: { o, ex, ey } } = geom;
 
   const skel = await readSkeleton(ctx, layer);
   const len = new Map((skel?.bones ?? []).map((b) => [b.id, b.length] as const));
@@ -353,7 +371,12 @@ export async function rigViewData(ctx: ToolContext, rawArgs: unknown): Promise<R
   const puppet = await storedJson(ctx, layer, 'layer/puppet');
   const pins = (Array.isArray(puppet?.pins) ? puppet.pins as Record<string, unknown>[] : [])
     .filter((p) => isNum(p.x) && isNum(p.y))
-    .map((p) => ({ id: String(p.id ?? ''), name: String(p.name ?? p.id ?? ''), x: p.x as number, y: p.y as number }));
+    .map((p) => ({ id: String(p.id ?? ''), name: String(p.name ?? p.id ?? ''), x: p.x as number, y: p.y as number, kind: typeof p.kind === 'string' ? p.kind : 'advanced' }));
+  // The mesh itself is not drawable here (no mesh query); its settings and size are reported.
+  const meshNote = puppet
+    ? `Puppet mesh: ${String(puppet.meshMode ?? 'silhouette')}, density ${String(puppet.meshDensity ?? 'default')}, expansion ${String(puppet.meshExpansion ?? 0)}px, solver ${String(puppet.solver ?? 'arap')}` +
+      (isNum(puppet.maxRotationDeg) ? `, max rotation ${puppet.maxRotationDeg}°` : '') + '. The mesh and bone weights are not drawn (the Rigging panel shows them).'
+    : '';
 
   const gridStep = niceStep(Math.max(box.width, box.height));
   const r1 = (v: number): number => Math.round(v);
@@ -362,7 +385,8 @@ export async function rigViewData(ctx: ToolContext, rawArgs: unknown): Promise<R
     `Layer box: x ${r1(box.x)}…${r1(box.x + box.width)}, y ${r1(box.y)}…${r1(box.y + box.height)}.`,
     bones.length ? `Bones (root → tip, posed): ${bones.map((b) => `${b.id} (${r1(b.root.x)},${r1(b.root.y)})→(${r1(b.tip.x)},${r1(b.tip.y)})`).join('; ')}` : 'No skeleton.',
     ik.length ? `IK goals: ${ik.map((g) => `${g.bone} (${r1(g.x)},${r1(g.y)}) ${g.mode}`).join('; ')}` : '',
-    pins.length ? `Puppet pins (rest): ${pins.map((p) => `${p.id} '${p.name}' (${r1(p.x)},${r1(p.y)})`).join('; ')}` : 'No puppet pins.',
+    pins.length ? `Puppet pins (rest): ${pins.map((p) => `${p.id} '${p.name}' ${p.kind} (${r1(p.x)},${r1(p.y)})`).join('; ')}` : 'No puppet pins.',
+    meshNote,
   ].filter(Boolean).join('\n');
   return { time: t, crop, affine: { o, ex, ey }, box, gridStep, bones, pins, ik, text };
 }

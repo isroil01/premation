@@ -92,6 +92,72 @@ describe('McpCallHost', () => {
     expect(textOf(strip)).toMatch(/after startSec/);
   });
 
+  it('passes render_frame\'s composition, solo, crop, zoom and asset options to the renderer, and refuses bad ones', async () => {
+    const seen: unknown[] = [];
+    const { call } = setup({ renderStill: async (_t, _s, opts) => { seen.push(opts); return { mimeType: 'image/png', data: 'PNGDATA' }; } });
+    const r = await call('render_frame', { time: 2, compId: 'comp_b', layerIds: ['l1', 'l2'], region: { x: 10, y: 20, w: 300, h: 200 }, zoom: 2 });
+    expect(r.content[0]!.type).toBe('image');
+    expect(seen[0]).toEqual({ compId: 'comp_b', layerIds: ['l1', 'l2'], region: { x: 10, y: 20, w: 300, h: 200 }, zoom: 2 });
+    expect(textOf(r)).toMatch(/solo/);
+    await call('render_frame', { time: 1, assetId: 'asset_9' });
+    expect(seen[1]).toEqual({ assetId: 'asset_9' });
+    expect(textOf(await call('render_frame', { time: 1, assetId: 'a', layerIds: ['x'] }))).toMatch(/assetId renders an imported asset/);
+    expect(textOf(await call('render_frame', { time: 1, zoom: 40 }))).toMatch(/zoom must be/);
+    expect(textOf(await call('render_frame', { time: 1, region: { x: 0, y: 0, w: -1, h: 2 } }))).toMatch(/region needs/);
+  });
+
+  it('relays the renderer\'s refusal of an option as the error', async () => {
+    const { call } = setup({ renderStill: async () => ({ error: 'No composition \'nope\'.' }) });
+    const r = await call('render_frame', { time: 0, compId: 'nope' });
+    expect(r.isError).toBe(true);
+    expect(textOf(r)).toMatch(/No composition 'nope'/);
+  });
+
+  it('attaches the subject preview to select_subject and drops the geometry from the text', async () => {
+    const views: unknown[] = [];
+    const { call, txs } = setup({
+      registry: () => ({
+        has: (n: string) => n === 'select_subject',
+        get: (n: string) => (n === 'select_subject' ? { name: n, kind: 'write', description: '', inputSchema: {} } : undefined),
+        execute: async (): Promise<ToolResult> => ({ ok: true, content: 'Selected subject s1', data: { subject: 's1', view: { layer: 'v', time: 0, outlines: [], crop: {}, affine: {}, box: {} } } }),
+      }),
+      renderSubjectView: async (view) => { views.push(view); return { mimeType: 'image/png', data: 'MATTE' }; },
+    });
+    const r = await call('select_subject', { layerId: 'v', points: [{ x: 1, y: 2 }] });
+    expect(r.content[0]).toEqual({ type: 'image', data: 'MATTE', mimeType: 'image/png' });
+    expect(textOf(r)).toMatch(/"subject": "s1"/);
+    expect(textOf(r)).not.toMatch(/outlines/);
+    expect(views).toHaveLength(1);
+    expect(txs).toEqual([{ label: 'Claude: select subject', state: 'committed' }]);
+  });
+
+  it('asks the user before transcribing and refuses without Allow', async () => {
+    const asked: string[] = [];
+    const { call, executed } = setup({
+      registry: () => ({ has: (n: string) => n === 'transcribe', get: () => undefined, execute: async (n: string): Promise<ToolResult> => { executed.push(n); return { ok: true, content: 'ok' }; } }),
+      approve: async (req) => { asked.push(req.title); return false; },
+    });
+    const r = await call('transcribe', { createCaptions: true });
+    expect(r.isError).toBe(true);
+    expect(asked[0]).toMatch(/Transcribe/);
+    expect(executed).toEqual([]);
+  });
+
+  it('attaches describe_asset\'s contact sheet for footage, not for audio', async () => {
+    let data: Record<string, unknown> = { itemId: 'item_1', type: 'video', durationSec: 4, cells: 3 };
+    const sheets: unknown[] = [];
+    const { call } = setup({
+      registry: () => ({ has: (n: string) => n === 'describe_asset', get: () => ({ name: 'describe_asset', kind: 'read', description: '', inputSchema: {} }), execute: async (): Promise<ToolResult> => ({ ok: true, content: 'clip.mp4', data }) }),
+      renderAssetSheet: async (itemId, durationSec, cells) => { sheets.push([itemId, durationSec, cells]); return { mimeType: 'image/png', data: 'SHEET' }; },
+    });
+    const r = await call('describe_asset', { assetId: 'a' });
+    expect(r.content[0]).toEqual({ type: 'image', data: 'SHEET', mimeType: 'image/png' });
+    expect(sheets).toEqual([['item_1', 4, 3]]);
+    data = { itemId: 'item_2', type: 'audio', durationSec: 4, cells: 3 };
+    expect((await call('describe_asset', { assetId: 'b' })).content[0]!.type).toBe('text');
+    expect(sheets).toHaveLength(1);
+  });
+
   it('wraps a changing call in its own transaction, but not a read', async () => {
     const { call, txs } = setup();
     await call('describe_scene');

@@ -33,6 +33,10 @@ inline constexpr std::string_view kFxScopeMask = "fx-scope-mask";
 /// The input of a faded / scoped effect that spans several chain entries,
 /// kept until its last entry blends back over it (effect_chain.cpp).
 inline constexpr std::string_view kFxBlendInput = "fx-blend-input";
+/// Stream D (2026-11-02): the scene under the layer being drawn, copied before
+/// its chain runs — an adjustment layer's untouched frame (mixed back through
+/// its mask and opacity) and the fx-graph's BACKDROP slot (fx_graph.hpp).
+inline constexpr std::string_view kFxBackdrop = "fx-backdrop";
 /// AE parity 5.3: scratch buffers of the multi-pass keying / matte / grade
 /// passes (effect_chain.cpp, matte-ops.wgsl) — data, not colour: always float
 /// (kDataTargetFormat), whatever the project's bit depth.

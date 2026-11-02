@@ -4369,19 +4369,205 @@
     "gpuOnly": true,
     "params": [
       {
+        "key": "mapLayerId",
+        "label": "Displacement Map Layer",
+        "type": "layer",
+        "noneLabel": "None (this layer)",
+        "default": ""
+      },
+      {
+        "key": "source",
+        "label": "Displace",
+        "type": "enum",
+        "options": [
+          {
+            "value": 0,
+            "label": "This Layer"
+          },
+          {
+            "value": 1,
+            "label": "Backdrop (the scene below)"
+          }
+        ],
+        "default": 0
+      },
+      {
+        "key": "hChannel",
+        "label": "Use For Horizontal Displacement",
+        "type": "enum",
+        "options": [
+          {
+            "value": 0,
+            "label": "Red"
+          },
+          {
+            "value": 1,
+            "label": "Green"
+          },
+          {
+            "value": 2,
+            "label": "Blue"
+          },
+          {
+            "value": 3,
+            "label": "Alpha"
+          },
+          {
+            "value": 4,
+            "label": "Luminance"
+          },
+          {
+            "value": 5,
+            "label": "Hue"
+          },
+          {
+            "value": 6,
+            "label": "Lightness"
+          },
+          {
+            "value": 7,
+            "label": "Saturation"
+          },
+          {
+            "value": 8,
+            "label": "Full"
+          },
+          {
+            "value": 9,
+            "label": "Half"
+          },
+          {
+            "value": 10,
+            "label": "Off"
+          }
+        ],
+        "default": 0
+      },
+      {
         "key": "amount",
-        "label": "Amount",
+        "label": "Max Horizontal Displacement",
         "type": "number",
         "unit": "px",
-        "min": -100,
-        "max": 100,
+        "min": -32000,
+        "max": 32000,
         "default": 20
       },
       {
-        "key": "mapLayerId",
-        "label": "Map Layer",
-        "type": "layer",
-        "default": ""
+        "key": "vChannel",
+        "label": "Use For Vertical Displacement",
+        "type": "enum",
+        "options": [
+          {
+            "value": 0,
+            "label": "Red"
+          },
+          {
+            "value": 1,
+            "label": "Green"
+          },
+          {
+            "value": 2,
+            "label": "Blue"
+          },
+          {
+            "value": 3,
+            "label": "Alpha"
+          },
+          {
+            "value": 4,
+            "label": "Luminance"
+          },
+          {
+            "value": 5,
+            "label": "Hue"
+          },
+          {
+            "value": 6,
+            "label": "Lightness"
+          },
+          {
+            "value": 7,
+            "label": "Saturation"
+          },
+          {
+            "value": 8,
+            "label": "Full"
+          },
+          {
+            "value": 9,
+            "label": "Half"
+          },
+          {
+            "value": 10,
+            "label": "Off"
+          }
+        ],
+        "default": 1
+      },
+      {
+        "key": "linkVertical",
+        "label": "Vertical = Horizontal",
+        "type": "checkbox",
+        "default": true
+      },
+      {
+        "key": "maxVertical",
+        "label": "Max Vertical Displacement",
+        "type": "number",
+        "unit": "px",
+        "min": -32000,
+        "max": 32000,
+        "default": 20
+      },
+      {
+        "key": "mapBehavior",
+        "label": "Displacement Map Behavior",
+        "type": "enum",
+        "options": [
+          {
+            "value": 0,
+            "label": "As Placed in Comp"
+          },
+          {
+            "value": 1,
+            "label": "Center Map"
+          },
+          {
+            "value": 2,
+            "label": "Stretch Map to Fit"
+          },
+          {
+            "value": 3,
+            "label": "Tile Map"
+          }
+        ],
+        "default": 0
+      },
+      {
+        "key": "edgeBehavior",
+        "label": "Edge Behavior",
+        "type": "enum",
+        "options": [
+          {
+            "value": 0,
+            "label": "Clamp Edge Pixels"
+          },
+          {
+            "value": 1,
+            "label": "Wrap Pixels Around"
+          },
+          {
+            "value": 2,
+            "label": "Transparent"
+          }
+        ],
+        "default": 0
+      },
+      {
+        "key": "expandOutput",
+        "label": "Expand Output",
+        "type": "checkbox",
+        "default": true
       }
     ]
   },
@@ -11125,6 +11311,22 @@
     "label": "Glass",
     "params": [
       {
+        "key": "source",
+        "label": "Refract",
+        "type": "enum",
+        "options": [
+          {
+            "value": 0,
+            "label": "This Layer"
+          },
+          {
+            "value": 1,
+            "label": "Backdrop (the scene below)"
+          }
+        ],
+        "default": 0
+      },
+      {
         "key": "bumpSoftness",
         "label": "Softness",
         "type": "number",
@@ -14301,6 +14503,13 @@
     "gpuOnly": true,
     "params": [
       {
+        "key": "blobLayerId",
+        "label": "Blob Layer",
+        "type": "layer",
+        "noneLabel": "None (this layer)",
+        "default": ""
+      },
+      {
         "key": "softness",
         "label": "Softness",
         "type": "number",
@@ -14593,6 +14802,32 @@
     "label": "Caustics",
     "gpuOnly": true,
     "params": [
+      {
+        "key": "bottomLayerId",
+        "label": "Bottom",
+        "type": "layer",
+        "group": "Bottom",
+        "noneLabel": "None (this layer)",
+        "default": ""
+      },
+      {
+        "key": "waterLayerId",
+        "label": "Water Surface",
+        "type": "layer",
+        "group": "Water",
+        "noneLabel": "None (waves only)",
+        "default": ""
+      },
+      {
+        "key": "waterGain",
+        "label": "Surface Height",
+        "type": "number",
+        "group": "Water",
+        "unit": "%",
+        "min": 0,
+        "max": 400,
+        "default": 100
+      },
       {
         "key": "scale",
         "label": "Wave Scale",
@@ -16916,6 +17151,22 @@
     "gpuOnly": true,
     "params": [
       {
+        "key": "source",
+        "label": "Frost",
+        "type": "enum",
+        "options": [
+          {
+            "value": 0,
+            "label": "This Layer"
+          },
+          {
+            "value": 1,
+            "label": "Backdrop (the scene below)"
+          }
+        ],
+        "default": 0
+      },
+      {
         "key": "amount",
         "label": "Frost",
         "type": "number",
@@ -19187,6 +19438,22 @@
           {
             "value": 4,
             "label": "Blue"
+          }
+        ],
+        "default": 0
+      },
+      {
+        "key": "source",
+        "label": "Refract",
+        "type": "enum",
+        "options": [
+          {
+            "value": 0,
+            "label": "This Layer"
+          },
+          {
+            "value": 1,
+            "label": "Backdrop (the scene below)"
           }
         ],
         "default": 0
@@ -24959,6 +25226,140 @@
         "label": "Render Refine Edge",
         "type": "checkbox",
         "default": true
+      }
+    ]
+  },
+  {
+    "type": "goo",
+    "label": "Goo",
+    "gpuOnly": true,
+    "params": [
+      {
+        "key": "blur",
+        "label": "Blur",
+        "type": "number",
+        "unit": "px",
+        "min": 0,
+        "max": 200,
+        "default": 12
+      },
+      {
+        "key": "threshold",
+        "label": "Threshold",
+        "type": "number",
+        "unit": "%",
+        "min": 1,
+        "max": 100,
+        "default": 50
+      },
+      {
+        "key": "softness",
+        "label": "Softness",
+        "type": "number",
+        "unit": "%",
+        "min": 0,
+        "max": 100,
+        "default": 10
+      },
+      {
+        "key": "color",
+        "label": "Color",
+        "type": "enum",
+        "group": "Shading",
+        "options": [
+          {
+            "value": 0,
+            "label": "Layer"
+          },
+          {
+            "value": 1,
+            "label": "Tint"
+          }
+        ],
+        "default": 0
+      },
+      {
+        "key": "tint",
+        "label": "Tint",
+        "type": "color",
+        "group": "Shading",
+        "default": "#36c6ff"
+      },
+      {
+        "key": "shine",
+        "label": "Shine",
+        "type": "number",
+        "group": "Shading",
+        "unit": "%",
+        "min": 0,
+        "max": 400,
+        "default": 50
+      },
+      {
+        "key": "highlight",
+        "label": "Highlight Color",
+        "type": "color",
+        "group": "Shading",
+        "default": "#ffffff"
+      },
+      {
+        "key": "shininess",
+        "label": "Shininess",
+        "type": "number",
+        "group": "Shading",
+        "min": 1,
+        "max": 400,
+        "default": 40
+      },
+      {
+        "key": "lightAngle",
+        "label": "Light Direction",
+        "type": "number",
+        "group": "Shading",
+        "unit": "°",
+        "min": -3600,
+        "max": 3600,
+        "default": -45
+      },
+      {
+        "key": "lightElevation",
+        "label": "Light Elevation",
+        "type": "number",
+        "group": "Shading",
+        "unit": "°",
+        "min": 0,
+        "max": 90,
+        "default": 50
+      },
+      {
+        "key": "rim",
+        "label": "Fresnel Rim",
+        "type": "number",
+        "group": "Shading",
+        "unit": "%",
+        "min": 0,
+        "max": 200,
+        "default": 20
+      },
+      {
+        "key": "ambient",
+        "label": "Ambient",
+        "type": "number",
+        "group": "Shading",
+        "unit": "%",
+        "min": 0,
+        "max": 200,
+        "default": 85
+      },
+      {
+        "key": "dome",
+        "label": "Dome Radius",
+        "type": "number",
+        "group": "Shading",
+        "unit": "px",
+        "min": 0,
+        "max": 500,
+        "default": 0
       }
     ]
   }

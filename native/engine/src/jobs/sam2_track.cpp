@@ -302,17 +302,35 @@ bool Tracker::step(std::span<const std::uint8_t> rgba, std::uint32_t width, std:
     return false;
   }
   out.memoryMs = ms_since(t0);
-  bank_.add(step_, std::move(mem), dec.pointer, conditioning);
-  ++step_;
-
   if (given) {
     out.alpha.assign(mask.begin(), mask.end());
   } else {
     logits_to_alpha(dec.highRes, width, height, out.alpha);
   }
+  if (first) {
+    // The origin, kept for a walk the other way (start_from): one encode serves both directions.
+    Origin o;
+    o.mem = mem;
+    o.pointer = dec.pointer;
+    o.alpha = out.alpha;
+    o.iou = dec.iou;
+    o.objectScore = dec.objectScore;
+    origin_ = std::move(o);
+  }
+  bank_.add(step_, std::move(mem), dec.pointer, conditioning);
+  ++step_;
   out.iou = dec.iou;
   out.objectScore = dec.objectScore;
   out.conditioning = conditioning;
+  return true;
+}
+
+bool Tracker::start_from(const Origin& o) {
+  if (!bank_.empty() || step_ != 0) return false;
+  if (o.mem.tokens.size() != kTokens * kMemDim || o.mem.pos.size() != kTokens * kMemDim || o.pointer.size() != kHidden) return false;
+  bank_.add(0, o.mem, o.pointer, /*conditioning=*/true);
+  origin_ = o;
+  step_ = 1;
   return true;
 }
 

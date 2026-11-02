@@ -400,3 +400,80 @@ vs the viewport (task "Fix washed-out gradients in engine stills"); a huge
 layer blanks the whole frame (task from round 1). Quality is now "clean and
 correct", not yet "award-winning": richer looks, imagery (imported media in
 `cast_piece` beats), and stronger technique choice are the next levers.
+
+## 15. Stream E (2026-11-02): subjects, tracking, transcription, assets, rigs
+
+**Diagnosis.** The engine ran every analysis job the user has (object matte,
+track motion / apply, transcribe…) and the model could reach none of them:
+footage was only placeable, a person in a shot only cut out through
+`place_behind_subject` with a point, rigs took one pin per call with no kinds,
+and `apply_layer_style` knew two of ten styles. Audit: the job kinds in
+`native/engine/src/jobs/job_kinds.hpp` against `packages/ai-tools`.
+
+**New registry tools** (`packages/ai-tools/src/tools/media.ts`, handlers in
+`src/core/ai/mediaTools.ts` — offered in-app and over MCP alike; every point on
+footage is FOOTAGE px from the top-left, times are composition seconds):
+
+| Tool | What it does |
+|---|---|
+| `find_subjects` | Find Objects: the model's candidates in a frame (index, bounds, area, seed). Nothing written. |
+| `select_subject` | Points (labelled subject / not), a box or a candidate → one subject's soft matte on a frame (`runSubjectEdit`); a new subject per call unless `subject` names one; optional `name`. Returns id, coverage, bounds; over MCP a matte preview image. |
+| `refine_subject` | Add / subtract points, brush strokes (paint or refine, radius), the subject's live edge (feather, choke, contrast, smooth, invert). |
+| `follow_subject` | `propagateObjectMatte` through the work area / a range from the selected frame; a background job (`jobId`) or `wait: true`. |
+| `apply_subject_style` | The Subjects panel's presets through `src/core/workspace/subjectPort.ts` (registered by `layout/Workspace/placeBehindSubjectCommand.ts`), plus `background_blur`, `remove_background` / `keep_background` (the Object Matte effect on / off). |
+| `track_point` / `attach_to_track` | The one-click `trackMotion` job (autoFeature, both ways from the playhead) held per session as `track_N`; `trackApply` as follow / transform / createNull / stabilize / effectPoint. |
+| `transcribe` | `transcribeCompositionDetailed`: cues + word timings (+ language); `createCaptions` replaces the comp's caption layers (`captionReplaceCommands`) in the call's undo step. Behind Allow over MCP (it sends audio to the user's provider). |
+| `get_job_status` | The jobs this assistant started (`AI_JOBS`): progress, result, cancel. |
+| `get_editor_context` | Comp, playhead, work area, selected layers / properties / keyframes, subjects in focus, active tool, running jobs. |
+| `describe_asset` | Real metadata (engine item: size, duration, fps, codec, audio, alpha, bytes, layers using it); over MCP a contact sheet decoded by `engineFootageStill`. |
+
+**Changed:** `render_frame` takes `compId`, `layerIds` (a solo: the live
+document copied with those layers soloed and drawn by `renderDocumentStill`),
+`region` / `zoom` (cropped page-side), `assetId` (a source frame). Overlays are
+not drawn by the renderer (no engine flag): render_rig_view, inspect_layers and
+the subject previews cover masks / pins / bounds. `create_puppet_rig`: pin
+`kind` (position / advanced / bend / starch / overlap), `scale`, `overlap`,
+`mesh` (density, expansion, mode, solver, maxRotationDeg, and for image
+layers traceAccuracy 0–100 % / alphaThreshold 0–255 — stream C1's
+`puppet/mesh/*` properties), `append`. `create_skeleton_rig`: `mesh`
+(density, expansion, mode, traceAccuracy, alphaThreshold, preserveVolume =
+dual-quaternion skinning).
+`set_puppet_pin_keyframes`: many `pins` per call, per-key `easing` / `bezier`
+and spatial `tangentIn` / `tangentOut` (AnimFacade.setPointsKeyframe `opts`).
+`pose_skeleton`: rotation optional, per-key easing, `ikPoses` (goal, pole,
+`ik` true/false or `ikBlend` 0..1 — ikMode.<bone> is now an FK→IK blend,
+keyed with the pose's easing). `render_rig_view` reports the mesh settings and pin kinds; the
+mesh and weights are not drawn (no mesh query). `apply_layer_style`: all ten
+styles incl. glass (its own `glass.<field>` tracks in `patchLayerStyle`),
+`enabled: false`, Global Light; the `glass` object also takes stream D's liquid
+fields (surface edge|dome|luma|layer, thickness, ior, dispersion, caustic,
+fresnel, bumpLayerId — written as `glass.<field>` tracks / style fields, so
+they land once the engine exposes them). `add_effect` offers `goo` (liquid
+merge); the author guide explains Source: Backdrop on refraction / glass /
+displacement-map and goo for metaball merges. `update_layer`'s `ior` hint corrected (Fresnel
+F0, not refraction); `backdropBlur` points at the glass style.
+`list_capabilities { area: "media" }` lists the subject presets, tracking modes
+and coordinates; `get_author_guide` and the server instructions carry the
+footage workflow. The MCP server declares `resources`: `premation://asset/<id>`
+from `list_assets`, read through `describe_asset`.
+
+**Jobs inside a turn (live finding, skater clip):** the engine never applies a
+finished job's edits while a gesture is open (session_jobs.cpp), so a job
+started with `apply: true` from inside the AI turn's gesture waited for the
+gesture the turn was waiting to close — `select_subject` never returned. The
+media tools now start their jobs HELD (`apply: false`) and apply the result
+through the turn's session (`applyJobResult` via `ctx.engine.apply`,
+mediaTools.ts `turnApplier`): `runSubjectEdit` / `propagateObjectMatte` take
+an `applyResult` option (rotoBrushTool.ts `JobApplyOptions`, the UI keeps the
+default), track_point / attach_to_track do the same inline. follow_subject
+left running (wait: false) keeps the engine's own apply, which lands when no
+gesture is open (an open begin_edit group holds it until end_edit).
+
+**Verified without an engine:** `packages/ai-tools/src/mcp.test.ts` (schemas,
+coercion), `registry.test.ts` (85 tools), `packages/mcp-server/src/resources.test.ts`,
+`src/core/ai/mediaTools.test.ts` (jobs, refusals), `src/core/ai/mcp/mcpHost.test.ts`
+(render_frame options, previews, transcribe approval). Not verified: the jobs
+on the real app engine (the headless engine runs none) — select / refine /
+follow a subject on a clip, track + attach, transcribe + captions, the solo and
+asset stills; after `npm run mcp:build` the announced list must show 85 + the
+MCP-only tools.

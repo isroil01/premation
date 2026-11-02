@@ -597,6 +597,13 @@ at apply time — e.g. the replaced keyframe — so undo never re-derives anythi
   (`gestureOpen`); `endGesture` without one is `noGesture`. `commit:false`
   applies the inverses (Esc cancels a drag, the document returns exactly). If the
   UI disconnects mid-gesture the engine commits it (nothing the user saw is lost).
+  A `Hello` on an open session is a client *reconnect* (a reloaded page on an
+  engine that lived on) and commits the open gesture the same way before the
+  fresh `Welcome`; main does the same for a window whose page went away
+  (`EngineHost.pageReset` ends the gesture that window held), and a client that
+  meets `gestureOpen` while holding no gesture of its own may end "the open one"
+  (`endGesture{gesture:0, commit:true}`) rather than wait for an owner that no
+  longer exists.
 - `control` and `io` commands never enter history; `undo`/`redo` inside a gesture
   are refused.
 
@@ -702,6 +709,7 @@ Queries answer at the revision in their `Response` and never change anything.
 | `hitTest` | Layers under a comp point at a time (topmost or all). C++: the frame's drawn quads (the model matrix, projective for corner pins / 3D cards), topmost first — a layer's box, not its alpha; meshes, extrusions, models and generators by their bounds; adjustment layers, track-matte sources and edge-on planes are never hit; a collapsed precomp's or a cloner's draws are that layer; locked layers only with `includeLocked`. The TS engine answers `unsupported` (the editor's HitTester answers in the page). |
 | `getLayerBounds`, `getLayerTransforms` | Bounds/corners in comp/layer space (viewport: the overlay push, §15.12); 4×4 layer→comp matrices — what gizmos draw from. |
 | `getRigPose` | B4: a layer's rig at a time — live / solved bones, IK goals with their mode, pointer points back through the pose, a vertex's bind weights (§15.14). |
+| `getSubjectTracks` | A layer's subjects and their stored matte frames (time, confidence, fix) — the Subjects panel's tracking lanes and the AI's `follow_subject` / `get_job_status`. |
 | `getTextLayout` | The measured layout of a text layer: render / selection box, wrap, paragraph box, line-block placement, with hypothetical overrides (§15.12). |
 | `evaluateExpression` | Preview an expression without storing it. |
 | `readPixels` | Working-space pixel values of a viewport region (Info panel, eyedropper). C++: `region` in the viewport's slot pixels (physical px, top-left origin; the pixels it touches, an empty one = the pixel under its corner, clamped to the slot, ≤ 256² pixels); the float scene colour before the display transform / viewer LUT, straight alpha, top-down; the frame the viewport last showed is drawn again offscreen to read it. No such viewport: `notFound`; nothing shown yet: `busy`; C2 quads / `--no-gpu`: `unsupported`. The TS engine answers `unsupported`. |

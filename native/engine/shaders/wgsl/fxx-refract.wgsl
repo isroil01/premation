@@ -2,7 +2,9 @@
 // height (tex1), the view ray refracted per wavelength (six samples across the
 // spectrum, each at its own index: dispersion), reading the (frosted) picture
 // (tex2); a Phong highlight on top. Alpha follows the refracted sample.
-// p0 = (depth px, index, dispersion, specular), p1 = (light dir xyz, shininess).
+// p0 = (depth px, index, dispersion, specular), p1 = (light dir xyz, shininess),
+// p2.x = 1: the picture is the scene under the layer (stream D Source: Backdrop)
+// and the result is cut by the layer's own alpha (tex0).
 fn hAt(uv : vec2<f32>) -> f32 { return at1(uv).r; }
 fn spectrum(t : f32) -> vec3<f32> {
   return clamp(vec3<f32>(1.5 - abs(t * 3.0 - 0.0), 1.5 - abs(t * 3.0 - 1.5), 1.5 - abs(t * 3.0 - 3.0)), vec3<f32>(0.0), vec3<f32>(1.0));
@@ -32,5 +34,6 @@ fn spectrum(t : f32) -> vec3<f32> {
   let r = reflect(-l, n);
   let spec = pow(max(r.z, 0.0), P(1).w) * P(0).w * clamp(length(vec2<f32>(dx, dy)) * depth * 0.5 + 0.15, 0.0, 1.0);
   res = vec4<f32>(res.rgb + vec3<f32>(spec) * res.a, res.a);
+  if (P(2).x > 0.5) { res = res * at0(uv).a; }
   return res;
 }

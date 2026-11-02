@@ -1,5 +1,6 @@
 #include "job_worker.hpp"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <filesystem>
@@ -117,6 +118,9 @@ void JobWorker::reader_loop(Proc* p) {
         } else if (kind == "result") {
           p->result = js::stringify(ev->at("result"));
           p->answered = true;
+        } else if (kind == "cancelled") {
+          // The work stopped at its cancel check: no result, no error (run() returns nullopt).
+          p->answered = true;
         } else if (kind == "error") {
           api::EngineError e;
           e.code = child_detail::code_named(ev->at("code").is_string() ? ev->at("code").str() : "");
@@ -227,25 +231,37 @@ std::optional<std::string> JobWorker::run(const std::string& work, const std::st
   req.set("id", Json::number(static_cast<double>(id)));
   req.set("work", Json::string(work));
   req.set("input", *input);
-  std::string line = js::stringify(req);
-  line.push_back('\n');
   lk.unlock();
-  const bool wrote = p->child->write(
-      std::span<const std::uint8_t>(reinterpret_cast<const std::uint8_t*>(line.data()), line.size()));  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+  const bool wrote = write_line(p, js::stringify(req));
   lk.lock();
 
   // The timeout is a silence: every progress line from the worker moves the deadline (a long walk reports per frame).
   auto deadline = std::chrono::steady_clock::now() + call.timeout;
   bool timedOut = false;
   bool cancelKill = false;
+  // A cancel is sent once; a killOnCancel call then gives the worker `cancelGrace` to answer.
+  bool cancelSent = false;
+  std::optional<std::chrono::steady_clock::time_point> cancelDeadline;
   while (wrote && !p->answered && !p->dead) {
-    if (std::chrono::steady_clock::now() >= deadline) {
+    const auto now = std::chrono::steady_clock::now();
+    if (now >= deadline) {
       timedOut = true;
       break;
     }
-    if (call.killOnCancel && control.cancelled()) {
+    if (cancelDeadline && now >= *cancelDeadline) {
       cancelKill = true;
       break;
+    }
+    if (!cancelSent && control.cancelled()) {
+      cancelSent = true;
+      Json c = Json::object();
+      c.set("id", Json::number(static_cast<double>(id)));
+      c.set("cancel", Json::boolean(true));
+      lk.unlock();
+      const bool sent = write_line(p, js::stringify(c));
+      lk.lock();
+      if (!sent || call.killOnCancel) cancelDeadline = std::chrono::steady_clock::now() + (sent ? call.cancelGrace : std::chrono::milliseconds(0));
+      continue;
     }
     if (p->hasProgress) {
       p->hasProgress = false;
@@ -257,7 +273,9 @@ std::optional<std::string> JobWorker::run(const std::string& work, const std::st
       lk.lock();
       continue;
     }
-    cv_.wait_until(lk, std::min(deadline, std::chrono::steady_clock::now() + std::chrono::milliseconds(100)));
+    auto until = std::min(deadline, std::chrono::steady_clock::now() + std::chrono::milliseconds(100));
+    if (cancelDeadline) until = std::min(until, *cancelDeadline);
+    cv_.wait_until(lk, until);
   }
   if (p->answered) {
     if (p->hasProgress) {
@@ -271,6 +289,7 @@ std::optional<std::string> JobWorker::run(const std::string& work, const std::st
     }
     if (control.cancelled()) return std::nullopt;
     if (p->error) throw doc::EngineFail{std::move(*p->error)};
+    // `cancelled` without a cancel of ours (the worker stopped on its own): nothing to hand back.
     return std::move(p->result);
   }
   // A crash, a hang or a dead pipe: this call fails, the next one starts afresh.
@@ -289,6 +308,12 @@ std::optional<std::string> JobWorker::run(const std::string& work, const std::st
   fail(ErrorCode::internal, "the " + work +
                                 " model process ended without an answer; the next try starts it again (the engine kept running — log: " +
                                 log + ")");
+}
+
+bool JobWorker::write_line(Proc* p, std::string line) {
+  line.push_back('\n');
+  return p->child->write(
+      std::span<const std::uint8_t>(reinterpret_cast<const std::uint8_t*>(line.data()), line.size()));  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
 }
 
 void JobWorker::idle_loop() {
@@ -377,15 +402,21 @@ std::optional<std::string> run_in_worker(const std::string& work, const std::str
     return out;
   }
   if (const std::optional<std::string> off = os::env_var("PREMATION_JOB_WORKER"); off && *off == "0") return run_child(work, inputJson, control);
-  // The process-wide worker; it dies with the engine (its destructor kills it,
-  // and the OS job object kills it when the engine crashes).
-  static JobWorker worker([&exe] {
+  // The process-wide workers, one per lane (job_worker.hpp "lanes": the batch
+  // lane's walks never queue a hover behind them, at the price of a second
+  // process holding its own copy of the models while both are warm). They die
+  // with the engine (the destructor kills them, and the OS job object kills
+  // them when the engine crashes).
+  const auto options = [&exe] {
     JobWorker::Options o;
     o.exe = exe;
     o.idle = idle_from_env();
     o.plugins = [] { return child_detail::current_plugins(); };
     return o;
-  }());
+  };
+  static JobWorker interactive(options());
+  static JobWorker batch(options());
+  JobWorker& worker = call.lane == WorkerLane::batch ? batch : interactive;
   return worker.run(work, inputJson, control, call);
 }
 
@@ -393,10 +424,23 @@ std::optional<std::string> run_in_worker(const std::string& work, const std::str
 
 namespace {
 
+/// What the worker's stdin thread hands the work loop: requests in order, and
+/// the ids whose cancel arrived before their request was taken up. The request
+/// in flight has its own flag, read by WorkerControl::cancelled() without a lock.
+struct WorkerInbox {
+  std::mutex mu;
+  std::condition_variable cv;
+  std::deque<Json> requests;
+  std::vector<std::uint64_t> cancelledAhead;  // a few at most: a cancel of a queued request
+  bool closed = false;
+  std::atomic<std::uint64_t> inflight{0};
+  std::atomic<bool> inflightCancelled{false};
+};
+
 class WorkerControl final : public JobControl {
  public:
-  WorkerControl(std::ostream& out, double id) : out_(out), id_(id) {}
-  [[nodiscard]] bool cancelled() const noexcept override { return false; }
+  WorkerControl(std::ostream& out, double id, const std::atomic<bool>& cancelled) : out_(out), id_(id), cancelled_(cancelled) {}
+  [[nodiscard]] bool cancelled() const noexcept override { return cancelled_.load(std::memory_order_relaxed); }
   void progress(double fraction, std::string message) override {
     Json o = Json::object();
     o.set("id", Json::number(id_));
@@ -409,7 +453,35 @@ class WorkerControl final : public JobControl {
  private:
   std::ostream& out_;
   double id_;
+  const std::atomic<bool>& cancelled_;
 };
+
+/// The stdin thread: every line is a request (queued) or a cancel (flagged).
+void worker_inbox_loop(std::istream& in, WorkerInbox& inbox) {
+  std::string line;
+  while (std::getline(in, line)) {
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+    if (line.empty()) continue;
+    std::optional<Json> req = js::parse(line);
+    if (!req || !req->is_object() || !req->at("id").is_number()) continue;
+    const auto id = static_cast<std::uint64_t>(req->at("id").num());
+    const std::lock_guard<std::mutex> lock(inbox.mu);
+    if (req->at("cancel").is_bool() && req->at("cancel").b()) {
+      if (inbox.inflight.load() == id) {
+        inbox.inflightCancelled.store(true);
+      } else {
+        // Still queued (or never seen): the loop answers it `cancelled` when it reaches it.
+        inbox.cancelledAhead.push_back(id);
+      }
+    } else {
+      inbox.requests.push_back(std::move(*req));
+    }
+    inbox.cv.notify_all();
+  }
+  const std::lock_guard<std::mutex> lock(inbox.mu);
+  inbox.closed = true;
+  inbox.cv.notify_all();
+}
 
 }  // namespace
 
@@ -429,32 +501,50 @@ int worker_main(const std::string& startFile, std::istream& in, std::ostream& ou
     body.set("ev", Json::string(ev));
     out << js::stringify(body) << '\n' << std::flush;
   };
-  std::string line;
-  while (std::getline(in, line)) {
-    if (!line.empty() && line.back() == '\r') line.pop_back();
-    if (line.empty()) continue;
-    const std::optional<Json> req = js::parse(line);
-    if (!req || !req->is_object() || !req->at("id").is_number()) continue;
-    const double id = req->at("id").num();
+  WorkerInbox inbox;
+  std::thread reader([&in, &inbox] { worker_inbox_loop(in, inbox); });
+  for (;;) {
+    Json req;
+    bool cancelledAhead = false;
+    {
+      std::unique_lock<std::mutex> lk(inbox.mu);
+      inbox.cv.wait(lk, [&] { return inbox.closed || !inbox.requests.empty(); });
+      if (inbox.requests.empty()) break;  // stdin closed and nothing left: exit
+      req = std::move(inbox.requests.front());
+      inbox.requests.pop_front();
+      const auto id = static_cast<std::uint64_t>(req.at("id").num());
+      const auto it = std::find(inbox.cancelledAhead.begin(), inbox.cancelledAhead.end(), id);
+      if (it != inbox.cancelledAhead.end()) {
+        inbox.cancelledAhead.erase(it);
+        cancelledAhead = true;
+      }
+      inbox.inflightCancelled.store(cancelledAhead);
+      inbox.inflight.store(id);
+    }
+    const double id = req.at("id").num();
+    if (cancelledAhead) {
+      answer(id, "cancelled", Json::object());
+      continue;
+    }
     Json err = Json::object();
-    if (!req->at("work").is_string()) {
+    if (!req.at("work").is_string()) {
       err.set("code", Json::string("invalidArgument"));
       err.set("message", Json::string("not a worker request"));
       answer(id, "error", std::move(err));
       continue;
     }
-    const ChildWork work = child_detail::find_work(req->at("work").str());
+    const ChildWork work = child_detail::find_work(req.at("work").str());
     if (!work) {
       err.set("code", Json::string("unsupported"));
-      err.set("message", Json::string("no job work '" + req->at("work").str() + "' in this engine build"));
+      err.set("message", Json::string("no job work '" + req.at("work").str() + "' in this engine build"));
       answer(id, "error", std::move(err));
       continue;
     }
-    WorkerControl control(out, id);
+    WorkerControl control(out, id, inbox.inflightCancelled);
     std::optional<api::EngineError> failed;
     std::string result;
     try {
-      result = work(js::stringify(req->at("input")), control);
+      result = work(js::stringify(req.at("input")), control);
     } catch (const doc::EngineFail& f) {
       failed = f.error;
     } catch (const std::exception& e) {
@@ -462,6 +552,12 @@ int worker_main(const std::string& startFile, std::istream& in, std::ostream& ou
       e2.code = ErrorCode::internal;
       e2.message = e.what();
       failed = std::move(e2);
+    }
+    inbox.inflight.store(0);
+    if (control.cancelled()) {
+      // Stopped at a cancel check (or finished just after one): the parent discards it either way.
+      answer(id, "cancelled", Json::object());
+      continue;
     }
     if (failed) {
       err.set("code", Json::string(child_detail::code_name(failed->code)));
@@ -474,6 +570,7 @@ int worker_main(const std::string& startFile, std::istream& in, std::ostream& ou
     body.set("result", parsed ? *parsed : Json::object());
     answer(id, "result", std::move(body));
   }
+  if (reader.joinable()) reader.join();
   return 0;
 }
 

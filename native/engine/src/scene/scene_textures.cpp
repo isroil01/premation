@@ -199,6 +199,101 @@ struct SceneTextures::SvgWorker {
   JoiningThread thread_;  // last: joined first
 };
 
+namespace {
+
+/// A stored subject matte file's cache hash (`img:…|a`): path + size + last write, like image_ref's,
+/// with the alpha-plane tag — the read-ahead worker and the render thread agree on it.
+std::string matte_hash(const std::filesystem::path& p) {
+  const FileStamp st = file_stamp(p);
+  std::array<char, 64> tail{};
+  std::snprintf(tail.data(), tail.size(), "|%llu|%llu|a", static_cast<unsigned long long>(st.size),  // NOLINT(cppcoreguidelines-pro-type-vararg)
+                static_cast<unsigned long long>(st.modified));
+  return "img:" + hex64(fnv1a(tail.data(), fnv1a(utf8_path(p.lexically_normal()))));
+}
+
+/// A stored subject matte file decoded to its alpha plane (a greyscale PNG's value, a legacy RGBA
+/// cut-out's alpha). False with `error` when it does not decode.
+bool decode_matte(const std::filesystem::path& p, RasterEntry& e, std::string& error) {
+  DecodedImage img;
+  if (!decode_image_file(p, img, error)) return false;
+  e.width = img.width;
+  e.height = img.height;
+  e.alpha = subject_matte::alpha_plane(img.rgba, img.width, img.height, subject_matte::png_is_gray(p));
+  return true;
+}
+
+}  // namespace
+
+/// Stream B5: the matte read-ahead worker. One thread, FIFO, paths de-duplicated; each path
+/// decodes to an alpha-plane raster the render thread's matte_ref then finds (the same hash).
+struct SceneTextures::MatteWorker {
+  explicit MatteWorker(SceneTextures& owner) : owner_(owner), thread_([this] { run(); }) {}
+  ~MatteWorker() {
+    {
+      const std::scoped_lock lock(m_);
+      stop_ = true;
+    }
+    cv_.notify_all();
+    thread_.join();
+  }
+  MatteWorker(const MatteWorker&) = delete;
+  MatteWorker& operator=(const MatteWorker&) = delete;
+  MatteWorker(MatteWorker&&) = delete;
+  MatteWorker& operator=(MatteWorker&&) = delete;
+
+  void enqueue(std::filesystem::path p) {
+    {
+      const std::scoped_lock lock(m_);
+      if (!keys_.insert(utf8_path(p)).second) return;  // queued or in flight already
+      queue_.push_back(std::move(p));
+    }
+    cv_.notify_one();
+  }
+  [[nodiscard]] bool pending() const {
+    const std::scoped_lock lock(m_);
+    return !keys_.empty();
+  }
+  bool wait_idle(std::uint32_t timeoutMs) {
+    std::unique_lock lock(m_);
+    return idle_.wait_for(lock, std::chrono::milliseconds(timeoutMs), [this] { return keys_.empty(); });
+  }
+
+ private:
+  void run() {
+    for (;;) {
+      std::filesystem::path p;
+      {
+        std::unique_lock lock(m_);
+        cv_.wait(lock, [this] { return stop_ || !queue_.empty(); });
+        if (stop_) return;
+        p = std::move(queue_.front());
+        queue_.pop_front();
+      }
+      const std::string hash = matte_hash(p);
+      if (!owner_.find(hash)) {
+        auto e = std::make_shared<RasterEntry>();
+        std::string error;
+        // A file that does not decode is left to the render thread, which records the reason.
+        if (decode_matte(p, *e, error)) owner_.insert(hash, std::move(e));
+      }
+      {
+        const std::scoped_lock lock(m_);
+        keys_.erase(utf8_path(p));
+      }
+      idle_.notify_all();
+    }
+  }
+
+  SceneTextures& owner_;
+  mutable std::mutex m_;
+  std::condition_variable cv_;
+  std::condition_variable idle_;
+  std::deque<std::filesystem::path> queue_;
+  std::unordered_set<std::string> keys_;
+  bool stop_ = false;
+  JoiningThread thread_;  // last: joined first
+};
+
 SceneTextures::SceneTextures(Options opts)
     : opts_(std::move(opts)),
       bakePool_(std::make_unique<effects::ThreadPool>(std::min(8U, std::max(1U, std::thread::hardware_concurrency())))) {}
@@ -211,6 +306,23 @@ bool SceneTextures::wait_svg_idle(std::uint32_t timeoutMs) { return svgWorker_ =
 void SceneTextures::svg_enqueue(SvgJob job) {
   if (!svgWorker_) svgWorker_ = std::make_unique<SvgWorker>(*this);
   svgWorker_->enqueue(std::move(job));
+}
+
+bool SceneTextures::matte_pending() const { return matteWorker_ != nullptr && matteWorker_->pending(); }
+
+bool SceneTextures::wait_matte_idle(std::uint32_t timeoutMs) { return matteWorker_ == nullptr || matteWorker_->wait_idle(timeoutMs); }
+
+void SceneTextures::matte_prefetch(const std::vector<std::string>& srcs) {
+  for (const std::string& src : srcs) {
+    if (src.empty() || src.starts_with("data:") || is_svg_src(src)) continue;
+    std::filesystem::path p = file_url_fs_path(src);
+    if (p.is_relative() && !opts_.mediaBase.empty()) p = opts_.mediaBase / p;
+    // Already decoded (or decoding): nothing to queue. A hash miss here costs one stat per
+    // frame ahead, once per playback frame — the frames the walk stored are read in order.
+    if (find(matte_hash(p))) continue;
+    if (!matteWorker_) matteWorker_ = std::make_unique<MatteWorker>(*this);
+    matteWorker_->enqueue(std::move(p));
+  }
 }
 
 void SceneTextures::set_media(media::MediaSystem* system, media::MediaTextures* frames) noexcept {
@@ -236,7 +348,7 @@ const RasterEntry* SceneTextures::raster(std::string_view hash) const {
 void SceneTextures::insert(std::string hash, std::shared_ptr<const RasterEntry> e) {
   const std::scoped_lock lock(m_);
   if (byHash_.contains(hash)) return;
-  bytes_ += e->rgba.size();
+  bytes_ += e->bytes();
   lru_.push_front(Slot{hash, std::move(e), frame_});
   byHash_.emplace(std::move(hash), lru_.begin());
   // Least recently used first — but never a raster of the frame being prepared
@@ -245,7 +357,7 @@ void SceneTextures::insert(std::string hash, std::shared_ptr<const RasterEntry> 
   // and the cache shrinks back to the budget on the frames after it.
   while (bytes_ > opts_.rasterCacheBytes && lru_.size() > 1 && lru_.back().lastUse != frame_) {
     Slot& back = lru_.back();
-    bytes_ -= back.entry->rgba.size();
+    bytes_ -= back.entry->bytes();
     byHash_.erase(back.hash);
     lru_.pop_back();
   }
@@ -591,12 +703,16 @@ void SceneTextures::resolve_contours(std::span<const std::pair<const TextureRequ
 }
 
 rg::TexRef SceneTextures::external_texture(std::string_view hash) {
+  if (hash.starts_with("sm:")) return subject_texture(hash);  // stream B3: built by the subject-edge passes
   if (hash.starts_with("rs:") || hash.starts_with("img:")) {
     if (dev_ == nullptr) return {};
     const std::shared_ptr<const RasterEntry> e = find(hash);
     // A pooled texture hits by hash and ignores the pixels; on a miss the
     // pixels upload once (an evicted raster that is not re-prepared draws nothing).
     if (!e) return {};
+    // A stored subject matte's alpha plane: one channel (the subject-edge passes read .r).
+    if (e->rgba.empty() && !e->alpha.empty())
+      return dev_->texture(hash, e->width, e->height, wgpu::TextureFormat::R8Unorm, std::span<const std::uint8_t>(e->alpha), false);
     return dev_->texture(hash, e->width, e->height, wgpu::TextureFormat::RGBA8Unorm, std::span<const std::uint8_t>(e->rgba),
                          false);
   }
@@ -611,6 +727,7 @@ rg::TexRef SceneTextures::external_texture_mipmapped(std::string_view hash, cons
   if (dev_ == nullptr) return {};
   const std::shared_ptr<const RasterEntry> e = find(hash);
   if (!e) return {};
+  if (e->rgba.empty()) return external_texture(hash);  // an alpha plane: level 0 alone
   // Built as deep as the draw samples (rg::Device::mip_texture): a raster shown
   // at up to 2:1 — most of them, rasters are supersampled 2× — keeps level 0
   // alone, and an animating layer's re-rasters build no chain they never read.
@@ -664,35 +781,132 @@ std::string SceneTextures::image_ref(const TextureRequest& r, const std::filesys
   return hash;
 }
 
+std::string SceneTextures::matte_ref(const std::string& src, std::string_view requestKey, PrepareStats& stats) {
+  if (src.empty() || is_svg_src(src)) return {};
+  if (src.starts_with("data:")) {
+    // A matte carried in the document as a `data:image/…;base64,` URL (the render-tests' scenes,
+    // a frame pasted by a script): its bytes are the content — cached by the URL, like data_image_ref.
+    const std::string hash = "img:data:" + hex64(fnv1a("|a", fnv1a(src)));
+    if (const auto oe = openErrors_.find(hash); oe != openErrors_.end()) {
+      stats.unsupported.emplace_back(std::string(requestKey), "matte did not decode: " + oe->second);
+      return {};
+    }
+    if (find(hash)) return hash;
+    const auto t0 = std::chrono::steady_clock::now();
+    const std::size_t comma = src.find(',');
+    const std::string_view head = std::string_view(src).substr(0, comma == std::string::npos ? 0 : comma);
+    std::optional<std::vector<std::uint8_t>> bytes;
+    if (comma != std::string::npos && head.ends_with(";base64")) bytes = doc::native_unbase64(std::string_view(src).substr(comma + 1));
+    DecodedImage img;
+    std::string error = bytes ? std::string() : std::string("not a base64 data URL");
+    if (!bytes || !decode_image_bytes(*bytes, img, error)) {
+      openErrors_.emplace(hash, error);
+      stats.unsupported.emplace_back(std::string(requestKey), "matte did not decode: " + error);
+      return {};
+    }
+    auto e = std::make_shared<RasterEntry>();
+    e->width = img.width;
+    e->height = img.height;
+    e->alpha = subject_matte::alpha_plane(img.rgba, img.width, img.height, subject_matte::png_bytes_gray(*bytes));
+    insert(hash, std::move(e));
+    ++stats.rasterMisses;
+    stats.rasterMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    return hash;
+  }
+  std::filesystem::path p = file_url_fs_path(src);
+  if (p.is_relative() && !opts_.mediaBase.empty()) p = opts_.mediaBase / p;
+  const std::string hash = matte_hash(p);
+  if (const auto oe = openErrors_.find(hash); oe != openErrors_.end()) {
+    stats.unsupported.emplace_back(std::string(requestKey), "matte did not decode: " + oe->second);
+    return {};
+  }
+  if (find(hash)) return hash;  // decoded on an earlier frame, or by the read-ahead worker (B5)
+  const auto t0 = std::chrono::steady_clock::now();
+  auto e = std::make_shared<RasterEntry>();
+  std::string error;
+  if (!decode_matte(p, *e, error)) {
+    openErrors_.emplace(hash, error);
+    stats.unsupported.emplace_back(std::string(requestKey), "matte did not decode: " + error);
+    return {};
+  }
+  insert(hash, std::move(e));
+  ++stats.rasterMisses;
+  stats.rasterMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+  return hash;
+}
+
 std::string SceneTextures::subject_ref(const TextureRequest& r, PrepareStats& stats) {
-  // Each file through image_ref (its own cache entry, keyed by path and last write), then the
-  // combination keyed by those entries and every part's settings.
-  const auto decoded = [&](const std::string& src) -> std::string {
-    if (src.empty() || src.starts_with("data:") || is_svg_src(src)) return {};
-    std::filesystem::path p = file_url_fs_path(src);
-    if (p.is_relative() && !opts_.mediaBase.empty()) p = opts_.mediaBase / p;
-    TextureRequest one;
-    one.key = r.key;
-    return image_ref(one, p, stats);
-  };
+  // Each file to its alpha plane (matte_ref: its own cache entry, keyed by path and last write),
+  // then the combination keyed by those entries and every part's settings. Playing, the frames
+  // each subject reaches next go to the read-ahead worker first (stream B5).
+  if (playing_ && !exact_)
+    for (const SubjectPart& p : r.subjectParts)
+      if (!p.ahead.empty()) matte_prefetch(p.ahead);
   std::string spec;
   std::vector<std::string> frames(r.subjectParts.size());
   std::vector<std::vector<std::string>> blends(r.subjectParts.size());
   for (std::size_t i = 0; i < r.subjectParts.size(); ++i) {
     const SubjectPart& p = r.subjectParts[i];
-    frames[i] = decoded(p.src);
+    frames[i] = matte_ref(p.src, r.key, stats);
     std::array<char, 160> s{};
     std::snprintf(s.data(), s.size(), "|%s|%.6g|%.6g|%.6g|%d|%d", frames[i].c_str(), p.feather, p.choke, p.contrast, p.invert ? 1 : 0,  // NOLINT(cppcoreguidelines-pro-type-vararg)
                   p.hidden ? 1 : 0);
     spec += s.data();
     for (const auto& [src, w] : p.blend) {
-      blends[i].push_back(decoded(src));
+      blends[i].push_back(matte_ref(src, r.key, stats));
       std::snprintf(s.data(), s.size(), "~%s*%.6g", blends[i].back().c_str(), w);  // NOLINT(cppcoreguidelines-pro-type-vararg)
       spec += s.data();
     }
   }
   if (std::ranges::all_of(frames, [](const std::string& f) { return f.empty(); })) return {};
-  std::string hash = "img:" + hex64(fnv1a(spec, fnv1a("subject-matte")));
+  const std::string tail = hex64(fnv1a(spec, fnv1a("subject-matte")));
+  if (dev_ != nullptr) {
+    // Stream B3: the GPU path. The spec is remembered under its `sm:` hash; the texture is built
+    // (and rebuilt after the pool drops it) by subject_texture when the frame samples it. A slider
+    // move changes the spec, not the frames: the alpha planes stay cached, only the passes rerun.
+    std::string hash = "sm:" + tail;
+    if (!subjectSpecs_.contains(hash)) {
+      SubjectGpuSpec gs;
+      for (std::size_t i = 0; i < r.subjectParts.size(); ++i) {
+        const SubjectPart& sp = r.subjectParts[i];
+        SubjectGpuPart gp;
+        gp.frame = frames[i];
+        for (std::size_t j = 0; j < blends[i].size(); ++j)
+          if (!blends[i][j].empty()) gp.blend.emplace_back(blends[i][j], sp.blend[j].second);
+        gp.feather = sp.feather;
+        gp.choke = sp.choke;
+        gp.contrast = sp.contrast;
+        gp.invert = sp.invert;
+        gp.hidden = sp.hidden;
+        // The first shown part's size; every part hidden, the first one's (as the CPU combine).
+        if (gs.width == 0 && !gp.frame.empty() && !gp.hidden)
+          if (const std::shared_ptr<const RasterEntry> e = find(gp.frame)) {
+            gs.width = e->width;
+            gs.height = e->height;
+          }
+        gs.parts.push_back(std::move(gp));
+      }
+      if (gs.width == 0)
+        for (const SubjectGpuPart& gp : gs.parts)
+          if (const std::shared_ptr<const RasterEntry> e = gp.frame.empty() ? nullptr : find(gp.frame)) {
+            gs.width = e->width;
+            gs.height = e->height;
+            break;
+          }
+      if (gs.width == 0 || gs.height == 0) return {};
+      if (subjectSpecOrder_.size() >= kSubjectSpecCap) {  // bounded: the oldest half goes
+        for (std::size_t i = 0; i < kSubjectSpecCap / 2; ++i) {
+          subjectSpecs_.erase(subjectSpecOrder_.front());
+          subjectSpecOrder_.pop_front();
+        }
+      }
+      subjectSpecOrder_.push_back(hash);
+      subjectSpecs_.emplace(hash, std::move(gs));
+    }
+    return hash;
+  }
+  // No device (tests, a CPU-only session): the CPU combine, an `img:` raster.
+  std::string hash = "img:" + tail;
   if (find(hash)) return hash;
   const auto t0 = std::chrono::steady_clock::now();
   // The decoded entries stay alive while they are read.
@@ -704,7 +918,7 @@ std::string SceneTextures::subject_ref(const TextureRequest& r, PrepareStats& st
     if (!e) return pic;
     pic.width = e->width;
     pic.height = e->height;
-    pic.rgba = std::span<const std::uint8_t>(e->rgba);
+    pic.alpha = std::span<const std::uint8_t>(e->alpha);
     keep.push_back(std::move(e));
     return pic;
   };
@@ -731,14 +945,117 @@ std::string SceneTextures::subject_ref(const TextureRequest& r, PrepareStats& st
   return hash;
 }
 
+rg::TexRef SceneTextures::subject_texture(std::string_view hash) {
+  if (dev_ == nullptr) return {};
+  const auto it = subjectSpecs_.find(std::string(hash));
+  if (it == subjectSpecs_.end()) return {};
+  const SubjectGpuSpec& gs = it->second;
+  bool created = false;
+  rg::RenderTarget& out = dev_->target(hash, gs.width, gs.height, wgpu::TextureFormat::RGBA8Unorm, 1, false, &created);
+  if (!created) return out.tex();  // the pool holds it: a slider that did not move costs nothing
+  ++subjectEdgeBuilds_;
+  // One-off texture preparation, off the hot path (side_draw: its own command buffer, submitted
+  // now): the allocations below happen once per content, never per frame.
+  const std::uint32_t w = gs.width;
+  const std::uint32_t h = gs.height;
+  const rg::SamplerRef nearest = dev_->sampler("nearest-clamp", wgpu::FilterMode::Nearest, wgpu::AddressMode::ClampToEdge);
+  const auto scratch = [&](std::string_view name, wgpu::TextureFormat format) -> rg::RenderTarget& {
+    return dev_->target(name, w, h, format, 1, false);
+  };
+  const rg::ColorPipeline plain{};
+  std::vector<float> uniforms;
+  const auto pass = [&](const rg::RenderTarget& dest, double mode, double dirX, double dirY, double amount, double a, double b,
+                        const rg::TexRef& in, const rg::TexRef& texB, const rg::TexRef& texC) {
+    rg::DrawItem item;
+    item.material = rg::Mat::SUBJECT_EDGE_MATERIAL;
+    item.texture = in;
+    item.sampler = nearest;
+    item.mask = texB ? texB : in;
+    item.origin = texC ? texC : in;
+    rg::Packer pk(uniforms, plain);
+    pk.mat3(rg::screen_mvp()).rect({0, 0, 1, 1}).vec4(mode, dirX, dirY, amount).vec4(1.0 / w, 1.0 / h, a, b);
+    dev_->side_draw(dest.view, dest.format, dest.width, dest.height, item, uniforms);
+  };
+  // The frames' alpha planes as R8 textures (kept alive while they are read).
+  std::vector<std::shared_ptr<const RasterEntry>> keep;
+  const auto frameTex = [&](const std::string& frameHash) -> rg::TexRef {
+    if (frameHash.empty()) return {};
+    std::shared_ptr<const RasterEntry> e = find(frameHash);
+    if (!e || e->alpha.empty()) return {};
+    rg::TexRef t = dev_->texture(frameHash, e->width, e->height, wgpu::TextureFormat::R8Unorm, std::span<const std::uint8_t>(e->alpha), false);
+    keep.push_back(std::move(e));
+    return t;
+  };
+  constexpr double kMix = 0, kGauss = 1, kErode = 2, kDilate = 3, kFinish = 4;
+  // Two R8 scratches for the separable passes (a pass never reads the target it writes: the
+  // destination is whichever one the input is not), two RGBA scratches for the union so far.
+  const rg::RenderTarget& r0 = scratch("subject-edge-r0", wgpu::TextureFormat::R8Unorm);
+  const rg::RenderTarget& r1 = scratch("subject-edge-r1", wgpu::TextureFormat::R8Unorm);
+  const std::array<const rg::RenderTarget*, 2> unions = {&scratch("subject-edge-u0", wgpu::TextureFormat::RGBA8Unorm),
+                                                         &scratch("subject-edge-u1", wgpu::TextureFormat::RGBA8Unorm)};
+  const auto other = [&](const rg::TexRef& in) -> const rg::RenderTarget& { return in.id == r0.id ? r1 : r0; };
+  std::size_t shown = 0;
+  for (const SubjectGpuPart& gp : gs.parts)
+    if (!gp.hidden && !gp.frame.empty()) ++shown;
+  std::size_t done = 0;
+  const rg::RenderTarget* prev = nullptr;  // the union of the subjects finished so far
+  for (const SubjectGpuPart& gp : gs.parts) {
+    if (gp.hidden || gp.frame.empty()) continue;
+    rg::TexRef cur = frameTex(gp.frame);
+    if (!cur) {
+      --shown;
+      continue;
+    }
+    ++done;
+    // Temporal Smooth: the frame with its neighbours (the frame keeps 1 − Σ weights).
+    if (!gp.blend.empty()) {
+      const rg::TexRef nb0 = frameTex(gp.blend[0].first);
+      const rg::TexRef nb1 = gp.blend.size() > 1 ? frameTex(gp.blend[1].first) : rg::TexRef{};
+      const double wa = nb0 ? gp.blend[0].second : 0.0;
+      const double wb = nb1 ? gp.blend[1].second : 0.0;
+      pass(r0, kMix, 0, 0, 0, wa, wb, cur, nb0 ? nb0 : cur, nb1 ? nb1 : cur);
+      cur = r0.tex();
+    }
+    // The live edge: each pass of the plan along x, then along y (subject_matte.cpp run_pass).
+    for (const subject_matte::EdgePass& ep : subject_matte::edge_plan(gp.feather, gp.choke)) {
+      const double mode = ep.kind == subject_matte::EdgePass::Kind::gauss ? kGauss : ep.kind == subject_matte::EdgePass::Kind::erode ? kErode : kDilate;
+      const rg::RenderTarget& x = other(cur);
+      pass(x, mode, 1, 0, ep.amount, 0, 0, cur, {}, {});
+      const rg::RenderTarget& y = other(x.tex());
+      pass(y, mode, 0, 1, ep.amount, 0, 0, x.tex(), {}, {});
+      cur = y.tex();
+    }
+    // Contrast, invert, the union with the subjects so far (p0.y: read texB) — the last subject
+    // straight into the result, the others into the union scratch the previous one did not use.
+    const bool last = done >= shown;
+    const rg::RenderTarget& dest = last ? out : *unions[done % 2];
+    pass(dest, kFinish, prev != nullptr ? 1 : 0, 0, 0, gp.contrast, gp.invert ? 1 : 0, cur, prev != nullptr ? prev->tex() : cur, {});
+    prev = &dest;
+  }
+  if (prev == nullptr) {
+    // Every subject hidden, or no frame decoded: a transparent matte of the spec's size (p0.z: clear).
+    pass(out, kFinish, 0, 1, 0, 0, 0, r0.tex(), {}, {});
+  } else if (prev != &out) {
+    // The last subject's frame did not decode after earlier ones were united into a scratch: the
+    // union so far is the result (a FINISH with a neutral curve copies (a, a, a, a) through).
+    pass(out, kFinish, 0, 0, 0, 0, 0, prev->tex(), {}, {});
+  }
+  return out.tex();
+}
+
 std::string SceneTextures::media_ref(const TextureRequest& r, PrepareStats& stats,
                                      std::optional<api::RenderColorSpace>& space) {
   // Still footage decodes to sRGB-encoded RGBA8 (PNG / JPEG / WebP without a profile).
   space = api::RenderColorSpace::srgb;
   if (r.colorProfile) space = *r.colorProfile;
   if (r.src.empty()) return {};
-  // Several subjects, or one with a live edge: combined as read. One plain subject is its file.
-  if (!r.subjectParts.empty() && !(r.subjectParts.size() == 1 && r.subjectParts.front().plain())) return subject_ref(r, stats);
+  // A subject matte (stream B1): the stored alpha planes combined as read — one plain subject
+  // too, since its file is coverage alone and the consumers read (a, a, a, a). Data, not colour:
+  // untagged, so colour management leaves it be.
+  if (!r.subjectParts.empty()) {
+    space.reset();
+    return subject_ref(r, stats);
+  }
   // A still's CPU-baked effect chain runs on its decoded bitmap (setImage's bake).
   const auto baked_still = [&](std::string hash) {
     if (!r.bake || r.video || hash.empty()) return hash;
@@ -1304,7 +1621,7 @@ void SceneTextures::svg_drop_below(const std::string& doc, int step) {
     // the frame being prepared: dropping it would blank that layer. It goes
     // once a frame passes without it (or is evicted as any raster is).
     if (it->second->lastUse == frame_) continue;
-    bytes_ -= it->second->entry->rgba.size();
+    bytes_ -= it->second->entry->bytes();
     lru_.erase(it->second);
     byHash_.erase(it);
   }

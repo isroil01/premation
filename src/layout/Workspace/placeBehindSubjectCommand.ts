@@ -17,8 +17,10 @@ import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
 import { t } from '@core/i18n';
 import { registerPlaceBehindSubject } from '@core/workspace/placeBehindSubjectPort';
+import { registerSubjectPort } from '@core/workspace/subjectPort';
 import { planPlaceBehindSubject, placeBehindSubjectEdit } from './placeBehindSubject';
 import { createSubjectTrackEdit } from './subjectTrack';
+import { SUBJECT_STYLES, subjectStyleCommands } from './subjectStyles';
 
 export interface PlaceBehindOptions {
   /** A point on the subject, footage px from the top-left, on the frame at the playhead. */
@@ -75,6 +77,15 @@ export async function runCreateSubjectTrack(layer: string): Promise<string | nul
 
 // The Assistant's tool reaches the edit through core's port (core cannot import the editor).
 registerPlaceBehindSubject((layers, opts) => runPlaceBehindSubject(layers, opts));
+
+// The Assistant's `apply_subject_style`: the Subjects panel's presets, as commands it sends in its own edit.
+registerSubjectPort({
+  styles: () => SUBJECT_STYLES.map((s) => ({ id: s.id, label: s.label(), hint: s.hint(), kind: s.kind })),
+  styleCommands: (layer, subject, styleId) => {
+    const preset = SUBJECT_STYLES.find((s) => s.id === styleId);
+    return preset ? subjectStyleCommands(layer, subject, preset) : [];
+  },
+});
 
 async function makeMatte(subject: string, point: { x: number; y: number }): Promise<PlaceBehindOutcome> {
   const size = await engine().query({ type: 'getSourceSize', layers: [subject] });

@@ -32,21 +32,21 @@ void chunk(std::vector<std::uint8_t>& out, std::string_view type, std::span<cons
   put_u32(out, crc32(std::span<const std::uint8_t>(out).subspan(at)));
 }
 
-}  // namespace
-
-bool encode_png_rgba8(std::span<const std::uint8_t> rgba, std::uint32_t width, std::uint32_t height,
-                      std::vector<std::uint8_t>& out, int zlibLevel) {
-  const std::size_t row = std::size_t{width} * 4;
+/// Paeth-filtered rows of `bpp` bytes per pixel, deflated, framed as a PNG of `colourType`.
+bool encode_png(std::span<const std::uint8_t> px, std::uint32_t width, std::uint32_t height, std::size_t bpp, std::uint8_t colourType,
+                std::vector<std::uint8_t>& out, int zlibLevel) {
+  const std::size_t row = std::size_t{width} * bpp;
+  if (px.size() < row * height) return false;
   std::vector<std::uint8_t> filtered((row + 1) * height);
   for (std::uint32_t y = 0; y < height; ++y) {
-    const auto cur = rgba.subspan(std::size_t{y} * row, row);
-    const auto up = y == 0 ? std::span<const std::uint8_t>() : rgba.subspan(std::size_t{y - 1} * row, row);
+    const auto cur = px.subspan(std::size_t{y} * row, row);
+    const auto up = y == 0 ? std::span<const std::uint8_t>() : px.subspan(std::size_t{y - 1} * row, row);
     const auto dst = std::span<std::uint8_t>(filtered).subspan(std::size_t{y} * (row + 1), row + 1);
     dst[0] = kPaeth;
     for (std::size_t i = 0; i < row; ++i) {
-      const int a = i >= 4 ? cur[i - 4] : 0;
+      const int a = i >= bpp ? cur[i - bpp] : 0;
       const int b = up.empty() ? 0 : up[i];
-      const int c = i >= 4 && !up.empty() ? up[i - 4] : 0;
+      const int c = i >= bpp && !up.empty() ? up[i - bpp] : 0;
       dst[i + 1] = static_cast<std::uint8_t>(cur[i] - paeth(a, b, c));
     }
   }
@@ -60,13 +60,27 @@ bool encode_png_rgba8(std::span<const std::uint8_t> rgba, std::uint32_t width, s
   std::vector<std::uint8_t> ihdr;
   put_u32(ihdr, width);
   put_u32(ihdr, height);
-  ihdr.insert(ihdr.end(), {8, 6, 0, 0, 0});  // 8 bits, RGBA, deflate, adaptive filtering, no interlace
+  ihdr.insert(ihdr.end(), {8, colourType, 0, 0, 0});  // 8 bits, the colour type, deflate, adaptive filtering, no interlace
   chunk(out, "IHDR", ihdr);
-  const std::array<std::uint8_t, 1> perceptual = {0};
-  chunk(out, "sRGB", perceptual);
+  if (colourType == 6) {
+    const std::array<std::uint8_t, 1> perceptual = {0};
+    chunk(out, "sRGB", perceptual);
+  }
   chunk(out, "IDAT", idat);
   chunk(out, "IEND", {});
   return true;
+}
+
+}  // namespace
+
+bool encode_png_rgba8(std::span<const std::uint8_t> rgba, std::uint32_t width, std::uint32_t height,
+                      std::vector<std::uint8_t>& out, int zlibLevel) {
+  return encode_png(rgba, width, height, 4, 6, out, zlibLevel);  // RGBA
+}
+
+bool encode_png_gray8(std::span<const std::uint8_t> gray, std::uint32_t width, std::uint32_t height,
+                      std::vector<std::uint8_t>& out, int zlibLevel) {
+  return encode_png(gray, width, height, 1, 0, out, zlibLevel);  // greyscale: data, no sRGB tag
 }
 
 }  // namespace premation::exporter

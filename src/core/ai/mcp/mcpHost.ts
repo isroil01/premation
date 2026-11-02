@@ -48,6 +48,7 @@ import { SFX_ITEMS, getSfxItem } from '@core/library/sfxLibrary';
 import type { MotionSheetInput } from '../filmstrip';
 import { analyzeMotionText, motionSheetData } from './motionTools';
 import { rigCharacter, rigCycle, rigViewData, type RigView } from '../rigTools';
+import type { AssetDescription, SubjectView } from '../mediaTools';
 import {
   describeEntry,
   findLibraryEntry,
@@ -134,6 +135,20 @@ export interface McpEditorOps {
   library?: Omit<LibraryEditorOps, 'addSfx'>;
 }
 
+/** render_frame's options beyond time and size (all optional; the active composition, whole, by default). */
+export interface StillOptions {
+  /** Another composition of the project. */
+  compId?: string;
+  /** Solo: only these layers of the composition are drawn (the project is untouched). */
+  layerIds?: string[];
+  /** Crop to this rectangle, comp px. */
+  region?: { x: number; y: number; w: number; h: number };
+  /** Magnify about the centre of the frame (or of `region`): show 1/zoom of it. */
+  zoom?: number;
+  /** A frame of an imported asset (source seconds) instead of a composition. */
+  assetId?: string;
+}
+
 export interface McpHostDeps {
   registry(): Pick<ToolRegistry, 'execute' | 'has' | 'get'>;
   beginTransaction(label: string): Promise<AiTransaction>;
@@ -141,8 +156,16 @@ export interface McpHostDeps {
   context(session: AiTransaction['session'] | null, signal: AbortSignal, aliases: Map<string, string>): ToolContext;
   /** Start a run (resets the scene window, style, entrance seed); called once per client. */
   freshRun(signal: AbortSignal): void;
-  /** PNG of the active composition at `seconds`, long side ≤ maxSize; null if it could not draw. */
-  renderStill(seconds: number, maxSize: number): Promise<{ mimeType: string; data: string } | null>;
+  /**
+   * PNG of the active composition at `seconds`, long side ≤ maxSize; null if
+   * it could not draw. `opts` (render_frame's compId / layerIds / region /
+   * zoom / assetId) may be refused with a sentence (`{ error }`).
+   */
+  renderStill(seconds: number, maxSize: number, opts?: StillOptions): Promise<{ mimeType: string; data: string } | { error: string } | null>;
+  /** A subject's matte preview (the layer cropped, outlines drawn); absent = text only. */
+  renderSubjectView?(view: SubjectView): Promise<{ mimeType: string; data: string } | null>;
+  /** describe_asset's contact sheet of an imported footage item; absent = text only. */
+  renderAssetSheet?(itemId: string, durationSec: number, cells: number): Promise<{ mimeType: string; data: string } | null>;
   /** A labelled contact sheet of `cells` frames between two times. */
   renderStrip(startSec: number, endSec: number, cells: number): Promise<{ mimeType: string; data: string } | null>;
   /** render_motion_sheet's images (frame strip, onion skin with trails); absent = text only. */
@@ -184,6 +207,30 @@ function obj(args: unknown): Record<string, unknown> {
 
 function num(v: unknown, fallback: number): number {
   return typeof v === 'number' && Number.isFinite(v) ? v : fallback;
+}
+
+/** render_frame's options, checked; a sentence when they cannot be honoured together. */
+export function stillOptions(a: Record<string, unknown>): StillOptions | { error: string } {
+  const out: StillOptions = {};
+  if (typeof a.compId === 'string' && a.compId) out.compId = a.compId;
+  if (typeof a.assetId === 'string' && a.assetId) out.assetId = a.assetId;
+  if (Array.isArray(a.layerIds)) {
+    const ids = a.layerIds.filter((x): x is string => typeof x === 'string' && x !== '').slice(0, 60);
+    if (ids.length) out.layerIds = ids;
+  }
+  if (a.region && typeof a.region === 'object') {
+    const r = a.region as Record<string, unknown>;
+    const x = num(r.x, NaN), y = num(r.y, NaN), w = num(r.w, NaN), h = num(r.h, NaN);
+    if (![x, y, w, h].every(Number.isFinite) || w <= 0 || h <= 0) return { error: 'region needs numeric x, y and positive w, h (composition px).' };
+    out.region = { x, y, w, h };
+  }
+  if (a.zoom !== undefined) {
+    const z = num(a.zoom, NaN);
+    if (!Number.isFinite(z) || z < 1 || z > 16) return { error: 'zoom must be between 1 and 16.' };
+    if (z > 1) out.zoom = z;
+  }
+  if (out.assetId && (out.compId || out.layerIds)) return { error: 'assetId renders an imported asset on its own: drop compId / layerIds (region and zoom still apply).' };
+  return out;
 }
 
 /**
@@ -377,6 +424,12 @@ export class McpCallHost {
         case 'import_media': return await this.importMedia(call);
         case 'export_video': return await this.exportVideo(call);
         case 'generate_speech': return await this.generateSpeech(call);
+        case 'transcribe': return await this.transcribe(call);
+        // Footage tools whose answer is also a picture: the registry result plus the preview.
+        case 'find_subjects':
+        case 'select_subject':
+        case 'refine_subject': return await this.withSubjectView(call);
+        case 'describe_asset': return await this.describeAsset(call);
         case 'get_design_guide': return text(designGuide(typeof obj(call.args).topic === 'string' ? String(obj(call.args).topic) : undefined));
         case 'list_looks': return text(listLooks());
         case 'apply_look': {
@@ -450,17 +503,49 @@ export class McpCallHost {
     }
   }
 
-  private async registryCall(call: McpCall): Promise<McpResult> {
+  /**
+   * Run a registry tool: a read as is, a changing one inside the open group
+   * or its own transaction. `shape` turns the tool's result into MCP content
+   * (default: its prose and data as text).
+   */
+  private async registryCall(call: McpCall, shape: (r: ToolResult) => Promise<McpResult> = async (r) => fromToolResult(r)): Promise<McpResult> {
     const reg = this.deps.registry();
     const def: AiToolDef | undefined = reg.get(call.name);
     const aliases = this.aliasesFor(call.clientId);
     if (!def || !mutates(def.kind)) {
       const ctx = this.deps.context(this.group?.tx.session ?? null, this.abort.signal, aliases);
-      return fromToolResult(await reg.execute(call.name, call.args, ctx));
+      return shape(await reg.execute(call.name, call.args, ctx));
     }
     return this.inTransaction(call, `Claude: ${call.name.replace(/_/g, ' ')}`, async (ctx) => {
       const r = await reg.execute(call.name, call.args, ctx);
-      return { result: fromToolResult(r), ok: r.ok };
+      return { result: await shape(r), ok: r.ok };
+    });
+  }
+
+  /** find_subjects / select_subject / refine_subject: the matte preview drawn from the result's `view`, which is dropped from the text. */
+  private withSubjectView(call: McpCall): Promise<McpResult> {
+    return this.registryCall(call, async (r) => {
+      const data = r.data && typeof r.data === 'object' ? { ...(r.data as Record<string, unknown>) } : undefined;
+      const view = data?.view as SubjectView | undefined;
+      if (data) delete data.view;
+      const base = fromToolResult({ ...r, ...(data ? { data } : {}) });
+      if (!r.ok || !view || !this.deps.renderSubjectView) return base;
+      const img = await this.deps.renderSubjectView(view);
+      if (!img) return base;
+      return { content: [{ type: 'image', data: img.data, mimeType: img.mimeType }, ...base.content] };
+    });
+  }
+
+  /** describe_asset: the metadata plus a contact sheet decoded from the footage item. */
+  private describeAsset(call: McpCall): Promise<McpResult> {
+    return this.registryCall(call, async (r) => {
+      const base = fromToolResult(r);
+      const d = r.data as AssetDescription | undefined;
+      if (!r.ok || !d?.itemId || d.type === 'audio' || !this.deps.renderAssetSheet) return base;
+      const img = await this.deps.renderAssetSheet(d.itemId, d.durationSec, d.cells);
+      if (!img) return { content: [...base.content, { type: 'text', text: 'No frames could be decoded for a contact sheet (the file may be missing or unsupported).' }] };
+      const note = d.type === 'image' ? 'The picture is attached.' : `Attached: ${d.cells} frame(s) spread over ${d.durationSec.toFixed(2)}s, each labelled with its source time (render_frame { assetId, time } for one frame large).`;
+      return { content: [{ type: 'image', data: img.data, mimeType: img.mimeType }, ...base.content, { type: 'text', text: note }] };
     });
   }
 
@@ -571,6 +656,18 @@ export class McpCallHost {
     });
   }
 
+  private async transcribe(call: McpCall): Promise<McpResult> {
+    const a = obj(call.args);
+    const range = `${num(a.startSec, 0).toFixed(1)}s–${typeof a.endSec === 'number' ? `${a.endSec.toFixed(1)}s` : 'the end'}`;
+    const ok = await this.approved({
+      kind: 'export',
+      title: 'Transcribe the composition\'s audio (sends it to your speech provider)',
+      detail: [`Range: ${range}`, a.createCaptions === true ? 'Creates caption layers (replacing the existing ones)' : 'Returns the text and word timings only'],
+    });
+    if (!ok) return text('The user did not allow transcribing. Do not retry it unless they ask.', true);
+    return this.registryCall(call);
+  }
+
   private async generateSpeech(call: McpCall): Promise<McpResult> {
     const a = obj(call.args);
     const words = typeof a.text === 'string' ? a.text : '';
@@ -636,9 +733,18 @@ export class McpCallHost {
     const a = obj(call.args);
     const time = Math.max(0, num(a.time, 0));
     const maxSize = Math.max(128, Math.min(2048, Math.round(num(a.maxSize, 1024))));
-    const img = await this.deps.renderStill(time, maxSize);
-    if (!img) return text(`Premation could not render the frame at ${time}s.`, true);
-    return { content: [{ type: 'image', data: img.data, mimeType: img.mimeType }, { type: 'text', text: `Frame at ${time}s.` }] };
+    const opts = stillOptions(a);
+    if ('error' in opts) return text(opts.error, true);
+    const img = await this.deps.renderStill(time, maxSize, opts);
+    const what = opts.assetId ? `asset ${opts.assetId} at ${time}s (source time)` : `the frame at ${time}s${opts.compId ? ` of ${opts.compId}` : ''}`;
+    if (!img) return text(`Premation could not render ${what}.`, true);
+    if ('error' in img) return text(img.error, true);
+    const notes = [
+      opts.layerIds ? `only ${opts.layerIds.join(', ')} drawn (solo)` : '',
+      opts.region ? `cropped to x ${opts.region.x} y ${opts.region.y} ${opts.region.w}×${opts.region.h} comp px` : '',
+      opts.zoom ? `${opts.zoom}× about the centre` : '',
+    ].filter(Boolean);
+    return { content: [{ type: 'image', data: img.data, mimeType: img.mimeType }, { type: 'text', text: `${opts.assetId ? `Asset ${opts.assetId} at ${time}s` : `Frame at ${time}s`}${notes.length ? ` — ${notes.join(', ')}` : ''}.` }] };
   }
 
   private async renderStrip(call: McpCall): Promise<McpResult> {
@@ -736,9 +842,10 @@ export class McpCallHost {
         if (!made || made.length === 0) { notes.push(`- ${entry.id}: could not be built.`); continue; }
         const comp = await ctx.comp.get();
         const span = Math.min(previewSpan(entry), comp.durationSeconds);
-        const img = span > 0.05
+        const raw = span > 0.05
           ? await this.deps.renderStrip(0, span, cells)
           : await this.deps.renderStill(0, 1024);
+        const img = raw && !('error' in raw) ? raw : null;
         if (img) content.push({ type: 'image', data: img.data, mimeType: img.mimeType });
         notes.push(`- ${describeEntry(entry)}${img ? ` (${span > 0.05 ? `filmstrip 0–${span.toFixed(2)}s` : 'frame'} attached, over the composition at 0 s)` : ' (could not render)'}`);
       } finally {
@@ -765,6 +872,10 @@ export class McpCallHost {
       '',
       'A beat may also carry `precompose`: [{ id, name, layers: [layer ids of that beat sharing a parent], props?: { x, y, scale, rotation, opacity }, keys?: { prop: [[t, v], …] } }] — the layers become ONE composition layer that moves, fades and takes effects as a unit (a camera rig, a crowd). Its keys are beat seconds.',
       'Key times snap to frames: two keys of one property closer than a frame (1/fps s) merge and only the later one survives — author_scene reports any it finds.',
+      '',
+      'GLASS AND LIQUID: a 2D layer becomes real glass with apply_layer_style { styleType: "glass" } — backdrop blur, tint, edge refraction, rim and specular; set glass.surface "dome" with thickness, ior, caustic and fresnel for a drop of liquid, "luma" / "layer" for an embossed or bump-mapped surface. The refraction, glass and displacement-map EFFECTS take a Source: set their `source` param to "Backdrop (the scene below)" (update_effect_param source: 1) so they bend what is BEHIND the layer, not the layer\'s own pixels — a lens over footage, a water ripple over the whole scene (on an adjustment layer). The goo effect merges nearby shapes into one liquid blob (metaballs: blur + threshold, then a shaded dome with highlight and Fresnel rim) — put the blobs in a precomp or an adjustment layer over them, keyframe their positions, and they fuse and split as they meet.',
+      '',
+      'FOOTAGE the user imported (list_assets): describe_asset shows a contact sheet and the real codec / fps before you place it with create_media (render_frame { assetId, time } for one frame). A person or object in a shot is a SUBJECT: find_subjects lists candidates, select_subject cuts one out on a frame (points, a box or a candidate; footage px from the top-left), refine_subject corrects it (points, brush strokes, edge feather / choke), follow_subject carries it through the shot (a job — get_job_status), then apply_subject_style (outlines, glows, spotlight, colour splash, duotone, portrait blur, remove_background) and place_behind_subject (text behind them) use it. track_point + attach_to_track pin a layer or a null to a moving detail; transcribe gives word timings to cut type and SFX to speech, and caption layers.',
     ].join('\n'));
   }
 

@@ -11,7 +11,7 @@
  *    and its easing land at two different times in the old op path.
  */
 
-import type { AiToolDef } from '../types';
+import type { AiToolDef, JsonSchema } from '../types';
 
 /** Shared enum — the engine's real EasingKind union. */
 const EASING_ENUM = [
@@ -390,7 +390,9 @@ export const updateLayerDef: AiToolDef = {
         description:
           'Blur what is BEHIND this layer, in px — a frosted-glass panel. Different from the blur ' +
           'effect, which blurs the layer itself. This is how you do a glass card, a translucent ' +
-          'sheet, or an iOS-style toolbar; pair it with a low-opacity light fill.',
+          'sheet, or an iOS-style toolbar; pair it with a low-opacity light fill. It blurs only: for ' +
+          'refraction, a rim light, tint and grain use apply_layer_style { styleType: "glass" }, which ' +
+          'includes its own backdrop blur (do not stack both). Keyframeable as `backdropBlur`.',
       },
       threeD: { type: 'boolean', description: 'Enable the 3D switch (required before z/rotationX/rotationY).' },
       acceptsLights: {
@@ -434,8 +436,8 @@ export const updateLayerDef: AiToolDef = {
       roughness: { type: 'number', minimum: 0, maximum: 100, description: 'Percent roughness (3D, pbr). Low = mirror-sharp highlights, high = matte. Default 50.' },
       reflectionIntensity: { type: 'number', minimum: 0, maximum: 100, description: 'Percent of the environment and other layers reflected (3D). Needs an environment light to have something to reflect.' },
       reflectionSharpness: { type: 'number', minimum: 0, maximum: 100, description: 'Percent: 100 = mirror reflections, 0 = blurred.' },
-      transparency: { type: 'number', minimum: 0, maximum: 100, description: 'Percent see-through (3D glass). Pair with ior for refraction.' },
-      ior: { type: 'number', minimum: 1, maximum: 4, description: 'Index of refraction for transparency: 1.0 air, 1.33 water, 1.52 glass, 2.4 diamond.' },
+      transparency: { type: 'number', minimum: 0, maximum: 100, description: 'Percent see-through (3D glass). What is behind shows through unrefracted; `ior` sets how strongly the surface REFLECTS at grazing angles (Fresnel), not refraction.' },
+      ior: { type: 'number', minimum: 1, maximum: 4, description: 'Index of refraction for the surface\'s Fresnel reflectance (F0): 1.0 air (no reflection), 1.33 water, 1.52 glass, 2.4 diamond. It does not bend what is seen through a transparent layer — for refracting, frosted glass use apply_layer_style { styleType: "glass" } on a 2D layer.' },
       lightTransmission: { type: 'number', minimum: 0, maximum: 100, description: 'Percent of light passing through the layer (back-lit paper, leaves).' },
       castsShadows: {
         type: 'string',
@@ -893,7 +895,7 @@ export const addEffectDef: AiToolDef = {
           'temporal-denoise', 'fluid-ink', 'reaction-diffusion', 'crystal-growth', 'mr-mercury', 'foam', 'hair',
           'rain-on-glass', 'particle-world', 'warp-stabilizer', 'match-grain', 'color-stabilizer',
           'camera-shake-deblur', 'burn-dissolve', 'liquid-morph', 'bend-it', 'bender', 'matte-stroke',
-          'selective-color-ai', 'object-matte',
+          'selective-color-ai', 'object-matte', 'goo',
           // deepfx:ai:end
         ],
       },
@@ -1168,12 +1170,34 @@ export const createMediaFromAttachmentDef: AiToolDef = {
   },
 };
 
+/** One puppet pin keyframe: a moment, the pin's position, and optionally how the key eases and bends the path. */
+const PUPPET_PIN_KEY: JsonSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['timeSec', 'x', 'y'],
+  properties: {
+    timeSec: { type: 'number', minimum: 0, description: 'Time of this keyframe in seconds.' },
+    x: { type: 'number', description: 'Local X of the pin at this time.' },
+    y: { type: 'number', description: 'Local Y of the pin at this time.' },
+    easing: { type: 'string', enum: ['linear', 'easeIn', 'easeOut', 'easeInOut', 'hold', 'bezier'], description: 'Temporal ease of the segment that starts at this key (default linear). "bezier" uses `bezier`.' },
+    bezier: { type: 'array', items: { type: 'number' }, minItems: 4, maxItems: 4, description: 'Cubic-bezier ease [x1, y1, x2, y2] for this key (sets easing "bezier").' },
+    tangentIn: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2, description: 'SPATIAL tangent into the key, layer px relative to the pin position: bends the pin\'s path (an arc instead of a corner).' },
+    tangentOut: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2, description: 'Spatial tangent out of the key, layer px relative to the pin position.' },
+  },
+};
+
 export const createPuppetRigDef: AiToolDef = {
   name: 'create_puppet_rig',
   kind: 'write',
   description:
-    'Create a puppet deformation rig with pins on a layer. Pins are placed in layer-local coordinates centered on the origin (e.g. x from -width/2 to width/2, y from -height/2 to height/2). ' +
-    'Returns the pin ids. After rigging, animate each pin via tracks: puppet.<pinId>.rotation (degrees) and puppet.<pinId>.stiffness (>= 0, sharpens falloff) with set_keyframes; puppet.<pinId>.position is a data track driven by canvas pin drags.',
+    'Puppet-pin a shape or image layer (After Effects\' Puppet tools): pins in LAYER-LOCAL px centred on the ' +
+    'origin (x from −width/2 to width/2, y from −height/2 to height/2 — read positions off render_rig_view). Pin ' +
+    'kinds: "position" (moves a point of the mesh), "advanced" (position + rotation + scale, the default), "bend" ' +
+    '(rotates and scales a region carried by the other pins — a wrist, a tail tip), "starch" (keeps a region ' +
+    'rigid), "overlap" (which part draws in front where the mesh folds). Mesh settings shape the deformation ' +
+    '(`mesh`). Returns the pin ids. Animate: set_puppet_pin_keyframes for pin positions (with eases and path ' +
+    'tangents); set_keyframes on puppet.<pinId>.rotation (degrees) / .stiffness / .scale. By default the call ' +
+    'REPLACES the layer\'s rig; append: true keeps the existing pins and adds these.',
   inputSchema: {
     type: 'object',
     additionalProperties: false,
@@ -1182,6 +1206,8 @@ export const createPuppetRigDef: AiToolDef = {
       layerId: { type: 'string', description: 'ID of the layer to rig.' },
       pins: {
         type: 'array',
+        minItems: 1,
+        maxItems: 64,
         items: {
           type: 'object',
           additionalProperties: false,
@@ -1190,12 +1216,30 @@ export const createPuppetRigDef: AiToolDef = {
             name: { type: 'string', description: 'Descriptive name for the pin.' },
             x: { type: 'number', description: 'Local X coordinate of the pin.' },
             y: { type: 'number', description: 'Local Y coordinate of the pin.' },
-            rotation: { type: 'number', description: 'Optional static rotation in degrees — rotates the deformation rigidly around the pin.' },
-            stiffness: { type: 'number', minimum: 0, description: 'Optional static stiffness >= 0 — sharpens this pin\'s influence falloff.' },
+            kind: { type: 'string', enum: ['position', 'advanced', 'bend', 'starch', 'overlap'], default: 'advanced' },
+            rotation: { type: 'number', description: 'Static rotation in degrees — rotates the deformation rigidly around the pin (advanced / bend).' },
+            scale: { type: 'number', minimum: 0.01, maximum: 10, description: 'Static uniform scale around the pin (1 = unchanged; advanced / bend).' },
+            stiffness: { type: 'number', minimum: 0, description: 'Static stiffness >= 0 — sharpens this pin\'s influence falloff (a starch pin defaults to 8).' },
+            overlap: { type: 'number', minimum: -100, maximum: 100, description: 'Overlap depth: + in front, − behind where the mesh folds (overlap pins; default 50).' },
           },
         },
         description: 'Placements of puppet pins.',
       },
+      mesh: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          density: { type: 'integer', minimum: 2, maximum: 50, description: 'Triangles across the layer (AE Triangles; default about 12). More = smoother bends, slower.' },
+          expansion: { type: 'number', minimum: 0, maximum: 200, description: 'Mesh padding past the artwork\'s edge, px (AE Expansion).' },
+          mode: { type: 'string', enum: ['grid', 'silhouette'], description: 'silhouette (default): the mesh hugs the artwork\'s outline / alpha; grid: a uniform lattice over the box.' },
+          solver: { type: 'string', enum: ['arap', 'lbs'], description: 'arap (default) bends rigidly like AE\'s Advanced engine; lbs is the legacy linear blend.' },
+          maxRotationDeg: { type: 'number', minimum: 0, maximum: 180, description: 'Mesh Rotation Refinement: the most any one pin may twist the mesh.' },
+          traceAccuracy: { type: 'number', minimum: 0, maximum: 100, description: 'Image layers: how finely the silhouette mesh traces the bitmap\'s alpha, % (cells ≈ 16 px at 0 … 2 px at 100; default 60).' },
+          alphaThreshold: { type: 'number', minimum: 0, maximum: 255, description: 'Image layers: the alpha (0–255) a pixel must reach to count as artwork for the mesh (default 32).' },
+        },
+        description: 'Mesh settings (the Puppet effect\'s Mesh group). Omitted fields keep the layer\'s current ones, or the defaults on a new rig.',
+      },
+      append: { type: 'boolean', default: false, description: 'Keep the pins the layer already has and add these.' },
     },
   },
 };
@@ -1204,35 +1248,35 @@ export const setPuppetPinKeyframesDef: AiToolDef = {
   name: 'set_puppet_pin_keyframes',
   kind: 'write',
   description:
-    "Animate a puppet pin's POSITION over time by setting keyframes on its points data track (puppet.<pinId>.position). " +
-    'Use this after create_puppet_rig to make a rig move — e.g. wave an arm, bounce a character. ' +
-    'Coordinates are layer-local, centered on the origin (same space as create_puppet_rig pins). ' +
-    'Each keyframe is a moment (timeSec) and the pin position (x, y) at that moment; the segment from a key is linear ' +
-    'unless that key gives `easing`. ' +
-    'For rotation/stiffness animation (with easing) use set_keyframes on puppet.<pinId>.rotation / .stiffness instead.',
+    'Animate puppet pins\' POSITIONS over time (the puppet.<pinId>.position track) — wave an arm, bounce a ' +
+    'character, swing a tail. Give several pins in one call (`pins`), each with its keys in time order; every key ' +
+    'may carry a temporal ease (easing or a cubic `bezier`) and SPATIAL tangents (tangentIn / tangentOut, layer px ' +
+    'relative to the pin) so the pin travels an arc. Coordinates are layer-local, centred on the origin (the space ' +
+    'create_puppet_rig and render_rig_view use). Rotation / stiffness / scale animate with set_keyframes on ' +
+    'puppet.<pinId>.rotation / .stiffness / .scale. The old single-pin form (pinId + keyframes) still works.',
   inputSchema: {
     type: 'object',
     additionalProperties: false,
-    required: ['layerId', 'pinId', 'keyframes'],
+    required: ['layerId'],
     properties: {
       layerId: { type: 'string', description: 'ID of the rigged layer.' },
-      pinId: { type: 'string', description: 'ID of the pin to animate (returned by create_puppet_rig).' },
-      keyframes: {
+      pins: {
         type: 'array',
         minItems: 1,
+        maxItems: 64,
         items: {
           type: 'object',
           additionalProperties: false,
-          required: ['timeSec', 'x', 'y'],
+          required: ['pinId', 'keyframes'],
           properties: {
-            timeSec: { type: 'number', minimum: 0, description: 'Time of this keyframe in seconds.' },
-            x: { type: 'number', description: 'Local X of the pin at this time.' },
-            y: { type: 'number', description: 'Local Y of the pin at this time.' },
-            easing: { type: 'string', enum: ['linear', 'easeIn', 'easeOut', 'easeInOut'], description: 'Easing of the segment that starts at this key (default linear).' },
+            pinId: { type: 'string', description: 'A pin id from create_puppet_rig.' },
+            keyframes: { type: 'array', minItems: 1, maxItems: 400, items: PUPPET_PIN_KEY, description: 'Position keys for this pin, in time order.' },
           },
         },
-        description: 'Position keyframes for the pin, in time order.',
+        description: 'Several pins at once.',
       },
+      pinId: { type: 'string', description: 'Single-pin form: the pin to animate.' },
+      keyframes: { type: 'array', minItems: 1, maxItems: 400, items: PUPPET_PIN_KEY, description: 'Single-pin form: its keys in time order.' },
     },
   },
 };
@@ -1420,13 +1464,28 @@ export const createSkeletonRigDef: AiToolDef = {
   description:
     'Create a 2D skeleton bone hierarchy on a layer for character rigging and kinematics. Bone x/y/rotation are ' +
     'PARENT-local (a root: layer-local); for a character from joint positions, rig_character solves them for you. ' +
-    'Optional IK goals (`ik`) make a chain reach for a point: animate ikTarget.<boneId>.x / .y.',
+    'Optional IK goals (`ik`) make a chain reach for a point: animate ikTarget.<boneId>.x / .y (pose_skeleton). ' +
+    '`mesh` shapes the skin: density, expansion, grid or silhouette, how an image\'s alpha is traced, and ' +
+    'preserveVolume (dual-quaternion skinning — joints bend on an arc instead of pinching).',
   inputSchema: {
     type: 'object',
     additionalProperties: false,
     required: ['layerId', 'bones'],
     properties: {
       layerId: { type: 'string', description: 'ID of the layer to rig.' },
+      mesh: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          density: { type: 'integer', minimum: 2, maximum: 50, description: 'Triangles across the layer.' },
+          expansion: { type: 'number', minimum: 0, maximum: 200, description: 'Mesh padding past the artwork\'s edge, px.' },
+          mode: { type: 'string', enum: ['grid', 'silhouette'], description: 'silhouette hugs the artwork\'s outline / alpha; grid is a uniform lattice.' },
+          traceAccuracy: { type: 'number', minimum: 0, maximum: 100, description: 'Image layers: how finely the silhouette traces the alpha, % (default 60).' },
+          alphaThreshold: { type: 'number', minimum: 0, maximum: 255, description: 'Image layers: the alpha a pixel must reach to count as artwork (default 32).' },
+          preserveVolume: { type: 'boolean', description: 'Dual-quaternion skinning: joints keep their volume when they bend (no candy-wrapper pinch). Default off.' },
+        },
+        description: 'Skin mesh settings. Omitted fields take the defaults.',
+      },
       bones: {
         type: 'array',
         minItems: 1,
@@ -1479,29 +1538,56 @@ export const createSkeletonRigDef: AiToolDef = {
 export const poseSkeletonDef: AiToolDef = {
   name: 'pose_skeleton',
   kind: 'write',
-  description: 'Animate or pose skeleton bones over time by setting keyframes on bone tracks (bone.<boneId>.rotation / .x / .y).',
+  description:
+    'Pose a skeleton over time: FK keys on bones (bone.<boneId>.rotation in degrees, .x / .y translation — each ' +
+    'optional, keyed only when given), IK keys on goals (ikTarget.<boneId>.x / .y, layer px; ikPole for the ' +
+    'elbow / knee side; ikMode 0 = FK, 1 = IK), each key with an ease. Read the rest pose and joint positions ' +
+    'off render_rig_view first; check the result with it afterwards. rig_cycle writes an idle / wave / walk for you. ' +
+    'ikMode.<boneId> is a 0..1 blend (FK → IK); `ik` keys it per IK pose.',
   inputSchema: {
     type: 'object',
     additionalProperties: false,
-    required: ['layerId', 'bonePoses'],
+    required: ['layerId'],
     properties: {
       layerId: { type: 'string', description: 'ID of the rigged layer.' },
       bonePoses: {
         type: 'array',
-        minItems: 1,
+        maxItems: 400,
         items: {
           type: 'object',
           additionalProperties: false,
-          required: ['boneId', 'timeSec', 'rotation'],
+          required: ['boneId', 'timeSec'],
           properties: {
             boneId: { type: 'string', description: 'ID of the bone to pose.' },
             timeSec: { type: 'number', minimum: 0, description: 'Time of keyframe in seconds.' },
-            rotation: { type: 'number', description: 'Rotation angle in degrees.' },
-            x: { type: 'number', description: 'Optional X translation offset.' },
-            y: { type: 'number', description: 'Optional Y translation offset.' },
+            rotation: { type: 'number', description: 'Rotation angle in degrees (parent-local).' },
+            x: { type: 'number', description: 'X translation offset, px.' },
+            y: { type: 'number', description: 'Y translation offset, px.' },
+            easing: { type: 'string', enum: ['linear', 'ease', 'easeIn', 'easeOut', 'easeInOut', 'hold'], default: 'easeInOut', description: 'Ease of the segment starting at this key.' },
           },
         },
-        description: 'Bone pose keyframes in time order.',
+        description: 'FK bone keys in time order.',
+      },
+      ikPoses: {
+        type: 'array',
+        maxItems: 400,
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['boneId', 'timeSec'],
+          properties: {
+            boneId: { type: 'string', description: 'The chain\'s END bone (the one create_skeleton_rig / rig_character gave the IK goal).' },
+            timeSec: { type: 'number', minimum: 0 },
+            x: { type: 'number', description: 'Goal X, layer px.' },
+            y: { type: 'number', description: 'Goal Y, layer px.' },
+            poleX: { type: 'number', description: 'Pole X, layer px (the side the joint bends to).' },
+            poleY: { type: 'number' },
+            ik: { type: 'boolean', description: 'IK (true) or FK (false) from this key on — keys the chain\'s ikMode blend to 1 / 0.' },
+            ikBlend: { type: 'number', minimum: 0, maximum: 1, description: 'The chain\'s IK/FK BLEND at this key, 0 = FK … 1 = IK (0.5 = half way), keyed with the key\'s easing so a chain hands over between IK and FK over a few frames. Wins over `ik`.' },
+            easing: { type: 'string', enum: ['linear', 'ease', 'easeIn', 'easeOut', 'easeInOut', 'hold'], default: 'easeInOut' },
+          },
+        },
+        description: 'IK goal / pole / switch keys in time order.',
       },
     },
   },

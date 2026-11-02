@@ -7,8 +7,9 @@
 
 jest.mock('electron', () => ({ ipcMain: { handle: () => undefined, on: () => undefined } }));
 
-import { FrameForwarder, bundledFontsManifest, nativePluginArgs, offeredFrameCapabilities, viewportRoute, type ForwardedFrameMeta, type SharedTextureApi } from './engineHost';
+import { FrameForwarder, OpenGestureTracker, bundledFontsManifest, nativePluginArgs, offeredFrameCapabilities, viewportRoute, type ForwardedFrameMeta, type SharedTextureApi } from './engineHost';
 import path from 'node:path';
+import { encodeEngineMessage, type Command, type Response } from '@motion/engine-api';
 
 describe('bundledFontsManifest', () => {
   it('points the engine at resources/fonts/fonts.json in a checkout, and nowhere when it is missing', () => {
@@ -51,6 +52,55 @@ describe('nativePluginArgs (G1)', () => {
   it('omits what is not configured', () => {
     expect(nativePluginArgs(undefined, undefined)).toEqual([]);
     expect(nativePluginArgs('/u/p', undefined)).toEqual(['--plugins', '/u/p']);
+  });
+});
+
+describe('OpenGestureTracker (a reloaded page must not keep the gesture slot)', () => {
+  const req = (command: Command): Uint8Array =>
+    encodeEngineMessage({ kind: 'request', value: { seq: 1, body: { kind: 'command', value: command }, origin: 'ui' } });
+  const began = (gesture: number): Uint8Array => {
+    const r: Response = { seq: 1, revision: 3, outcome: { kind: 'command', value: { type: 'beginGesture', gesture } } };
+    return encodeEngineMessage({ kind: 'response', value: r });
+  };
+  const ended = (): Uint8Array => {
+    const r: Response = { seq: 1, revision: 3, outcome: { kind: 'command', value: { type: 'endGesture' } } };
+    return encodeEngineMessage({ kind: 'response', value: r });
+  };
+  const refused = (): Uint8Array => {
+    const r: Response = { seq: 1, revision: 3, outcome: { kind: 'error', value: { code: 'gestureOpen', message: 'open' } } };
+    return encodeEngineMessage({ kind: 'response', value: r });
+  };
+
+  it('remembers who opened the gesture and hands it over when that page goes away', () => {
+    const t = new OpenGestureTracker();
+    t.note(req({ type: 'beginGesture', label: 'AI: fade' }), began(7), 11);
+    expect(t.held(11)).toBe(7);
+    expect(t.held(12)).toBeNull();
+    expect(t.release(12)).toBeNull();   // another window's reload leaves it alone
+    expect(t.release(11)).toBe(7);
+    expect(t.held(11)).toBeNull();
+    expect(t.release(11)).toBeNull();   // once
+  });
+
+  it('forgets the gesture when its owner ends it, or when anyone ends "the open one"', () => {
+    const t = new OpenGestureTracker();
+    t.note(req({ type: 'beginGesture', label: 'Move' }), began(2), 11);
+    t.note(req({ type: 'endGesture', gesture: 2, commit: true }), ended(), 11);
+    expect(t.release(11)).toBeNull();
+    t.note(req({ type: 'beginGesture', label: 'Move' }), began(3), 11);
+    t.note(req({ type: 'endGesture', gesture: 0, commit: true }), ended(), 12);
+    expect(t.release(11)).toBeNull();
+  });
+
+  it('ignores a refused begin and anything that is not a gesture command', () => {
+    const t = new OpenGestureTracker();
+    t.note(req({ type: 'beginGesture', label: 'Move' }), began(5), 11);
+    t.note(req({ type: 'beginGesture', label: 'Second' }), refused(), 12);
+    t.note(req({ type: 'pause' }), ended(), 12);
+    expect(t.held(11)).toBe(5);
+    expect(t.held(12)).toBeNull();
+    t.reset();
+    expect(t.held(11)).toBeNull();
   });
 });
 

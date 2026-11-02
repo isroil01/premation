@@ -284,6 +284,10 @@ Catalog catalog_for(const Document& d, std::string_view layerId) {
   for (const StaticPropertyRow& row : rows) {
     // Effect Opacity is listed for EVERY effect below (B3z), not only once touched.
     if (effect_opacity_row(row.prop)) continue;
+    // Rig rows (C2) stand for the rig bindings below (`add_rig_bindings`), which own
+    // their tracks' units and pose capture; a row-derived binding here would claim
+    // `puppet.<pin>.rotation` first and the rig's would never be found by member.
+    if (row.group == kRigGroup) continue;
     if (!row.members.empty() &&
         std::all_of(row.members.begin(), row.members.end(), [&](const std::string& m) { return controlMembers.contains(m); })) {
       continue;
@@ -1574,9 +1578,8 @@ std::optional<api::Color> read_color_base(const Node& n, const std::string& base
       const auto field = style_color_field(*styleKey, eff->rest);
       return field ? color_of_string(styles.at(*styleKey).at(*field)) : std::nullopt;
     }
-    const std::vector<Json> effects = read_node_effects(n);
-    const Json* e = find_by_id(effects, eff->id);
-    return e != nullptr ? color_of_string(params_of(*e).at(eff->rest)) : std::nullopt;
+    const Json e = read_node_effect(n, eff->id);
+    return !e.is_undefined() ? color_of_string(params_of(e).at(eff->rest)) : std::nullopt;
   }
   for (const Component& c : n.components) {
     if (auto col = color_of_string(c.props.at(base))) return col;
@@ -1615,8 +1618,7 @@ bool write_color_base(Document& d, std::string_view nodeId, const std::string& b
       set_layer_styles(d, nodeId, styles);
       return true;
     }
-    const std::vector<Json> effects = read_node_effects(n);
-    if (find_by_id(effects, eff->id) == nullptr) return false;
+    if (read_node_effect(n, eff->id).is_undefined()) return false;
     update_effect_param(d, nodeId, eff->id, eff->rest, Json::string(hex));
     return true;
   }
@@ -1734,8 +1736,8 @@ api::Value read_static(const Document& d, std::string_view layer, const PropBind
       return pts != nullptr ? v_path(shape_path_value(*pts, shape_closed(n))) : v_none();
     }
     case Special::effectParam: {
-      const std::vector<Json> effects = read_node_effects(n);
-      const Json* e = find_by_id(effects, *b.effectId);
+      const Json eff = read_node_effect(n, *b.effectId);
+      const Json* e = eff.is_undefined() ? nullptr : &eff;
       const Json v = e != nullptr ? params_of(*e).at(*b.paramKey) : Json();
       const EffectDef* def = e != nullptr ? registry().effect(e->at("type").str()) : nullptr;
       const EffectParamDef* pd = def != nullptr ? def->param(*b.paramKey) : nullptr;
@@ -1819,8 +1821,8 @@ std::optional<bool> is_stored_static(const Document& d, std::string_view layer, 
       return g != nullptr && as_points(g->props.at("points")) != nullptr;
     }
     case Special::effectParam: {
-      const std::vector<Json> effects = read_node_effects(n);
-      const Json* e = find_by_id(effects, *b.effectId);
+      const Json eff = read_node_effect(n, *b.effectId);
+      const Json* e = eff.is_undefined() ? nullptr : &eff;
       return e != nullptr && !params_of(*e).at(*b.paramKey).is_undefined();
     }
     case Special::field:
@@ -2003,8 +2005,8 @@ void write_static(Document& d, std::string_view layer, const PropBinding& b, con
       return;
     }
     case Special::effectParam: {
-      const std::vector<Json> effects = read_node_effects(n);
-      const Json* e = find_by_id(effects, *b.effectId);
+      const Json eff = read_node_effect(n, *b.effectId);
+      const Json* e = eff.is_undefined() ? nullptr : &eff;
       if (e == nullptr) fail(ErrorCode::not_found, "no effect '" + *b.effectId + "'", {.layer = std::string(layer), .path = b.path});
       const EffectDef* def = registry().effect(e->at("type").str());
       const EffectParamDef* pd = def != nullptr ? def->param(*b.paramKey) : nullptr;

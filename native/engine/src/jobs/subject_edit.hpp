@@ -44,6 +44,17 @@ struct Pt {
 /// A stroke as at most `maxPoints` points spread evenly along its length (its ends included).
 [[nodiscard]] std::vector<Pt> sample_stroke(std::span<const Pt> stroke, std::size_t maxPoints);
 
+/// The most prompts one edit sends the model for its strokes (SAM takes a handful well; a dense
+/// chain is out of distribution).
+inline constexpr std::size_t kMaxStrokePrompts = 24;
+
+/// A stroke as about one prompt per brush DIAMETER along it (`radius` px; the ends included), at
+/// most `maxPoints`: a short dab is one click, a stroke down a leg a line of them a brush apart.
+[[nodiscard]] std::vector<Pt> sample_stroke_by_radius(std::span<const Pt> stroke, double radius, std::size_t maxPoints = kMaxStrokePrompts);
+
+/// Every stroke sampled by the brush radius, `maxTotal` prompts in all, in stroke order.
+[[nodiscard]] std::vector<Pt> sample_strokes(std::span<const std::vector<Pt>> strokes, double radius, std::size_t maxTotal = kMaxStrokePrompts);
+
 /// What the prompts are for: a lone click (no stroke, no box) wants the whole object under it.
 struct Intent {
   bool loneClick = false;
@@ -91,11 +102,14 @@ struct Proposal {
                                                     double scale, std::uint32_t width, std::uint32_t height, std::size_t maxObjects);
 
 /// Zero every region of `alpha` (connected above 0.5) that no seed (frame px) falls in
-/// and that does not lie mostly inside `box`; soft edges within 3 px of a kept region stay.
+/// and that does not lie mostly inside `box`; the SOFT edge (under 0.5) within 3 px of a
+/// kept region stays — never a dropped region's own solid pixels next to a kept one.
 void keep_touching(std::vector<float>& alpha, int width, int height, std::span<const Pt> seeds, const std::optional<sam::Box>& box);
 
 /// The strokes' footprint at brush radius `radius` px, anti-aliased (1 inside, 0 outside).
-[[nodiscard]] std::vector<float> paint(int width, int height, std::span<const std::vector<Pt>> strokes, double radius);
+/// `hardness` 0…100: 100 a hard disc; lower, the cover falls off with a smoothstep from
+/// `hardness` % of the radius (never under 1 px: the centre is always painted) out to the radius.
+[[nodiscard]] std::vector<float> paint(int width, int height, std::span<const std::vector<Pt>> strokes, double radius, double hardness = 100);
 
 /// Refine Edge: inside `band` (0…1), alpha estimated per pixel from the mean colours of
 /// the sure foreground (base > 0.95) and sure background (base < 0.05) around it, then
@@ -107,6 +121,18 @@ void keep_touching(std::vector<float>& alpha, int width, int height, std::span<c
 /// (~0.9 across a dark shirt) and text Behind it ghosts through. A smoothstep over
 /// 0.1…0.9 makes the sure inside and outside solid and keeps the edge's own ramp.
 void solidify(std::vector<float>& alpha);
+
+/// solidify() for the INTERIOR only: pixels farther than `bandPx` (4-connected steps) from the
+/// matte's 0.5 crossing. The band around the edge — hair, fur, the snapped soft edge — keeps
+/// its fractional alpha, so making the inside solid no longer hardens the edge.
+void solidify_interior(std::vector<float>& alpha, int width, int height, int bandPx);
+
+/// The IoU of a frame-size matte `alpha` (read at 0.5) against one decoder candidate's 256²
+/// logit plane (> 0 = inside; `offset` into `logits`, the frame letterboxed by `scale`), computed
+/// on the model's grid: each cell of the frame's part of the grid reads the matte at its centre.
+/// No full-resolution upsample of the candidate — a walk compares three candidates per frame.
+[[nodiscard]] double matte_iou_logits(std::span<const float> alpha, int width, int height, std::span<const float> logits, std::size_t offset,
+                                      double scale);
 
 /// What a subtract takes away: the segmentation made firm (its soft fringe counts as
 /// inside) and grown by `growPx` — taking a thing away must not leave its outline behind.

@@ -264,6 +264,13 @@ std::optional<FxGraphResult> run_fx_graph(PassContext& ctx, const Fx& fx, const 
     if (!used.at(kFxgMask0 + k)) continue;
     const std::string_view key = fx.text(kMaskKeys.at(k));
     sl.tex = io.maskInto && !key.empty() ? io.maskInto(key, kFxMaskTargets.at(k)) : TexRef{};
+    // A mask the effect cannot do without (fx_graph_writer Graph::mask required — an Object Matte
+    // card's stored frame): missing, the entry runs nothing and the chain keeps its input, rather
+    // than reading transparent black and cutting the whole layer away. Recorded on the frame.
+    if (!sl.tex && fx.flag(k == 0 ? "maskRequired0" : "maskRequired1")) {
+      why = "fx-graph: the effect's matte texture did not arrive (the layer shows uncut)";
+      return std::nullopt;
+    }
   }
   slot[kFxgStrip] = {kFxHist, {}, 256, 1, 1};
   // Program X1: each time tap drawn (as a map layer) and parked in its own target.
@@ -297,6 +304,10 @@ std::optional<FxGraphResult> run_fx_graph(PassContext& ctx, const Fx& fx, const 
       slot.at(kFxgSim0 + k) = {simNames.at(k), {}, simW, simH, static_cast<double>(simW) / std::max(1U, pw)};
     }
   }
+  // Stream D: the scene under the layer (read only; transparent black when the
+  // composition pass did not copy it for this chain).
+  slot[kFxgBackdrop] = full;
+  if (used[kFxgBackdrop] && io.backdrop) slot[kFxgBackdrop].tex = io.backdrop();
   TexRef depth;
   if (needsDepth) {
     depth = io.depth ? io.depth() : TexRef{};

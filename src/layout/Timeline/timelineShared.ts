@@ -193,6 +193,7 @@ export const GROUP_HEADING: Readonly<Record<TimelineGroupKey, { readonly label: 
   contents: { get label() { return t('timeline.group.contents', 'Contents'); }, icon: 'shape' },
   masks: { get label() { return t('timeline.group.masks', 'Masks'); }, icon: 'mask-square' },
   effects: { get label() { return t('timeline.group.effects', 'Effects'); }, icon: 'sparkles' },
+  rig: { get label() { return t('timeline.group.rig', 'Rig'); }, icon: 'bone' },
   transform: { get label() { return t('timeline.group.transform', 'Transform'); }, icon: 'sliders-h' },
   styles: { get label() { return t('timeline.group.styles', 'Layer Styles'); }, icon: 'palette' },
   camera: { get label() { return t('timeline.group.camera', 'Camera Options'); }, icon: 'camera' },

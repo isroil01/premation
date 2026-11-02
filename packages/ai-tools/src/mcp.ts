@@ -32,7 +32,7 @@ export const MCP_EXCLUDED_TOOLS: Readonly<Record<string, string>> = {
  * Registry tools that run only after the user clicks Allow in Premation
  * (owner decision 2026-10-08: files in or out need an in-app approval).
  */
-export const MCP_APPROVAL_TOOLS: ReadonlySet<string> = new Set(['export_video', 'import_media', 'generate_speech']);
+export const MCP_APPROVAL_TOOLS: ReadonlySet<string> = new Set(['export_video', 'import_media', 'generate_speech', 'transcribe']);
 
 /**
  * Tools that work with NO project open — the app's front desk answers them
@@ -374,16 +374,33 @@ export const MCP_ONLY_TOOL_DEFS: readonly AiToolDef[] = [
     name: 'render_frame',
     kind: 'read',
     description:
-      'Render one frame of the active composition with Premation\'s real renderer and return it as an image, ' +
-      'so you can SEE what you built. Call it after a change and judge the picture (size, framing, contrast, ' +
-      'legibility) before moving on. `time` is composition seconds. Returns an image, long side ≤ maxSize.',
+      'Render one frame with Premation\'s real renderer and return it as an image, so you can SEE what you ' +
+      'built. Call it after a change and judge the picture (size, framing, contrast, legibility) before moving ' +
+      'on. By default the ACTIVE composition at `time` (composition seconds); `compId` renders another ' +
+      'composition; `layerIds` renders only those layers (a solo — the rest of the composition is hidden for the ' +
+      'render, nothing changes in the project); `region` (comp px) or `zoom` (about the comp centre, or about ' +
+      '`region`\'s centre) crops in for a close look at edges, type and mattes; `assetId` renders frame `time` ' +
+      '(SOURCE seconds) of an imported asset without placing it. Overlays (masks, pins, bones, bounds) are not ' +
+      'drawn by the renderer: render_rig_view shows a layer with its grid and rig, inspect_layers gives bounds, ' +
+      'select_subject / refine_subject return a matte preview. Returns an image, long side ≤ maxSize.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
       required: ['time'],
       properties: {
-        time: { type: 'number', minimum: 0, description: 'Composition time in seconds.' },
+        time: { type: 'number', minimum: 0, description: 'Composition time in seconds (asset mode: source seconds).' },
         maxSize: { type: 'integer', minimum: 128, maximum: 2048, default: 1024, description: 'Long side of the image in pixels (default 1024).' },
+        compId: { type: 'string', description: 'A composition from list_compositions (default the active one).' },
+        layerIds: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 60, description: 'Solo: render only these layers of the composition.' },
+        region: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['x', 'y', 'w', 'h'],
+          properties: { x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number', minimum: 1 }, h: { type: 'number', minimum: 1 } },
+          description: 'Crop to this rectangle, composition px from the top-left.',
+        },
+        zoom: { type: 'number', minimum: 1, maximum: 16, description: 'Magnify: show 1/zoom of the frame (or of `region`) about its centre, at maxSize.' },
+        assetId: { type: 'string', description: 'Render a frame of this imported asset (list_assets) instead of a composition.' },
       },
     },
   },
@@ -516,7 +533,9 @@ export const MCP_ONLY_TOOL_DEFS: readonly AiToolDef[] = [
       'LOOK at a layer to rig it: the layer cropped from the real frame with a coordinate GRID labelled in its LAYER-LOCAL ' +
       'pixels — the space puppet pins, rig_character joints and chains, bone x/y and IK goals use — and the rig drawn on ' +
       'it (bones root → tip, IK goals, pins, with ids). Read joint positions (shoulder, elbow, knee…) off the grid ' +
-      'instead of guessing; call it again at a few times to check a pose or a cycle.',
+      'instead of guessing; call it again at a few times to check a pose or a cycle. The puppet MESH and bone ' +
+      'weights are not drawn (the engine exposes no mesh query; the Rigging panel shows them); the text reports the ' +
+      'mesh settings and the vertex count.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -685,7 +704,8 @@ export const MCP_SERVER_INSTRUCTIONS = [
   '4. Instruments, only when they serve your idea: apply_look (a palette/type/pacing pack), apply_technique (a hand-authored move for layers you made), cast_piece (template layouts; you pick a layout and a technique per beat from its menus). Never start from them — a piece that is only a look pack and a template reads as one.',
   '5. Sound: list_sfx / add_sfx on the moments that hit, set_audio_levels and duck_audio for the mix; import_media for the user\'s music; generate_speech for voice-over.',
   '6. review_design after building, and analyze_motion on each beat — it measures every move on screen (ease shape, overshoot, settle, stagger in frames, crowding); render_motion_sheet shows one moment frame by frame with an onion skin. Fix the three biggest problems inside begin_edit / end_edit; review again; then save_project.',
-  'Look before editing: describe_scene, get_selection ("this"), list_compositions, list_capabilities. Multi-scene: one composition per scene or format (create_composition / set_active_composition), nest with create_precomp.',
-  'import_media, export_video and generate_speech need the user to click Allow in Premation; say what you are about to do first.',
+  'Look before editing: describe_scene, get_selection ("this"), get_editor_context (playhead, work area, selected keys), list_compositions, list_capabilities. Multi-scene: one composition per scene or format (create_composition / set_active_composition), nest with create_precomp.',
+  '7. Footage: describe_asset to look at an import (contact sheet, codec, fps) before create_media; find_subjects / select_subject / refine_subject to cut a person or object out (then follow_subject through the shot, apply_subject_style for outlines, glows, background blur or removal, place_behind_subject for text behind them); track_point + attach_to_track to pin a layer or a null to a moving detail; transcribe for word timings and captions. Points on footage are footage px from the top-left; long jobs return a jobId for get_job_status.',
+  'import_media, export_video, generate_speech and transcribe need the user to click Allow in Premation; say what you are about to do first.',
   'Times are composition seconds. Ids come from describe_scene, list_compositions or the tool that created the thing. A failed call says why: change the call rather than repeating it.',
 ].join('\n');

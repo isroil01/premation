@@ -214,9 +214,13 @@ describe('the tool surface itself', () => {
     // Write On) was the editor's and no tool could reach it — no calligraphy.
     // 73 → 74: `place_behind_subject`. "Text behind the person" took four
     // tools and a matte the model could not make; now it is one call.
-    expect(ALL_TOOL_DEFS).toHaveLength(74);
-    expect(ALL_TOOL_DEFS.filter((t) => t.kind === 'read')).toHaveLength(11);
-    expect(ALL_TOOL_DEFS.filter((t) => t.kind === 'write')).toHaveLength(47);
+    // 74 → 85: the footage tools (media.ts). Subjects (find / select / refine /
+    // follow / style), tracking (track_point / attach_to_track), transcribe,
+    // get_job_status, get_editor_context, describe_asset — every engine job the
+    // user had and the model could not reach.
+    expect(ALL_TOOL_DEFS).toHaveLength(85);
+    expect(ALL_TOOL_DEFS.filter((t) => t.kind === 'read')).toHaveLength(15);
+    expect(ALL_TOOL_DEFS.filter((t) => t.kind === 'write')).toHaveLength(54);
     expect(ALL_TOOL_DEFS.filter((t) => t.kind === 'compose')).toHaveLength(16);
   });
 
@@ -241,7 +245,7 @@ describe('the tool surface itself', () => {
     // 'write' silently drops the compose tools — and it was a literal 'write'
     // test that decided which calls appear in the user's pending-changes list.
     const mutating = ALL_TOOL_DEFS.filter((t) => mutates(t.kind));
-    expect(mutating).toHaveLength(63);
+    expect(mutating).toHaveLength(70);
     expect(mutating.map((t) => t.name)).toContain('add_title');
     expect(mutating.map((t) => t.name)).toContain('set_spring');
   });

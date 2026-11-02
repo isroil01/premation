@@ -28,6 +28,8 @@ import { peekRequest, responseIsError, startJobIdFromResponse } from './engineFr
 
 /** Command ids (packages/engine-api/schema: the Command union's field numbers). */
 export const CMD = {
+  beginGesture: 4,
+  endGesture: 5,
   newProject: 10,
   play: 800,
   pause: 801,

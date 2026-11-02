@@ -111,12 +111,33 @@ const notify = (message: string, level: 'info' | 'success' | 'warning' = 'succes
   useUIStore.getState().notify({ level, message, durationMs: 3200 });
 };
 
-/** Follow a subject (default the active one) through the work area, both ways, as a Tasks-panel job. */
-export async function followSubject(layer: string, subject: string = activeSubjectId(layer), origin: number = playheadSeconds()): Promise<void> {
+/** The work area, or the whole composition without one. */
+function workAreaNow(): { start: number; end: number } {
   const settings = activeCompSettingsNow();
   const wa = settingsSetWorkArea(settings);
-  await walkSubject(layer, subject, { start: wa ? wa.start : 0, end: wa ? wa.end : settingsDurationSeconds(settings) }, false,
-    t('workspace.subjects.following', 'Following the subject'), origin);
+  return { start: wa ? wa.start : 0, end: wa ? wa.end : settingsDurationSeconds(settings) };
+}
+
+/** Follow a subject (default the active one) through the work area, both ways, as a Tasks-panel job (the explicit Follow). */
+export async function followSubject(layer: string, subject: string = activeSubjectId(layer), origin: number = playheadSeconds()): Promise<void> {
+  await walkSubject(layer, subject, workAreaNow(), false, t('workspace.subjects.following', 'Following the subject'), origin);
+}
+
+/** How far either side of an edit the automatic first Follow reaches (autoTrack.ts). */
+export const AUTO_FOLLOW_SPAN_S = 3;
+
+/**
+ * The automatic tracking's first Follow: `span` seconds either side of the
+ * edit (clamped to the work area), not the whole work area — a selection
+ * tracks where the user is working within seconds, while the explicit Follow
+ * button still carries it through the whole shot. Frames tracked earlier
+ * outside the span stay (keepOutside), so a later edit extends the track.
+ */
+export async function followSubjectNear(layer: string, subject: string, time: number, span: number = AUTO_FOLLOW_SPAN_S): Promise<void> {
+  const wa = workAreaNow();
+  const range = { start: Math.max(wa.start, time - span), end: Math.min(wa.end, time + span) };
+  if (range.end <= range.start) return;
+  await walkSubject(layer, subject, range, true, t('workspace.subjects.following', 'Following the subject'), time);
 }
 
 /** Footage that moves: a video item (a still's subject is rightly held on every frame). */
@@ -169,7 +190,12 @@ export async function retrackSubject(layer: string, subject: string, time: numbe
   await walkSubject(layer, subject, range, true, t('workspace.subjects.retracking', 'Re-tracking the subject'), time);
 }
 
-/** The walk both of them run, as a Tasks-panel job (the work runs in the engine's model process). */
+/**
+ * The walk all of them run, as a Tasks-panel job (the work runs in the engine's
+ * model process, on its batch lane). It is BACKGROUND work: the tools stay
+ * usable — the store's `tracking` flag (not `busy`, which locks the tools)
+ * says a walk is on and how far it is.
+ */
 async function walkSubject(layer: string, subject: string, range: { start: number; end: number }, keepOutside: boolean, label: string,
   origin: number = playheadSeconds()): Promise<void> {
   const fps = settingsFps(activeCompSettingsNow());
@@ -183,13 +209,13 @@ async function walkSubject(layer: string, subject: string, range: { start: numbe
   const cancel = (): void => { cancelled = true; };
   runningWalks.set(key, cancel);
   useUIStore.getState().startJob({ id: jobId, kind: 'analysis', label, progress: 0, cancel });
-  store.setBusy(true, 0);
+  store.setTracking(true, 0);
   try {
     const r = await propagateObjectMatte(layer, store.strokes, {
       origin, start, end, fps, direction: 'both', featherPx: store.featherPx, refine: store.refine, box: store.box, subject, keepOutside,
     }, (f) => {
       useUIStore.getState().updateJob(jobId, { progress: f });
-      useRotoBrushStore.getState().setBusy(true, f);
+      useRotoBrushStore.getState().setTracking(true, f);
       return !cancelled;
     });
     useUIStore.getState().finishJob(jobId, r.status === 'cancelled'
@@ -201,7 +227,8 @@ async function walkSubject(layer: string, subject: string, range: { start: numbe
     notify(message, 'warning');
   } finally {
     if (runningWalks.get(key) === cancel) runningWalks.delete(key);
-    useRotoBrushStore.getState().setBusy(false);
+    // Another subject's walk may still run: the flag stays while any does.
+    if (runningWalks.size === 0) useRotoBrushStore.getState().setTracking(false);
   }
 }
 

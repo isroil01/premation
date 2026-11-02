@@ -18,6 +18,7 @@
 #pragma once
 
 #include <cstdint>
+#include <deque>
 #include <filesystem>
 #include <list>
 #include <memory>
@@ -54,8 +55,13 @@ struct RasterEntry {
   std::uint32_t width = 0;
   std::uint32_t height = 0;
   std::vector<std::uint8_t> rgba;  // premultiplied RGBA8, rows top-down
+  /// Stream B1/B3: a stored subject matte's alpha plane (one byte per pixel, rows
+  /// top-down) in place of `rgba` — uploaded as an R8 texture the subject-edge
+  /// passes read (scene_textures.cpp subject_ref). Never both.
+  std::vector<std::uint8_t> alpha;
   std::vector<std::string> unsupported;
   std::string error;
+  [[nodiscard]] std::size_t bytes() const noexcept { return rgba.size() + alpha.size(); }
 };
 
 struct PrepareStats {
@@ -140,6 +146,12 @@ class SceneTextures final : public rg::ExternalTextureSource {
   [[nodiscard]] bool svg_pending() const;
   /// E4: block until the worker's queue is empty (tests; bounded by `timeoutMs`).
   bool wait_svg_idle(std::uint32_t timeoutMs);
+  /// Stream B5: stored subject mattes queued or decoding on the matte read-ahead worker.
+  [[nodiscard]] bool matte_pending() const;
+  /// Block until the matte worker's queue is empty (tests; bounded by `timeoutMs`).
+  bool wait_matte_idle(std::uint32_t timeoutMs);
+  /// Stream B3: subject edge textures built on the GPU so far (tests, the HUD).
+  [[nodiscard]] std::uint64_t subject_edge_builds() const noexcept { return subjectEdgeBuilds_; }
 
   /// Resolve a frame's requests into refs (key → hash), rasterising misses.
   void prepare(const std::vector<TextureRequest>& reqs, std::vector<api::RenderTextureRef>& refs, PrepareStats& stats);
@@ -169,9 +181,17 @@ class SceneTextures final : public rg::ExternalTextureSource {
   void prepare_refs(const std::vector<TextureRequest>& reqs, std::vector<api::RenderTextureRef>& refs, PrepareStats& stats);
   std::string media_ref(const TextureRequest& r, PrepareStats& stats, std::optional<api::RenderColorSpace>& space);
   std::string image_ref(const TextureRequest& r, const std::filesystem::path& p, PrepareStats& stats);
-  /// A subject matte (r.subjectParts): each subject's stored frame decoded (image_ref), its live
-  /// edge applied and the subjects united (subject_matte.hpp), cached by the files and the settings.
+  /// A subject matte (r.subjectParts): each subject's stored frame decoded to its alpha plane
+  /// (matte_ref), its live edge applied and the subjects united, cached by the files and the
+  /// settings. With a device: an `sm:` hash whose texture the subject-edge passes build on first
+  /// use (subject_texture); without one: the CPU combine (subject_matte.hpp), an `img:` raster.
   std::string subject_ref(const TextureRequest& r, PrepareStats& stats);
+  /// A stored subject matte file as an alpha-plane raster (`img:…|a`): a greyscale PNG's value,
+  /// a legacy RGBA cut-out's alpha. Keyed by path + size + last write, like image_ref.
+  std::string matte_ref(const std::string& src, std::string_view requestKey, PrepareStats& stats);
+  /// Stream B3: the GPU subject matte `hash` (an `sm:` ref): the pooled target holding it, built
+  /// on a pool miss by the subject-edge passes (one side draw per pass, once per content).
+  rg::TexRef subject_texture(std::string_view hash);
   /// P7b: footage a native plugin importer reads (scene_textures_plugin.cpp).
   std::string plugin_image_ref(const TextureRequest& r, const std::filesystem::path& p, PrepareStats& stats);
   /// A still carried as a `data:image/…;base64,` URL (a content-aware fill frame).
@@ -266,6 +286,32 @@ class SceneTextures final : public rg::ExternalTextureSource {
   struct SvgWorker;  // scene_textures.cpp: one thread, FIFO, keys de-duplicated
   std::unique_ptr<SvgWorker> svgWorker_;
   void svg_enqueue(SvgJob job);
+  /// Stream B3: what a GPU subject matte (`sm:` hash) is made of — the frames' alpha-plane
+  /// rasters (R8 textures) and each subject's edge settings; the passes run from this.
+  struct SubjectGpuPart {
+    std::string frame;                                   ///< the frame's `img:…|a` hash ('' = none)
+    std::vector<std::pair<std::string, double>> blend;  ///< neighbours' hashes and weights (Temporal Smooth)
+    double feather = 0;
+    double choke = 0;
+    double contrast = 0;
+    bool invert = false;
+    bool hidden = false;
+  };
+  struct SubjectGpuSpec {
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+    std::vector<SubjectGpuPart> parts;
+  };
+  /// `sm:` hash → its spec (render thread only). Bounded: the oldest half goes past kSubjectSpecCap.
+  std::unordered_map<std::string, SubjectGpuSpec> subjectSpecs_;
+  std::deque<std::string> subjectSpecOrder_;
+  static constexpr std::size_t kSubjectSpecCap = 4096;
+  std::uint64_t subjectEdgeBuilds_ = 0;
+  /// Stream B5: the matte read-ahead worker — one thread decoding the stored frames playback is
+  /// about to reach (SubjectPart::ahead) into alpha-plane rasters, so the render thread finds them.
+  struct MatteWorker;  // scene_textures.cpp: one thread, FIFO, paths de-duplicated
+  std::unique_ptr<MatteWorker> matteWorker_;
+  void matte_prefetch(const std::vector<std::string>& srcs);
   /// A static document keeps one raster: once step `step` is in, the steps below it are dropped.
   void svg_drop_below(const std::string& doc, int step);
   /// The SVG display step for a request's need, with playback hysteresis (remembers it per request key).

@@ -6,8 +6,11 @@
 
 #include <cmath>
 #include <cstdint>
+#include <initializer_list>
 #include <numbers>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "scene_renderer.hpp"
 
@@ -315,6 +318,63 @@ TEST_CASE("P8b: a layer that only moves by whole pixels reuses its effect chain,
   CHECK(edge.rgba == fresh());
 }
 
+TEST_CASE("P8b: while playing, a layer drifting by fractions of a pixel reuses its effect chain through the fraction") {
+  std::string err;
+  auto renderer = SceneRenderer::create({}, err);
+  if (!renderer) return;
+  auto file = solid_scene(0, 0.5, 1);
+  file.view.css_width = 256;
+  file.view.css_height = 160;
+  file.view.camera_center_x = 128;
+  file.view.camera_center_y = 80;
+  file.scene.width = 256;
+  file.scene.height = 160;
+  file.scene.renderables[0].model_matrix = {32, 0, 0, 0, 24, 0, 100, 60, 1};
+  file.scene.renderables[0].bounds = {100, 60, 32, 24};
+  api::RenderEffect blur;
+  blur.type = "gaussian-blur";
+  blur.params.push_back(num_param("radiusPx", 4));
+  file.scene.renderables[0].effects.push_back(blur);
+  const auto fresh = [&]() {
+    std::string e;
+    auto other = SceneRenderer::create({}, e);
+    Frame out;
+    FrameStats s;
+    REQUIRE(other->render(file, &out, s, e));
+    return out.rgba;
+  };
+  const auto maxDiff = [](const std::vector<std::uint8_t>& a, const std::vector<std::uint8_t>& b) {
+    REQUIRE(a.size() == b.size());
+    int worst = 0;
+    for (std::size_t i = 0; i < a.size(); ++i) worst = std::max(worst, std::abs(int{a[i]} - int{b[i]}));
+    return worst;
+  };
+  renderer->set_playing(true);
+  // Three frames, the layer 0.3 px further each time (ending on a fraction, so
+  // the paused frame below cannot be a whole-pixel copy): the first runs the
+  // chain, the second keeps it (the whole-pixel key held), the third is the
+  // kept result composited through the fraction — close to a fresh render
+  // (one bilinear resample of a blurred solid), never far from it.
+  const unsigned expectReused[3] = {0U, 0U, 1U};
+  for (int i = 0; i < 3; ++i) {
+    file.scene.renderables[0].model_matrix[6] += 0.3;
+    file.scene.renderables[0].bounds.x += 0.3;
+    Frame f;
+    FrameStats s;
+    REQUIRE(renderer->render(file, &f, s, err));
+    CHECK(s.gpuError.empty());
+    CHECK(s.effects.layerChainsReused == expectReused[i]);
+    CHECK(maxDiff(f.rgba, fresh()) <= 24);
+  }
+  // Paused on a fraction: drawn at its own phase again — exact, pixel for pixel a fresh render.
+  renderer->set_playing(false);
+  Frame paused;
+  FrameStats sp;
+  REQUIRE(renderer->render(file, &paused, sp, err));
+  CHECK(sp.effects.layerChainsReused == 0);
+  CHECK(paused.rgba == fresh());
+}
+
 TEST_CASE("E4: fill opacity fades the contents and shapes the stroke by the silhouette") {
   std::string err;
   auto renderer = SceneRenderer::create({}, err);
@@ -515,9 +575,10 @@ TEST_CASE("grow bounds: a chain scissored to each layer's reach draws the same p
     FrameStats sf;
     REQUIRE(renderer->render(file, &full, sf, err));
     CHECK(sf.gpuError.empty());
-    // Every measured entry ran scissored, the vignette full frame; nothing bounded without bounds.
-    CHECK(sb.effects.bounded == 12);
-    CHECK(sb.effects.fullFrame == 1);
+    // Every measured entry ran scissored, the vignette too (it scales the
+    // input texel, so it reaches no further); nothing bounded without bounds.
+    CHECK(sb.effects.bounded == 13);
+    CHECK(sb.effects.fullFrame == 0);
     CHECK(sf.effects.bounded == 0);
     CHECK(sf.effects.fullFrame == 13);
     REQUIRE(bounded.width == full.width);
@@ -1001,4 +1062,384 @@ TEST_CASE("precomp targets: eight nested precomps each render into an isolated t
   CHECK(s2.effects.precompsRendered == 0);
   CHECK(s2.effects.precompsCached == 1);
   CHECK(again.rgba == frame.rgba);
+}
+
+// ── Stream D: liquid & glass (2026-11-02) ─────────────────────────────────────
+
+namespace {
+
+api::RenderEffectParam flag_param(std::string name, bool v) {
+  api::RenderEffectParam p;
+  p.name = std::move(name);
+  p.kind = api::RenderParamKind::flag;
+  p.number = v ? 1 : 0;
+  return p;
+}
+
+api::RenderEffectParam text_param(std::string name, std::string v) {
+  api::RenderEffectParam p;
+  p.name = std::move(name);
+  p.kind = api::RenderParamKind::text;
+  p.text = std::move(v);
+  return p;
+}
+
+/// A 64 x 1 raster under `key`: the left half white, the right half transparent
+/// (one texel a frame column, so the bilinear mask sample is whole away from x = 32).
+void add_half_mask(api::RenderFrameFile& f, const std::string& key) {
+  api::RenderBlob blob;
+  blob.hash = "hash:" + key;
+  blob.width = 64;
+  blob.height = 1;
+  blob.format = api::RenderTextureFormat::rgba8unorm;
+  blob.pixels.assign(64 * 4, 0);
+  for (std::size_t x = 0; x < 32; ++x) {
+    for (std::size_t c = 0; c < 4; ++c) blob.pixels[x * 4 + c] = 255;
+  }
+  f.blobs.push_back(std::move(blob));
+  api::RenderTextureRef ref;
+  ref.key = key;
+  ref.hash = "hash:" + key;
+  ref.ready = true;
+  f.textures.push_back(ref);
+}
+
+/// An adjustment layer over the whole 64 x 48 frame whose colour matrix paints everything red.
+api::Renderable red_adjustment() {
+  api::Renderable a;
+  a.id = "adj";
+  a.kind = api::RenderableKind::group;
+  a.model_matrix = {64, 0, 0, 0, 48, 0, 0, 0, 1};
+  a.bounds = {0, 0, 64, 48};
+  a.opacity = 1;
+  api::RenderColorMatrix cm;
+  cm.m = {0, 0, 0, 0, 0, 0, 0, 0, 0};
+  cm.offset = {1, 0, 0};
+  api::RenderAdjustment adj;
+  adj.color_matrix = cm;
+  a.adjustment = adj;
+  return a;
+}
+
+/// A red rect at (x, y) of w x h on top of the scene.
+api::Renderable red_rect(double x, double y, double w, double h) {
+  api::Renderable q;
+  q.id = "top";
+  q.kind = api::RenderableKind::rect;
+  q.model_matrix = {w, 0, 0, 0, h, 0, x, y, 1};
+  q.bounds = {x, y, w, h};
+  q.opacity = 1;
+  q.color = api::Color{1, 0, 0, 1};
+  return q;
+}
+
+struct Px {
+  const Frame& f;
+  [[nodiscard]] int at(std::uint32_t x, std::uint32_t y, std::size_t c) const {
+    return f.rgba.at((std::size_t{y} * f.width + x) * 4 + c);
+  }
+};
+
+}  // namespace
+
+TEST_CASE("stream D L1: an adjustment layer is scoped by its mask and faded by its opacity against the untouched frame") {
+  std::string err;
+  auto renderer = SceneRenderer::create({}, err);
+  if (!renderer) return;
+  auto file = solid_scene(0, 0, 1);  // the blue rect (16,12)-(48,36) over black
+  file.scene.renderables.push_back(red_adjustment());
+
+  // Opaque, unmasked: the whole frame goes red (as before stream D).
+  Frame full;
+  FrameStats s0;
+  REQUIRE(renderer->render(file, &full, s0, err));
+  CHECK(s0.gpuError.empty());
+  CHECK(s0.diagnostics.empty());
+  const Px pf{full};
+  CHECK(pf.at(32, 24, 0) > 200);
+  CHECK(pf.at(32, 24, 2) < 40);
+  CHECK(pf.at(2, 2, 0) > 200);
+
+  // At 50 %: a mix of the red and the blue rect; the background a half red.
+  file.scene.renderables[1].opacity = 0.5;
+  Frame half;
+  FrameStats s1;
+  REQUIRE(renderer->render(file, &half, s1, err));
+  CHECK(s1.diagnostics.empty());
+  const Px ph{half};
+  CHECK(ph.at(32, 24, 0) > 80);
+  CHECK(ph.at(32, 24, 0) < 180);
+  CHECK(ph.at(32, 24, 2) > 80);
+  CHECK(ph.at(32, 24, 2) < 180);
+  CHECK(ph.at(2, 2, 0) > 80);
+  CHECK(ph.at(2, 2, 0) < 180);
+
+  // Masked to the left half, opaque: the right half of the frame is untouched.
+  file.scene.renderables[1].opacity = 1;
+  file.scene.renderables[1].mask_texture_key = "mask:adj";
+  add_half_mask(file, "mask:adj");
+  Frame masked;
+  FrameStats s2;
+  REQUIRE(renderer->render(file, &masked, s2, err));
+  CHECK(s2.diagnostics.empty());
+  const Px pm{masked};
+  CHECK(pm.at(20, 24, 0) > 200);  // inside the mask: red
+  CHECK(pm.at(20, 24, 2) < 40);
+  CHECK(pm.at(44, 24, 0) == 0);   // outside: the blue rect as it was
+  CHECK(pm.at(44, 24, 2) == 255);
+  CHECK(pm.at(60, 40, 0) == 0);   // outside, background: black, opaque
+  CHECK(pm.at(60, 40, 3) == 255);
+
+  // At 0 % the frame is left alone entirely.
+  file.scene.renderables[1].opacity = 0;
+  Frame none;
+  FrameStats s3;
+  REQUIRE(renderer->render(file, &none, s3, err));
+  const Px pn{none};
+  CHECK(pn.at(20, 24, 0) == 0);
+  CHECK(pn.at(20, 24, 2) == 255);
+}
+
+TEST_CASE("stream D L2/L5: Displacement Map with Source: Backdrop draws the scene under the layer through its silhouette") {
+  std::string err;
+  auto renderer = SceneRenderer::create({}, err);
+  if (!renderer) return;
+  auto file = solid_scene(0, 0, 1);
+  api::Renderable top = red_rect(24, 18, 16, 12);
+  api::RenderEffect d;
+  d.type = "displacement-map";
+  d.params.push_back(num_param("maxH", 0));
+  d.params.push_back(num_param("maxV", 0));
+  d.params.push_back(num_param("hChannel", 10));  // Off
+  d.params.push_back(num_param("vChannel", 10));
+  d.params.push_back(num_param("mapMode", 0));
+  d.params.push_back(num_param("edge", 0));
+  d.params.push_back(flag_param("expand", false));
+  d.params.push_back(num_param("lw", 16));
+  d.params.push_back(num_param("lh", 12));
+  top.effects.push_back(d);
+  file.scene.renderables.push_back(top);
+
+  // Source: This Layer (no flag) — the red rect, moved by nothing.
+  Frame own;
+  FrameStats s0;
+  REQUIRE(renderer->render(file, &own, s0, err));
+  CHECK(s0.gpuError.empty());
+  CHECK(s0.diagnostics.empty());
+  const Px po{own};
+  CHECK(po.at(32, 24, 0) == 255);
+  CHECK(po.at(32, 24, 2) == 0);
+
+  // Source: Backdrop — the blue rect under it shows through the red rect's silhouette.
+  file.scene.renderables[1].effects[0].params.push_back(flag_param("readsBackdrop", true));
+  Frame back;
+  FrameStats s1;
+  REQUIRE(renderer->render(file, &back, s1, err));
+  CHECK(s1.diagnostics.empty());
+  CHECK(s1.effects.layerChainsReused == 0);
+  const Px pb{back};
+  CHECK(pb.at(32, 24, 0) == 0);
+  CHECK(pb.at(32, 24, 2) == 255);
+  CHECK(pb.at(20, 24, 2) == 255);  // beside the red rect: the blue rect as before
+  CHECK(pb.at(2, 2, 3) == 255);
+  // Never kept across frames (the backdrop may change): the chain runs again.
+  Frame again;
+  FrameStats s2;
+  REQUIRE(renderer->render(file, &again, s2, err));
+  CHECK(s2.effects.layerChainsReused == 0);
+  CHECK(again.rgba == back.rgba);
+}
+
+TEST_CASE("stream D L2: the fx-graph's BACKDROP slot is the scene under the layer when the entry reads the backdrop") {
+  std::string err;
+  auto renderer = SceneRenderer::create({}, err);
+  if (!renderer) return;
+  auto file = solid_scene(0, 0, 0.25);
+  Frame alone;
+  FrameStats sa;
+  REQUIRE(renderer->render(file, &alone, sa, err));
+  // The rect colour is display-encoded (the first test: 0.5 -> 128): 0.25 -> 64.
+  const int blueAlone = Px{alone}.at(32, 24, 2);
+  CHECK(blueAlone > 50);
+  CHECK(blueAlone < 80);
+
+  // A copy of BACKDROP into A, added over the scene: the blue doubles in linear
+  // light (2 x 0.0508 -> display ~0.35, about 89).
+  api::Renderable top = red_rect(24, 18, 16, 12);
+  top.blend = api::RenderBlendMode::add;
+  api::RenderEffect g;
+  g.type = "fx-graph";
+  g.params.push_back(text_param("fxType", "test-backdrop"));
+  g.params.push_back(text_param("mats", "fxx-copy"));
+  g.params.push_back(nums_param("g", {0, 0, 1, 31, -1, -1, -1, 0, 0, 0}));
+  g.params.push_back(num_param("out", 1));
+  g.params.push_back(num_param("lw", 16));
+  g.params.push_back(num_param("lh", 12));
+  top.effects.push_back(g);
+  file.scene.renderables.push_back(top);
+
+  // Without the flag the slot reads transparent black: nothing is added.
+  Frame blank;
+  FrameStats s0;
+  REQUIRE(renderer->render(file, &blank, s0, err));
+  CHECK(s0.diagnostics.empty());
+  CHECK(Px{blank}.at(32, 24, 2) == blueAlone);
+
+  file.scene.renderables[1].effects[0].params.push_back(flag_param("readsBackdrop", true));
+  Frame doubled;
+  FrameStats s1;
+  REQUIRE(renderer->render(file, &doubled, s1, err));
+  CHECK(s1.gpuError.empty());
+  CHECK(s1.diagnostics.empty());
+  const Px pd{doubled};
+  CHECK(pd.at(32, 24, 2) > blueAlone + 15);
+  CHECK(pd.at(32, 24, 0) == 0);
+  CHECK(pd.at(2, 2, 0) == 0);  // black + black
+  CHECK(pd.at(2, 2, 3) == 255);
+}
+
+TEST_CASE("stream D L3: the goo passes build and the blurred, thresholded blob reaches past the input, shaded, nowhere else") {
+  std::string err;
+  auto renderer = SceneRenderer::create({}, err);
+  if (!renderer) return;
+  renderer->set_effect_fields(true);
+  auto file = solid_scene(0, 0, 1);
+  api::RenderEffect g;
+  g.type = "fx-graph";
+  g.params.push_back(text_param("fxType", "goo"));
+  g.params.push_back(text_param("mats", "fxx-goo-shape,fxx-goo-shade"));
+  const double lx = std::cos(-std::numbers::pi / 4) * std::cos(0.9);
+  const double ly = std::sin(-std::numbers::pi / 4) * std::cos(0.9);
+  const double lz = std::sin(0.9);
+  g.params.push_back(nums_param("g", {// blur sigma 6 along x (IN -> X1) and y (X1 -> X0)
+                                      1, 6, 5, 0, -1, -1, -1, 0, 0, 0,  //
+                                      2, 6, 4, 5, -1, -1, -1, 0, 0, 0,  //
+                                      // the shape: threshold 0.25, softness 0.2, tint
+                                      0, 0, 1, 4, 0, -1, -1, 0, 0, 2, 0.25, 0.2, 1, 0, 0.03, 0.55, 1, 0,  //
+                                      // its distance field to 10 px, then the shading
+                                      4, 10, 5, 1, -1, -1, -1, 0, 0, 0,  //
+                                      0, 1, 2, 1, 5, -1, -1, 0, 0, 3, 8, 0.5, 40, 0.2, lx, ly, lz, 0.85, 1, 1, 1, 0}));
+  g.params.push_back(num_param("out", 2));
+  g.params.push_back(num_param("lw", 32));
+  g.params.push_back(num_param("lh", 24));
+  g.params.push_back(num_param("reachPx", 24));
+  g.params.push_back(flag_param("reachMeasured", true));
+  file.scene.renderables[0].effects.push_back(g);
+  Frame frame;
+  FrameStats s;
+  REQUIRE(renderer->render(file, &frame, s, err));
+  CHECK(s.gpuError.empty());
+  CHECK(s.diagnostics.empty());
+  const Px px{frame};
+  // Inside: the tinted blob, lit.
+  CHECK(px.at(32, 24, 2) > 100);
+  CHECK(px.at(32, 24, 3) == 255);
+  // Three px outside the rect's left edge (16): the blurred alpha (sigma 6) is
+  // over the threshold there — the blob grew.
+  CHECK(px.at(13, 24, 2) > 20);
+  // Far outside: nothing (the reach is bounded).
+  CHECK(px.at(2, 2, 0) == 0);
+  CHECK(px.at(2, 2, 2) == 0);
+  CHECK(px.at(2, 2, 3) == 255);
+}
+
+TEST_CASE("stream D L4: liquid glass builds and shades its dome; the original glass path is untouched") {
+  std::string err;
+  auto renderer = SceneRenderer::create({}, err);
+  if (!renderer) return;
+  auto file = solid_scene(0, 0, 1);
+  api::Renderable panel = red_rect(20, 14, 24, 20);
+  panel.id = "panel";
+  panel.color = api::Color{1, 1, 1, 1};
+  api::RenderGlass g;
+  g.refraction = 10;
+  g.edge_width = 3;
+  g.aberration = 2;
+  g.saturation = 1;
+  g.tint = api::Color{1, 1, 1, 1};
+  g.tint_opacity = 0.1;
+  g.rim = api::Color{1, 1, 1, 1};
+  g.rim_opacity = 0.3;
+  g.rim_width = 4;
+  g.rim_angle = 5.5;
+  g.specular_angle = 5.5;
+  g.specular_intensity = 0.3;
+  g.specular_falloff = 8;
+  g.grain = 0;
+  g.ior = 1.5;
+  g.thickness = 8;
+  panel.glass = g;
+  file.scene.renderables.push_back(panel);
+
+  Frame edge;
+  FrameStats s0;
+  REQUIRE(renderer->render(file, &edge, s0, err));
+  CHECK(s0.gpuError.empty());
+  CHECK(s0.diagnostics.empty());
+
+  file.scene.renderables[1].glass->bump_source = 1;  // the dome
+  file.scene.renderables[1].glass->caustic = 0.5;
+  file.scene.renderables[1].glass->fresnel = 0.3;
+  Frame dome;
+  FrameStats s1;
+  REQUIRE(renderer->render(file, &dome, s1, err));
+  CHECK(s1.gpuError.empty());
+  CHECK(s1.diagnostics.empty());
+  const Px pd{dome};
+  CHECK(pd.at(32, 24, 3) == 255);
+  // The panel is lit differently from the alpha-edge glass somewhere inside it; outside it nothing changed.
+  int differ = 0;
+  for (std::uint32_t y = 14; y < 34; ++y) {
+    for (std::uint32_t x = 20; x < 44; ++x) {
+      for (std::size_t c = 0; c < 3; ++c) differ += Px{edge}.at(x, y, c) != pd.at(x, y, c) ? 1 : 0;
+    }
+  }
+  CHECK(differ > 0);
+  CHECK(Px{edge}.at(2, 2, 0) == pd.at(2, 2, 0));
+  CHECK(Px{edge}.at(10, 24, 2) == pd.at(10, 24, 2));
+
+  // The luminance surface, and a bump layer that does not exist (falls back to the luminance).
+  file.scene.renderables[1].glass->bump_source = 2;
+  Frame luma;
+  FrameStats s2;
+  REQUIRE(renderer->render(file, &luma, s2, err));
+  CHECK(s2.diagnostics.empty());
+  file.scene.renderables[1].glass->bump_source = 3;
+  file.scene.renderables[1].glass->bump_layer_id = "nobody";
+  Frame missing;
+  FrameStats s3;
+  REQUIRE(renderer->render(file, &missing, s3, err));
+  CHECK(s3.diagnostics.empty());
+  CHECK(missing.rgba == luma.rgba);
+}
+
+TEST_CASE("stream D L5: a Displacement Map entry with only an amount renders as the full AE row at Red / Green, both axes") {
+  std::string err;
+  auto renderer = SceneRenderer::create({}, err);
+  if (!renderer) return;
+  auto file = solid_scene(0.2, 0.6, 1);
+  api::RenderEffect legacy;
+  legacy.type = "displacement-map";
+  legacy.params.push_back(num_param("amount", 6));
+  legacy.params.push_back(num_param("lw", 32));
+  legacy.params.push_back(num_param("lh", 24));
+  file.scene.renderables[0].effects.push_back(legacy);
+  Frame a;
+  FrameStats sa;
+  REQUIRE(renderer->render(file, &a, sa, err));
+  CHECK(sa.diagnostics.empty());
+
+  api::RenderEffect full;
+  full.type = "displacement-map";
+  for (const auto& [k, v] : std::initializer_list<std::pair<const char*, double>>{
+           {"amount", 6}, {"maxH", 6}, {"maxV", 6}, {"hChannel", 0}, {"vChannel", 1}, {"mapMode", 0}, {"edge", 0}, {"lw", 32}, {"lh", 24}}) {
+    full.params.push_back(num_param(k, v));
+  }
+  full.params.push_back(flag_param("expand", true));
+  file.scene.renderables[0].effects[0] = full;
+  Frame b;
+  FrameStats sb;
+  REQUIRE(renderer->render(file, &b, sb, err));
+  CHECK(sb.diagnostics.empty());
+  CHECK(a.rgba == b.rgba);
 }

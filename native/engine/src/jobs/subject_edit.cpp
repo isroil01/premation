@@ -67,6 +67,38 @@ std::vector<Pt> sample_stroke(std::span<const Pt> stroke, std::size_t maxPoints)
   return out;
 }
 
+std::vector<Pt> sample_stroke_by_radius(std::span<const Pt> stroke, double radius, std::size_t maxPoints) {
+  if (stroke.empty() || maxPoints == 0) return {};
+  std::vector<double> cum(stroke.size(), 0.0);
+  for (std::size_t i = 1; i < stroke.size(); ++i) cum[i] = cum[i - 1] + std::hypot(stroke[i].x - stroke[i - 1].x, stroke[i].y - stroke[i - 1].y);
+  const double total = cum.back();
+  const double step = std::max(2.0, radius * 2);
+  // One prompt per brush diameter along the arc (sample_stroke's own 12 px floor does not apply:
+  // the brush says how dense), the ends included, at most `maxPoints`.
+  const std::size_t n = std::min(maxPoints, static_cast<std::size_t>(std::floor(total / step)) + 1);
+  if (n <= 1 || total < 1e-9) return {stroke.front()};
+  std::vector<Pt> out;
+  out.reserve(n);
+  std::size_t seg = 1;
+  for (std::size_t k = 0; k < n; ++k) {
+    const double target = total * static_cast<double>(k) / static_cast<double>(n - 1);
+    while (seg + 1 < stroke.size() && cum[seg] < target) ++seg;
+    const double span = cum[seg] - cum[seg - 1];
+    const double t = span > 1e-12 ? std::clamp((target - cum[seg - 1]) / span, 0.0, 1.0) : 0.0;
+    out.push_back({stroke[seg - 1].x + t * (stroke[seg].x - stroke[seg - 1].x), stroke[seg - 1].y + t * (stroke[seg].y - stroke[seg - 1].y)});
+  }
+  return out;
+}
+
+std::vector<Pt> sample_strokes(std::span<const std::vector<Pt>> strokes, double radius, std::size_t maxTotal) {
+  std::vector<Pt> out;
+  for (const std::vector<Pt>& s : strokes) {
+    if (out.size() >= maxTotal) break;
+    for (const Pt& p : sample_stroke_by_radius(s, radius, maxTotal - out.size())) out.push_back(p);
+  }
+  return out;
+}
+
 std::vector<CandidateScore> score_candidates(std::span<const float> iouScores, std::span<const float> logits, std::span<const sam::Point> prompts,
                                              double scale, std::uint32_t width, std::uint32_t height) {
   const std::size_t plane = static_cast<std::size_t>(sam::kMaskSize) * sam::kMaskSize;
@@ -296,13 +328,29 @@ void keep_touching(std::vector<float>& alpha, int width, int height, std::span<c
   }
   std::vector<float> kept(n, 0.0f);
   for (std::size_t i = 0; i < n; ++i) kept[i] = label[i] >= 0 && keep[at(label[i])] ? 1.0f : 0.0f;
+  // The soft fringe (under 0.5) within 3 px of a kept region stays; a dropped region's own solid
+  // pixels never do, however close — the dilation used to let a 3 px halo of the neighbour in.
   const std::vector<float> near = dilate(kept, width, height, 3);
-  for (std::size_t i = 0; i < n; ++i) alpha[i] *= near[i];
+  for (std::size_t i = 0; i < n; ++i) {
+    if (kept[i] != 0.0f) continue;
+    alpha[i] = alpha[i] < 0.5f ? alpha[i] * near[i] : 0.0f;
+  }
 }
 
-std::vector<float> paint(int width, int height, std::span<const std::vector<Pt>> strokes, double radius) {
+std::vector<float> paint(int width, int height, std::span<const std::vector<Pt>> strokes, double radius, double hardness) {
   std::vector<float> out(static_cast<std::size_t>(std::max(0, width)) * static_cast<std::size_t>(std::max(0, height)), 0.0f);
   if (out.empty() || !(radius > 0)) return out;
+  // Where the falloff starts: a hard brush at the rim (the anti-aliased px), a soft one earlier —
+  // never inside the centre pixel: a dab's centre is painted fully at any hardness.
+  const double solid = std::max(1.0, radius * std::clamp(hardness, 0.0, 100.0) / 100.0);
+  const auto cover_at = [&](double d) {
+    if (d >= radius + 0.5) return 0.0f;
+    if (d <= solid) return 1.0f;
+    const double soft = radius + 0.5 - solid;
+    if (soft <= 1.0) return static_cast<float>(std::clamp(radius + 0.5 - d, 0.0, 1.0));  // hard: the rim's anti-aliasing only
+    const double t = std::clamp((radius + 0.5 - d) / soft, 0.0, 1.0);
+    return static_cast<float>(t * t * (3.0 - 2.0 * t));
+  };
   for (const std::vector<Pt>& raw : strokes) {
     if (raw.empty()) continue;
     // Points closer than a quarter radius add nothing to the footprint.
@@ -328,8 +376,8 @@ std::vector<float> paint(int width, int height, std::span<const std::vector<Pt>>
       for (int x = bx0; x <= bx1; ++x) {
         const Pt p{x + 0.5, y + 0.5};
         double d = std::hypot(p.x - s.front().x, p.y - s.front().y);
-        for (std::size_t i = 1; i < s.size() && d > radius - 0.5; ++i) d = std::min(d, seg_dist(p, s[i - 1], s[i]));
-        const auto cover = static_cast<float>(std::clamp(radius + 0.5 - d, 0.0, 1.0));
+        for (std::size_t i = 1; i < s.size() && d > solid; ++i) d = std::min(d, seg_dist(p, s[i - 1], s[i]));
+        const float cover = cover_at(d);
         float& o = out[idx(x, y, width)];
         o = std::max(o, cover);
       }
@@ -497,6 +545,76 @@ void solidify(std::vector<float>& alpha) {
     const float x = std::clamp((v - 0.1f) / 0.8f, 0.0f, 1.0f);
     v = x * x * (3.0f - 2.0f * x);
   }
+}
+
+void solidify_interior(std::vector<float>& alpha, int width, int height, int bandPx) {
+  const std::size_t n = alpha.size();
+  if (width <= 0 || height <= 0 || n != static_cast<std::size_t>(width) * static_cast<std::size_t>(height)) return;
+  if (bandPx <= 0) {
+    solidify(alpha);
+    return;
+  }
+  // The band: a breadth-first march of `bandPx` steps out from every pixel on the 0.5 crossing.
+  std::vector<std::uint8_t> band(n, 0);
+  std::vector<std::size_t> frontier;
+  for (int y = 0; y < height; ++y)
+    for (int x = 0; x < width; ++x) {
+      const std::size_t i = idx(x, y, width);
+      const bool in = alpha[i] >= 0.5f;
+      const bool edge = (x > 0 && (alpha[i - 1] >= 0.5f) != in) || (x + 1 < width && (alpha[i + 1] >= 0.5f) != in) ||
+                        (y > 0 && (alpha[i - static_cast<std::size_t>(width)] >= 0.5f) != in) ||
+                        (y + 1 < height && (alpha[i + static_cast<std::size_t>(width)] >= 0.5f) != in);
+      if (!edge) continue;
+      band[i] = 1;
+      frontier.push_back(i);
+    }
+  std::vector<std::size_t> next;
+  for (int step = 1; step <= bandPx && !frontier.empty(); ++step) {
+    next.clear();
+    for (const std::size_t i : frontier) {
+      const int x = static_cast<int>(i % static_cast<std::size_t>(width));
+      const int y = static_cast<int>(i / static_cast<std::size_t>(width));
+      const std::array<std::array<int, 2>, 4> nb{{{x - 1, y}, {x + 1, y}, {x, y - 1}, {x, y + 1}}};
+      for (const auto& q : nb) {
+        if (q[0] < 0 || q[1] < 0 || q[0] >= width || q[1] >= height) continue;
+        const std::size_t j = idx(q[0], q[1], width);
+        if (band[j] != 0) continue;
+        band[j] = 1;
+        next.push_back(j);
+      }
+    }
+    frontier.swap(next);
+  }
+  for (std::size_t i = 0; i < n; ++i) {
+    if (band[i] != 0) continue;
+    const float x = std::clamp((alpha[i] - 0.1f) / 0.8f, 0.0f, 1.0f);
+    alpha[i] = x * x * (3.0f - 2.0f * x);
+  }
+}
+
+double matte_iou_logits(std::span<const float> alpha, int width, int height, std::span<const float> logits, std::size_t offset, double scale) {
+  constexpr std::size_t M = sam::kMaskSize;
+  if (width <= 0 || height <= 0 || alpha.size() < static_cast<std::size_t>(width) * static_cast<std::size_t>(height) || logits.size() < offset + M * M) return 0.0;
+  // The frame's cells of the letterboxed grid. upsample_mask / soft_mask sample the logits at
+  // frame px x · scale / 4 with no half-cell offset, so cell c's value lands exactly on the frame
+  // pixel c · cell: the matte is read there, and the IoU agrees with the full-resolution one.
+  const double cell = (static_cast<double>(sam::kInputSize) / M) / scale;
+  const auto cells = [&](int px) { return std::clamp<std::size_t>(static_cast<std::size_t>(std::lround(px * scale / 4.0)), 1, M); };
+  const std::size_t fw = cells(width);
+  const std::size_t fh = cells(height);
+  std::size_t both = 0;
+  std::size_t either = 0;
+  for (std::size_t cy = 0; cy < fh; ++cy) {
+    const int y = std::clamp(static_cast<int>(std::lround(static_cast<double>(cy) * cell)), 0, height - 1);
+    for (std::size_t cx = 0; cx < fw; ++cx) {
+      const int x = std::clamp(static_cast<int>(std::lround(static_cast<double>(cx) * cell)), 0, width - 1);
+      const bool a = alpha[idx(x, y, width)] >= 0.5f;
+      const bool b = logits[offset + cy * M + cx] > 0.0f;
+      both += a && b ? 1 : 0;
+      either += a || b ? 1 : 0;
+    }
+  }
+  return either == 0 ? 1.0 : static_cast<double>(both) / static_cast<double>(either);
 }
 
 void harden_for_subtract(std::vector<float>& delta, int width, int height, int growPx) {

@@ -272,6 +272,7 @@ if(MOTION_BUILD_TESTS)
     tests/test_b4_round3.cpp
     tests/test_b4_round5_text.cpp
     tests/test_b4_round5_rig.cpp
+    tests/test_ptree_rig.cpp  # C2 2026-11-02: puppet pin / bone / IK rows in the static property tree
     tests/test_b4_round5_view.cpp
     tests/test_b4_round5_items.cpp
     tests/test_jobs.cpp
@@ -462,6 +463,7 @@ set(ENGINE_DOC_SOURCES
   src/core/handlers_layertime.cpp
   src/core/handlers_markers.cpp
   src/core/handlers_misc.cpp
+  src/core/subject_files.cpp  # stream B2: stored subject matte files, collected on save
   src/core/handlers_performance.cpp
   src/core/handlers_native.cpp
   src/core/handlers_optional.cpp
@@ -644,7 +646,8 @@ if(MOTION_BUILD_TESTS)
                                          tests/test_corner_pin_parity.cpp tests/test_write_on_trail_parity.cpp
                                          tests/test_model_deform_parity.cpp tests/test_pixel_motion_parity.cpp tests/test_pixel_motion_quality.cpp
                                          tests/test_extrusion_faces_parity.cpp tests/test_alpha_mesh_parity.cpp
-                                         tests/test_frame_hit.cpp tests/test_exr_read.cpp tests/test_rigid_body_parity.cpp)
+                                         tests/test_frame_hit.cpp tests/test_exr_read.cpp tests/test_rigid_body_parity.cpp
+                                         tests/test_rig_cache.cpp)  # C1: cache determinism, barycentric pins, coverage, IK blend, DQ skinning
   target_link_libraries(engine_scene_core_tests PRIVATE engine_scene_core motion::options Catch2::Catch2WithMain)
   target_compile_definitions(engine_scene_core_tests PRIVATE PREMATION_ENGINE_TEST_DATA="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
   add_test(NAME engine_scene_core_tests COMMAND engine_scene_core_tests --reporter compact)
@@ -1494,7 +1497,7 @@ if(MOTION_BUILD_TESTS)
                                  tests/test_reframe_analyse.cpp tests/test_job_retime.cpp
                                  tests/test_transcribe.cpp tests/test_mask_fit.cpp tests/test_sam2_track.cpp
                                  tests/test_sam_gpu_encoder.cpp)
-  target_link_libraries(engine_jobs_tests PRIVATE engine_jobs_core motion::options Catch2::Catch2WithMain)
+  target_link_libraries(engine_jobs_tests PRIVATE engine_jobs_core engine_export_core motion::options Catch2::Catch2WithMain)  # export_core: the stored matte's PNG writer (stream B1)
   # Camera program D3: the depth model's ORT run (the test skips without PREMATION_DEPTH_TEST_MODEL).
   # Object Matte: the float encoder on the GPU vs the quantized one on the CPU (skips without the models).
   target_sources(engine_jobs_tests PRIVATE src/jobs/depth_ort_ffi.cpp src/jobs/sam2_ort_ffi.cpp src/jobs/sam_ort_ffi.cpp)

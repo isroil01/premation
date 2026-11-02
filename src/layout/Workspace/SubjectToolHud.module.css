@@ -1,0 +1,135 @@
+/*
+ * The Object Matte group's HUD (SubjectToolHud.tsx): a chip in the viewer's
+ * bottom-left corner, and the background-tracking chip top-right. Both are
+ * overlay chrome in the overlay palette, inert to the pointer except the
+ * Stop button.
+ */
+.hud {
+  position: absolute;
+  left: var(--space-2);
+  bottom: var(--space-2);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: calc(100% - var(--space-4));
+  padding: 3px var(--space-2);
+  border: 1px solid var(--color-overlay-panel-border);
+  border-radius: var(--radius-full);
+  background: var(--color-overlay-panel-bg);
+  box-shadow: var(--color-overlay-panel-shadow);
+  color: var(--color-overlay-text);
+  font-size: var(--font-size-xs);
+  line-height: 16px;
+  white-space: nowrap;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.name {
+  font-weight: 600;
+}
+
+/* What the next press does: green for add / foreground, red for cut / background. */
+.mode {
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--color-overlay-text) 14%, transparent);
+}
+
+.mode[data-mode='fg'] {
+  background: color-mix(in srgb, var(--color-success) 30%, transparent);
+}
+
+.mode[data-mode='bg'] {
+  background: color-mix(in srgb, var(--color-danger) 30%, transparent);
+}
+
+.value {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.9;
+}
+
+/* The brush, to scale (clamped): a glance says how big it is. */
+.dot {
+  display: inline-block;
+  border-radius: 50%;
+  border: 1px solid var(--color-overlay-text);
+}
+
+.keys {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0.6;
+}
+
+@container (max-width: 640px) {
+  .keys {
+    display: none;
+  }
+}
+
+/* ── Background tracking ─────────────────────────────────────────── */
+.tracking {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 2px 4px 2px var(--space-2);
+  border: 1px solid var(--color-overlay-panel-border);
+  border-radius: var(--radius-full);
+  background: var(--color-overlay-panel-bg);
+  box-shadow: var(--color-overlay-panel-shadow);
+  color: var(--color-overlay-text);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 16px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.stop {
+  pointer-events: auto;
+  padding: 0 6px;
+  border: 1px solid var(--color-overlay-panel-border);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.stop:hover {
+  background: color-mix(in srgb, var(--color-overlay-text) 14%, transparent);
+}
+
+.stop:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+.spinner {
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid var(--color-overlay-text);
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+  }
+}

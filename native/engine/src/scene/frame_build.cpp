@@ -286,7 +286,7 @@ class Flattener {
   api::Renderable layer_to_renderable(const RLayer& l, const Mat3& parent, double parentOpacity, const Mat3* placement);
   api::Renderable precomp_to_renderable(const RLayer& l, const Mat3& parent, double parentOpacity, const Mat3* placement);
   api::Renderable particles_to_renderable(const RLayer& l, const Mat3& parent, double parentOpacity);
-  std::optional<api::Renderable> adjustment_to_renderable(const RLayer& l, const Mat3& parent);
+  std::optional<api::Renderable> adjustment_to_renderable(const RLayer& l, const Mat3& parent, double parentOpacity);
   /// `parentScale`: the device scale the flatten's parent adds (parent_scale).
   void feed(const RLayer& l, double parentScale);
   static bool needs_isolation(const RLayer& l);
@@ -920,10 +920,13 @@ api::Renderable Flattener::layer_to_renderable(const RLayer& l, const Mat3& pare
   if (l.behindSubject) {
     // Behind Subject: last on the chain, the layer is cut by the inverse of that layer's subject
     // (Set Matte from its matte frame, drawn through its placement — composition_pass map_layer).
+    // Softness feathers the matte (a separable Gaussian, stream B4), choke shrinks (+) or grows (−)
+    // it first, so a soft edge's halo does not hide the text behind.
     r.effects.push_back(FxWriter("set-matte")
                             .flag("useLuminance", false)
                             .flag("invert", true)
                             .num("featherPx", l.behindSubjectSoftness)
+                            .num("chokePx", l.behindSubjectChoke)
                             .text("matteLayerId", *l.behindSubject + std::string(kSubjectMapSuffix) +
                                                       object_matte_key("", l.behindSubjects).substr(std::string_view("fxmatte:").size()))
                             .done());
@@ -1078,7 +1081,7 @@ api::Renderable Flattener::particles_to_renderable(const RLayer& l, const Mat3& 
   return r;
 }
 
-std::optional<api::Renderable> Flattener::adjustment_to_renderable(const RLayer& l, const Mat3& parent) {
+std::optional<api::Renderable> Flattener::adjustment_to_renderable(const RLayer& l, const Mat3& parent, double parentOpacity) {
   const ColorMatrix cm = l.effects.empty() ? ColorMatrix{} : effect_color_matrix(l.effects);
   const bool lut = has_lut_effect(l);
   std::vector<api::RenderEffect> spatial = extract_spatial_effects(l, false);
@@ -1086,15 +1089,23 @@ std::optional<api::Renderable> Flattener::adjustment_to_renderable(const RLayer&
   api::Renderable r;
   r.id = l.id;
   r.kind = api::RenderableKind::group;
-  r.model_matrix = mat_wire(Mat3::identity());
+  // The layer's own placement, as every other layer's (stream D L1, 2026-11-02):
+  // the composition pass draws the layer's mask raster through it to scope the
+  // adjustment, as After Effects does. The chain itself still runs on the
+  // whole frame below (composition_pass.cpp adjustment branch).
+  const Mat3 model = mat3_mul(parent, center_model(l));
+  r.model_matrix = mat_wire(model);
   // The layer's own box in world space, as every other layer's: the effect
   // chain's fxBox (renderable_box) is where box-relative effects put their
   // centre and extent — a Vignette's falloff, a generator's field. A 1 × 1
   // box at the origin made Vignette darken the whole frame evenly and
   // Snowfall / Rainfall draw into one pixel (2026-10-09 samurai session).
-  r.bounds = bounds_of(mat3_mul(parent, center_model(l)));
-  r.opacity = 1;
+  r.bounds = bounds_of(model);
+  // AE honours an adjustment layer's opacity (and masks): the processed frame
+  // is mixed against the untouched one by opacity × mask coverage.
+  r.opacity = parentOpacity * l.opacity;
   r.blend = api::RenderBlendMode::normal;
+  if (l.mask.is_object() && !l.mask.at("paths").arr().empty()) r.mask_texture_key = "mask:" + l.id;  // fed by feed()
   api::RenderAdjustment adj;
   if (!cm.identity) {
     api::RenderColorMatrix wm;
@@ -1128,7 +1139,7 @@ void Flattener::flatten(const std::vector<RLayer>& layers, const Mat3& parent, d
         continue;
       }
       if (l.isAdjustment) {
-        if (auto adj = adjustment_to_renderable(l, parent)) out.push_back(std::move(*adj));
+        if (auto adj = adjustment_to_renderable(l, parent, parentOpacity)) out.push_back(std::move(*adj));
         continue;
       }
       if (l.light) {  // a light's screen-blended glow quad

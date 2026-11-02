@@ -1364,6 +1364,26 @@
       }
     },
     {
+      "path": "layer/behindSubjectChoke",
+      "key": "behindSubjectChoke",
+      "label": "Behind Subject Choke",
+      "type": "scalar",
+      "default": 0,
+      "min": -100,
+      "max": 100,
+      "clearAtDefault": true,
+      "store": {
+        "fx": "behindSubjectChoke"
+      },
+      "when": {
+        "notKinds": [
+          "camera",
+          "light",
+          "audio"
+        ]
+      }
+    },
+    {
       "path": "layer/behindSubjects",
       "key": "behindSubjects",
       "label": "Behind Subjects",
@@ -1857,6 +1877,35 @@
     },
     {
       "owner": "puppet",
+      "path": "mesh/traceAccuracy",
+      "label": "Trace Accuracy",
+      "matchName": "Premation Puppet Trace Accuracy",
+      "type": "scalar",
+      "codec": "number",
+      "keys": [
+        "traceAccuracy"
+      ],
+      "default": 60,
+      "min": 0,
+      "max": 100,
+      "unit": "%"
+    },
+    {
+      "owner": "puppet",
+      "path": "mesh/alphaThreshold",
+      "label": "Alpha Threshold",
+      "matchName": "Premation Puppet Alpha Threshold",
+      "type": "scalar",
+      "codec": "number",
+      "keys": [
+        "alphaThreshold"
+      ],
+      "default": 32,
+      "min": 0,
+      "max": 255
+    },
+    {
+      "owner": "puppet",
       "path": "mesh/solver",
       "label": "Solver",
       "matchName": "Premation Puppet Solver",
@@ -2059,6 +2108,51 @@
       "choices": [
         "grid",
         "silhouette"
+      ]
+    },
+    {
+      "owner": "skeleton",
+      "path": "mesh/traceAccuracy",
+      "label": "Trace Accuracy",
+      "matchName": "Premation Skeleton Trace Accuracy",
+      "type": "scalar",
+      "codec": "number",
+      "keys": [
+        "traceAccuracy"
+      ],
+      "default": 60,
+      "min": 0,
+      "max": 100,
+      "unit": "%"
+    },
+    {
+      "owner": "skeleton",
+      "path": "mesh/alphaThreshold",
+      "label": "Alpha Threshold",
+      "matchName": "Premation Skeleton Alpha Threshold",
+      "type": "scalar",
+      "codec": "number",
+      "keys": [
+        "alphaThreshold"
+      ],
+      "default": 32,
+      "min": 0,
+      "max": 255
+    },
+    {
+      "owner": "skeleton",
+      "path": "mesh/preserveVolume",
+      "label": "Preserve Volume",
+      "matchName": "Premation Skeleton Preserve Volume",
+      "type": "choice",
+      "codec": "choice",
+      "keys": [
+        "preserveVolume"
+      ],
+      "default": "off",
+      "choices": [
+        "off",
+        "on"
       ]
     },
     {

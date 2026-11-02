@@ -17,6 +17,9 @@ extern "C" {
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <memory>
+#include <utility>
+#include <vector>
 
 #include "audio_decode.hpp"
 #include "scene/image_decode.hpp"
@@ -133,18 +136,18 @@ class FfmpegFrames final : public FrameSource {
 
   bool read_luma(std::int64_t frame, LumaImage& out, std::string& error) override {
     if (!position(frame, error)) return false;
-    const auto fmt = static_cast<AVPixelFormat>(frame_->format);
+    const auto fmt = static_cast<AVPixelFormat>(cur_->format);
     const bool planarY = fmt == AV_PIX_FMT_YUV420P || fmt == AV_PIX_FMT_YUVJ420P || fmt == AV_PIX_FMT_NV12 ||
                          fmt == AV_PIX_FMT_YUV422P || fmt == AV_PIX_FMT_YUVJ422P || fmt == AV_PIX_FMT_YUV444P ||
                          fmt == AV_PIX_FMT_YUVJ444P || fmt == AV_PIX_FMT_YUVA420P;
-    if (planarY && static_cast<std::uint32_t>(frame_->width) == outW_ && static_cast<std::uint32_t>(frame_->height) == outH_) {
+    if (planarY && static_cast<std::uint32_t>(cur_->width) == outW_ && static_cast<std::uint32_t>(cur_->height) == outH_) {
       // lumaExtract.ts 'raw8': the Y bytes themselves.
       out.width = outW_;
       out.height = outH_;
       out.bytes = true;
       out.data.resize(static_cast<std::size_t>(outW_) * outH_);
       for (std::uint32_t y = 0; y < outH_; ++y) {
-        const std::uint8_t* row = frame_->data[0] + static_cast<std::ptrdiff_t>(y) * frame_->linesize[0];  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+        const std::uint8_t* row = cur_->data[0] + static_cast<std::ptrdiff_t>(y) * cur_->linesize[0];  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
         for (std::uint32_t x = 0; x < outW_; ++x) out.data[static_cast<std::size_t>(y) * outW_ + x] = row[x];  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
       }
       return true;
@@ -164,12 +167,48 @@ class FfmpegFrames final : public FrameSource {
   }
 
  private:
-  /// Decode up to `frame` (frame_ holds it after).
+  /// A decoded picture kept for a backward walk (position()'s ring).
+  struct Kept {
+    std::int64_t index = 0;
+    std::unique_ptr<AVFrame, FrameDeleter> frame;
+  };
+
+  /// How many pictures the backward ring may hold for this stream: about 384 MB of raw frames,
+  /// never fewer than 4 nor more than 96 (a GOP is 12–250 frames; a longer one is decoded in parts).
+  [[nodiscard]] std::size_t ring_capacity() const noexcept {
+    const auto fmt = static_cast<AVPixelFormat>(frame_->format);
+    const int bytes = av_image_get_buffer_size(fmt, frame_->width, frame_->height, 1);
+    const std::size_t per = bytes > 0 ? static_cast<std::size_t>(bytes) : static_cast<std::size_t>(frame_->width) * static_cast<std::size_t>(frame_->height) * 3 / 2;
+    constexpr std::size_t kBudget = std::size_t{384} << 20;
+    return std::clamp<std::size_t>(kBudget / std::max<std::size_t>(1, per), 4, 96);
+  }
+
+  /// Position on `frame` (cur_ holds its picture after). Forward and near: keep decoding.
+  /// Far: seek to the keyframe before it. BACKWARD, one or two frames at a time (a walk the other
+  /// way from the origin): seeking to the keyframe and decoding the GOP up to the frame again for
+  /// every step cost a whole GOP decode per frame; instead the GOP is decoded forward ONCE into a
+  /// ring of ref-counted pictures ending at the frame, and the following backward steps are handed
+  /// out of the ring in reverse. The ring refills from the keyframe before it when it runs dry.
   bool position(std::int64_t frame, std::string& error) {
     frame = std::clamp<std::int64_t>(frame, 0, std::max<std::int64_t>(0, frames_ - 1));
-    if (haveLast_ && frame == lastIndex_) return true;
-    // Forward and near: keep decoding. Backward or far: seek to the keyframe before it.
-    if (!haveLast_ || frame < lastIndex_ || frame > lastIndex_ + 48) {
+    if (haveServed_ && frame == servedIndex_ && cur_ != nullptr) return true;
+    // In the ring (a backward step): the picture is there; everything after it is no longer needed.
+    for (auto it = ring_.rbegin(); it != ring_.rend(); ++it) {
+      if (it->index != frame) continue;
+      cur_ = it->frame.get();
+      ring_.erase(it.base(), ring_.end());  // the pictures after `frame`
+      serve(frame);
+      return true;
+    }
+    const bool backward = haveServed_ && frame < servedIndex_ && servedIndex_ - frame <= 2;
+    if (backward && frames_ > 1) return fill_ring_to(frame, error);
+    ring_.clear();
+    if (haveDec_ && frame == decIndex_) {
+      cur_ = frame_.get();
+      serve(frame);
+      return true;
+    }
+    if (!haveDec_ || frame < decIndex_ || frame > decIndex_ + 48) {
       if (!seek(frame, error)) return false;
     }
     for (;;) {
@@ -177,12 +216,62 @@ class FfmpegFrames final : public FrameSource {
       if (got < 0) return false;
       if (got == 0) {
         // End of stream before `frame`: hand back the last picture (a short final GOP).
-        if (haveLast_) return true;
+        if (haveDec_) {
+          cur_ = frame_.get();
+          serve(decIndex_);
+          return true;
+        }
         error = "no frame " + std::to_string(frame);
         return false;
       }
-      if (lastIndex_ >= frame) return true;
+      if (decIndex_ >= frame) {
+        cur_ = frame_.get();
+        serve(decIndex_);
+        return true;
+      }
     }
+  }
+
+  void serve(std::int64_t index) noexcept {
+    servedIndex_ = index;
+    haveServed_ = true;
+  }
+
+  /// Decode from the keyframe before `frame` up to it, keeping the last `ring_capacity()` pictures
+  /// (ending at `frame`) in the ring; serve `frame` from it.
+  bool fill_ring_to(std::int64_t frame, std::string& error) {
+    ring_.clear();
+    if (!seek(frame, error)) return false;
+    std::size_t cap = 0;
+    for (;;) {
+      const int got = next_frame(error);
+      if (got < 0) return false;
+      if (got == 0) break;
+      if (cap == 0) cap = ring_capacity();  // from the first decoded picture's size and format
+      if (decIndex_ > frame) break;  // overshot (a stream whose index does not round exactly): the last kept is the nearest
+      Kept k;
+      k.index = decIndex_;
+      k.frame.reset(av_frame_clone(frame_.get()));  // a reference to the decoder's buffer, not a copy
+      if (!k.frame) {
+        error = "out of memory";
+        return false;
+      }
+      ring_.push_back(std::move(k));
+      while (ring_.size() > cap) ring_.erase(ring_.begin());
+      if (decIndex_ >= frame) break;
+    }
+    if (ring_.empty()) {
+      if (!haveDec_) {
+        error = "no frame " + std::to_string(frame);
+        return false;
+      }
+      cur_ = frame_.get();
+      serve(decIndex_);
+      return true;
+    }
+    cur_ = ring_.back().frame.get();
+    serve(ring_.back().index);
+    return true;
   }
 
   bool seek(std::int64_t frame, std::string& error) {
@@ -195,7 +284,7 @@ class FfmpegFrames final : public FrameSource {
     }
     avcodec_flush_buffers(dec_.get());
     eof_ = false;
-    haveLast_ = false;
+    haveDec_ = false;
     return true;
   }
 
@@ -207,11 +296,11 @@ class FfmpegFrames final : public FrameSource {
         const std::int64_t pts = frame_->best_effort_timestamp != AV_NOPTS_VALUE ? frame_->best_effort_timestamp : frame_->pts;
         if (pts != AV_NOPTS_VALUE) {
           const double sec = static_cast<double>(pts) * timeBase_ - startSec_;
-          lastIndex_ = static_cast<std::int64_t>(std::llround(sec * fps_));
+          decIndex_ = static_cast<std::int64_t>(std::llround(sec * fps_));
         } else {
-          lastIndex_ = haveLast_ ? lastIndex_ + 1 : 0;
+          decIndex_ = haveDec_ ? decIndex_ + 1 : 0;
         }
-        haveLast_ = true;
+        haveDec_ = true;
         return 1;
       }
       if (r == AVERROR_EOF) return 0;
@@ -242,16 +331,16 @@ class FfmpegFrames final : public FrameSource {
     }
   }
 
-  /// The decoded picture's luma at the analysis size, 8-bit (`bytes`); false when swscale cannot.
+  /// The served picture's luma at the analysis size, 8-bit (`bytes`); false when swscale cannot.
   bool luma_scaled(LumaImage& out) {
-    const auto fmtIn = static_cast<AVPixelFormat>(frame_->format);
-    swsLuma_.reset(sws_getCachedContext(swsLuma_.release(), frame_->width, frame_->height, fmtIn, static_cast<int>(outW_),
+    const auto fmtIn = static_cast<AVPixelFormat>(cur_->format);
+    swsLuma_.reset(sws_getCachedContext(swsLuma_.release(), cur_->width, cur_->height, fmtIn, static_cast<int>(outW_),
                                         static_cast<int>(outH_), AV_PIX_FMT_GRAY8, SWS_AREA, nullptr, nullptr, nullptr));
     if (!swsLuma_) return false;
     grey_.resize(static_cast<std::size_t>(outW_) * outH_);
     std::uint8_t* dst[4] = {grey_.data(), nullptr, nullptr, nullptr};
     const int dstStride[4] = {static_cast<int>(outW_), 0, 0, 0};
-    if (sws_scale(swsLuma_.get(), frame_->data, frame_->linesize, 0, frame_->height, dst, dstStride) <= 0) return false;
+    if (sws_scale(swsLuma_.get(), cur_->data, cur_->linesize, 0, cur_->height, dst, dstStride) <= 0) return false;
     out.width = outW_;
     out.height = outH_;
     out.bytes = true;
@@ -260,8 +349,12 @@ class FfmpegFrames final : public FrameSource {
   }
 
   bool convert(RgbaImage& out, std::string& error) {
-    const auto fmtIn = static_cast<AVPixelFormat>(frame_->format);
-    sws_.reset(sws_getCachedContext(sws_.release(), frame_->width, frame_->height, fmtIn, static_cast<int>(outW_),
+    if (cur_ == nullptr) {
+      error = "no picture";
+      return false;
+    }
+    const auto fmtIn = static_cast<AVPixelFormat>(cur_->format);
+    sws_.reset(sws_getCachedContext(sws_.release(), cur_->width, cur_->height, fmtIn, static_cast<int>(outW_),
                                     static_cast<int>(outH_), AV_PIX_FMT_RGBA, SWS_BICUBIC, nullptr, nullptr, nullptr));
     if (!sws_) {
       error = "cannot convert the picture";
@@ -272,7 +365,7 @@ class FfmpegFrames final : public FrameSource {
     out.rgba.assign(static_cast<std::size_t>(outW_) * outH_ * 4U, 0);
     std::uint8_t* dst[4] = {out.rgba.data(), nullptr, nullptr, nullptr};
     const int dstStride[4] = {static_cast<int>(outW_ * 4U), 0, 0, 0};
-    const int h = sws_scale(sws_.get(), frame_->data, frame_->linesize, 0, frame_->height, dst, dstStride);
+    const int h = sws_scale(sws_.get(), cur_->data, cur_->linesize, 0, cur_->height, dst, dstStride);
     if (h <= 0) {
       error = "cannot convert the picture";
       return false;
@@ -288,6 +381,10 @@ class FfmpegFrames final : public FrameSource {
   std::unique_ptr<SwsContext, SwsDeleter> sws_;
   std::unique_ptr<SwsContext, SwsDeleter> swsLuma_;
   std::vector<std::uint8_t> grey_;  // luma_scaled's scratch, kept across frames
+  /// The backward ring: pictures in index order, the served one last (position()).
+  std::vector<Kept> ring_;
+  /// The picture read() converts: the decoder's `frame_`, or one of the ring's.
+  const AVFrame* cur_ = nullptr;
   int stream_ = -1;
   std::uint32_t srcW_ = 0;
   std::uint32_t srcH_ = 0;
@@ -297,8 +394,11 @@ class FfmpegFrames final : public FrameSource {
   double timeBase_ = 1;
   double startSec_ = 0;
   std::int64_t frames_ = 1;
-  std::int64_t lastIndex_ = -1;
-  bool haveLast_ = false;
+  /// The decoder's last picture (frame_) and the one served last (cur_).
+  std::int64_t decIndex_ = -1;
+  bool haveDec_ = false;
+  std::int64_t servedIndex_ = -1;
+  bool haveServed_ = false;
   bool eof_ = false;
 };
 

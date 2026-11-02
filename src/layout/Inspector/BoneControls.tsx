@@ -16,8 +16,11 @@ import { Button } from '@components/Button';
 import { Icon } from '@components/Icon';
 import { useUIStore } from '@stores/uiStore';
 import { documentMirror } from '@stores/documentMirror';
-import { useMirrorLayer, useMirrorLayersWatch } from '@hooks/useMirror';
+import { useMirrorLayer, useMirrorLayersWatch, useMirrorTree, useMirrorValueAt } from '@hooks/useMirror';
 import { useMirrorJson } from '@hooks/useMirrorFields';
+import { useThrottledTime } from '@stores/playbackClockStore';
+import { numbersOfValue } from '@core/mirror/trackIndex';
+import { RigAnimToggle } from './PuppetControls';
 import { applyRigPresetEdit, rigPaths } from '@core/engine/rigPaths';
 import { edit } from '@core/engine/uiEdits';
 import { compTime } from '@core/engine/propRefs';
@@ -45,7 +48,7 @@ import {
 } from '@core/rig/weightPaint';
 import { useEngineEdit } from './useEngineEdit';
 import {
-  addControllerCommands, addPoleCommands, boneFieldCommands, boneRestCommands, chainSwitchCommands,
+  addControllerCommands, addPoleCommands, boneFieldCommands, bonePoseCommands, boneRestCommands, chainSwitchCommands,
   controllerFieldCommands, deleteBoneCommands, deleteControllerCommands, ikChainLengthCommands,
   ikTargetCommands, ikToggleCommands, removePoleCommands, renameBoneCommands, skeletonMeshCommands,
   weightPaintCommands,
@@ -81,6 +84,11 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
   // B4 round 5: the rig at the playhead as the engine resolves it (getRigPose) — the live and
   // solved pose, the goals' chain modes, the picked vertex's bind weights.
   const pose = useRigPose(layer ? nodeId : null, workspaceTime, selectedVertex);
+  // C1's mesh settings (`skeleton/mesh/traceAccuracy`, `skeleton/mesh/alphaThreshold`) appear once the engine lists them.
+  const meshTree = useMirrorTree(layer ? nodeId : null);
+  const hasTrace = !!meshTree?.nodes.has('skeleton/mesh/traceAccuracy');
+  const hasAlpha = !!meshTree?.nodes.has('skeleton/mesh/alphaThreshold');
+  const skelMeshAny = skel as (SkeletonRig & { traceAccuracy?: number; alphaThreshold?: number }) | undefined;
   if (!layer) return null;
 
   const bones = skel?.bones ?? [];
@@ -438,6 +446,36 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
               aria-label={t('inspector.bone.meshExpansionAria', 'Skinning mesh expansion')}
             />
           </div>
+          {hasTrace && (
+            <div className={styles.paramRow}>
+              <span className={styles.paramLabel} title={t('inspector.puppet.traceAccuracyHint', "How closely the outline mesh follows the artwork's edge (0–100). Higher keeps small notches; lower smooths them away.")}>
+                {t('inspector.puppet.traceAccuracy', 'Trace Accuracy')}
+              </span>
+              <ValueField
+                value={skelMeshAny?.traceAccuracy ?? 60}
+                min={0}
+                max={100}
+                {...eng.scrub('Edit Skeleton Mesh')}
+                onChange={(v) => eng.send('Edit Skeleton Mesh', skeletonMeshCommands(nodeId, { traceAccuracy: Math.max(0, Math.min(100, Math.round(v))) }))}
+                aria-label={t('inspector.puppet.traceAccuracy', 'Trace Accuracy')}
+              />
+            </div>
+          )}
+          {hasAlpha && (
+            <div className={styles.paramRow}>
+              <span className={styles.paramLabel} title={t('inspector.puppet.alphaThresholdHint', 'Alpha below this (0–255) counts as outside the artwork when the outline is traced.')}>
+                {t('inspector.puppet.alphaThreshold', 'Alpha Threshold')}
+              </span>
+              <ValueField
+                value={skelMeshAny?.alphaThreshold ?? 32}
+                min={0}
+                max={255}
+                {...eng.scrub('Edit Skeleton Mesh')}
+                onChange={(v) => eng.send('Edit Skeleton Mesh', skeletonMeshCommands(nodeId, { alphaThreshold: Math.max(0, Math.min(255, Math.round(v))) }))}
+                aria-label={t('inspector.puppet.alphaThreshold', 'Alpha Threshold')}
+              />
+            </div>
+          )}
         </div>
       )}
 
@@ -536,11 +574,14 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
               </Button>
             </div>
 
+            {/* The POSE at the playhead (the keyframeable bone tracks), each row with its
+                stopwatch and navigator — Rest Angle / Scale below are the bind pose. */}
+            <BonePoseRows nodeId={nodeId} bone={bone} seconds={workspaceTime} eng={eng} />
             {(() => {
               const live = posedBones.find((candidate) => candidate.id === bone.id) ?? bone;
               return (
                 <div className={styles.paramRow}>
-                  <span className={styles.paramLabel}>{t('inspector.bone.livePose', 'Live Pose')}</span>
+                  <span className={styles.paramLabel}>{t('inspector.bone.livePose', 'Solved Pose')}</span>
                   <span className={styles.subText}>
                     {`${((live.rotation * 180) / Math.PI).toFixed(1)}° · ${live.x.toFixed(1)}, ${live.y.toFixed(1)}`}
                   </span>
@@ -688,6 +729,13 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                   />
                 </div>
                 <div className={styles.paramRow}>
+                  <RigAnimToggle
+                    nodeId={nodeId}
+                    path={rigPaths.ikProp(bone.id, 'target')}
+                    tracks={[`ikTarget.${bone.id}.x`, `ikTarget.${bone.id}.y`]}
+                    label={`${bone.name || bone.id} IK Goal`}
+                    seconds={workspaceTime}
+                  />
                   <span className={styles.paramLabel}>{t('inspector.bone.goalXY', 'Goal X / Y')}</span>
                   <div style={{ display: 'flex', gap: 4 }}>
                     {/* The goal at the playhead: a typed value keys it there
@@ -859,6 +907,81 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * A bone's POSE rows (C2): Rotation, Position X / Y, Scale X / Y at the playhead
+ * — the keyframeable `bone.<id>.*` tracks, each with its stopwatch and (once
+ * animated) the ◀ ◆ ▶ navigator, like a Transform row. The values are the LIVE
+ * ones (the mirror's `valueAt` samples the keys); a typed value follows the
+ * one keying rule (`rigAutoKey`): a key when animated or under auto-keyframe,
+ * else the static pose (the engine captures the bind pose first).
+ */
+function BonePoseRows({ nodeId, bone, seconds, eng }: { nodeId: string; bone: Bone; seconds: number; eng: ReturnType<typeof useEngineEdit> }): JSX.Element {
+  const name = bone.name || bone.id;
+  const shown = compTime(useThrottledTime());
+  const rotation = numbersOfValue(useMirrorValueAt(nodeId, rigPaths.boneProp(bone.id, 'rotation'), shown))[0] ?? (bone.rotation * 180) / Math.PI;
+  const position = numbersOfValue(useMirrorValueAt(nodeId, rigPaths.boneProp(bone.id, 'position'), shown));
+  const scale = numbersOfValue(useMirrorValueAt(nodeId, rigPaths.boneProp(bone.id, 'scale'), shown));
+  const px = position[0] ?? bone.x;
+  const py = position[1] ?? bone.y;
+  const sx = (scale[0] ?? (bone.scaleX ?? 1) * 100) / 100;
+  const sy = (scale[1] ?? (bone.scaleY ?? 1) * 100) / 100;
+  const label = 'Pose Bone';
+  const track = (p: string): string => `bone.${bone.id}.${p}`;
+  return (
+    <>
+      <div className={styles.paramRow}>
+        <RigAnimToggle nodeId={nodeId} path={rigPaths.boneProp(bone.id, 'rotation')} tracks={[track('rotation')]} label={`${name} Rotation`} seconds={seconds} />
+        <span className={styles.paramLabel}>{t('inspector.bone.poseRotation', 'Rotation')}</span>
+        <ValueField
+          value={rotation}
+          unit="°"
+          {...eng.scrub(label)}
+          onChange={(v) => eng.send(label, bonePoseCommands(nodeId, bone.id, 'rotation', v, seconds))}
+          aria-label={t('inspector.bone.poseRotationAria', '{name} pose rotation', { name })}
+        />
+      </div>
+      <div className={styles.paramRow}>
+        <RigAnimToggle nodeId={nodeId} path={rigPaths.boneProp(bone.id, 'position')} tracks={[track('x'), track('y')]} label={`${name} Position`} seconds={seconds} />
+        <span className={styles.paramLabel}>{t('inspector.bone.posePosition', 'Position X / Y')}</span>
+        <div style={{ display: 'flex', gap: 4 }}>
+          <ValueField
+            value={px}
+            unit="px"
+            {...eng.scrub(label)}
+            onChange={(x) => eng.send(label, bonePoseCommands(nodeId, bone.id, 'position', { x, y: py }, seconds))}
+            aria-label={t('inspector.bone.posePositionXAria', '{name} pose x', { name })}
+          />
+          <ValueField
+            value={py}
+            unit="px"
+            {...eng.scrub(label)}
+            onChange={(y) => eng.send(label, bonePoseCommands(nodeId, bone.id, 'position', { x: px, y }, seconds))}
+            aria-label={t('inspector.bone.posePositionYAria', '{name} pose y', { name })}
+          />
+        </div>
+      </div>
+      <div className={styles.paramRow}>
+        <RigAnimToggle nodeId={nodeId} path={rigPaths.boneProp(bone.id, 'scale')} tracks={[track('scaleX'), track('scaleY')]} label={`${name} Scale`} seconds={seconds} />
+        <span className={styles.paramLabel}>{t('inspector.bone.poseScale', 'Scale X / Y')}</span>
+        <div style={{ display: 'flex', gap: 4 }}>
+          <ValueField
+            value={sx}
+            {...eng.scrub(label)}
+            onChange={(v) => eng.send(label, bonePoseCommands(nodeId, bone.id, 'scale', { x: v, y: sy }, seconds))}
+            aria-label={t('inspector.bone.poseScaleXAria', '{name} pose scale x', { name })}
+          />
+          <ValueField
+            value={sy}
+            {...eng.scrub(label)}
+            onChange={(v) => eng.send(label, bonePoseCommands(nodeId, bone.id, 'scale', { x: sx, y: v }, seconds))}
+            aria-label={t('inspector.bone.poseScaleYAria', '{name} pose scale y', { name })}
+          />
+        </div>
+      </div>
+    </>
   );
 }
 

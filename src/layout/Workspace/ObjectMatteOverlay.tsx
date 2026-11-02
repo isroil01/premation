@@ -8,20 +8,34 @@
  *   Shift-click  add to the selection (a foreground point)
  *   Alt-click    subtract from it (a background point)
  *   drag         a box around the subject, or a lasso (AE's Rectangle /
- *                Lasso marquee, picked on the options bar)
+ *                Lasso marquee, picked on the options bar) — a lasso hands
+ *                the model its polygon as prompts (points inside it are the
+ *                subject, points just outside its edge are not), so the shape
+ *                drawn is what is asked for
  *
  * The prompts are the Roto Brush's (`rotoBrushStore`: a click is a one-point
  * stroke, the box rides beside them), so the tool options' Propagate, Refine
  * and Freeze carry the selection through the shot exactly as they do a
  * painted one. Segmenting is `core/workspace/rotoBrushTool.ts`; this file is
  * pointer plumbing and SVG.
+ *
+ * ## Staying out of the frame loop
+ *
+ * The overlay reads the playhead through `useRestingTime`: paused it is
+ * exact, playing it is frozen, so a played frame re-renders nothing here.
+ * The pointer lives in a ref and reaches React at most once per animation
+ * frame; the subjects' boundaries and the found objects' outline paths are
+ * memoised per (layer, frame, document revision, projection) and computed
+ * once per render. A background walk (`tracking`) blocks nothing; a short
+ * job in flight (`busy`) queues the press made meanwhile instead of dropping
+ * it.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useUIStore } from '@stores/uiStore';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useActiveCompSize, useMirrorRevisionFrame } from '@hooks/useMirrorFrame';
-import { useCurrentTime } from '@stores/playbackClockStore';
+import { useRestingTime } from '@hooks/useRestingTime';
 import { lassoPrompts, useRotoBrushStore } from '@stores/rotoBrushStore';
 import { getWorkspaceController } from '@core/workspace/WorkspaceController';
 import {
@@ -45,7 +59,8 @@ import { useLayerScreenMapping } from './useLayerScreenMapping';
 import type { LayerScreenMapping } from './layerScreen';
 import { useDisplayedCamera2D } from './useOverlayView';
 import { autoInstallObjectMatte, offerSam2Tracking } from '@layout/Settings/objectMatteJob';
-import { insideOutline, subjectBoundaries } from './subjectBoundary';
+import { insideOutline, subjectBoundaries, type SubjectBoundary } from './subjectBoundary';
+import { SubjectToolHud, TrackingChip } from './SubjectToolHud';
 import styles from './ObjectMatteOverlay.module.css';
 import { t } from '@core/i18n';
 
@@ -79,11 +94,29 @@ function reportFailure(err: unknown): void {
   store.setStatus(explainObjectMatteError(message));
 }
 
-/**
- * The gate: only the tool's own flag is subscribed here, so with another tool
- * up a drag or a played frame re-renders nothing of this overlay (the inner
- * part reads the time and the document revision).
- */
+/** The smallest shown subject whose outline holds layer-local `p` (a subject inside another is reachable). */
+export function subjectAt(boundaries: readonly SubjectBoundary[], subjects: readonly Subject[], p: Pt): Subject | null {
+  let best: { s: Subject; area: number } | null = null;
+  for (const b of boundaries) {
+    const s = subjects.find((x) => x.id === b.subject);
+    if (!s || s.hidden || !insideOutline(b.local, p)) continue;
+    const area = (b.box.x1 - b.box.x0) * (b.box.y1 - b.box.y0);
+    if (!best || area < best.area) best = { s, area };
+  }
+  return best?.s ?? null;
+}
+
+/** A found object's outline (layer-local x y pairs) as screen path data. */
+export function outlinePathOf(flat: readonly number[], toScreen: (x: number, y: number) => Pt): string {
+  if (flat.length < 6) return '';
+  let d = '';
+  for (let i = 0; i + 1 < flat.length; i += 2) {
+    const s = toScreen(flat[i]!, flat[i + 1]!);
+    d += `${i === 0 ? 'M' : 'L'} ${s.x.toFixed(1)} ${s.y.toFixed(1)} `;
+  }
+  return `${d}Z`;
+}
+
 /**
  * Where the overlay is hosted when it is not the Composition viewer's: the
  * Layer panel passes its own camera (layer-local px ↔ its stage), the layer
@@ -96,6 +129,11 @@ export interface ObjectMatteHost {
   time: number;
 }
 
+/**
+ * The gate: only the tool's own flag is subscribed here, so with another tool
+ * up a drag or a played frame re-renders nothing of this overlay (the inner
+ * part reads the resting time and the document revision).
+ */
 export function ObjectMatteOverlay({ host }: { host?: ObjectMatteHost } = {}): JSX.Element | null {
   const on = useUIStore((s) => s.activeTool === 'object-matte');
   return on ? <ObjectMatteOverlayActive host={host} /> : null;
@@ -104,7 +142,7 @@ export function ObjectMatteOverlay({ host }: { host?: ObjectMatteHost } = {}): J
 function ObjectMatteOverlayActive({ host }: { host?: ObjectMatteHost }): JSX.Element | null {
   const activeTool = useUIStore((s) => s.activeTool);
   const ids = useSelectionStore((s) => s.ids);
-  const playhead = useCurrentTime();
+  const { time: playhead, playing } = useRestingTime();
   const time = host ? host.time : playhead;
   const comp = useActiveCompSize();
   const sceneTick = useMirrorRevisionFrame();
@@ -122,6 +160,9 @@ function ObjectMatteOverlayActive({ host }: { host?: ObjectMatteHost }): JSX.Ele
   // whole first (a person, the jacket on them, its sleeve): `depth` picks which is lit strongly.
   const [objects, setObjects] = useState<FoundObject[] | null>(null);
   const [stack, setStack] = useState<FoundObject[]>([]);
+  // The pointer, overlay px: written on every move, handed to React once per animation frame.
+  const pointerRef = useRef<Pt | null>(null);
+  const pointerRaf = useRef<number | null>(null);
   const [pointer, setPointer] = useState<Pt | null>(null);
   const depth = useSubjectStore((s) => s.depth);
   const hot = stack.length > 0 ? stack[Math.min(depth, stack.length - 1)]! : null;
@@ -129,8 +170,8 @@ function ObjectMatteOverlayActive({ host }: { host?: ObjectMatteHost }): JSX.Ele
   stackRef.current = stack;
   // The layer's subjects (several per layer) and the one Shift / Alt edit.
   const storedActive = useSubjectStore((s) => (nodeId ? s.active[nodeId] : undefined));
-  void sceneTick;
-  const subjects: Subject[] = nodeId ? layerSubjects(nodeId) : [];
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- sceneTick: the subjects are read from the document at this revision
+  const subjects: Subject[] = useMemo(() => (nodeId ? layerSubjects(nodeId) : []), [nodeId, sceneTick]);
   const activeId = subjects.some((s) => s.id === storedActive) ? storedActive! : (subjects[subjects.length - 1]?.id ?? null);
   const activeSubject = subjects.find((s) => s.id === activeId) ?? null;
   const [finding, setFinding] = useState(false);
@@ -149,6 +190,9 @@ function ObjectMatteOverlayActive({ host }: { host?: ObjectMatteHost }): JSX.Ele
   useEffect(() => {
     if (active) offerSam2Tracking();
   }, [active]);
+  useEffect(() => () => {
+    if (pointerRaf.current !== null) cancelAnimationFrame(pointerRaf.current);
+  }, []);
 
   const camera = useDisplayedCamera2D();
   // Hosted: the host's camera. The comp viewer's projection is still asked for
@@ -165,6 +209,16 @@ function ObjectMatteOverlayActive({ host }: { host?: ObjectMatteHost }): JSX.Ele
     },
     [mapping],
   );
+
+  /** The pointer to React, once per frame (the hover tag and the subject under it read it). */
+  const publishPointer = useCallback((p: Pt | null): void => {
+    pointerRef.current = p;
+    if (pointerRaf.current !== null) return;
+    pointerRaf.current = requestAnimationFrame(() => {
+      pointerRaf.current = null;
+      setPointer(pointerRef.current);
+    });
+  }, []);
 
   const clearHover = useCallback((): void => {
     hoverSeq.current++;
@@ -183,9 +237,10 @@ function ObjectMatteOverlayActive({ host }: { host?: ObjectMatteHost }): JSX.Ele
   // Mask lights every selectable object on hover): one search per frame, kept,
   // so moving the pointer is a lookup. It also warms the frame's encoding, so a
   // click — or the per-point hover where no object was found — is decoder-only.
+  // Nothing is searched while the transport runs: the frame is already gone.
   useEffect(() => {
     setStack([]);
-    if (!active || !nodeId) {
+    if (!active || !nodeId || playing) {
       setObjects(null);
       return;
     }
@@ -208,7 +263,7 @@ function ObjectMatteOverlayActive({ host }: { host?: ObjectMatteHost }): JSX.Ele
       window.clearTimeout(timer);
       setFinding(false);
     };
-  }, [active, nodeId, time, sceneTick]);
+  }, [active, nodeId, time, sceneTick, playing]);
 
   const fps = (): number => settingsFps(activeCompSettingsNow());
 
@@ -247,12 +302,15 @@ function ObjectMatteOverlayActive({ host }: { host?: ObjectMatteHost }): JSX.Ele
    * box / lasso and replaces (plain), adds to (Shift) or is cut from (Alt)
    * what is selected — the soft matte at full size, its edge snapped to the
    * picture, only the region the prompt touched kept.
+   *
+   * While a job is in flight the press waits for it (`queuePress`), so a
+   * click made during the previous click's segmenting is not lost.
    */
   // A plain click or box makes a NEW subject; Shift adds to the active one, Alt cuts from it.
   const targetOf = (shift: boolean, alt: boolean): string | null =>
     !nodeId ? null : (shift || alt) && activeId ? activeId : newSubjectId(nodeId);
-  const select = (req: SubjectEditRequest, subject: string | null): void => {
-    if (!nodeId || !subject) return;
+  const runSelect = (req: SubjectEditRequest, subject: string): void => {
+    if (!nodeId) return;
     const store = useRotoBrushStore.getState();
     store.setBusy(true);
     store.setStatus(t('workspace.objectMatte.selecting', 'Selecting…'));
@@ -269,20 +327,29 @@ function ObjectMatteOverlayActive({ host }: { host?: ObjectMatteHost }): JSX.Ele
       })
       .finally(() => useRotoBrushStore.getState().setBusy(false));
   };
+  const select = (req: SubjectEditRequest, subject: string | null): void => {
+    if (!nodeId || !subject) return;
+    const store = useRotoBrushStore.getState();
+    if (!store.queuePress(() => runSelect(req, subject))) {
+      store.setStatus(t('workspace.objectMatte.queued', 'Queued — applies when the current selection finishes.'));
+    }
+  };
   const opOf = (shift: boolean, alt: boolean): SubjectEditRequest['op'] => (alt ? 'subtract' : shift ? 'add' : 'replace');
 
-  /** The shown subject whose outline holds `p` (the smallest, so a subject inside another is reachable). */
-  const subjectUnder = (p: Pt): Subject | null => {
-    if (!nodeId) return null;
-    let best: { s: Subject; area: number } | null = null;
-    for (const b of subjectBoundaries(nodeId, time, (x, y) => ({ x, y }))) {
-      const s = subjects.find((x) => x.id === b.subject);
-      if (!s || s.hidden || !insideOutline(b.local, p)) continue;
-      const area = (b.box.x1 - b.box.x0) * (b.box.y1 - b.box.y0);
-      if (!best || area < best.area) best = { s, area };
-    }
-    return best?.s ?? null;
-  };
+  const toScreen = useCallback((x: number, y: number): Pt => (mapping ? mapping.localToScreen(x, y) : { x: 0, y: 0 }), [mapping]);
+  // The subjects' outlines, once per (layer, frame, document revision, projection): both the
+  // drawing and the hit test read the same list.
+  const boundaries = useMemo(
+    () => (nodeId && mapping ? subjectBoundaries(nodeId, time, toScreen) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sceneTick: the document revision the outlines are read at
+    [nodeId, mapping, time, toScreen, sceneTick],
+  );
+  // The found objects' outline paths, once per search result and projection (up to 24 of them).
+  const objectPaths = useMemo(
+    () => (objects && mapping ? objects.map((o) => outlinePathOf(o.outline, toScreen)) : []),
+    [objects, mapping, toScreen],
+  );
+  const subjectUnder = (p: Pt): Subject | null => (nodeId ? subjectAt(boundaries, subjects, p) : null);
 
   const click = (p: Pt, shift: boolean, alt: boolean): void => {
     if (!nodeId) return;
@@ -321,16 +388,6 @@ function ObjectMatteOverlayActive({ host }: { host?: ObjectMatteHost }): JSX.Ele
 
   if (!active) return null;
 
-  const toScreen = (x: number, y: number): Pt => (mapping ? mapping.localToScreen(x, y) : { x: 0, y: 0 });
-  const outlinePath = (flat: readonly number[]): string => {
-    if (!mapping || flat.length < 6) return '';
-    let d = '';
-    for (let i = 0; i + 1 < flat.length; i += 2) {
-      const s = toScreen(flat[i]!, flat[i + 1]!);
-      d += `${i === 0 ? 'M' : 'L'} ${s.x.toFixed(1)} ${s.y.toFixed(1)} `;
-    }
-    return `${d}Z`;
-  };
   const rectPath = (a: Pt, b: Pt): string => {
     const c = [toScreen(a.x, a.y), toScreen(b.x, a.y), toScreen(b.x, b.y), toScreen(a.x, b.y)];
     return `M ${c.map((q) => `${q.x.toFixed(1)} ${q.y.toFixed(1)}`).join(' L ')} Z`;
@@ -338,13 +395,15 @@ function ObjectMatteOverlayActive({ host }: { host?: ObjectMatteHost }): JSX.Ele
   const lassoPath = (pts: readonly Pt[]): string =>
     pts.length < 2 ? '' : `${pts.map((q, i) => { const s = toScreen(q.x, q.y); return `${i === 0 ? 'M' : 'L'} ${s.x.toFixed(1)} ${s.y.toFixed(1)}`; }).join(' ')} Z`;
   const shownBox = drag ?? (boxAt(box, time, fps()) ? { from: { x: box!.x0, y: box!.y0 }, to: { x: box!.x1, y: box!.y1 } } : null);
-  const boundaries = nodeId && mapping ? subjectBoundaries(nodeId, time, toScreen) : [];
   // The pointer over a subject already made (the whole picked): a click makes it the active one.
   const hoverLocal = pointer && mapping ? mapping.screenToLocal(pointer.x, pointer.y) : null;
   const hoverUnder = hoverLocal && depth === 0 ? subjectUnder(hoverLocal) : null;
+  const hotIndex = hot && objects ? objects.indexOf(hot) : -1;
 
   const message = !nodeId
     ? t('workspace.objectMatte.selectLayer', 'Select one footage layer, then hover the subject.')
+    : playing
+      ? t('workspace.objectMatte.playing', 'Stop playback to select a subject.')
     : status ?? (looking
       ? t('workspace.objectMatte.looking', 'Looking…')
       : finding && !objects
@@ -361,7 +420,7 @@ function ObjectMatteOverlayActive({ host }: { host?: ObjectMatteHost }): JSX.Ele
       className={styles.root}
       data-object-matte-overlay=""
       onPointerDown={(e) => {
-        if (e.button !== 0 || !nodeId || busy) return;
+        if (e.button !== 0 || !nodeId || playing) return;
         const p = toLocal(e.clientX, e.clientY);
         if (!p) return;
         e.preventDefault();
@@ -379,9 +438,9 @@ function ObjectMatteOverlayActive({ host }: { host?: ObjectMatteHost }): JSX.Ele
           }
           return;
         }
-        if (busy) return;
+        if (playing) return;
         const r = rootRef.current?.getBoundingClientRect();
-        if (r) setPointer({ x: e.clientX - r.left, y: e.clientY - r.top });
+        if (r) publishPointer({ x: e.clientX - r.left, y: e.clientY - r.top });
         // Over found objects: lit at once, no model call (a new whole under the pointer starts at the whole).
         const under = objects ? objectsAt(objects, p) : [];
         if (under.length > 0) {
@@ -394,6 +453,8 @@ function ObjectMatteOverlayActive({ host }: { host?: ObjectMatteHost }): JSX.Ele
           return;
         }
         if (stackRef.current.length > 0) setStack([]);
+        // A job in flight: no model hover (it would queue behind it); the found objects still light.
+        if (busy) return;
         const h = hoverRef.current;
         // Still on the previewed spot: keep it rather than re-asking the model.
         if (h && Math.hypot(h.at.x - p.x, h.at.y - p.y) <= SAME_SPOT_PX) return;
@@ -412,14 +473,17 @@ function ObjectMatteOverlayActive({ host }: { host?: ObjectMatteHost }): JSX.Ele
               useRotoBrushStore.getState().setStatus(t('workspace.objectMatte.lassoEmpty', 'Draw the lasso around the subject (a closed loop).'));
               return;
             }
-            // The object inside the loop: its bounds as the box, the inside point nearest its middle as the click.
+            // The polygon itself is the prompt: foreground points inside it, background points just outside its
+            // edge, and its bounds as the box — so the loop drawn is what is selected, not the box around it.
             const xs = d.path.map((q) => q.x);
             const ys = d.path.map((q) => q.y);
-            const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
-            const cy = (Math.min(...ys) + Math.max(...ys)) / 2;
-            const middle = prompts.inside.reduce((a, b) => (Math.hypot(b.x - cx, b.y - cy) < Math.hypot(a.x - cx, a.y - cy) ? b : a));
-            select({ tool: 'segment', op: opOf(press.shift, press.alt), clicks: [middle],
-              box: { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys), time } }, targetOf(press.shift, press.alt));
+            select({
+              tool: 'segment',
+              op: opOf(press.shift, press.alt),
+              clicks: prompts.inside,
+              negatives: prompts.outside,
+              box: { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys), time },
+            }, targetOf(press.shift, press.alt));
             return;
           }
           if (Math.abs(d.to.x - d.from.x) < 2 || Math.abs(d.to.y - d.from.y) < 2) return;
@@ -435,7 +499,7 @@ function ObjectMatteOverlayActive({ host }: { host?: ObjectMatteHost }): JSX.Ele
         if (!pressRef.current) {
           clearHover();
           setStack([]);
-          setPointer(null);
+          publishPointer(null);
         }
       }}
     >
@@ -452,10 +516,10 @@ function ObjectMatteOverlayActive({ host }: { host?: ObjectMatteHost }): JSX.Ele
             />
           );
         })}
-        {objects?.map((o, i) => (o === hot ? null : <path key={i} className={styles.object} d={outlinePath(o.outline)} />))}
-        {hot && <path className={styles.preview} d={outlinePath(hot.outline)} />}
+        {objects?.map((o, i) => (o === hot ? null : <path key={i} className={styles.object} d={objectPaths[i] ?? ''} />))}
+        {hot && <path className={styles.preview} d={hotIndex >= 0 ? objectPaths[hotIndex] : outlinePathOf(hot.outline, toScreen)} />}
         {!hot && hover && (
-          <path className={styles.preview} d={outlinePath(hover.preview.outline)} />
+          <path className={styles.preview} d={outlinePathOf(hover.preview.outline, toScreen)} />
         )}
         {drag && marquee === 'lasso' ? (
           <path className={styles.box} d={lassoPath(drag.path)} />
@@ -477,8 +541,11 @@ function ObjectMatteOverlayActive({ host }: { host?: ObjectMatteHost }): JSX.Ele
           </span>
         );
       })}
-      {hot && pointer && !busy && !drag && (
+      {hot && pointer && !drag && (
         <div className={styles.hoverTag} style={{ left: pointer.x + 16, top: pointer.y + 16 }}>
+          <span className={styles.hoverName}>
+            {t('workspace.subjects.foundObject', 'Object {n} · {pct}% of frame', { n: hotIndex + 1, pct: Math.max(1, Math.round(hot.area * 100)) })}
+          </span>
           {hoverUnder ? (
             <span>{t('workspace.subjects.hoverActivate', 'Click: make {name} active', { name: hoverUnder.name })}</span>
           ) : (
@@ -506,6 +573,8 @@ function ObjectMatteOverlayActive({ host }: { host?: ObjectMatteHost }): JSX.Ele
           {message}
         </div>
       )}
+      <SubjectToolHud tool="object-matte" nodeId={nodeId} />
+      <TrackingChip nodeId={nodeId} />
     </div>
   );
 }

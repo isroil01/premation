@@ -38,6 +38,18 @@ test('execute / batch / query map outcomes to results and track the revision', a
   expect(c.sent.at(-1)!.baseRevision).toBe(7);
 });
 
+test('heldGesture: the gesture this client opened and has not ended', async () => {
+  const c = new Echo();
+  expect(c.heldGesture).toBeNull();
+  unwrap(await c.beginGesture('Move'));
+  expect(c.heldGesture).toBe(1);
+  // A refused command changes nothing (Echo refuses renameLayer).
+  await c.execute({ type: 'renameLayer', layer: 'a', name: 'b' });
+  expect(c.heldGesture).toBe(1);
+  await c.endGesture(1, true);
+  expect(c.heldGesture).toBeNull();
+});
+
 test('schema metadata helpers', () => {
   expect(commandKind('setProperty')).toBe('edit');
   expect(commandKind('seek')).toBe('control');

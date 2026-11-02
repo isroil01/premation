@@ -82,6 +82,9 @@ export interface RigPropSpec {
 }
 
 export const RIG_MESH_DENSITY_DEFAULT = 22;
+/** Image-layer trace settings (alpha_mesh.hpp kTraceAccuracyDefault / kAlphaThresholdDefault). */
+export const RIG_TRACE_ACCURACY_DEFAULT = 60;
+export const RIG_ALPHA_THRESHOLD_DEFAULT = 32;
 
 const MESH_MODES = ['grid', 'silhouette'] as const;
 
@@ -93,6 +96,9 @@ export const RIG_PROPS: readonly RigPropSpec[] = [
   { owner: 'puppet', path: 'mesh/density', label: 'Density', matchName: 'ADBE FreePin3 Mesh Density', type: 'scalar', codec: 'number', keys: ['meshDensity'], default: RIG_MESH_DENSITY_DEFAULT, min: 1 },
   { owner: 'puppet', path: 'mesh/expansion', label: 'Expansion', matchName: 'ADBE FreePin3 Mesh Expansion', type: 'scalar', codec: 'number', keys: ['meshExpansion'], default: 0, unit: 'px' },
   { owner: 'puppet', path: 'mesh/mode', label: 'Mesh', matchName: 'Premation Puppet Mesh Mode', type: 'choice', codec: 'choice', keys: ['meshMode'], default: 'grid', choices: MESH_MODES },
+  // Image layers only: how finely the bitmap's alpha is traced (cell ≈ 16 px at 0 … 2 px at 100) and the alpha a pixel counts at.
+  { owner: 'puppet', path: 'mesh/traceAccuracy', label: 'Trace Accuracy', matchName: 'Premation Puppet Trace Accuracy', type: 'scalar', codec: 'number', keys: ['traceAccuracy'], default: RIG_TRACE_ACCURACY_DEFAULT, min: 0, max: 100, unit: '%' },
+  { owner: 'puppet', path: 'mesh/alphaThreshold', label: 'Alpha Threshold', matchName: 'Premation Puppet Alpha Threshold', type: 'scalar', codec: 'number', keys: ['alphaThreshold'], default: RIG_ALPHA_THRESHOLD_DEFAULT, min: 0, max: 255 },
   { owner: 'puppet', path: 'mesh/solver', label: 'Solver', matchName: 'Premation Puppet Solver', type: 'choice', codec: 'choice', keys: ['solver'], default: 'arap', choices: ['arap', 'lbs'] },
   { owner: 'puppet', path: 'mesh/rotationRefinement', label: 'Mesh Rotation Refinement', matchName: 'ADBE FreePin3 Mesh Rotation Refinement', type: 'scalar', codec: 'number', keys: ['maxRotationDeg'], default: 0, min: 0, unit: '°', clearAtDefault: true },
   // ── Puppet pin (AE: Deform ▸ Puppet Pin N) ──
@@ -108,6 +114,10 @@ export const RIG_PROPS: readonly RigPropSpec[] = [
   { owner: 'skeleton', path: 'mesh/density', label: 'Density', matchName: 'Premation Skeleton Mesh Density', type: 'scalar', codec: 'number', keys: ['meshDensity'], default: RIG_MESH_DENSITY_DEFAULT, min: 1 },
   { owner: 'skeleton', path: 'mesh/expansion', label: 'Expansion', matchName: 'Premation Skeleton Mesh Expansion', type: 'scalar', codec: 'number', keys: ['meshExpansion'], default: 0, unit: 'px' },
   { owner: 'skeleton', path: 'mesh/mode', label: 'Mesh', matchName: 'Premation Skeleton Mesh Mode', type: 'choice', codec: 'choice', keys: ['meshMode'], default: 'grid', choices: MESH_MODES },
+  { owner: 'skeleton', path: 'mesh/traceAccuracy', label: 'Trace Accuracy', matchName: 'Premation Skeleton Trace Accuracy', type: 'scalar', codec: 'number', keys: ['traceAccuracy'], default: RIG_TRACE_ACCURACY_DEFAULT, min: 0, max: 100, unit: '%' },
+  { owner: 'skeleton', path: 'mesh/alphaThreshold', label: 'Alpha Threshold', matchName: 'Premation Skeleton Alpha Threshold', type: 'scalar', codec: 'number', keys: ['alphaThreshold'], default: RIG_ALPHA_THRESHOLD_DEFAULT, min: 0, max: 255 },
+  // Dual-quaternion skinning: joints bend on an arc instead of pinching ("candy wrapper").
+  { owner: 'skeleton', path: 'mesh/preserveVolume', label: 'Preserve Volume', matchName: 'Premation Skeleton Preserve Volume', type: 'choice', codec: 'choice', keys: ['preserveVolume'], default: 'off', choices: ['off', 'on'] },
   { owner: 'skeleton', path: 'weightPaint', label: 'Weight Paint', matchName: 'Premation Skeleton Weight Paint', type: 'json', codec: 'json', keys: ['weightPaint'], default: null },
   // ── Bone ──
   { owner: 'bone', path: 'position', label: 'Position', matchName: 'Premation Bone Position', type: 'vec2', codec: 'xy', keys: ['x', 'y'], tracks: ['bone.{id}.x', 'bone.{id}.y'], default: [0, 0], unit: 'px', poseCapture: true },

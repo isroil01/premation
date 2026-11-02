@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 namespace premation::jobs::sam {
@@ -16,10 +17,12 @@ double js_round(double x) noexcept {
   return x - r >= 0.5 ? r + 1 : r;
 }
 
-/// The mask's largest 8-connected subject (>= 128) with its holes filled, 0 / 255: the one
-/// region whose outer contour matte_contour wants. Tracing the raw matte of a cluttered
-/// frame (thousands of specks and holes) took minutes at 2560×1440; this pass is linear.
-std::vector<std::uint8_t> largest_filled(std::span<const std::uint8_t> mask, std::uint32_t width, std::uint32_t height) {
+/// The mask's largest 8-connected subject (>= 128) with its SMALL holes filled (each under
+/// `holeShare` of the subject's area; the default 2 %), 0 / 255: the one region whose outer
+/// contour matte_contour wants. Tracing the raw matte of a cluttered frame (thousands of
+/// specks and holes) took minutes at 2560×1440; this pass is linear. A large hole — the gap
+/// between an arm and the body, the inside of a handle — is part of the shape and stays.
+std::vector<std::uint8_t> largest_filled(std::span<const std::uint8_t> mask, std::uint32_t width, std::uint32_t height, double holeShare) {
   const std::size_t w = width;
   const std::size_t h = height;
   const std::size_t n = w * h;
@@ -83,11 +86,44 @@ std::vector<std::uint8_t> largest_filled(std::span<const std::uint8_t> mask, std
     if (y > 0) seed(i - w);
     if (y + 1 < h) seed(i + w);
   }
-  for (std::size_t i = 0; i < n; ++i) out[i] = outside[i] != 0 ? 0 : 255;
+  // Holes (not the subject, not reachable from the border): each 4-connected one is measured;
+  // a small one is filled, a large one is kept open (its pixels count as outside).
+  const auto maxHole = static_cast<std::size_t>(std::max(0.0, holeShare) * static_cast<double>(bestCount));
+  std::vector<std::size_t> hole;
+  for (std::size_t s = 0; s < n; ++s) {
+    if (label[s] == best || outside[s] != 0) continue;
+    hole.clear();
+    outside[s] = 2;  // 2 = a hole under measurement
+    stack.push_back(s);
+    while (!stack.empty()) {
+      const std::size_t i = stack.back();
+      stack.pop_back();
+      hole.push_back(i);
+      const std::size_t x = i % w;
+      const std::size_t y = i / w;
+      const auto grow = [&](std::size_t j) {
+        if (label[j] == best || outside[j] != 0) return;
+        outside[j] = 2;
+        stack.push_back(j);
+      };
+      if (x > 0) grow(i - 1);
+      if (x + 1 < w) grow(i + 1);
+      if (y > 0) grow(i - w);
+      if (y + 1 < h) grow(i + w);
+    }
+    const std::uint8_t mark = hole.size() <= maxHole ? 3 : 1;  // 3 = filled, 1 = open (outside)
+    for (const std::size_t i : hole) outside[i] = mark;
+  }
+  for (std::size_t i = 0; i < n; ++i) out[i] = outside[i] == 1 ? 0 : 255;
   return out;
 }
 
 }  // namespace
+
+std::vector<std::uint8_t> subject_region(std::span<const std::uint8_t> mask, std::uint32_t width, std::uint32_t height, double holeShare) {
+  if (mask.size() < std::size_t{width} * height || width == 0 || height == 0) return {};
+  return largest_filled(mask, width, height, holeShare);
+}
 
 Letterbox letterbox(std::uint32_t width, std::uint32_t height) noexcept {
   Letterbox l;
@@ -106,15 +142,49 @@ std::vector<float> preprocess(std::span<const std::uint8_t> rgba, std::uint32_t 
   std::vector<float> out(3 * plane, 0.0F);
   if (width == 0 || height == 0 || rgba.size() < static_cast<std::size_t>(width) * height * 4) return out;
   const Letterbox l = letterbox(width, height);
-  for (std::size_t y = 0; y < l.resizedH; ++y) {
-    const auto sy = static_cast<std::size_t>(std::min<double>(height - 1, js_round(static_cast<double>(y) / l.scale)));
-    for (std::size_t x = 0; x < l.resizedW; ++x) {
-      const auto sx = static_cast<std::size_t>(std::min<double>(width - 1, js_round(static_cast<double>(x) / l.scale)));
-      const std::size_t s = (sy * width + sx) * 4;
-      const std::size_t d = y * T + x;
-      for (std::size_t c = 0; c < 3; ++c) {
-        out[c * plane + d] = static_cast<float>((rgba[s + c] / 255.0 - kMean[c]) / kStd[c]);
+  if (l.scale >= 1.0) {
+    // A frame no larger than the input: nearest, as samPipeline.ts did.
+    for (std::size_t y = 0; y < l.resizedH; ++y) {
+      const auto sy = static_cast<std::size_t>(std::min<double>(height - 1, js_round(static_cast<double>(y) / l.scale)));
+      for (std::size_t x = 0; x < l.resizedW; ++x) {
+        const auto sx = static_cast<std::size_t>(std::min<double>(width - 1, js_round(static_cast<double>(x) / l.scale)));
+        const std::size_t s = (sy * width + sx) * 4;
+        const std::size_t d = y * T + x;
+        for (std::size_t c = 0; c < 3; ++c) out[c * plane + d] = static_cast<float>((rgba[s + c] / 255.0 - kMean[c]) / kStd[c]);
       }
+    }
+    return out;
+  }
+  // A frame larger than the input (every camera frame): an AREA filter — each input pixel is the
+  // mean of the source pixels it covers. Nearest sampling dropped most of a 1080p frame's pixels,
+  // and the edge the model saw was wherever the kept pixel fell, a cell or two off the true one;
+  // the mean keeps hair and thin edges as the soft mix they are.
+  const auto span_of = [](std::size_t i, std::size_t count, double scale, std::uint32_t limit) {
+    const auto a = static_cast<std::size_t>(std::min<double>(limit - 1, std::floor(static_cast<double>(i) / scale)));
+    auto b = static_cast<std::size_t>(std::min<double>(limit, std::floor(static_cast<double>(i + 1) / scale)));
+    if (i + 1 == count) b = limit;  // the last input pixel takes the rest
+    if (b <= a) b = a + 1;
+    return std::pair<std::size_t, std::size_t>{a, b};
+  };
+  std::vector<std::pair<std::size_t, std::size_t>> xs(l.resizedW);
+  for (std::size_t x = 0; x < l.resizedW; ++x) xs[x] = span_of(x, l.resizedW, l.scale, width);
+  std::array<double, 3> sum{};
+  for (std::size_t y = 0; y < l.resizedH; ++y) {
+    const auto [sy0, sy1] = span_of(y, l.resizedH, l.scale, height);
+    for (std::size_t x = 0; x < l.resizedW; ++x) {
+      const auto [sx0, sx1] = xs[x];
+      sum = {0.0, 0.0, 0.0};
+      for (std::size_t sy = sy0; sy < sy1; ++sy) {
+        const std::uint8_t* row = rgba.data() + (sy * width + sx0) * 4;
+        for (std::size_t sx = sx0; sx < sx1; ++sx, row += 4) {
+          sum[0] += row[0];
+          sum[1] += row[1];
+          sum[2] += row[2];
+        }
+      }
+      const double n = static_cast<double>((sy1 - sy0) * (sx1 - sx0));
+      const std::size_t d = y * T + x;
+      for (std::size_t c = 0; c < 3; ++c) out[c * plane + d] = static_cast<float>((sum[c] / n / 255.0 - kMean[c]) / kStd[c]);
     }
   }
   return out;
@@ -201,7 +271,7 @@ std::vector<trace::TracePoint> matte_contour(std::span<const std::uint8_t> mask,
                                              std::uint32_t height, std::size_t maxPoints) {
   trace::TraceOptions opts;  // traceBitmap.ts defaults: 128, tolerance 1, min area 4
   if (mask.size() < std::size_t{width} * height) return {};
-  const std::vector<std::uint8_t> subject = largest_filled(mask, width, height);
+  const std::vector<std::uint8_t> subject = largest_filled(mask, width, height, kSmallHoleShare);
   const std::vector<trace::TracedContour> contours = trace::trace_bitmap(subject, width, height, 1, opts);
   const trace::TracedContour* best = nullptr;
   double bestArea = 0;

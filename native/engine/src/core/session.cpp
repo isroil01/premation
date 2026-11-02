@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <filesystem>
 #include <limits>
 #include <thread>
 #include <type_traits>
@@ -25,6 +26,7 @@
 #include "onion_skin.hpp"
 #include "render/coverage_ledger.hpp"
 #include "scene/media_reload.hpp"
+#include "subject_files.hpp"
 #include "time_conv.hpp"
 #include "variant_util.hpp"
 
@@ -196,6 +198,7 @@ Session::~Session() {
 void Session::set_frame_builder(FrameBuilder* builder) {
   drain_builds();  // the worker reads frameBuilder_ while it builds
   frameBuilder_ = builder;
+  if (frameBuilder_ != nullptr) frameBuilder_->set_cancel_flag(&editsWaiting_);
 }
 
 void Session::on_frame(std::span<const std::uint8_t> payload, Clock::time_point now) {
@@ -227,11 +230,10 @@ void Session::on_message(api::EngineMessage message, Clock::time_point now) {
   if (phase_ == Phase::closed) return;
   switch (message.kind()) {
     case api::EngineMessage::Kind::hello:
-      if (phase_ == Phase::awaiting_hello) {
-        handle_hello(std::get<api::Hello>(message.v));
-      } else {
-        send_engine_error(ErrorCode::invalid_argument, "Hello after the session opened; ignored", false);
-      }
+      // A Hello on an OPEN session is a client reconnect (the editor page was
+      // reloaded while this process lived on): what the old client left
+      // behind is settled (handle_hello) and a fresh Welcome goes out.
+      handle_hello(std::get<api::Hello>(message.v));
       return;
     case api::EngineMessage::Kind::goodbye:
       PREMATION_LOG(info, "goodbye_received").kv("message", std::get<api::Goodbye>(message.v).message);
@@ -267,6 +269,22 @@ void Session::handle_hello(const api::Hello& hello) {
               std::to_string(api::kProtocolMajor) + "." + std::to_string(api::kProtocolMinor));
     return;
   }
+  const bool reconnect = phase_ == Phase::open;
+  if (reconnect) {
+    // The previous client is gone as far as this session is concerned: a page
+    // reload (location.reload) keeps the engine process, so nothing ever
+    // called on_disconnect, and a gesture the old page opened (an AI turn, a
+    // drag) would hold the one gesture slot forever — every later beginGesture
+    // answers gestureOpen and the new page cannot edit. Settle it exactly as a
+    // disconnect does (§5.1): COMMIT, not discard. The edits were applied and
+    // shown while they were made, so committing loses nothing the user saw and
+    // keeps them undoable as one entry; discarding would silently revert work
+    // the user may already have saved on. Playback stops like on a disconnect:
+    // the new page starts from a stopped transport.
+    const bool closed = commit_open_gesture();
+    stop_playback();
+    PREMATION_LOG(info, "client_reconnect").kv("client", hello.client).kv("gestureCommitted", closed);
+  }
   const bool wantShared = std::find(hello.capabilities.begin(), hello.capabilities.end(), "frames.sharedTexture") !=
                           hello.capabilities.end();
   const bool shared = wantShared && sink_.shared_supported();
@@ -297,6 +315,17 @@ void Session::handle_hello(const api::Hello& hello) {
       .kv("minor", hello.protocol_minor)
       .kv("sharedFrames", shared)
       .kv("copyFrames", copy);
+  // A reconnected client reads the gesture slot from the status it gets now.
+  if (reconnect) emit_status();
+}
+
+bool Session::commit_open_gesture() {
+  if (!gesture_) return false;
+  Gesture g = std::move(*gesture_);
+  gesture_.reset();
+  g.changes.prune();
+  if (!g.changes.empty()) history_.push(doc::Entry{g.label, g.origin, std::move(g.changes)});
+  return true;
 }
 
 void Session::close(api::GoodbyeReason reason, std::string message) {
@@ -311,12 +340,7 @@ void Session::close(api::GoodbyeReason reason, std::string message) {
 
 void Session::on_disconnect() {
   // A gesture still open when the client goes away is COMMITTED (§5.1).
-  if (gesture_) {
-    Gesture g = std::move(*gesture_);
-    gesture_.reset();
-    g.changes.prune();
-    if (!g.changes.empty()) history_.push(doc::Entry{g.label, g.origin, std::move(g.changes)});
-  }
+  commit_open_gesture();
   stop_playback();
   deferred_.clear();
   // Nobody is watching: the camera goes off with the editor.
@@ -653,6 +677,7 @@ std::vector<api::CommandResult> Session::run_edits(const std::vector<const api::
   std::string label = batchLabel.value_or("");
   const bool indexed = commands.size() > 1 || batchLabel.has_value();
   const BuildLock lock(*this, true);  // the document is written below: no frame builds meanwhile
+  const auto editStart = Clock::now();
   doc_.begin();
   // A failed request is rolled back AND left out of the command log, so the ids
   // it minted must be handed back too: otherwise a restart's replay, which never
@@ -690,21 +715,41 @@ std::vector<api::CommandResult> Session::run_edits(const std::vector<const api::
       throw EngineFail{std::move(*failed)};
     }
   }
+  // Edit-pipeline trace (debug): where a slow command's time goes, stage by stage.
+  const auto tHandlers = Clock::now();
   if (const doc::Parts* written = doc_.journal()) keys_.settle(doc_, *written);
+  const auto tSettle = Clock::now();
   doc::ChangeSet changes = doc_.commit();
   if (changes.empty()) return results;
   const api::Revision from = revision_;
   ++revision_;
+  const auto tCommit = Clock::now();
   std::vector<api::Event> events = builder_.build(changes, pctx());
+  const auto tEvents = Clock::now();
   note_document_changed(from, &changes);
+  const auto tKeys = Clock::now();
   if (gesture_) {
     gesture_->changes.merge(changes);
   } else {
     history_.push(doc::Entry{label, origin, std::move(changes)});
   }
+  const auto tHistory = Clock::now();
   send_events(from, revision_, std::move(events), std::nullopt, origin);
   emit_status();
   request_render();
+  const auto tEnd = Clock::now();
+  if (log::enabled(log::Level::debug)) {
+    const auto ms = [](Clock::time_point a, Clock::time_point b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
+    PREMATION_LOG(debug, "edit_timing")
+        .kv("label", label)
+        .kv("handlersMs", ms(editStart, tHandlers))
+        .kv("settleMs", ms(tHandlers, tSettle))
+        .kv("commitMs", ms(tSettle, tCommit))
+        .kv("eventsMs", ms(tCommit, tEvents))
+        .kv("frameKeysMs", ms(tEvents, tKeys))
+        .kv("historyMs", ms(tKeys, tHistory))
+        .kv("sendMs", ms(tHistory, tEnd));
+  }
   return results;
 }
 
@@ -1016,6 +1061,11 @@ struct ControlVisitor {
     const std::uint64_t bytes = s.ports_->write_project_as(path, s.capture_document(), format, s.bundleRoot_);
     if (!c.copy) {
       s.projectPath_ = path;
+      // Stream B2: the stored subject matte files no state of this session names any more
+      // (not the document, not an undo / redo entry, not the open gesture) go with the save.
+      // Never with a copy: the project stays bound to its own folder.
+      doc::gc_object_matte_files(std::filesystem::path(std::u8string(path.begin(), path.end())), s.doc_, s.history_,
+                                 s.gesture_ ? &s.gesture_->changes : nullptr);
       // A bundle now holds every blob the document names (collected in); a JSON file holds none.
       if (s.ports_->is_bundle(path)) s.bundleRoot_ = path;
       s.savedRevision_ = s.revision_;
@@ -2674,6 +2724,8 @@ void Session::submit_frame_to(const ViewportConfig& surface, const std::string& 
 void Session::enqueue_build(BuildTask task) {
   const std::uint32_t viewport = task.job.viewport;
   task.writes = docWrites_.load(std::memory_order_acquire);
+  task.seq = ++buildSeq_;
+  if (!task.job.prefetch) lastFrameSeq_[viewport] = task.seq;
   // Frame-pipeline trace (debug level, PREMATION_LOG_LEVEL=debug): where a
   // frame's time goes between an edit and its pixels — one atomic load when off.
   PREMATION_LOG(debug, "ft_enqueue").kv("rev", static_cast<std::uint64_t>(task.job.revision)).kv("vp", viewport);
@@ -2744,9 +2796,16 @@ void Session::run_build(BuildTask t) {
   BuildReport report;
   report.comp = t.comp;
   report.announce = t.announce;
+  report.viewport = t.job.viewport;
+  report.seq = t.seq;
   bool submit = false;
   const auto ftWait0 = Clock::now();
-  {
+  if (editsWaiting_.load(std::memory_order_acquire) != 0) {
+    // An edit is waiting for the lock: taking it first would make the edit
+    // wait for a frame of the document it is about to change. The task is
+    // skipped without the lock (the core thread queues a fresh one, below).
+    report.skipped = true;
+  } else {
     const std::lock_guard<std::mutex> lock(buildMu_);
     // Frame-pipeline trace: how long the build waited for the lock, and a skip.
     PREMATION_LOG(debug, "ft_build").kv("rev", static_cast<std::uint64_t>(t.job.revision))
@@ -2786,14 +2845,24 @@ void Session::run_build(BuildTask t) {
         report.ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
         const doc::PCtx pc{doc_, t.view, env, buildExprCache_};
         complete_job(t, pc, frameBuilder_->text_queries(), rig_queries());
+        submit = true;
+      } catch (const BuildCancelled&) {
+        // An edit arrived while this frame was being built (BuildLock{write}
+        // raised editsWaiting_): the builder stopped at its next layer. The
+        // task is dropped as a skip — the core thread queues a fresh frame of
+        // the edited document — and nothing of the half-built frame is kept.
+        PREMATION_LOG(debug, "ft_build_cancelled")
+            .kv("rev", static_cast<std::uint64_t>(t.job.revision))
+            .kv("ms", std::chrono::duration<double, std::milli>(Clock::now() - ftWait0).count());
+        report.skipped = true;
       } catch (const std::exception& e) {
         // Nothing here is expected to throw (the builder isolates its layers);
         // if it does, the frame goes out as far as it got, with the failure on
         // layerErrors — never a dead worker (CLAUDE.md: isolate, record, continue).
         PREMATION_LOG(error, "frame_build_failed").kv("error", std::string(e.what()));
         report.errors.push_back(api::LayerError{"", "snapshot", std::string("frame build failed: ") + e.what(), std::nullopt});
+        submit = true;
       }
-      submit = true;
     }
   }
   if (submit) sink_.submit(std::move(t.job));
@@ -2825,7 +2894,13 @@ void Session::pump_builds() {
   bool rebuild = false;
   for (BuildReport& r : reports) {
     if (r.skipped) {
-      rebuild = true;
+      // Build again only if no frame for this viewport was queued after the
+      // skipped task: the edit that made it stale queues its own frame
+      // (flush_render after the command), and that one is the rebuild. A
+      // skipped prefetch (never recorded in lastFrameSeq_) re-requests the
+      // viewport's frame unless a frame was queued since.
+      const auto last = lastFrameSeq_.find(r.viewport);
+      if (last == lastFrameSeq_.end() || last->second <= r.seq) rebuild = true;
       continue;
     }
     if (r.cached) continue;  // no build happened: nothing to average, nothing to announce

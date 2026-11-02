@@ -47,6 +47,7 @@ import { mirrorEffectHeaders } from '@core/mirror/effects';
 import { effectDisplayNames, type Effect } from '@core/inspector/effectCatalog';
 import { resetEffectEdit, setEffectEnabledEdit } from '@layout/Effects/effectEdits';
 import { groupEffectRows, objectMatteSelections } from './effectRowGroups';
+import { groupRigRows, nestedIndent, rigNodeCount, type RigRowNode } from './rigRowGroups';
 import { SelectionRowHeader } from './SelectionRowHeader';
 import { barOf, replaceSourceWithAsset, replaceTargetAt, splitLayersAt, timeStretchEdit } from './timelineEdits';
 import {
@@ -143,6 +144,7 @@ import { useClipDrag } from './useClipDrag';
 import { useKeyframeDrag } from './useKeyframeDrag';
 import { useMarquee } from './useMarquee';
 import { t } from '@core/i18n';
+import { popOutPanel } from '@layout/EditorLayout/popoutWindows';
 
 /**
  * A property row's expression for its `=` badge: the first member track that
@@ -339,14 +341,9 @@ function inPopoutWindow(): boolean {
   return typeof window !== 'undefined' && window.location.hash.startsWith('#/popout/');
 }
 
-/** Pop the timeline out through the app's window manager when it has one. */
+/** Pop the timeline out; the editor opens its window (EditorLayout/popoutWindows). */
 function popOutTimeline(): void {
-  if (window.motionEditor?.popout?.spawnWindow) {
-    window.motionEditor.popout.spawnWindow('timeline');
-    return;
-  }
-  const url = `${window.location.origin}${window.location.pathname}#/popout/timeline`;
-  window.open(url, 'popout-timeline', 'width=1280,height=500,resizable=yes');
+  popOutPanel('timeline');
 }
 
 function Timeline({
@@ -804,6 +801,17 @@ function Timeline({
                   }
                   for (const prop of g.props) out.push({ type: 'prop', track, prop, categoryKey: fxKey });
                 }
+              } else if (isCatExpanded && cat.key === 'rig') {
+                // C2: Rig ▸ Puppet ▸ Pins ▸ <pin> / Skeleton ▸ Bones ▸ <bone>, each pin and bone its own twirl.
+                const tree = documentMirror().tree(track.id);
+                const pushRig = (n: RigRowNode): void => {
+                  const open = !collapsedCategoryKeys.has(`${track.id}:${n.key}`);
+                  out.push({ type: 'category', track, categoryKey: n.key, label: n.label, icon: n.icon, expanded: open, count: rigNodeCount(n) });
+                  if (!open) return;
+                  for (const c of n.children) pushRig(c);
+                  for (const prop of n.props) out.push({ type: 'prop', track, prop, categoryKey: n.key });
+                };
+                for (const n of groupRigRows(cat.props, tree)) pushRig(n);
               } else if (isCatExpanded) {
                 for (const prop of cat.props) {
                   out.push({ type: 'prop', track, prop, categoryKey: cat.key });
@@ -2279,11 +2287,16 @@ function Timeline({
     let category = null;
     if (found.category && catRow?.type === 'category') {
       let label = catRow.label;
-      if (catRow.categoryKey.startsWith('effects/')) {
-        for (let i = found.category.index - 1; i >= 0; i--) {
+      // A nested twirl (an effect's, a rig pin's) reads with its ancestors: "Effects › Glow", "Rig › Puppet › Pins › Pin 1".
+      if (catRow.categoryKey.includes('/')) {
+        let want = catRow.categoryKey.slice(0, catRow.categoryKey.lastIndexOf('/'));
+        for (let i = found.category.index - 1; i >= 0 && want.length > 0; i--) {
           const r = rows[i]!;
-          if (r.type === 'category' && r.categoryKey === 'effects') { label = `${r.label} › ${label}`; break; }
           if (r.type === 'track') break;
+          if (r.type === 'category' && r.categoryKey === want) {
+            label = `${r.label} › ${label}`;
+            want = want.includes('/') ? want.slice(0, want.lastIndexOf('/')) : '';
+          }
         }
       }
       category = { row: catRow, label, index: found.category.index, offset: found.category.offset };
@@ -2621,8 +2634,9 @@ function Timeline({
                 const fx = row.effect;
                 const categoryStyle: CSSProperties = {
                   ...rowStyle,
-                  // An effect's twirl sits one step inside Effects; its Selections one more.
-                  paddingLeft: 88 + (row.track.depth ?? 0) * 14 + (fx ? 14 : 0) + (row.categoryKey.endsWith('/selections') ? 28 : 0),
+                  // An effect's twirl sits one step inside Effects; its Selections one more;
+                  // a rig's Puppet ▸ Pins ▸ <pin> one step per level (`nestedIndent`).
+                  paddingLeft: 88 + (row.track.depth ?? 0) * 14 + nestedIndent(row.categoryKey),
                 };
                 return (
                   <TrackCategoryHeader
@@ -2660,8 +2674,8 @@ function Timeline({
               }
               const propStyle: CSSProperties = {
                 ...rowStyle,
-                // An effect's params sit under its twirl, one step deeper.
-                paddingLeft: 124 + (row.track.depth ?? 0) * 14 + (row.categoryKey.startsWith('effects/') ? 14 : 0),
+                // An effect's params sit under its twirl, one step deeper; a pin's / bone's under theirs.
+                paddingLeft: 124 + (row.track.depth ?? 0) * 14 + nestedIndent(row.categoryKey),
               };
               return (
                 <PropertyHeader
@@ -2802,7 +2816,7 @@ function Timeline({
                     right: 0,
                     height: trackHeight,
                     zIndex: 3,
-                    paddingLeft: 88 + (row.track.depth ?? 0) * 14 + (fx ? 14 : 0),
+                    paddingLeft: 88 + (row.track.depth ?? 0) * 14 + nestedIndent(row.categoryKey),
                   }}
                   onToggle={() => {
                     if (row.expanded) scrollRowToSlot(index, 1);

@@ -32,6 +32,9 @@ import { EFFECT_DEFS, effectDefFor } from '@core/effects/effects';
 import { ANIMATOR_PARAMS } from '@core/text/textAnimators';
 import { isRiggableKind } from '@core/scene/rigLogo';
 import { nextRigIds, usedRigIds } from '@core/rig/rigIds';
+import type { PinKind, PuppetPin, PuppetRig } from '@core/rig/puppet';
+import { defaultGlassStyle, type LayerStyles } from '@core/effects/layerStyles';
+import { MEDIA_HANDLERS, subjectStyleCatalog } from './mediaTools';
 import { uiKindOf } from '@core/mirror/layerKinds';
 import { documentMirror } from '@stores/documentMirror';
 import { placeBehindSubject } from '@core/workspace/placeBehindSubjectPort';
@@ -213,11 +216,17 @@ const evaluateAt: AiTool['handler'] = async (input, ctx) => {
   const node = (await ctx.scene.get(nodeId))!;
   // Fall back to the node's base transform for properties with no track —
   // evaluateNode only reports animated props.
+  // Post-expression values: `animated` is the engine's evaluated answer, so an
+  // expression-driven prop reports what the frame draws, not its base value.
+  const fromExpression = ctx.anim.expressionProps ? [...await ctx.anim.expressionProps(nodeId)] : [];
   const payload = {
     t: compT,
     values: { x: node.x, y: node.y, rotation: node.rotation, opacity: node.opacity, ...animated },
+    ...(fromExpression.length > 0 ? { fromExpression } : {}),
   };
-  return ok(JSON.stringify(payload), payload);
+  const note = fromExpression.length > 0 ? `
+Values for ${fromExpression.join(', ')} come from an expression (evaluated at t).` : '';
+  return ok(JSON.stringify(payload) + note, payload);
 };
 
 const getSelection: AiTool['handler'] = async (_input, ctx) => {
@@ -301,8 +310,21 @@ const listCapabilities: AiTool['handler'] = async (input, ctx) => {
         rotation: 'puppet.<pinId>.rotation — scalar keyframe track (degrees); keyframeable via set_keyframes. Rotates the deformation rigidly around the pin.',
         stiffness: 'puppet.<pinId>.stiffness — scalar keyframe track (>= 0); keyframeable via set_keyframes. Sharpens the pin\'s influence falloff.',
       },
-      tools: 'create_puppet_rig (rig + pins) → set_puppet_pin_keyframes (animate pin position) + set_keyframes on .rotation/.stiffness.',
-      note: 'Pin ids are returned by create_puppet_rig. Rig mesh settings live on the layer fx.puppet block (meshDensity 2-50, meshExpansion px, solver lbs|arap, meshMode grid|silhouette, maxRotationDeg = Mesh Rotation Refinement).',
+      tools: 'create_puppet_rig (rig + pins, kinds position|advanced|bend|starch|overlap, mesh settings, append) → set_puppet_pin_keyframes (many pins, eases, path tangents) + set_keyframes on .rotation/.stiffness/.scale.',
+      note: 'Pin ids are returned by create_puppet_rig. Mesh settings: create_puppet_rig { mesh: { density 2-50, expansion px, mode grid|silhouette, solver arap|lbs, maxRotationDeg, traceAccuracy 0-100 %, alphaThreshold 0-255 } }; create_skeleton_rig { mesh: { density, expansion, mode, traceAccuracy, alphaThreshold, preserveVolume } }. ikMode.<boneId> is a 0..1 FK→IK blend (pose_skeleton ikPoses.ik).',
+    };
+  }
+  if (want('media')) {
+    payload.media = {
+      coordinates: 'Points on footage are FOOTAGE px from the top-left of the picture (not comp px); times are composition seconds.',
+      subjects: {
+        tools: 'find_subjects (candidates) → select_subject (points / box / candidate; a new subject per call) → refine_subject (add / subtract / strokes / edge) → follow_subject (through the shot, a job) → apply_subject_style, place_behind_subject, get_editor_context (the active subject).',
+        styles: subjectStyleCatalog(),
+      },
+      tracking: 'track_point (one click, auto feature, tracks outward from the playhead) → attach_to_track { mode: follow | transform | createNull | stabilize | effectPoint }.',
+      transcription: 'transcribe (cues + word timings; createCaptions makes caption layers) — needs the user\'s Allow over MCP.',
+      assets: 'describe_asset (metadata + contact sheet over MCP); render_frame { assetId, time } for one frame; create_media to place.',
+      jobs: 'follow_subject and transcribe return a jobId; get_job_status polls or cancels it.',
     };
   }
   if (want('camera')) payload.cameraMoves = { tool: 'add_camera_move', kinds: cameraMoveCapabilities() };
@@ -1520,7 +1542,12 @@ const inspectLayers: AiTool['handler'] = async (input) => {
     const b = plain.get(id);
     const fx = withFx.get(id);
     const fill = colorValueHex(m.valueAt(id, 'layer/fill', time) ?? m.property(id, 'layer/fill')?.value);
-    const opacity = m.valueAt(id, 'transform/opacity', time);
+    // Asked of the engine, not valueAt: the mirror's cache lands asynchronously, so a first read
+    // returned the pre-expression base value.
+    const evald = await engine().query({ type: 'getPropertyValues', props: [{ layer: id, path: 'transform/opacity' }, { layer: id, path: 'transform/rotation' }], time, evaluated: true });
+    const opacity = evald.ok ? evald.value.values[0]?.value : m.valueAt(id, 'transform/opacity', time);
+    const rotation = evald.ok ? evald.value.values[1]?.value : undefined;
+    const driven = (path: string): boolean => { const p = m.property(id, path); return !!p && p.expression !== '' && p.expressionEnabled; };
     const row: Record<string, unknown> = { id, name: info.name, kind, bounds: b ?? null, boundsWithEffects: fx ?? null };
     let line = `- ${id} "${info.name}" (${kind}) bounds ${fmt(b)}`;
     if (fx && b && (fx.width > b.width + 1 || fx.height > b.height + 1)) line += `, with effects ${fmt(fx)}`;
@@ -1534,7 +1561,8 @@ const inspectLayers: AiTool['handler'] = async (input) => {
       row.stroke = s.row;
       line += `, stroke ${s.text}`;
     }
-    if (opacity?.kind === 'scalar') { row.opacity = opacity.value; line += `, opacity ${Math.round(opacity.value)}%`; }
+    if (opacity?.kind === 'scalar') { row.opacity = opacity.value; line += `, opacity ${Math.round(opacity.value)}%${driven('transform/opacity') ? ' (from expression)' : ''}`; }
+    if (rotation?.kind === 'scalar' && (rotation.value !== 0 || driven('transform/rotation'))) { row.rotation = rotation.value; line += `, rotation ${Math.round(rotation.value * 100) / 100}°${driven('transform/rotation') ? ' (from expression)' : ''}`; }
     if (kind === 'text') {
       const fam = m.property(id, 'text/fontFamily')?.value;
       if (fam?.kind === 'string') { row.fontFamily = fam.value; line += `, font "${fam.value}"`; }
@@ -2316,9 +2344,11 @@ const addTransition: AiTool['handler'] = async (input, ctx) => {
 interface CreatePuppetRigInput {
   layerId: string;
   pins: {
-    name: string; x: number; y: number;
+    name: string; x: number; y: number; kind?: string;
     rotation?: number; stiffness?: number; scale?: number; overlap?: number;
   }[];
+  mesh?: { density?: number; expansion?: number; mode?: string; solver?: string; maxRotationDeg?: number; traceAccuracy?: number; alphaThreshold?: number };
+  append?: boolean;
 }
 
 const createPuppetRig: AiTool['handler'] = async (input, ctx) => {
@@ -2340,43 +2370,84 @@ const createPuppetRig: AiTool['handler'] = async (input, ctx) => {
         `Rasterize it first (the "Rig Logo for Animation" command flattens a group/precomp to a single riggable image).`,
     );
   }
+  // `append`: the stored rig's pins and mesh stay, the new pins join them
+  // (their tracks survive — a replaced rig drops the tracks of pins it lost).
+  const stored = i.append === true ? await storedPuppet(ctx, i.layerId) : null;
+  const kept = stored && Array.isArray(stored.pins) ? (stored.pins as PuppetPin[]) : [];
   // Ordinal ids, not timestamps: `pin_${Date.now}_${idx}` collided whenever
   // two rigs were authored inside the same millisecond, and colliding pins
   // share one set of animation tracks.
   const pinIds = nextRigIds(
     'pin_',
-    usedRigIds(await puppetPins(i.layerId)),
+    usedRigIds([...(await puppetPins(i.layerId)), ...kept]),
     i.pins.length,
   );
-  const pinsList = i.pins.map((p, idx) => ({
-    id: pinIds[idx]!,
-    name: p.name || `Pin ${idx + 1}`,
-    x: p.x,
-    y: p.y,
-    ...(typeof p.rotation === 'number' ? { rotation: p.rotation } : {}),
-    ...(typeof p.stiffness === 'number' ? { stiffness: Math.max(0, p.stiffness) } : {}),
-    ...(typeof p.scale === 'number' ? { scale: Math.max(0.01, p.scale) } : {}),
-    ...(typeof p.overlap === 'number'
-      ? { overlap: Math.max(-100, Math.min(100, p.overlap)) }
-      : {}),
-  }));
-  await ctx.scene.setPuppet(i.layerId, { pins: pinsList });
-  const ids = pinsList.map((p) => ({ id: p.id, name: p.name }));
+  const PIN_KINDS: ReadonlySet<string> = new Set(['position', 'advanced', 'bend', 'starch', 'overlap']);
+  const pinsList: PuppetPin[] = i.pins.map((p, idx) => {
+    const kind = (p.kind && PIN_KINDS.has(p.kind) ? p.kind : 'advanced') as PinKind;
+    return {
+      id: pinIds[idx]!,
+      name: p.name || `Pin ${kept.length + idx + 1}`,
+      x: p.x,
+      y: p.y,
+      kind,
+      ...(typeof p.rotation === 'number' ? { rotation: p.rotation } : {}),
+      // A starch pin stiffens by default; an overlap pin comes forward (the tools' defaults, puppet.ts draftPin).
+      ...(typeof p.stiffness === 'number' ? { stiffness: Math.max(0, p.stiffness) } : kind === 'starch' ? { stiffness: 8 } : {}),
+      ...(typeof p.scale === 'number' ? { scale: Math.max(0.01, p.scale) } : {}),
+      ...(typeof p.overlap === 'number'
+        ? { overlap: Math.max(-100, Math.min(100, p.overlap)) }
+        : kind === 'overlap' ? { overlap: 50 } : {}),
+    };
+  });
+  // Mesh settings: what the call names over what the layer had (append) or the defaults.
+  const m = i.mesh ?? {};
+  const prev = stored ?? {};
+  const prevAny = prev as Record<string, unknown>;
+  const num = (v: unknown, lo: number, hi: number): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : undefined);
+  const mesh = {
+    ...(num(m.density ?? prev.meshDensity, 2, 50) !== undefined ? { meshDensity: Math.round(num(m.density ?? prev.meshDensity, 2, 50)!) } : {}),
+    ...(num(m.expansion ?? prev.meshExpansion, 0, 200) !== undefined ? { meshExpansion: num(m.expansion ?? prev.meshExpansion, 0, 200) } : {}),
+    ...((m.mode ?? prev.meshMode) === 'grid' || (m.mode ?? prev.meshMode) === 'silhouette' ? { meshMode: (m.mode ?? prev.meshMode) as 'grid' | 'silhouette' } : {}),
+    ...((m.solver ?? prev.solver) === 'lbs' || (m.solver ?? prev.solver) === 'arap' ? { solver: (m.solver ?? prev.solver) as 'lbs' | 'arap' } : {}),
+    ...(num(m.maxRotationDeg ?? prev.maxRotationDeg, 0, 180) !== undefined ? { maxRotationDeg: num(m.maxRotationDeg ?? prev.maxRotationDeg, 0, 180) } : {}),
+    // Image layers: the alpha trace (rigSpecs.ts puppet/mesh/traceAccuracy, /alphaThreshold).
+    ...(num(m.traceAccuracy ?? prevAny.traceAccuracy, 0, 100) !== undefined ? { traceAccuracy: num(m.traceAccuracy ?? prevAny.traceAccuracy, 0, 100) } : {}),
+    ...(num(m.alphaThreshold ?? prevAny.alphaThreshold, 0, 255) !== undefined ? { alphaThreshold: Math.round(num(m.alphaThreshold ?? prevAny.alphaThreshold, 0, 255)!) } : {}),
+  };
+  const all = [...kept, ...pinsList];
+  await ctx.scene.setPuppet(i.layerId, { ...prev, ...mesh, pins: all });
+  const ids = pinsList.map((p) => ({ id: p.id, name: p.name, kind: p.kind }));
+  const meshText = Object.keys(mesh).length ? ` Mesh: ${Object.entries(mesh).map(([k, v]) => `${k} ${String(v)}`).join(', ')}.` : '';
   return {
     ok: true,
     content:
-      `Created puppet rig with ${pinsList.length} pins on layer '${i.layerId}'. ` +
-      `Pin ids: ${pinsList.map((p) => p.id).join(', ')}. ` +
-      `Animate via tracks puppet.<pinId>.rotation and puppet.<pinId>.stiffness (set_keyframes); ` +
-      `pin positions animate via the puppet.<pinId>.position data track (canvas pin drags).`,
-    data: { layerId: i.layerId, pinsCount: pinsList.length, pins: ids },
+      `${stored ? `Added ${pinsList.length} pins to the puppet rig (now ${all.length})` : `Created puppet rig with ${pinsList.length} pins`} on layer '${i.layerId}'. ` +
+      `Pins: ${pinsList.map((p) => `${p.id} '${p.name}' ${p.kind}`).join(', ')}.${meshText} ` +
+      `Animate positions with set_puppet_pin_keyframes; puppet.<pinId>.rotation / .stiffness / .scale with set_keyframes. render_rig_view shows them on the layer.`,
+    data: { layerId: i.layerId, pinsCount: all.length, pins: ids, mesh },
   };
 };
 
+/** The layer's stored puppet rig (`layer/puppet`, JSON), or null. */
+async function storedPuppet(ctx: ToolContext, layer: string): Promise<Partial<PuppetRig> | null> {
+  try {
+    const r = await ctx.engine.query({ type: 'getPropertyValues', props: [{ layer, path: 'layer/puppet' }], time: 0, evaluated: false });
+    const v = r.values[0]?.value;
+    if (!v || v.kind !== 'json' || typeof v.value !== 'string') return null;
+    const parsed: unknown = JSON.parse(v.value);
+    return parsed && typeof parsed === 'object' ? (parsed as Partial<PuppetRig>) : null;
+  } catch {
+    return null;
+  }
+}
+
+interface PuppetPinKey { timeSec: number; x: number; y: number; easing?: string; bezier?: number[]; tangentIn?: number[]; tangentOut?: number[] }
 interface SetPuppetPinKeyframesInput {
   layerId: string;
-  pinId: string;
-  keyframes: { timeSec: number; x: number; y: number; easing?: string }[];
+  pins?: { pinId: string; keyframes: PuppetPinKey[] }[];
+  pinId?: string;
+  keyframes?: PuppetPinKey[];
 }
 
 const setPuppetPinKeyframes: AiTool['handler'] = async (input, ctx) => {
@@ -2389,26 +2460,36 @@ const setPuppetPinKeyframes: AiTool['handler'] = async (input, ctx) => {
   if (!rig) {
     return { ok: false, content: `Layer '${i.layerId}' has no puppet rig. Call create_puppet_rig first.` };
   }
-  if (!rig.pins.some((p) => p.id === i.pinId)) {
-    const ids = rig.pins.map((p) => p.id).join(', ');
-    return { ok: false, content: `Pin '${i.pinId}' is not on layer '${i.layerId}'. Pins: ${ids || 'none'}.` };
+  // Both forms: many pins, or the old one pin.
+  const batches = [...(i.pins ?? []), ...(i.pinId && i.keyframes ? [{ pinId: i.pinId, keyframes: i.keyframes }] : [])];
+  if (batches.length === 0) return fail('Give `pins` [{ pinId, keyframes }] (or pinId + keyframes).');
+  const ids = rig.pins.map((p) => p.id).join(', ');
+  const written: Record<string, number> = {};
+  for (const b of batches) {
+    if (!rig.pins.some((p) => p.id === b.pinId)) {
+      return { ok: false, content: `Pin '${b.pinId}' is not on layer '${i.layerId}'. Pins: ${ids || 'none'}.` };
+    }
+    if (!b.keyframes || b.keyframes.length === 0) return fail(`Pin '${b.pinId}': provide at least one keyframe.`);
+    const prop = `puppet.${b.pinId}.position`;
+    for (const k of b.keyframes) {
+      // Composition seconds — the engine converts. The ease and the spatial
+      // handles ride the insert itself (one write per key).
+      await ctx.anim.setPointsKeyframe(i.layerId, prop, k.timeSec, [{ x: k.x, y: k.y }], {
+        ...(k.easing ? { easing: k.easing } : {}),
+        ...(k.bezier ? { bezier: k.bezier } : {}),
+        ...(k.tangentIn ? { tangentIn: k.tangentIn } : {}),
+        ...(k.tangentOut ? { tangentOut: k.tangentOut } : {}),
+      });
+    }
+    written[b.pinId] = (written[b.pinId] ?? 0) + b.keyframes.length;
   }
-  if (!i.keyframes || i.keyframes.length === 0) {
-    return { ok: false, content: 'Provide at least one keyframe.' };
-  }
-  const prop = `puppet.${i.pinId}.position`;
-  for (const k of i.keyframes) {
-    const lt = k.timeSec; // composition seconds — the engine converts
-    await ctx.anim.setPointsKeyframe(i.layerId, prop, lt, [{ x: k.x, y: k.y }]);
-    // A points key lands linear; the easing of the segment starting here.
-    if (k.easing && k.easing !== 'linear') await ctx.anim.setEasing(i.layerId, prop, lt, k.easing);
-  }
+  const total = Object.values(written).reduce((a, n) => a + n, 0);
   return {
     ok: true,
     content:
-      `Set ${i.keyframes.length} position keyframe(s) on pin '${i.pinId}' of layer '${i.layerId}'. ` +
-      `The pin now animates along ${prop}.`,
-    data: { layerId: i.layerId, pinId: i.pinId, keyframes: i.keyframes.length },
+      `Set ${total} position keyframe(s) on ${Object.keys(written).length} pin(s) of layer '${i.layerId}': ` +
+      `${Object.entries(written).map(([p, n]) => `${p} ×${n}`).join(', ')}. Each pin animates along puppet.<pinId>.position; check a pose with render_rig_view.`,
+    data: { layerId: i.layerId, pins: written, keyframes: total },
   };
 };
 
@@ -2715,6 +2796,7 @@ const createSkeletonRigHandler: AiTool['handler'] = async (input, ctx) => {
     layerId: string;
     bones: Array<{ id: string; parentId?: string; length: number; x?: number; y?: number; rotation?: number }>;
     ik?: Array<{ boneId: string; x: number; y: number; chainLength?: number; pole?: { x: number; y: number } }>;
+    mesh?: { density?: number; expansion?: number; mode?: string; traceAccuracy?: number; alphaThreshold?: number; preserveVolume?: boolean };
   };
   if (!await ctx.scene.has(i.layerId)) return fail((await unknownNode(ctx, i.layerId)));
   const skelKind = kindOf(i.layerId);
@@ -2759,50 +2841,150 @@ const createSkeletonRigHandler: AiTool['handler'] = async (input, ctx) => {
     // on — rig_mesh.cpp apply_ik); none keeps the rest pose's side.
     ...(g.pole && Number.isFinite(g.pole.x) && Number.isFinite(g.pole.y) ? { pole: { x: g.pole.x, y: g.pole.y } } : {}),
   }));
+  // The skin mesh (rigSpecs.ts skeleton/mesh/*): only what the call names; the rest takes the defaults.
+  const sm = i.mesh ?? {};
+  const clampNum = (v: unknown, lo: number, hi: number): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : undefined);
+  const mesh: Record<string, unknown> = {
+    ...(clampNum(sm.density, 2, 50) !== undefined ? { meshDensity: Math.round(clampNum(sm.density, 2, 50)!) } : {}),
+    ...(clampNum(sm.expansion, 0, 200) !== undefined ? { meshExpansion: clampNum(sm.expansion, 0, 200) } : {}),
+    ...(sm.mode === 'grid' || sm.mode === 'silhouette' ? { meshMode: sm.mode } : {}),
+    ...(clampNum(sm.traceAccuracy, 0, 100) !== undefined ? { traceAccuracy: clampNum(sm.traceAccuracy, 0, 100) } : {}),
+    ...(clampNum(sm.alphaThreshold, 0, 255) !== undefined ? { alphaThreshold: Math.round(clampNum(sm.alphaThreshold, 0, 255)!) } : {}),
+    ...(typeof sm.preserveVolume === 'boolean' ? { preserveVolume: sm.preserveVolume ? 'on' : 'off' } : {}),
+  };
   // The whole rig as `layer/skeleton` (a rig preset's route, rigPaths.ts).
-  await ctx.engine.apply([{ type: 'setProperty', prop: { layer: i.layerId, path: 'layer/skeleton' }, value: { kind: 'json', value: JSON.stringify({ bones, ikTargets }) } } as Command]);
+  await ctx.engine.apply([{ type: 'setProperty', prop: { layer: i.layerId, path: 'layer/skeleton' }, value: { kind: 'json', value: JSON.stringify({ bones, ikTargets, ...mesh }) } } as Command]);
+  const meshText = Object.keys(mesh).length ? ` Mesh: ${Object.entries(mesh).map(([k, v]) => `${k} ${String(v)}`).join(', ')}.` : '';
   return ok(
-    `Created skeleton rig with ${bones.length} bones${ikTargets.length ? ` and ${ikTargets.length} IK goal(s)` : ''} on layer '${i.layerId}'.` +
-      (ikTargets.length ? ' Animate a goal with set_keyframes on ikTarget.<boneId>.x / .y (layer px).' : ''),
-    { layerId: i.layerId, boneCount: bones.length, ikCount: ikTargets.length },
+    `Created skeleton rig with ${bones.length} bones${ikTargets.length ? ` and ${ikTargets.length} IK goal(s)` : ''} on layer '${i.layerId}'.${meshText}` +
+      (ikTargets.length ? ' Animate a goal with pose_skeleton ikPoses (or set_keyframes on ikTarget.<boneId>.x / .y, layer px); ikMode.<boneId> blends FK (0) → IK (1).' : ''),
+    { layerId: i.layerId, boneCount: bones.length, ikCount: ikTargets.length, mesh },
   );
 };
 
 const poseSkeletonHandler: AiTool['handler'] = async (input, ctx) => {
-  const i = input as { layerId: string; bonePoses: Array<{ boneId: string; timeSec: number; rotation: number; x?: number; y?: number }> };
+  const i = input as {
+    layerId: string;
+    bonePoses?: Array<{ boneId: string; timeSec: number; rotation?: number; x?: number; y?: number; easing?: string }>;
+    ikPoses?: Array<{ boneId: string; timeSec: number; x?: number; y?: number; poleX?: number; poleY?: number; ik?: boolean; ikBlend?: number; easing?: string }>;
+  };
   if (!await ctx.scene.has(i.layerId)) return fail((await unknownNode(ctx, i.layerId)));
-  for (const p of i.bonePoses) {
-    const lt = p.timeSec; // composition seconds — the engine converts
-    await ctx.anim.setKeyframe(i.layerId, `bone.${p.boneId}.rotation`, lt, p.rotation);
-    if (p.x !== undefined) await ctx.anim.setKeyframe(i.layerId, `bone.${p.boneId}.x`, lt, p.x);
-    if (p.y !== undefined) await ctx.anim.setKeyframe(i.layerId, `bone.${p.boneId}.y`, lt, p.y);
+  const keys: { nodeId: string; prop: string; t: number; value: number; easing?: string }[] = [];
+  const ease = (e: string | undefined): string => e ?? 'easeInOut';
+  for (const p of i.bonePoses ?? []) {
+    // Composition seconds — the engine converts. Degrees here; the stored
+    // bone rotation is radians (create_skeleton_rig converts too).
+    if (p.rotation !== undefined) keys.push({ nodeId: i.layerId, prop: `bone.${p.boneId}.rotation`, t: p.timeSec, value: p.rotation, easing: ease(p.easing) });
+    if (p.x !== undefined) keys.push({ nodeId: i.layerId, prop: `bone.${p.boneId}.x`, t: p.timeSec, value: p.x, easing: ease(p.easing) });
+    if (p.y !== undefined) keys.push({ nodeId: i.layerId, prop: `bone.${p.boneId}.y`, t: p.timeSec, value: p.y, easing: ease(p.easing) });
+    if (p.rotation === undefined && p.x === undefined && p.y === undefined) return fail(`bonePoses: bone '${p.boneId}' at ${p.timeSec}s names no rotation, x or y.`);
+  }
+  for (const g of i.ikPoses ?? []) {
+    if (g.x !== undefined) keys.push({ nodeId: i.layerId, prop: `ikTarget.${g.boneId}.x`, t: g.timeSec, value: g.x, easing: ease(g.easing) });
+    if (g.y !== undefined) keys.push({ nodeId: i.layerId, prop: `ikTarget.${g.boneId}.y`, t: g.timeSec, value: g.y, easing: ease(g.easing) });
+    if (g.poleX !== undefined) keys.push({ nodeId: i.layerId, prop: `ikPole.${g.boneId}.x`, t: g.timeSec, value: g.poleX, easing: ease(g.easing) });
+    if (g.poleY !== undefined) keys.push({ nodeId: i.layerId, prop: `ikPole.${g.boneId}.y`, t: g.timeSec, value: g.poleY, easing: ease(g.easing) });
+    // The IK/FK blend (0 = FK … 1 = IK): a boolean is the whole switch, a number a partial hand-over, eased like the goal.
+    if (g.ik !== undefined || g.ikBlend !== undefined) {
+      const blend = typeof g.ikBlend === 'number' ? g.ikBlend : g.ik ? 1 : 0;
+      if (!Number.isFinite(blend) || blend < 0 || blend > 1) return fail(`ikPoses: '${g.boneId}' ikBlend must be between 0 (FK) and 1 (IK).`);
+      keys.push({ nodeId: i.layerId, prop: `ikMode.${g.boneId}`, t: g.timeSec, value: blend, easing: ease(g.easing) });
+    }
+  }
+  if (keys.length === 0) return fail('Give `bonePoses` (FK) and/or `ikPoses` (IK goals / poles / switch).');
+  const rejected: string[] = [];
+  if (ctx.anim.setKeyframes) {
+    try {
+      await ctx.anim.setKeyframes(keys);
+    } catch (err) {
+      return fail(`pose_skeleton: ${err instanceof Error ? err.message : String(err)} — the bone / goal ids must be the rig's (render_rig_view lists them).`);
+    }
+  } else {
+    for (const k of keys) {
+      try { await ctx.anim.setKeyframe(k.nodeId, k.prop, k.t, k.value, k.easing); } catch (err) { rejected.push(`${k.prop}@${k.t}: ${err instanceof Error ? err.message : String(err)}`); }
+    }
   }
   refreshAfterLegacy(ctx);
-  return ok(`Set ${i.bonePoses.length} bone pose keyframes on layer '${i.layerId}'.`, { layerId: i.layerId, poseCount: i.bonePoses.length });
+  const bones = new Set(keys.map((k) => k.prop.split('.')[1]));
+  return ok(
+    `Set ${keys.length - rejected.length} key(s) on ${bones.size} bone(s) / goal(s) of layer '${i.layerId}'${rejected.length ? `; rejected: ${rejected.join('; ')}` : ''}. Check the pose with render_rig_view at those times.`,
+    { layerId: i.layerId, keys: keys.length - rejected.length, rejected },
+  );
+};
+
+/** apply_layer_style's enum → the style key and how its generic fields map onto that style's own. */
+const LAYER_STYLE_KEYS: Readonly<Record<string, keyof LayerStyles>> = {
+  drop_shadow: 'dropShadow', inner_shadow: 'innerShadow', outer_glow: 'outerGlow', inner_glow: 'innerGlow', satin: 'satin',
+  bevel: 'bevel', color_overlay: 'colorOverlay', gradient_overlay: 'gradientOverlay', stroke: 'stroke', glass: 'glass',
 };
 
 const applyLayerStyleHandler: AiTool['handler'] = async (input, ctx) => {
-  const i = input as { nodeId: string; styleType: 'drop_shadow' | 'outer_glow'; color: string; opacity?: number; size?: number; distance?: number; angle?: number };
+  const i = input as {
+    nodeId: string; styleType: string; enabled?: boolean; color?: string; opacity?: number; size?: number; spread?: number; distance?: number; angle?: number;
+    useGlobalLight?: boolean; invert?: boolean; depth?: number; direction?: string; altitude?: number; highlightColor?: string; highlightOpacity?: number;
+    shadowColor?: string; shadowOpacity?: number; from?: string; to?: string; position?: string; glass?: Record<string, unknown>;
+  };
   if (!await ctx.scene.has(i.nodeId)) return fail((await unknownNode(ctx, i.nodeId)));
-
-  if (i.styleType === 'drop_shadow') {
-    await patchLayerStyle(ctx.engine, i.nodeId, 'dropShadow', {
-      enabled: true,
-      color: i.color,
-      opacity: i.opacity ?? 0.5,
-      blur: i.size ?? 8,
-      distance: i.distance ?? 8,
-      angle: i.angle ?? 90,
-    });
-  } else {
-    await patchLayerStyle(ctx.engine, i.nodeId, 'outerGlow', {
-      enabled: true,
-      color: i.color,
-      opacity: i.opacity ?? 0.9,
-      size: i.size ?? 16,
-    });
+  const key = LAYER_STYLE_KEYS[i.styleType];
+  if (!key) return fail(`Unknown styleType '${i.styleType}'. One of: ${Object.keys(LAYER_STYLE_KEYS).join(', ')}.`);
+  const enabled = i.enabled !== false;
+  const set = (o: Record<string, unknown>): Record<string, unknown> => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined));
+  const light = i.useGlobalLight !== undefined ? { useGlobalLight: i.useGlobalLight } : {};
+  let patch: Record<string, unknown>;
+  switch (key) {
+    case 'dropShadow':
+      patch = set({ color: i.color ?? '#000000', opacity: i.opacity ?? 0.5, blur: i.size ?? 8, distance: i.distance ?? 8, angle: i.angle ?? 90, spread: i.spread, ...light });
+      break;
+    case 'innerShadow':
+      patch = set({ color: i.color ?? '#000000', opacity: i.opacity ?? 0.5, size: i.size ?? 8, distance: i.distance ?? 6, angle: i.angle ?? 90, ...light });
+      break;
+    case 'outerGlow':
+      patch = set({ color: i.color ?? '#ffffff', opacity: i.opacity ?? 0.9, size: i.size ?? 16, spread: i.spread });
+      break;
+    case 'innerGlow':
+      patch = set({ color: i.color ?? '#ffffff', opacity: i.opacity ?? 0.75, size: i.size ?? 12 });
+      break;
+    case 'satin':
+      patch = set({ color: i.color ?? '#000000', opacity: i.opacity ?? 0.5, size: i.size ?? 14, distance: i.distance ?? 8, angle: i.angle ?? 19, invert: i.invert });
+      break;
+    case 'bevel':
+      patch = set({
+        size: i.size ?? 5, depth: i.depth ?? 100, direction: i.direction === 'down' ? 'down' : i.direction === 'up' ? 'up' : undefined, angle: i.angle ?? 120, altitude: i.altitude ?? 30,
+        highlightColor: i.highlightColor ?? '#ffffff', highlightOpacity: i.highlightOpacity ?? 0.75, shadowColor: i.shadowColor ?? '#000000', shadowOpacity: i.shadowOpacity ?? 0.75, ...light,
+      });
+      break;
+    case 'colorOverlay':
+      patch = set({ color: i.color ?? '#ffffff', opacity: i.opacity ?? 1 });
+      break;
+    case 'gradientOverlay':
+      patch = set({ from: i.from ?? i.color ?? '#ffffff', to: i.to ?? '#000000', opacity: i.opacity ?? 1, angle: i.angle ?? 90, ...light });
+      break;
+    case 'stroke':
+      patch = set({ color: i.color ?? '#ffffff', opacity: i.opacity ?? 1, size: i.size ?? 3, position: i.position });
+      break;
+    default: {
+      // Glass: the defaults already look like glass; only what the call names is written.
+      const g = i.glass ?? {};
+      patch = set({ ...g, tintColor: g.tintColor ?? i.color, tintOpacity: g.tintOpacity ?? i.opacity, blur: g.blur ?? i.size, ...light });
+      if (Object.keys(patch).length === 0) patch = { ...defaultGlassStyle() };
+      delete patch.enabled;
+      break;
+    }
   }
-  return ok(`Applied ${i.styleType} layer style on '${i.nodeId}'.`);
+  try {
+    await patchLayerStyle(ctx.engine, i.nodeId, key, { enabled, ...(enabled ? patch : {}) });
+  } catch (err) {
+    return fail(`apply_layer_style ${i.styleType}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (!enabled) {
+    await ctx.engine.apply([{ type: 'setGroupEnabled', groups: [{ layer: i.nodeId, path: `styles/${key}` }], enabled: false } as Command]);
+    return ok(`Switched the ${i.styleType} layer style off on '${i.nodeId}' (its settings are kept).`, { nodeId: i.nodeId, style: key, enabled: false });
+  }
+  const fields = Object.entries(patch).map(([k, v]) => `${k} ${String(v)}`).join(', ');
+  return ok(
+    `Applied ${i.styleType} layer style on '${i.nodeId}': ${fields}. Its fields are keyframeable (${key === 'glass' ? 'glass.<field>' : `effect.layerstyle:${key}.<param>`} with set_keyframes).`,
+    { nodeId: i.nodeId, style: key, enabled: true, fields: patch },
+  );
 };
 
 const recolorLottieVectorHandler: AiTool['handler'] = async (input, ctx) => {
@@ -2910,12 +3092,15 @@ export const ENGINE_ROUTED_TOOLS: ReadonlySet<string> = new Set([
   'add_camera_move', 'add_kinetic_title', 'add_light_sweep', 'add_ambient_orbs', 'add_lower_third', 'add_scene',
   'add_transition', 'add_logo_reveal', 'add_radial_burst', 'add_path_morph', 'export_video', 'merge_paths',
   'place_behind_subject',
+  // Footage (mediaTools.ts): engine jobs and commands only.
+  'select_subject', 'refine_subject', 'follow_subject', 'apply_subject_style', 'track_point', 'attach_to_track', 'transcribe',
 ]);
 
 const HANDLERS: Record<string, AiTool['handler']> = {
   // The craft primitives (spring, precomp, time remap, shadow stack, surface
   // treatment, …) live in their own file — this one is already 1300 lines.
   ...CRAFT_HANDLERS,
+  ...MEDIA_HANDLERS,
   apply_layer_style: applyLayerStyleHandler,
   add_logo_reveal: addLogoReveal,
   add_radial_burst: addRadialBurst,

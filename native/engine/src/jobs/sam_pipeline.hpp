@@ -38,8 +38,10 @@ struct Letterbox {
 [[nodiscard]] Letterbox letterbox(std::uint32_t width, std::uint32_t height) noexcept;
 
 /// Straight RGBA8 → normalized NCHW planes in the zero-padded 1024² square
-/// (samPipeline.ts `preprocessForSam`: nearest-neighbour, ImageNet mean/std,
-/// padding 0 AFTER normalization). 3·1024·1024 floats.
+/// (samPipeline.ts `preprocessForSam`: ImageNet mean/std, padding 0 AFTER
+/// normalization). A frame larger than the input is AREA-filtered (each input
+/// pixel the mean of the source pixels it covers), a smaller one sampled
+/// nearest. 3·1024·1024 floats.
 [[nodiscard]] std::vector<float> preprocess(std::span<const std::uint8_t> rgba, std::uint32_t width,
                                             std::uint32_t height);
 
@@ -85,6 +87,15 @@ void constrain_to_box(std::vector<std::uint8_t>& mask, std::uint32_t width, std:
 
 /// objectMask.ts's cap on the written path's vertices (Track mask tracks at most 64).
 inline constexpr std::size_t kMaxContourPoints = 48;
+
+/// A hole in the subject smaller than this share of its area is filled before the outline
+/// is traced (a speck of background the model missed); a larger one is part of the shape.
+inline constexpr double kSmallHoleShare = 0.02;
+
+/// The largest 8-connected region of `mask` (>= 128) with its holes under `holeShare` of its
+/// area filled, 0 / 255; empty when the sizes do not match. What matte_contour traces.
+[[nodiscard]] std::vector<std::uint8_t> subject_region(std::span<const std::uint8_t> mask, std::uint32_t width, std::uint32_t height,
+                                                       double holeShare = kSmallHoleShare);
 
 /// The matte as ONE outline in frame pixels: the traced outer contour with
 /// the largest area (trace_bitmap.hpp, threshold 128, tolerance 1, min area 4),

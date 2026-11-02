@@ -28,8 +28,11 @@
   display: flex;
   align-items: center;
   gap: var(--space-4);
-  flex: 0 1 auto;
+  /* What the tools leave, and no more: its own width is not a claim on the
+     row. A container, so the hints below can step aside as it narrows. */
+  flex: 1 1 0;
   min-width: 0;
+  container: tool-options / inline-size;
   height: 100%;
   padding-left: var(--space-3);
   overflow-x: auto;
@@ -244,6 +247,31 @@
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
   white-space: nowrap;
+}
+
+/* A hint is prose, not a control: in the inline strip it is the one thing
+   that gives way — ending in an ellipsis rather than being cut mid-letter at
+   the strip's edge. The strip's other children keep `flex-shrink: 0`. */
+.barInline > .hint {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* A secondary tip leaves first, then every hint: a few words ending in "…"
+   read as clutter, and the controls are what the row is for. The warning
+   stays — it says why the tool will not act. */
+@container tool-options (max-width: 520px) {
+  .hintSecondary {
+    display: none;
+  }
+}
+
+@container tool-options (max-width: 220px) {
+  .hint:not(.hintWarning) {
+    display: none;
+  }
 }
 
 /* Warning-tinted hint: a tool that cannot act until the selection changes. */

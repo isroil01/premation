@@ -162,6 +162,19 @@ function toolActivity(): Record<string, string> {
     paint_strokes: t('workspace.aiActivity.paintingStrokes', 'Painting strokes'),
     set_audio: t('workspace.aiActivity.mixingAudio', 'Mixing audio'),
 
+    // ── Subjects, tracking, media (2026-11-02) ──
+    find_subjects: reading,
+    get_job_status: reading,
+    get_editor_context: reading,
+    describe_asset: reading,
+    select_subject: t('workspace.aiActivity.selectingSubject', 'Selecting the subject'),
+    refine_subject: t('workspace.aiActivity.refiningSubject', 'Refining the subject edge'),
+    follow_subject: t('workspace.aiActivity.followingSubject', 'Tracking the subject through the shot'),
+    apply_subject_style: t('workspace.aiActivity.stylingSubject', 'Styling the subject'),
+    track_point: t('workspace.aiActivity.trackingPoint', 'Tracking motion'),
+    attach_to_track: t('workspace.aiActivity.attachingTrack', 'Attaching to the track'),
+    transcribe: t('workspace.aiActivity.transcribing', 'Transcribing speech'),
+
     // ── Shapes and rigs ──
     merge_paths: t('workspace.aiActivity.mergingPaths', 'Merging paths'),
     set_trim_path: t('workspace.aiActivity.trimPaths', 'Revealing trim-path outlines'),

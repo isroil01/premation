@@ -4,6 +4,7 @@
 // Glass does not compile to an effect: it resolves straight onto the layer
 // (and its backdrop blur) and the render graph composites it in its backdrop
 // branch.
+#include <algorithm>
 #include <cmath>
 #include <numbers>
 #include <string>
@@ -19,7 +20,9 @@ namespace {
 struct GlassDefaults {
   static constexpr double blur = 28, saturation = 1.9, tintOpacity = 0.1, refraction = 34, edgeWidth = 3.5,
                           chromaticAberration = 10, rimOpacity = 0.42, rimWidth = 7, rimAngle = 315, specularAngle = 315,
-                          specularIntensity = 0.38, specularFalloff = 10, grain = 0.04;
+                          specularIntensity = 0.38, specularFalloff = 10, grain = 0.04,
+                          // liquid glass (stream D L4) — inert under surface "edge"
+                          thickness = 24, ior = 1.5, dispersion = 0, caustic = 0, fresnel = 0;
 };
 constexpr std::string_view kDefaultTint = "#ffffff";
 constexpr std::string_view kDefaultRim = "#ffffff";
@@ -112,6 +115,21 @@ std::optional<ResolvedGlass> resolve_glass(const Json& style, const Values& av, 
     g.specularFalloff = std::isnan(f) ? f : (f > 0.1 ? f : 0.1);
   }
   g.grain = clamp01(val("grain", D::grain));
+  // Liquid glass (stream D L4): absent in every document written before it —
+  // the defaults (surface "edge", no caustic, no Fresnel) are the original shader.
+  {
+    const Json& surface = style.at("surface");
+    const std::string_view s = surface.is_string() ? surface.str() : std::string_view("edge");
+    g.bumpSource = s == "dome" ? 1 : s == "luma" ? 2 : s == "layer" ? 3 : 0;
+    if (const auto live = av.get("glass.surface")) g.bumpSource = static_cast<int>(std::lround(clamp01(*live / 3) * 3));
+    g.thickness = max0(val("thickness", D::thickness));
+    g.ior = std::max(1.0, val("ior", D::ior));
+    g.dispersion = clamp01(val("dispersion", D::dispersion));
+    g.caustic = max0(val("caustic", D::caustic));
+    g.fresnel = max0(val("fresnel", D::fresnel));
+    const Json& bump = style.at("bumpLayerId");
+    if (bump.is_string()) g.bumpLayerId = bump.str();
+  }
   return g;
 }
 
@@ -132,6 +150,13 @@ api::RenderGlass to_renderable_glass(const ResolvedGlass& g) {
   r.specular_intensity = g.specularIntensity;
   r.specular_falloff = g.specularFalloff;
   r.grain = g.grain;
+  r.bump_source = g.bumpSource;
+  r.thickness = g.thickness;
+  r.ior = g.ior;
+  r.dispersion = g.dispersion;
+  r.caustic = g.caustic;
+  r.fresnel = g.fresnel;
+  if (!g.bumpLayerId.empty()) r.bump_layer_id = g.bumpLayerId;
   return r;
 }
 

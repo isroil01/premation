@@ -405,20 +405,74 @@ export const applyLayerStyleDef: AiToolDef = {
   name: 'apply_layer_style',
   kind: 'write',
   description:
-    'Apply an outer glow or a drop shadow to a layer. For real depth prefer set_shadow_stack, ' +
-    'which emits a LAYERED stack — a single drop shadow reads as a CSS default however it is tuned.',
+    'Apply a LAYER STYLE (Photoshop / AE Layer Styles — Layer ▸ Layer Styles): drop_shadow, inner_shadow, ' +
+    'outer_glow, inner_glow, satin, bevel (Bevel & Emboss), color_overlay, gradient_overlay, stroke (an outline ' +
+    'hugging the rendered alpha, so it works on text and images), and glass — Premation\'s real frosted / ' +
+    'refractive glass as ONE style: backdrop blur, saturation, tint, edge refraction with chromatic aberration, ' +
+    'a rim light, a specular and grain (every field keyframeable as glass.<field>; the defaults already look like ' +
+    'glass — pass only what you change). Styles evaluate after the layer\'s effects; several may be on at once. ' +
+    'Calling again patches the same style. `enabled: false` switches a style off. Shadow / glow / bevel angles ' +
+    'may follow the composition\'s Global Light (useGlobalLight). For real depth prefer set_shadow_stack, which ' +
+    'emits a LAYERED stack — a single drop shadow reads as a CSS default however it is tuned.',
   inputSchema: {
     type: 'object',
     additionalProperties: false,
-    required: ['nodeId', 'styleType', 'color'],
+    required: ['nodeId', 'styleType'],
     properties: {
       nodeId: { type: 'string', description: 'The layer to style.' },
-      styleType: { type: 'string', enum: ['drop_shadow', 'outer_glow'] },
-      color: { type: 'string', description: 'Hex colour.' },
-      opacity: { type: 'number', minimum: 0, maximum: 1, description: 'Opacity 0..1.' },
-      size: { type: 'number', minimum: 0, description: 'Blur radius or glow size, px.' },
-      distance: { type: 'number', description: 'Shadow offset distance, px. Shadow only.' },
-      angle: { type: 'number', description: 'Shadow offset angle, degrees. Shadow only.' },
+      styleType: {
+        type: 'string',
+        enum: ['drop_shadow', 'inner_shadow', 'outer_glow', 'inner_glow', 'satin', 'bevel', 'color_overlay', 'gradient_overlay', 'stroke', 'glass'],
+      },
+      enabled: { type: 'boolean', default: true },
+      color: { type: 'string', description: 'Hex colour (shadow, glows, satin, overlay, stroke; the glass TINT).' },
+      opacity: { type: 'number', minimum: 0, maximum: 1, description: 'Opacity 0..1 (overlay: its blend; glass: the tint opacity).' },
+      size: { type: 'number', minimum: 0, description: 'Blur / glow / satin / bevel size, stroke width, px.' },
+      spread: { type: 'number', minimum: 0, maximum: 100, description: 'drop_shadow / outer_glow: hard spread before the blur, % of size.' },
+      distance: { type: 'number', description: 'Offset distance, px (drop_shadow, inner_shadow, satin).' },
+      angle: { type: 'number', description: 'Angle, degrees: shadow / satin offset, gradient direction (0 = left→right, 90 = top→bottom), bevel light.' },
+      useGlobalLight: { type: 'boolean', description: 'Take the angle (and the bevel altitude) from the composition\'s Global Light.' },
+      invert: { type: 'boolean', description: 'satin: sheen where the offset copies agree.' },
+      depth: { type: 'number', minimum: 0, maximum: 1000, description: 'bevel: how pronounced the slope reads, %.' },
+      direction: { type: 'string', enum: ['up', 'down'], description: 'bevel: raised or sunk.' },
+      altitude: { type: 'number', minimum: 0, maximum: 90, description: 'bevel: light altitude, degrees.' },
+      highlightColor: { type: 'string', description: 'bevel: highlight hex.' },
+      highlightOpacity: { type: 'number', minimum: 0, maximum: 1 },
+      shadowColor: { type: 'string', description: 'bevel: shadow hex.' },
+      shadowOpacity: { type: 'number', minimum: 0, maximum: 1 },
+      from: { type: 'string', description: 'gradient_overlay: start hex.' },
+      to: { type: 'string', description: 'gradient_overlay: end hex.' },
+      position: { type: 'string', enum: ['outside', 'inside', 'center'], description: 'stroke: where it sits on the edge.' },
+      glass: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          blur: { type: 'number', minimum: 0, maximum: 200, description: 'Backdrop blur, px (0 = clear glass; default 28).' },
+          saturation: { type: 'number', minimum: 0, maximum: 4, description: 'Backdrop saturation multiplier (>1 = vibrancy; default 1.9).' },
+          tintColor: { type: 'string', description: 'Hex (default white).' },
+          tintOpacity: { type: 'number', minimum: 0, maximum: 1, description: 'Default 0.1.' },
+          refraction: { type: 'number', minimum: 0, maximum: 200, description: 'Edge displacement, px (default 34).' },
+          edgeWidth: { type: 'number', minimum: 0, maximum: 100, description: 'How far in the refraction reaches, px (default 3.5).' },
+          chromaticAberration: { type: 'number', minimum: 0, maximum: 60, description: 'Per-channel split in the rim, px (default 10).' },
+          rimColor: { type: 'string' },
+          rimOpacity: { type: 'number', minimum: 0, maximum: 1, description: 'Default 0.42.' },
+          rimWidth: { type: 'number', minimum: 0, maximum: 100, description: 'Default 7.' },
+          rimAngle: { type: 'number', description: 'Degrees (default 315).' },
+          specularAngle: { type: 'number' },
+          specularIntensity: { type: 'number', minimum: 0, maximum: 1, description: 'Default 0.38.' },
+          specularFalloff: { type: 'number', minimum: 0, maximum: 100, description: 'Default 10.' },
+          grain: { type: 'number', minimum: 0, maximum: 1, description: 'Low-opacity noise that stops banding (default 0.04).' },
+          // Liquid glass: a real surface the view ray bends through.
+          surface: { type: 'string', enum: ['edge', 'dome', 'luma', 'layer'], description: 'Where the surface normal comes from: edge (the alpha edge, the default flat pane), dome (a drop of liquid over the shape), luma (the layer\'s own luminance as height), layer (another layer\'s luminance — bumpLayerId).' },
+          thickness: { type: 'number', minimum: 0, maximum: 500, description: 'Dome radius / height scale, comp px (default 24).' },
+          ior: { type: 'number', minimum: 1, maximum: 3, description: 'Refractive index the view ray bends through (1 = none, 1.5 glass, default 1.5).' },
+          dispersion: { type: 'number', minimum: 0, maximum: 1, description: 'Per-channel spread of the index — rainbow fringes (default 0).' },
+          caustic: { type: 'number', minimum: 0, maximum: 4, description: 'Inner caustic highlight where the surface faces the light (default 0).' },
+          fresnel: { type: 'number', minimum: 0, maximum: 4, description: 'Fresnel rim in the rim colour where the surface faces away (default 0).' },
+          bumpLayerId: { type: 'string', description: 'surface "layer": the layer whose luminance is the surface.' },
+        },
+        description: 'glass: the fields to change (see the defaults). `color` / `opacity` are shorthands for tintColor / tintOpacity. For liquid glass set surface "dome" with thickness, ior, caustic and fresnel.',
+      },
     },
   },
 };

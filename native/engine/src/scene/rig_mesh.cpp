@@ -5,8 +5,10 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <map>
+#include <memory>
 #include <numbers>
 #include <set>
 #include <string>
@@ -14,6 +16,8 @@
 #include <utility>
 
 #include "jsmath.hpp"
+#include "json.hpp"
+#include "rig_cache.hpp"
 
 namespace premation::scene {
 namespace {
@@ -86,6 +90,43 @@ std::vector<std::string> js_key_order(const std::vector<std::string>& keys) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Cache keys (rig_cache.hpp): the serialised inputs of a rest-state product
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Appends values to a key string: doubles as their 8 bit-pattern bytes,
+/// strings length-prefixed — a byte-exact record of the inputs, never a digest.
+class KeyWriter {
+ public:
+  explicit KeyWriter(std::string_view tag) { s(tag); }
+  KeyWriter& d(double v) {
+    std::array<char, sizeof(double)> b{};
+    std::memcpy(b.data(), &v, sizeof(double));
+    key_.append(b.data(), b.size());
+    return *this;
+  }
+  KeyWriter& u(std::uint64_t v) {
+    std::array<char, sizeof(std::uint64_t)> b{};
+    std::memcpy(b.data(), &v, sizeof(std::uint64_t));
+    key_.append(b.data(), b.size());
+    return *this;
+  }
+  KeyWriter& s(std::string_view v) {
+    u(v.size());
+    key_.append(v.data(), v.size());
+    return *this;
+  }
+  KeyWriter& bytes(const std::vector<std::uint8_t>& v) {
+    u(v.size());
+    key_.append(reinterpret_cast<const char*>(v.data()), v.size());  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast): raw key bytes
+    return *this;
+  }
+  [[nodiscard]] std::string take() { return std::move(key_); }
+
+ private:
+  std::string key_;
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Puppet data (puppet.ts PuppetPin / DeformPin / PuppetRig / DeformedMesh)
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -111,6 +152,17 @@ struct MeshRig {
   bool silhouette = false;
 };
 
+struct ArapTopology;
+
+/// R3: a pin's binding — the rest-mesh triangle that contains it and its
+/// barycentric weights (the handle is exactly where the user clicked). Off the
+/// mesh: the nearest vertex with weight 1 (`onMesh` false).
+struct PinBinding {
+  std::array<std::uint32_t, 3> v{};
+  std::array<double, 3> w{1, 0, 0};
+  bool onMesh = false;
+};
+
 struct RestMesh {
   std::vector<float> v;  ///< x, y, u, v
   std::vector<std::uint16_t> tris;
@@ -118,9 +170,15 @@ struct RestMesh {
   /// weights: pinId → column. `keys` keeps the object's insertion order.
   std::unordered_map<std::string, std::vector<float>> weights;
   std::vector<std::string> keys;
+  /// The pin's binding, and its primary vertex (the binding's heaviest corner).
+  std::unordered_map<std::string, PinBinding> pinBind;
   std::unordered_map<std::string, std::size_t> pinVertex;
   /// DeformedMesh.layout: true = 'outline' (a traced silhouette / alpha outline), false = 'grid'.
   bool outline = false;
+  /// The cache key this mesh was built under (derived products key off it).
+  std::string key;
+  /// The cotangent-Laplacian topology (shared by the harmonic weights and ARAP).
+  std::shared_ptr<const ArapTopology> topo;
 
   [[nodiscard]] std::size_t n() const noexcept { return v.size() / 4; }
   [[nodiscard]] const std::vector<float>* col(const std::string& id) const {
@@ -130,6 +188,20 @@ struct RestMesh {
   void set_col(const std::string& id, std::vector<float> w) {
     if (!weights.contains(id)) keys.push_back(id);
     weights[id] = std::move(w);
+  }
+  /// The pin's bound point in `verts` (x, y, u, v per vertex): its triangle's barycentric point.
+  [[nodiscard]] std::optional<std::array<double, 2>> pin_point(const std::string& id, const std::vector<float>& verts) const {
+    const auto it = pinBind.find(id);
+    if (it == pinBind.end()) return std::nullopt;
+    double x = 0;
+    double y = 0;
+    for (std::size_t k = 0; k < 3; ++k) {
+      const std::size_t at = static_cast<std::size_t>(it->second.v[k]) * 4;
+      if (at + 1 >= verts.size()) return std::nullopt;
+      x += it->second.w[k] * static_cast<double>(verts[at]);
+      y += it->second.w[k] * static_cast<double>(verts[at + 1]);
+    }
+    return std::array<double, 2>{x, y};
   }
 };
 
@@ -257,6 +329,251 @@ PolyMesh subdivide(const PolyMesh& mesh, int iterations) {
   return m;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Cotangent Laplacian topology (arap.ts) — built once per rest mesh and shared
+// by the harmonic weights (R3) and the ARAP global step
+// ═══════════════════════════════════════════════════════════════════════════
+
+constexpr int kOuterIterationsDense = 8;  ///< R4: with a cached factor the global step is a back-substitution
+constexpr int kOuterIterationsSparse = 4;
+constexpr int kGsSweeps = 64;
+constexpr std::size_t kDenseMax = 1200;
+constexpr double kStiffK = 6.0;
+constexpr std::size_t kStiffDenseMax = 512;
+constexpr double kCotMin = 1e-3;
+constexpr double kCotMax = 1e3;
+constexpr double kDiagEps = 1e-9;
+
+struct ArapTopology {
+  std::size_t n = 0;
+  std::vector<std::int32_t> nbrIdx;
+  std::vector<double> nbrW;
+  std::vector<std::int32_t> off;
+  std::vector<double> diag;
+  std::vector<std::int32_t> comp;
+  std::size_t compCount = 0;
+  std::vector<double> restX, restY;
+
+  [[nodiscard]] std::size_t bytes() const noexcept {
+    return (nbrIdx.size() + off.size() + comp.size()) * 4 + (nbrW.size() + diag.size() + restX.size() + restY.size()) * 8;
+  }
+};
+
+double cot_angle(double ax, double ay, double bx, double by, double cx, double cy) {
+  const double ux = bx - ax, uy = by - ay;
+  const double vx = cx - ax, vy = cy - ay;
+  const double dot = ux * vx + uy * vy;
+  const double crs = ux * vy - uy * vx;
+  const double area2 = std::abs(crs);
+  if (area2 < 1e-12) return kNaN;
+  const double cot = dot / area2;
+  if (!std::isfinite(cot)) return kNaN;
+  return jmax(-kCotMax, jmin(kCotMax, cot));
+}
+
+ArapTopology build_topology(const std::vector<float>& verts, const std::vector<std::uint16_t>& tris) {
+  ArapTopology t;
+  const std::size_t n = verts.size() / 4;
+  const std::uint64_t radix = std::max<std::uint64_t>(n, 1);  // the edge key's radix: n (1 for an empty mesh)
+  t.n = n;
+  t.restX.resize(n);
+  t.restY.resize(n);
+  for (std::size_t i = 0; i < n; ++i) {
+    t.restX[i] = verts[i * 4 + 0];
+    t.restY[i] = verts[i * 4 + 1];
+  }
+  // Insertion-ordered edge map (key = lo*n + hi), as the TypeScript Map.
+  std::unordered_map<std::uint64_t, std::size_t> edgeAt;
+  std::vector<std::pair<std::uint64_t, double>> edges;
+  const auto addEdge = [&](std::uint32_t a, std::uint32_t b, double w) {
+    const std::uint64_t lo = std::min(a, b);
+    const std::uint64_t hi = std::max(a, b);
+    const std::uint64_t key = lo * radix + hi;
+    const auto [it, fresh] = edgeAt.try_emplace(key, edges.size());
+    if (fresh) edges.emplace_back(key, 0.0 + w);
+    else edges[it->second].second = edges[it->second].second + w;
+  };
+  for (std::size_t k = 0; k + 2 < tris.size(); k += 3) {
+    const std::uint32_t a = tris[k];
+    const std::uint32_t b = tris[k + 1];
+    const std::uint32_t c = tris[k + 2];
+    if (a >= n || b >= n || c >= n) continue;
+    const double ax = t.restX[a], ay = t.restY[a];
+    const double bx = t.restX[b], by = t.restY[b];
+    const double cx = t.restX[c], cy = t.restY[c];
+    const double cotA = cot_angle(ax, ay, bx, by, cx, cy);
+    const double cotB = cot_angle(bx, by, ax, ay, cx, cy);
+    const double cotC = cot_angle(cx, cy, ax, ay, bx, by);
+    if (!std::isfinite(cotA) || !std::isfinite(cotB) || !std::isfinite(cotC)) {
+      addEdge(b, c, 0.5);
+      addEdge(a, c, 0.5);
+      addEdge(a, b, 0.5);
+      continue;
+    }
+    addEdge(b, c, 0.5 * jmax(kCotMin, cotA));
+    addEdge(a, c, 0.5 * jmax(kCotMin, cotB));
+    addEdge(a, b, 0.5 * jmax(kCotMin, cotC));
+  }
+  struct Nb {
+    std::uint64_t j;
+    double w;
+  };
+  std::vector<std::vector<Nb>> lists(n);
+  for (const auto& [key, w] : edges) {
+    const std::uint64_t lo = key / radix;
+    const std::uint64_t hi = key - lo * radix;
+    lists[lo].push_back({hi, w});
+    lists[hi].push_back({lo, w});
+  }
+  std::size_t total = 0;
+  for (auto& l : lists) {
+    std::ranges::stable_sort(l, [](const Nb& p, const Nb& q) { return p.j < q.j; });
+    total += l.size();
+  }
+  t.off.assign(n + 1, 0);
+  t.nbrIdx.resize(total);
+  t.nbrW.resize(total);
+  t.diag.assign(n, 0);
+  std::size_t cursor = 0;
+  for (std::size_t i = 0; i < n; ++i) {
+    t.off[i] = static_cast<std::int32_t>(cursor);
+    double d = 0;
+    for (const Nb& e : lists[i]) {
+      t.nbrIdx[cursor] = static_cast<std::int32_t>(e.j);
+      t.nbrW[cursor] = e.w;
+      d += e.w;
+      ++cursor;
+    }
+    t.diag[i] = d;
+  }
+  t.off[n] = static_cast<std::int32_t>(cursor);
+  // Connected components: BFS in ascending seed order.
+  t.comp.assign(n, -1);
+  std::vector<std::size_t> queue(n);
+  for (std::size_t seed = 0; seed < n; ++seed) {
+    if (t.comp[seed] != -1) continue;
+    const auto id = static_cast<std::int32_t>(t.compCount++);
+    t.comp[seed] = id;
+    std::size_t head = 0;
+    std::size_t tail = 0;
+    queue[tail++] = seed;
+    while (head < tail) {
+      const std::size_t i = queue[head++];
+      for (auto k = static_cast<std::size_t>(t.off[i]); std::cmp_less(k, t.off[i + 1]); ++k) {
+        const auto j = static_cast<std::size_t>(t.nbrIdx[k]);
+        if (t.comp[j] == -1) {
+          t.comp[j] = id;
+          queue[tail++] = j;
+        }
+      }
+    }
+  }
+  return t;
+}
+
+// ── R3: harmonic weights — Δw = 0 with Dirichlet values on the bound vertices,
+// solved to tolerance by Jacobi-preconditioned conjugate gradients on the
+// cotangent Laplacian (replaces 150 uniform Jacobi sweeps that never converged
+// on dense meshes). Fixed operation order: the iteration count and every bit
+// of the answer are a function of the inputs alone.
+
+constexpr double kCgTolerance = 1e-8;
+constexpr std::size_t kCgMaxIterations = 3000;
+
+/// The free system of a Laplacian with `locked` vertices: compact indices and the preconditioner.
+struct HarmonicSystem {
+  std::vector<std::int64_t> compactOf;  ///< vertex → free index (-1: locked or unreachable)
+  std::vector<std::size_t> freeOf;
+  std::vector<double> invDiag;
+};
+
+HarmonicSystem harmonic_system(const ArapTopology& topo, const std::vector<std::uint8_t>& locked) {
+  HarmonicSystem h;
+  const std::size_t n = topo.n;
+  std::vector<std::uint8_t> compHasLock(topo.compCount, 0);
+  for (std::size_t i = 0; i < n; ++i) {
+    if (locked[i] != 0) compHasLock[static_cast<std::size_t>(topo.comp[i])] = 1;
+  }
+  h.compactOf.assign(n, -1);
+  for (std::size_t i = 0; i < n; ++i) {
+    if (locked[i] == 0 && topo.diag[i] > kDiagEps && compHasLock[static_cast<std::size_t>(topo.comp[i])] != 0) {
+      h.compactOf[i] = static_cast<std::int64_t>(h.freeOf.size());
+      h.freeOf.push_back(i);
+      h.invDiag.push_back(1 / topo.diag[i]);
+    }
+  }
+  return h;
+}
+
+/// Solves for the free vertices given the locked values `value` (indexed by vertex); `out` gets every vertex.
+void harmonic_solve(const ArapTopology& topo, const HarmonicSystem& sys, const std::vector<double>& value, std::vector<double>& out) {
+  const std::size_t n = topo.n;
+  const std::size_t m = sys.freeOf.size();
+  out.assign(n, 0.0);
+  for (std::size_t i = 0; i < n; ++i) {
+    if (sys.compactOf[i] < 0) out[i] = value[i];
+  }
+  if (m == 0) return;
+  std::vector<double> b(m, 0.0);
+  for (std::size_t p = 0; p < m; ++p) {
+    const std::size_t i = sys.freeOf[p];
+    double acc = 0;
+    for (auto k = static_cast<std::size_t>(topo.off[i]); std::cmp_less(k, topo.off[i + 1]); ++k) {
+      const auto j = static_cast<std::size_t>(topo.nbrIdx[k]);
+      if (sys.compactOf[j] < 0) acc += topo.nbrW[k] * value[j];
+    }
+    b[p] = acc;
+  }
+  double bnorm2 = 0;
+  for (const double v : b) bnorm2 += v * v;
+  std::vector<double> x(m, 0.0);
+  if (bnorm2 > 0) {
+    std::vector<double> r = b;
+    std::vector<double> z(m);
+    std::vector<double> pdir(m);
+    std::vector<double> q(m);
+    double rz = 0;
+    for (std::size_t p = 0; p < m; ++p) {
+      z[p] = r[p] * sys.invDiag[p];
+      pdir[p] = z[p];
+      rz += r[p] * z[p];
+    }
+    const double stop2 = kCgTolerance * kCgTolerance * bnorm2;
+    const std::size_t maxIter = std::min(kCgMaxIterations, m + 8);
+    for (std::size_t it = 0; it < maxIter; ++it) {
+      double pq = 0;
+      for (std::size_t p = 0; p < m; ++p) {
+        const std::size_t i = sys.freeOf[p];
+        double acc = topo.diag[i] * pdir[p];
+        for (auto k = static_cast<std::size_t>(topo.off[i]); std::cmp_less(k, topo.off[i + 1]); ++k) {
+          const std::int64_t qj = sys.compactOf[static_cast<std::size_t>(topo.nbrIdx[k])];
+          if (qj >= 0) acc -= topo.nbrW[k] * pdir[static_cast<std::size_t>(qj)];
+        }
+        q[p] = acc;
+        pq += pdir[p] * acc;
+      }
+      if (!(pq > 0)) break;
+      const double alpha = rz / pq;
+      double r2 = 0;
+      for (std::size_t p = 0; p < m; ++p) {
+        x[p] += alpha * pdir[p];
+        r[p] -= alpha * q[p];
+        r2 += r[p] * r[p];
+      }
+      if (r2 <= stop2) break;
+      double rzNext = 0;
+      for (std::size_t p = 0; p < m; ++p) {
+        z[p] = r[p] * sys.invDiag[p];
+        rzNext += r[p] * z[p];
+      }
+      const double beta = rzNext / rz;
+      for (std::size_t p = 0; p < m; ++p) pdir[p] = z[p] + beta * pdir[p];
+      rz = rzNext;
+    }
+  }
+  for (std::size_t p = 0; p < m; ++p) out[sys.freeOf[p]] = std::min(1.0, std::max(0.0, x[p]));
+}
+
 // ── puppet.ts: rest mesh ───────────────────────────────────────────────────
 
 bool point_in_polygon(double px, double py, const std::vector<V2>& poly) {
@@ -294,69 +611,89 @@ void normalize_weight_columns(RestMesh& m, const std::vector<std::string>& pinId
   }
 }
 
+/// R3: the triangle under (x, y) with its barycentric weights; off the mesh the nearest vertex.
+PinBinding bind_pin(const std::vector<float>& verts, const std::vector<std::uint16_t>& tris, std::size_t numVertices, double x, double y) {
+  PinBinding b;
+  constexpr double kEps = -1e-6;
+  for (std::size_t t = 0; t + 2 < tris.size(); t += 3) {
+    const std::size_t a = tris[t];
+    const std::size_t bb = tris[t + 1];
+    const std::size_t c = tris[t + 2];
+    if (a >= numVertices || bb >= numVertices || c >= numVertices) continue;
+    const double ax = verts[a * 4], ay = verts[a * 4 + 1];
+    const double bx = verts[bb * 4], by = verts[bb * 4 + 1];
+    const double cx = verts[c * 4], cy = verts[c * 4 + 1];
+    const double det = (bx - ax) * (cy - ay) - (cx - ax) * (by - ay);
+    if (std::abs(det) < 1e-12) continue;
+    const double wa = ((bx - x) * (cy - y) - (cx - x) * (by - y)) / det;
+    const double wb = ((cx - x) * (ay - y) - (ax - x) * (cy - y)) / det;
+    const double wc = 1 - wa - wb;
+    if (wa < kEps || wb < kEps || wc < kEps) continue;
+    const double ca = jmax(0, wa);
+    const double cb = jmax(0, wb);
+    const double cc = jmax(0, wc);
+    const double sum = ca + cb + cc;
+    b.v = {static_cast<std::uint32_t>(a), static_cast<std::uint32_t>(bb), static_cast<std::uint32_t>(c)};
+    b.w = {ca / sum, cb / sum, cc / sum};
+    b.onMesh = true;
+    return b;
+  }
+  double minDist = kInf;
+  std::size_t bestIdx = 0;
+  for (std::size_t i = 0; i < numVertices; ++i) {
+    const double dist = hypot2(static_cast<double>(verts[i * 4 + 0]) - x, static_cast<double>(verts[i * 4 + 1]) - y);
+    if (dist < minDist) {
+      minDist = dist;
+      bestIdx = i;
+    }
+  }
+  const auto k = static_cast<std::uint32_t>(bestIdx);
+  b.v = {k, k, k};
+  b.w = {1, 0, 0};
+  b.onMesh = false;
+  return b;
+}
+
+std::size_t primary_vertex(const PinBinding& b) {
+  std::size_t best = 0;
+  for (std::size_t k = 1; k < 3; ++k) {
+    if (b.w[k] > b.w[best]) best = k;
+  }
+  return b.v[best];
+}
+
+/// finishRestMesh: pin bindings (R3) and the harmonic weight columns (CG on the cotangent Laplacian).
 RestMesh finish_rest_mesh(std::vector<float> vertices, std::vector<std::uint16_t> triangles, std::size_t numVertices,
                           const std::vector<StoredPin>& pins) {
   RestMesh m;
   m.v = std::move(vertices);
   m.tris = std::move(triangles);
-  std::vector<std::size_t> pinList;
+  m.topo = std::make_shared<const ArapTopology>(build_topology(m.v, m.tris));
+  std::vector<std::uint8_t> locked(numVertices, 0);
   for (const StoredPin& pin : pins) {
     m.pinRest[pin.id] = {pin.x, pin.y};
-    double minDist = kInf;
-    std::size_t bestIdx = 0;
-    for (std::size_t i = 0; i < numVertices; ++i) {
-      const double vx = m.v[i * 4 + 0];
-      const double vy = m.v[i * 4 + 1];
-      const double dist = hypot2(vx - pin.x, vy - pin.y);
-      if (dist < minDist) {
-        minDist = dist;
-        bestIdx = i;
-      }
+    const PinBinding b = bind_pin(m.v, m.tris, numVertices, pin.x, pin.y);
+    m.pinBind[pin.id] = b;
+    m.pinVertex[pin.id] = numVertices > 0 ? primary_vertex(b) : 0;
+    if (numVertices > 0) {
+      for (const std::uint32_t k : b.v) locked[k] = 1;
     }
-    m.pinVertex[pin.id] = bestIdx;
-    pinList.push_back(bestIdx);
   }
-
-  std::vector<std::vector<std::uint32_t>> neighbors(numVertices);
-  const auto link = [&neighbors](std::uint32_t a, std::uint32_t b) {
-    auto& na = neighbors[a];
-    if (std::ranges::find(na, b) == na.end()) na.push_back(b);
-  };
-  for (std::size_t i = 0; i + 2 < m.tris.size(); i += 3) {
-    const std::uint32_t a = m.tris[i];
-    const std::uint32_t b = m.tris[i + 1];
-    const std::uint32_t c = m.tris[i + 2];
-    link(a, b);
-    link(b, a);
-    link(b, c);
-    link(c, b);
-    link(c, a);
-    link(a, c);
-  }
-
-  std::vector<std::uint8_t> locked(numVertices, 0);
-  for (const std::size_t k : pinList) locked[k] = 1;
-  for (const StoredPin& pin : pins) {
-    const std::size_t targetIdx = m.pinVertex[pin.id];
-    std::vector<float> W(numVertices, 0.0F);
-    if (numVertices > 0) W[targetIdx] = 1.0F;
-    for (int iter = 0; iter < 150; ++iter) {
-      std::vector<float> nextW(numVertices, 0.0F);
-      if (numVertices > 0) nextW[targetIdx] = 1.0F;
-      for (const std::size_t vk : pinList) {
-        if (vk != targetIdx) nextW[vk] = 0.0F;
-      }
-      for (std::size_t i = 0; i < numVertices; ++i) {
-        if (locked[i] != 0) continue;
-        const auto& nb = neighbors[i];
-        if (nb.empty()) continue;
-        double sum = 0;
-        for (const std::uint32_t k : nb) sum += static_cast<double>(W[k]);
-        nextW[i] = f32(sum / static_cast<double>(nb.size()));
-      }
-      W = std::move(nextW);
+  if (numVertices > 0 && !pins.empty()) {
+    const HarmonicSystem sys = harmonic_system(*m.topo, locked);
+    std::vector<double> value(numVertices);
+    std::vector<double> solved;
+    for (const StoredPin& pin : pins) {
+      std::ranges::fill(value, 0.0);
+      const PinBinding& b = m.pinBind[pin.id];
+      for (const std::uint32_t k : b.v) value[k] = 1;
+      harmonic_solve(*m.topo, sys, value, solved);
+      std::vector<float> W(numVertices);
+      for (std::size_t i = 0; i < numVertices; ++i) W[i] = f32(solved[i]);
+      m.set_col(pin.id, std::move(W));
     }
-    m.set_col(pin.id, std::move(W));
+  } else {
+    for (const StoredPin& pin : pins) m.set_col(pin.id, std::vector<float>(numVertices, 0.0F));
   }
   std::vector<std::string> ids;
   ids.reserve(pins.size());
@@ -588,6 +925,148 @@ std::optional<RestMesh> build_rest_mesh(double width, double height, double pad,
   return finish_rest_mesh(std::move(vertices), std::move(triangles), numVertices, rig.pins);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// R1: the caches — value-keyed, bounded (rig_cache.hpp)
+// ═══════════════════════════════════════════════════════════════════════════
+
+struct ReducedFactor {
+  std::size_t m = 0;
+  std::vector<std::size_t> freeOf;
+  std::vector<std::int64_t> compactOf;
+  std::optional<std::vector<double>> L;
+};
+
+/// The ARAP global system for one (mesh, pinned set, stiffness) — the dense
+/// Cholesky factor when the free count allows, else the Gauss–Seidel weights.
+struct FactorEntry {
+  ReducedFactor factor;
+  /// Stiffness-scaled Laplacian weights (empty: the topology's own).
+  std::vector<double> nbrW;
+  std::vector<double> diag;
+  bool stiff = false;
+};
+
+struct VertexWeight {
+  std::string boneId;
+  double weight = 0;
+};
+struct Segment {
+  std::string id;
+  V2 a, b;
+  std::optional<double> radius;
+};
+
+/// getSkeletonBinding's per-rest products: geodesic weights (+ paint), the bind segments, the seam band.
+struct BoneBinding {
+  std::vector<std::vector<VertexWeight>> weights;
+  std::vector<Segment> segments;
+  double band = 1e-6;
+};
+
+std::size_t rest_bytes(const RestMesh& m) {
+  std::size_t b = m.v.size() * 4 + m.tris.size() * 2 + (m.topo ? m.topo->bytes() : 0) + 256;
+  for (const auto& [id, col] : m.weights) b += col.size() * 4 + id.size() + 64;
+  return b;
+}
+
+std::size_t factor_bytes(const FactorEntry& f) {
+  return (f.factor.L ? f.factor.L->size() * 8 : 0) + (f.factor.freeOf.size() + f.factor.compactOf.size()) * 8 +
+         (f.nbrW.size() + f.diag.size()) * 8 + 128;
+}
+
+std::size_t bones_bytes(const BoneBinding& b) {
+  std::size_t n = 128 + b.segments.size() * 96;
+  for (const auto& ws : b.weights) n += 24 + ws.size() * 48;
+  return n;
+}
+
+struct Caches {
+  rig::ValueLru<RestMesh> rest{64, std::size_t{128} << 20U};
+  rig::ValueLru<FactorEntry> factor{64, std::size_t{192} << 20U};
+  rig::ValueLru<BoneBinding> bones{64, std::size_t{64} << 20U};
+  rig::ValueLru<rig::CoverageMask> coverage{32, std::size_t{16} << 20U};
+};
+
+Caches& caches() {
+  static Caches c;
+  return c;
+}
+
+/// `settings` applied to `base`: the base mask itself at the defaults (or
+/// without a source plane), else the mask re-cut from the plane (cached).
+struct CoverageUse {
+  const rig::CoverageMask* mask = nullptr;
+  std::shared_ptr<const rig::CoverageMask> owned;
+};
+
+CoverageUse effective_coverage(const rig::CoverageMask* base, const rig::CoverageSettings& s) {
+  CoverageUse u;
+  u.mask = base;
+  if (base == nullptr || !base->source) return u;
+  if (s.traceAccuracy == rig::kTraceAccuracyDefault && s.alphaThreshold == rig::kAlphaThresholdDefault) return u;
+  KeyWriter kw("coverage");
+  kw.s(base->source->key).d(s.traceAccuracy).d(s.alphaThreshold);
+  const std::string key = kw.take();
+  auto hit = caches().coverage.find(key);
+  if (!hit) {
+    auto built = std::make_shared<const rig::CoverageMask>(rig::coverage_mask_from_alpha(base->source, s));
+    hit = caches().coverage.insert(key, built, built->cells.size() + 128);
+  }
+  u.owned = std::move(hit);
+  u.mask = u.owned.get();
+  return u;
+}
+
+/// `fx.puppet` / `fx.skeleton` mesh settings that shape an image layer's coverage
+/// (R2): `primary` first, then `secondary` (the other rig), then the defaults.
+rig::CoverageSettings read_coverage_settings(const Json& primary, const Json* secondary) {
+  const auto pick = [&](const char* k, double def) {
+    if (primary.is_object() && primary.at(k).is_number()) return primary.at(k).num();
+    if (secondary != nullptr && secondary->is_object() && secondary->at(k).is_number()) return secondary->at(k).num();
+    return def;
+  };
+  rig::CoverageSettings s;
+  s.traceAccuracy = pick("traceAccuracy", rig::kTraceAccuracyDefault);
+  s.alphaThreshold = pick("alphaThreshold", rig::kAlphaThresholdDefault);
+  return s;
+}
+
+/// The rest mesh for these inputs, from the cache or built (and stored) — the
+/// key is every input buildRestMesh reads.
+std::shared_ptr<const RestMesh> cached_rest_mesh(const RigInputs& in, const MeshRig& rig, const std::optional<std::vector<V2>>& silhouette,
+                                                 std::optional<int> cells, double expansion, double density,
+                                                 const rig::CoverageSettings& covSettings) {
+  const CoverageUse cov = effective_coverage(in.coverage, covSettings);
+  KeyWriter kw("rest");
+  kw.d(in.width).d(in.height).d(in.pad).d(expansion).d(density);
+  kw.u(rig.density.is_number() ? 1U : 0U).d(rig.density.is_number() ? rig.density.num() : 0);
+  kw.u(rig.silhouette ? 1U : 0U);
+  kw.u(cells ? 1U : 0U).u(cells ? static_cast<std::uint64_t>(static_cast<std::int64_t>(*cells)) : 0U);
+  kw.u(rig.pins.size());
+  for (const StoredPin& p : rig.pins) kw.s(p.id).d(p.x).d(p.y).s(p.kind);
+  if (silhouette) {
+    kw.u(silhouette->size());
+    for (const V2& p : *silhouette) kw.d(p.x).d(p.y);
+  } else {
+    kw.s("nopath");
+  }
+  const bool haveCoverage = cov.mask != nullptr && cov.mask->cols > 0 && cov.mask->rows > 0 && !cov.mask->cells.empty();
+  if (haveCoverage) {
+    // A mask without a key (a test's synthetic mask) is keyed by its cells.
+    if (!cov.mask->key.empty()) kw.s(cov.mask->key);
+    else kw.u(static_cast<std::uint64_t>(cov.mask->cols)).u(static_cast<std::uint64_t>(cov.mask->rows)).bytes(cov.mask->cells);
+  } else {
+    kw.s("nocov");
+  }
+  const std::string key = kw.take();
+  if (auto hit = caches().rest.find(key)) return hit;
+  std::optional<RestMesh> built = build_rest_mesh(in.width, in.height, in.pad, rig, silhouette, cells, expansion, density, cov.mask);
+  if (!built) return nullptr;  // a failure is not cached: it is as cheap to re-derive as to look up
+  built->key = key;
+  auto owned = std::make_shared<const RestMesh>(std::move(*built));
+  return caches().rest.insert(key, owned, rest_bytes(*owned));
+}
+
 // ── puppet.ts: deformation ─────────────────────────────────────────────────
 
 std::vector<DeformPin> clamp_pin_rotations(const std::vector<DeformPin>& pins, std::optional<double> maxRotationDeg) {
@@ -690,138 +1169,6 @@ std::vector<float> deform_lbs(const std::vector<DeformPin>& pins, const RestMesh
 
 // ── arap.ts ────────────────────────────────────────────────────────────────
 
-constexpr int kOuterIterations = 4;
-constexpr int kGsSweeps = 64;
-constexpr std::size_t kDenseMax = 1200;
-constexpr double kStiffK = 6.0;
-constexpr std::size_t kStiffDenseMax = 512;
-constexpr double kCotMin = 1e-3;
-constexpr double kCotMax = 1e3;
-constexpr double kDiagEps = 1e-9;
-
-struct ArapTopology {
-  std::size_t n = 0;
-  std::vector<std::int32_t> nbrIdx;
-  std::vector<double> nbrW;
-  std::vector<std::int32_t> off;
-  std::vector<double> diag;
-  std::vector<std::int32_t> comp;
-  std::size_t compCount = 0;
-  std::vector<double> restX, restY;
-};
-
-double cot_angle(double ax, double ay, double bx, double by, double cx, double cy) {
-  const double ux = bx - ax, uy = by - ay;
-  const double vx = cx - ax, vy = cy - ay;
-  const double dot = ux * vx + uy * vy;
-  const double crs = ux * vy - uy * vx;
-  const double area2 = std::abs(crs);
-  if (area2 < 1e-12) return kNaN;
-  const double cot = dot / area2;
-  if (!std::isfinite(cot)) return kNaN;
-  return jmax(-kCotMax, jmin(kCotMax, cot));
-}
-
-ArapTopology build_topology(const RestMesh& mesh) {
-  ArapTopology t;
-  const std::size_t n = mesh.n();
-  const std::uint64_t radix = std::max<std::uint64_t>(n, 1);  // the edge key's radix: n (1 for an empty mesh)
-  t.n = n;
-  t.restX.resize(n);
-  t.restY.resize(n);
-  for (std::size_t i = 0; i < n; ++i) {
-    t.restX[i] = mesh.v[i * 4 + 0];
-    t.restY[i] = mesh.v[i * 4 + 1];
-  }
-  // Insertion-ordered edge map (key = lo*n + hi), as the TypeScript Map.
-  std::unordered_map<std::uint64_t, std::size_t> edgeAt;
-  std::vector<std::pair<std::uint64_t, double>> edges;
-  const auto addEdge = [&](std::uint32_t a, std::uint32_t b, double w) {
-    const std::uint64_t lo = std::min(a, b);
-    const std::uint64_t hi = std::max(a, b);
-    const std::uint64_t key = lo * radix + hi;
-    const auto [it, fresh] = edgeAt.try_emplace(key, edges.size());
-    if (fresh) edges.emplace_back(key, 0.0 + w);
-    else edges[it->second].second = edges[it->second].second + w;
-  };
-  const auto& tris = mesh.tris;
-  for (std::size_t k = 0; k + 2 < tris.size(); k += 3) {
-    const std::uint32_t a = tris[k];
-    const std::uint32_t b = tris[k + 1];
-    const std::uint32_t c = tris[k + 2];
-    const double ax = t.restX[a], ay = t.restY[a];
-    const double bx = t.restX[b], by = t.restY[b];
-    const double cx = t.restX[c], cy = t.restY[c];
-    const double cotA = cot_angle(ax, ay, bx, by, cx, cy);
-    const double cotB = cot_angle(bx, by, ax, ay, cx, cy);
-    const double cotC = cot_angle(cx, cy, ax, ay, bx, by);
-    if (!std::isfinite(cotA) || !std::isfinite(cotB) || !std::isfinite(cotC)) {
-      addEdge(b, c, 0.5);
-      addEdge(a, c, 0.5);
-      addEdge(a, b, 0.5);
-      continue;
-    }
-    addEdge(b, c, 0.5 * jmax(kCotMin, cotA));
-    addEdge(a, c, 0.5 * jmax(kCotMin, cotB));
-    addEdge(a, b, 0.5 * jmax(kCotMin, cotC));
-  }
-  struct Nb {
-    std::uint64_t j;
-    double w;
-  };
-  std::vector<std::vector<Nb>> lists(n);
-  for (const auto& [key, w] : edges) {
-    const std::uint64_t lo = key / radix;
-    const std::uint64_t hi = key - lo * radix;
-    lists[lo].push_back({hi, w});
-    lists[hi].push_back({lo, w});
-  }
-  std::size_t total = 0;
-  for (auto& l : lists) {
-    std::ranges::stable_sort(l, [](const Nb& p, const Nb& q) { return p.j < q.j; });
-    total += l.size();
-  }
-  t.off.assign(n + 1, 0);
-  t.nbrIdx.resize(total);
-  t.nbrW.resize(total);
-  t.diag.assign(n, 0);
-  std::size_t cursor = 0;
-  for (std::size_t i = 0; i < n; ++i) {
-    t.off[i] = static_cast<std::int32_t>(cursor);
-    double d = 0;
-    for (const Nb& e : lists[i]) {
-      t.nbrIdx[cursor] = static_cast<std::int32_t>(e.j);
-      t.nbrW[cursor] = e.w;
-      d += e.w;
-      ++cursor;
-    }
-    t.diag[i] = d;
-  }
-  t.off[n] = static_cast<std::int32_t>(cursor);
-  // Connected components: BFS in ascending seed order.
-  t.comp.assign(n, -1);
-  std::vector<std::size_t> queue(n);
-  for (std::size_t seed = 0; seed < n; ++seed) {
-    if (t.comp[seed] != -1) continue;
-    const auto id = static_cast<std::int32_t>(t.compCount++);
-    t.comp[seed] = id;
-    std::size_t head = 0;
-    std::size_t tail = 0;
-    queue[tail++] = seed;
-    while (head < tail) {
-      const std::size_t i = queue[head++];
-      for (auto k = static_cast<std::size_t>(t.off[i]); std::cmp_less(k, t.off[i + 1]); ++k) {
-        const auto j = static_cast<std::size_t>(t.nbrIdx[k]);
-        if (t.comp[j] == -1) {
-          t.comp[j] = id;
-          queue[tail++] = j;
-        }
-      }
-    }
-  }
-  return t;
-}
-
 bool cholesky_factor(std::vector<double>& A, std::size_t m) {
   for (std::size_t j = 0; j < m; ++j) {
     double sum = A[j * m + j];
@@ -855,13 +1202,6 @@ void cholesky_solve(const std::vector<double>& L, std::size_t m, const std::vect
     x[ii] = s / L[ii * m + ii];
   }
 }
-
-struct ReducedFactor {
-  std::size_t m = 0;
-  std::vector<std::size_t> freeOf;
-  std::vector<std::int64_t> compactOf;
-  std::optional<std::vector<double>> L;
-};
 
 ReducedFactor reduced_factor(const ArapTopology& topo, const std::vector<std::uint8_t>& pinnedFlag, const std::vector<double>& effDiag,
                              const std::vector<double>& effNbrW, std::size_t denseCap) {
@@ -903,9 +1243,12 @@ ReducedFactor reduced_factor(const ArapTopology& topo, const std::vector<std::ui
 struct ArapHandles {
   std::vector<std::uint8_t> pinnedFlag;
   std::vector<double> targetX, targetY, cos, sin;
-  std::size_t distinct = 0;
+  std::size_t pins = 0;  ///< pins that bound a vertex
 };
 
+/// R3: every corner of a pin's binding triangle is a handle, carried by the
+/// pin's own rotation / scale about its exact rest point plus its translation —
+/// the pin point lands where the user put it; rotation pivots on it.
 ArapHandles resolve_pinned_vertices(const std::vector<DeformPin>& pins, const RestMesh& rest, std::size_t n) {
   ArapHandles h;
   h.pinnedFlag.assign(n, 0);
@@ -916,62 +1259,64 @@ ArapHandles resolve_pinned_vertices(const std::vector<DeformPin>& pins, const Re
   for (const DeformPin& pin : pins) {
     const auto* col = rest.col(pin.id);
     if (col == nullptr || col->size() < n) continue;
-    const auto bit = rest.pinVertex.find(pin.id);
-    const bool haveBound = bit != rest.pinVertex.end() && bit->second < n;
-    std::size_t best = haveBound ? bit->second : 0;
-    double bestW = haveBound ? static_cast<double>((*col)[best]) : -kInf;
-    for (std::size_t i = 0; i < n; ++i) {
-      const double w = (*col)[i];
-      if (w > bestW) {
-        bestW = w;
-        best = i;
-      }
-    }
-    if (h.pinnedFlag[best] == 0) ++h.distinct;
-    h.pinnedFlag[best] = 1;
+    const auto bit = rest.pinBind.find(pin.id);
+    if (bit == rest.pinBind.end()) continue;
     const auto ait = rest.pinRest.find(pin.id);
-    const double vx = rest.v[best * 4 + 0];
-    const double vy = rest.v[best * 4 + 1];
     const double rx = ait != rest.pinRest.end() ? ait->second[0] : pin.x;
     const double ry = ait != rest.pinRest.end() ? ait->second[1] : pin.y;
-    h.targetX[best] = vx + (pin.x - rx);
-    h.targetY[best] = vy + (pin.y - ry);
     const double rot = pin.rotation.value_or(0) * kDegToRad;
     const double scl = pin.scale.value_or(1);
-    h.cos[best] = mjs::cos(rot) * scl;
-    h.sin[best] = mjs::sin(rot) * scl;
+    const double c = mjs::cos(rot) * scl;
+    const double s = mjs::sin(rot) * scl;
+    bool any = false;
+    for (const std::uint32_t k : bit->second.v) {
+      if (k >= n) continue;
+      const double vx = rest.v[static_cast<std::size_t>(k) * 4 + 0];
+      const double vy = rest.v[static_cast<std::size_t>(k) * 4 + 1];
+      const double relX = vx - rx;
+      const double relY = vy - ry;
+      h.pinnedFlag[k] = 1;
+      h.targetX[k] = c * relX - s * relY + rx + (pin.x - rx);
+      h.targetY[k] = s * relX + c * relY + ry + (pin.y - ry);
+      h.cos[k] = c;
+      h.sin[k] = s;
+      any = true;
+    }
+    if (any) ++h.pins;
   }
   return h;
 }
 
-std::vector<float> deform_arap_with_handles(const std::vector<DeformPin>& pins, const RestMesh& rest, const ArapHandles& handles,
-                                            const std::vector<float>& warmStart, std::optional<double> maxRotationDeg) {
-  const std::size_t n = rest.n();
-  if (n == 0) return warmStart;
-  if (handles.distinct < 2) return warmStart;
-  const ArapTopology topo = build_topology(rest);
-
-  bool hasStiffness = false;
+/// The global system for `handles` over `rest` with `pins`' stiffness, from the cache or factored.
+std::shared_ptr<const FactorEntry> cached_factor(const std::vector<DeformPin>& pins, const RestMesh& rest, const ArapHandles& handles) {
+  const ArapTopology& topo = *rest.topo;
+  const std::size_t n = topo.n;
+  struct Stiff {
+    const std::vector<float>* col;
+    double s;
+  };
+  std::vector<Stiff> stiff;
+  KeyWriter kw("arap");
+  kw.s(rest.key).bytes(handles.pinnedFlag);
   for (const DeformPin& pin : pins) {
-    if (jmax(0, pin.stiffness.value_or(0)) > 0 && rest.col(pin.id) != nullptr) {
-      hasStiffness = true;
-      break;
-    }
+    const double s = jmax(0, pin.stiffness.value_or(0));
+    const auto* col = rest.col(pin.id);
+    if (!(s > 0) || col == nullptr || col->size() < n) continue;
+    stiff.push_back({col, s});
+    kw.s(pin.id).d(s);
   }
-  std::vector<double> sNbrW;
-  std::vector<double> sDiag;
+  const std::string key = kw.take();
+  if (auto hit = caches().factor.find(key)) return hit;
+  auto e = std::make_shared<FactorEntry>();
   std::size_t denseCap = kDenseMax;
-  if (hasStiffness) {
+  if (!stiff.empty()) {
+    e->stiff = true;
     std::vector<double> sVert(n, 0.0);
-    for (const DeformPin& pin : pins) {
-      const double s = jmax(0, pin.stiffness.value_or(0));
-      if (!(s > 0)) continue;
-      const auto* col = rest.col(pin.id);
-      if (col == nullptr || col->size() < n) continue;
-      for (std::size_t i = 0; i < n; ++i) sVert[i] = sVert[i] + static_cast<double>((*col)[i]) * s;
+    for (const Stiff& st : stiff) {
+      for (std::size_t i = 0; i < n; ++i) sVert[i] = sVert[i] + static_cast<double>((*st.col)[i]) * st.s;
     }
-    sNbrW.assign(topo.nbrW.size(), 0.0);
-    sDiag.assign(n, 0.0);
+    e->nbrW.assign(topo.nbrW.size(), 0.0);
+    e->diag.assign(n, 0.0);
     for (std::size_t i = 0; i < n; ++i) {
       const double si = sVert[i];
       double d = 0;
@@ -979,16 +1324,28 @@ std::vector<float> deform_arap_with_handles(const std::vector<DeformPin>& pins, 
         const auto j = static_cast<std::size_t>(topo.nbrIdx[k]);
         const double fct = 1 + kStiffK * 0.5 * (si + sVert[j]);
         const double w = topo.nbrW[k] * fct;
-        sNbrW[k] = w;
+        e->nbrW[k] = w;
         d += w;
       }
-      sDiag[i] = d;
+      e->diag[i] = d;
     }
     denseCap = kStiffDenseMax;
   }
-  const std::vector<double>& effNbrW = hasStiffness ? sNbrW : topo.nbrW;
-  const std::vector<double>& effDiag = hasStiffness ? sDiag : topo.diag;
-  const ReducedFactor factor = reduced_factor(topo, handles.pinnedFlag, effDiag, effNbrW, denseCap);
+  e->factor = reduced_factor(topo, handles.pinnedFlag, e->stiff ? e->diag : topo.diag, e->stiff ? e->nbrW : topo.nbrW, denseCap);
+  const std::size_t bytes = factor_bytes(*e);
+  return caches().factor.insert(key, std::shared_ptr<const FactorEntry>(std::move(e)), bytes);
+}
+
+std::vector<float> deform_arap_with_handles(const std::vector<DeformPin>& pins, const RestMesh& rest, const ArapHandles& handles,
+                                            const std::vector<float>& warmStart, std::optional<double> maxRotationDeg) {
+  const std::size_t n = rest.n();
+  if (n == 0) return warmStart;
+  if (handles.pins < 2) return warmStart;
+  const ArapTopology& topo = *rest.topo;
+  const std::shared_ptr<const FactorEntry> entry = cached_factor(pins, rest, handles);
+  const ReducedFactor& factor = entry->factor;
+  const std::vector<double>& effNbrW = entry->stiff ? entry->nbrW : topo.nbrW;
+  const std::vector<double>& effDiag = entry->stiff ? entry->diag : topo.diag;
   const std::size_t m = factor.m;
 
   std::vector<double> x(n);
@@ -1019,7 +1376,8 @@ std::vector<float> deform_arap_with_handles(const std::vector<DeformPin>& pins, 
   }
   const auto& off = topo.off;
   const auto& nbrIdx = topo.nbrIdx;
-  for (int outer = 0; outer < kOuterIterations; ++outer) {
+  const int outerIterations = factor.L ? kOuterIterationsDense : kOuterIterationsSparse;
+  for (int outer = 0; outer < outerIterations; ++outer) {
     // Local step.
     for (std::size_t i = 0; i < n; ++i) {
       if (handles.pinnedFlag[i] != 0) {
@@ -1137,14 +1495,25 @@ std::vector<float> solve_deform(const std::vector<DeformPin>& pins, const RestMe
   return deform_arap(clamped, rest, lbs, maxRotationDeg);
 }
 
-RestMesh driver_rest_mesh(const RestMesh& rest, const std::vector<DeformPin>& bends) {
+/// The rest mesh with the bend pins' columns removed and the drivers' renormalised (cached under the rest key).
+std::shared_ptr<const RestMesh> driver_rest_mesh(const std::shared_ptr<const RestMesh>& restPtr, const std::vector<DeformPin>& bends) {
+  const RestMesh& rest = *restPtr;
   std::set<std::string> bendIds;
   for (const DeformPin& b : bends) bendIds.insert(b.id);
+  KeyWriter kw("drivers");
+  kw.s(rest.key).u(bendIds.size());
+  for (const std::string& id : bendIds) kw.s(id);
+  const std::string key = kw.take();
+  if (auto hit = caches().rest.find(key)) return hit;
   RestMesh view;
   view.v = rest.v;
   view.tris = rest.tris;
   view.pinRest = rest.pinRest;
   view.pinVertex = rest.pinVertex;
+  view.pinBind = rest.pinBind;
+  view.outline = rest.outline;
+  view.topo = rest.topo;
+  view.key = key;
   std::vector<std::string> driverIds;
   const std::vector<std::string> keys = js_key_order(rest.keys);
   for (const std::string& id : keys) {
@@ -1161,7 +1530,8 @@ RestMesh driver_rest_mesh(const RestMesh& rest, const std::vector<DeformPin>& be
     }
   }
   normalize_weight_columns(view, driverIds, n, &hadInfluence);
-  return view;
+  auto owned = std::make_shared<const RestMesh>(std::move(view));
+  return caches().rest.insert(key, owned, rest_bytes(*owned));
 }
 
 std::vector<float> apply_bend_pins(const std::vector<float>& base, const std::vector<DeformPin>& bends, const RestMesh& rest,
@@ -1174,13 +1544,13 @@ std::vector<float> apply_bend_pins(const std::vector<float>& base, const std::ve
     const double scale = pin.scale.value_or(1);
     if (rotDeg == 0 && scale == 1) continue;
     const auto* col = rest.col(pin.id);
-    const auto kit = rest.pinVertex.find(pin.id);
-    if (col == nullptr || kit == rest.pinVertex.end()) continue;
-    const std::size_t k = kit->second;
+    if (col == nullptr) continue;
     if (!out) out = base;
     std::vector<float>& o = *out;
-    const double cx = o[k * 4 + 0];
-    const double cy = o[k * 4 + 1];
+    const auto pivot = rest.pin_point(pin.id, o);  // the pin's point as the other pins carried it
+    if (!pivot) continue;
+    const double cx = (*pivot)[0];
+    const double cy = (*pivot)[1];
     const double rad = rotDeg * kDegToRad;
     const double c = mjs::cos(rad) * scale;
     const double s = mjs::sin(rad) * scale;
@@ -1214,20 +1584,22 @@ std::vector<float> apply_bend_pins_arap(const std::vector<float>& base, const st
     const double scale = pin.scale.value_or(1);
     if (rotDeg == 0 && scale == 1) continue;
     const auto* col = rest.col(pin.id);
-    const auto kit = rest.pinVertex.find(pin.id);
-    if (col == nullptr || kit == rest.pinVertex.end()) continue;
-    const std::size_t k = kit->second;
-    const double cx = out[k * 4 + 0];
-    const double cy = out[k * 4 + 1];
+    const auto bit = rest.pinBind.find(pin.id);
+    if (col == nullptr || bit == rest.pinBind.end()) continue;
+    const auto pivot = rest.pin_point(pin.id, out);
+    if (!pivot) continue;
+    const double cx = (*pivot)[0];
+    const double cy = (*pivot)[1];
     const double rad = rotDeg * kDegToRad;
     const double c = mjs::cos(rad) * scale;
     const double s = mjs::sin(rad) * scale;
     ArapHandles handles = resolve_pinned_vertices(drivers, driverMesh, n);
     std::size_t added = 0;
+    const auto own = [&bit](std::size_t i) { return std::ranges::find(bit->second.v, static_cast<std::uint32_t>(i)) != bit->second.v.end(); };
     for (std::size_t i = 0; i < n; ++i) {
       if (handles.pinnedFlag[i] != 0) continue;
       const double w = i < col->size() ? static_cast<double>((*col)[i]) : 0;
-      if (i != k && w < kBendRegionWeight) continue;
+      if (!own(i) && w < kBendRegionWeight) continue;
       const double relX = static_cast<double>(out[i * 4 + 0]) - cx;
       const double relY = static_cast<double>(out[i * 4 + 1]) - cy;
       handles.pinnedFlag[i] = 1;
@@ -1238,7 +1610,7 @@ std::vector<float> apply_bend_pins_arap(const std::vector<float>& base, const st
       ++added;
     }
     if (added == 0) continue;
-    handles.distinct += added;
+    ++handles.pins;
     const std::vector<float> warm = apply_bend_pins(out, {pin}, rest, maxRotationDeg);
     out = deform_arap_with_handles(drivers, driverMesh, handles, warm, maxRotationDeg);
   }
@@ -1246,7 +1618,7 @@ std::vector<float> apply_bend_pins_arap(const std::vector<float>& base, const st
 }
 
 /// `deform(pins, restMesh, solver, maxRotationDeg)`.
-std::vector<float> deform(const std::vector<DeformPin>& pins, const RestMesh& rest, bool lbsSolver,
+std::vector<float> deform(const std::vector<DeformPin>& pins, const std::shared_ptr<const RestMesh>& rest, bool lbsSolver,
                           std::optional<double> maxRotationDeg) {
   bool hasBend = false;
   for (const DeformPin& p : pins) {
@@ -1260,11 +1632,11 @@ std::vector<float> deform(const std::vector<DeformPin>& pins, const RestMesh& re
   if (hasBend) {
     for (const DeformPin& p : pins) (p.kind == "bend" ? bends : drivers).push_back(p);
   }
-  if (!hasBend || drivers.empty()) return solve_deform(pins, rest, lbsSolver, maxRotationDeg);
-  const RestMesh driverMesh = driver_rest_mesh(rest, bends);
-  const std::vector<float> base = solve_deform(drivers, driverMesh, lbsSolver, maxRotationDeg);
-  return lbsSolver ? apply_bend_pins(base, bends, rest, maxRotationDeg)
-                   : apply_bend_pins_arap(base, drivers, bends, rest, driverMesh, maxRotationDeg);
+  if (!hasBend || drivers.empty()) return solve_deform(pins, *rest, lbsSolver, maxRotationDeg);
+  const std::shared_ptr<const RestMesh> driverMesh = driver_rest_mesh(rest, bends);
+  const std::vector<float> base = solve_deform(drivers, *driverMesh, lbsSolver, maxRotationDeg);
+  return lbsSolver ? apply_bend_pins(base, bends, *rest, maxRotationDeg)
+                   : apply_bend_pins_arap(base, drivers, bends, *rest, *driverMesh, maxRotationDeg);
 }
 
 std::optional<std::vector<float>> overlap_depth_field(const std::vector<DeformPin>& pins, const RestMesh& rest) {
@@ -1508,6 +1880,9 @@ struct IkTarget {
   double x = 0, y = 0;
   std::optional<double> chainLength;
   std::optional<V2> pole;
+  /// R4: the IK/FK blend — 1 = the solved pose, 0 = the FK pose, between = a
+  /// linear blend of the chain's local rotations (the `ikMode.<bone>` track).
+  double blend = 1;
   /// The pole, or nullptr without one.
   [[nodiscard]] const V2* pole_point() const noexcept { return pole.has_value() ? &*pole : nullptr; }
 };
@@ -1537,6 +1912,7 @@ std::vector<Bone> apply_ik(const std::vector<Bone>& bones, const std::vector<IkT
   for (const IkTarget& t : targets) {
     const auto endIt = byId.find(t.boneId);
     if (endIt == byId.end()) continue;
+    if (!(t.blend > 0)) continue;
     const std::vector<std::size_t> chain = ik_chain(out, t.boneId, t.chainLength.value_or(2));
     if (chain.empty()) continue;
     const Bone& end = out[endIt->second];
@@ -1568,9 +1944,7 @@ std::vector<Bone> apply_ik(const std::vector<Bone>& bones, const std::vector<IkT
         // solve_two_bone's bendPositive puts the middle joint where
         // cross(j1 − j0, target − j0) ≥ 0 (the no-pole branch below keeps the
         // current bend by the same product), so the pole is measured with the
-        // SAME orientation: cross(pole − j0, target − j0). The former
-        // `ax·(pole.y − j0.y) − ay·(pole.x − j0.x)` was that cross negated, and
-        // bent every joint AWAY from its pole (rigTools.ts worked around it).
+        // SAME orientation: cross(pole − j0, target − j0).
         const double ax = target.x - j0.x;
         const double ay = target.y - j0.y;
         bendPositive = (pole->x - j0.x) * ay - (pole->y - j0.y) * ax >= 0;
@@ -1582,10 +1956,13 @@ std::vector<Bone> apply_ik(const std::vector<Bone>& bones, const std::vector<IkT
     } else {
       solved = angles_from_joints(solve_fabrik(joints, lengths, target));
     }
+    // The full IK deltas (relative to the chain above), applied at the blend:
+    // FK + blend · (IK − FK) per local rotation.
+    const double blend = jmin(1, t.blend);
     double cumulative = 0;
     for (std::size_t i = 0; i < chain.size(); ++i) {
       const double delta = solved[i] - (currentAngles[i] + cumulative);
-      out[chain[i]].rotation += delta;
+      out[chain[i]].rotation += blend == 1 ? delta : delta * blend;
       cumulative += delta;
     }
   }
@@ -1593,16 +1970,6 @@ std::vector<Bone> apply_ik(const std::vector<Bone>& bones, const std::vector<IkT
 }
 
 // ── skinning ──
-
-struct VertexWeight {
-  std::string boneId;
-  double weight = 0;
-};
-struct Segment {
-  std::string id;
-  V2 a, b;
-  std::optional<double> radius;
-};
 
 double distance_to_segment(V2 p, V2 a, V2 b) {
   const double abx = b.x - a.x;
@@ -1814,20 +2181,21 @@ double seam_band(double meanEdge, const std::vector<Segment>& segments) {
   return jmax(jmax(1.5 * meanEdge, 0.18 * meanBone), 1e-6);
 }
 
-std::vector<std::vector<VertexWeight>> geodesic_auto_weights(const RestMesh& mesh, const std::vector<Segment>& segments) {
+/// geodesicAutoWeights + the binding's seam band (one edge graph for both).
+void geodesic_auto_weights(const RestMesh& mesh, BoneBinding& out) {
   const std::size_t n = mesh.n();
   const EdgeGraph g = build_edge_graph(mesh);
   std::vector<std::vector<double>> perBone;
-  perBone.reserve(segments.size());
-  for (const Segment& s : segments) perBone.push_back(geodesic_distance(mesh, g, s));
-  const double band = seam_band(g.meanEdge, segments);
-  std::vector<std::vector<VertexWeight>> out(n);
-  std::vector<double> dist(segments.size());
+  perBone.reserve(out.segments.size());
+  for (const Segment& s : out.segments) perBone.push_back(geodesic_distance(mesh, g, s));
+  const double band = seam_band(g.meanEdge, out.segments);
+  out.band = band;
+  out.weights.assign(n, {});
+  std::vector<double> dist(out.segments.size());
   for (std::size_t i = 0; i < n; ++i) {
-    for (std::size_t b = 0; b < segments.size(); ++b) dist[b] = perBone[b][i];
-    out[i] = partition_weights(dist, segments, band);
+    for (std::size_t b = 0; b < out.segments.size(); ++b) dist[b] = perBone[b][i];
+    out.weights[i] = partition_weights(dist, out.segments, band);
   }
-  return out;
 }
 
 /// applyWeightPaint (weightPaint.ts) for one vertex.
@@ -1867,14 +2235,77 @@ std::vector<VertexWeight> apply_weight_paint(const std::vector<VertexWeight>& au
 struct Skeleton {
   std::vector<Bone> bones;
   std::vector<Bone> bind;  ///< bindPoseBones(skel)
-  std::vector<IkTarget> ikTargets;
   const Json* weightPaint = nullptr;
+  /// R4: `preserveVolume: 'on'` — dual-quaternion blending instead of linear.
+  bool dualQuaternion = false;
 };
 
 constexpr double kFullyBound = 1 - 1e-6;
 
+/// R4 preserveVolume: the bones' rigid parts blended as 2D dual quaternions
+/// (rotation about z + translation: real (w, z), dual (dx, dy)) and their
+/// uniform scale linearly — a joint bends on an arc instead of collapsing toward
+/// the straight line between the two bones' answers ("candy wrapper"). A partial
+/// total spends the rest on the identity, as the linear blend does.
+std::optional<Mat2D> dual_quaternion_blend(const std::vector<VertexWeight>& ws, const WorldMap& poseWorld, const WorldMap& bindInverse) {
+  double qw = 0, qz = 0, dx = 0, dy = 0, scale = 0, total = 0;
+  bool first = true;
+  double pivotW = 1;
+  double pivotZ = 0;
+  for (const VertexWeight& w : ws) {
+    if (w.weight == 0) continue;
+    const auto pose = poseWorld.find(w.boneId);
+    const auto bind = bindInverse.find(w.boneId);
+    if (pose == poseWorld.end() || bind == bindInverse.end()) continue;
+    const Mat2D m = mul(pose->second, bind->second);
+    const double det = m[0] * m[3] - m[1] * m[2];
+    const double s = std::sqrt(std::abs(det));
+    const double theta = mjs::atan2(m[1], m[0]);
+    double rw = mjs::cos(theta / 2);
+    double rz = mjs::sin(theta / 2);
+    // q_d = ½ t·q_r for the pure translation t = (e, f).
+    double tdx = 0.5 * (m[4] * rw + m[5] * rz);
+    double tdy = 0.5 * (m[5] * rw - m[4] * rz);
+    if (first) {
+      pivotW = rw;
+      pivotZ = rz;
+      first = false;
+    } else if (rw * pivotW + rz * pivotZ < 0) {
+      rw = -rw;
+      rz = -rz;
+      tdx = -tdx;
+      tdy = -tdy;
+    }
+    qw += w.weight * rw;
+    qz += w.weight * rz;
+    dx += w.weight * tdx;
+    dy += w.weight * tdy;
+    scale += w.weight * s;
+    total += w.weight;
+  }
+  if (total == 0) return std::nullopt;
+  if (total < kFullyBound) {
+    const double spare = 1 - total;
+    qw += spare * (pivotW >= 0 ? 1 : -1);  // the identity, on the pivot's hemisphere
+    scale += spare;
+    total = 1;
+  }
+  const double norm = std::sqrt(qw * qw + qz * qz);
+  if (!(norm > 1e-12)) return std::nullopt;
+  qw /= norm;
+  qz /= norm;
+  dx /= norm;
+  dy /= norm;
+  const double c = qw * qw - qz * qz;  // cos θ
+  const double s = 2 * qw * qz;        // sin θ
+  const double tx = 2 * (dx * qw - dy * qz);
+  const double ty = 2 * (dx * qz + dy * qw);
+  const double k = scale / total;
+  return Mat2D{c * k, s * k, -s * k, c * k, tx, ty};
+}
+
 std::vector<float> skin_rig_vertices(const std::vector<std::vector<VertexWeight>>& weights, const WorldMap& poseWorld,
-                                     const WorldMap& bindInverse, const std::vector<float>& source) {
+                                     const WorldMap& bindInverse, const std::vector<float>& source, bool dualQuaternion) {
   const std::size_t numVerts = source.size() / 4;
   std::vector<float> out(source.size());
   static const std::vector<VertexWeight> kNone;
@@ -1882,29 +2313,37 @@ std::vector<float> skin_rig_vertices(const std::vector<std::vector<VertexWeight>
     const double vx = source[i * 4 + 0];
     const double vy = source[i * 4 + 1];
     const auto& ws = i < weights.size() ? weights[i] : kNone;
-    double px = 0;
-    double py = 0;
-    double total = 0;
-    for (const VertexWeight& w : ws) {
-      if (w.weight == 0) continue;
-      const auto pose = poseWorld.find(w.boneId);
-      const auto bind = bindInverse.find(w.boneId);
-      if (pose == poseWorld.end() || bind == bindInverse.end()) continue;
-      const V2 p = apply(mul(pose->second, bind->second), vx, vy);
-      px += p.x * w.weight;
-      py += p.y * w.weight;
-      total += w.weight;
-    }
     double ox = vx;
     double oy = vy;
-    if (total != 0) {
-      if (total >= kFullyBound) {
-        ox = px / total;
-        oy = py / total;
-      } else {
-        const double rest = 1 - total;
-        ox = px + rest * vx;
-        oy = py + rest * vy;
+    if (dualQuaternion) {
+      if (const auto m = dual_quaternion_blend(ws, poseWorld, bindInverse)) {
+        const V2 p = apply(*m, vx, vy);
+        ox = p.x;
+        oy = p.y;
+      }
+    } else {
+      double px = 0;
+      double py = 0;
+      double total = 0;
+      for (const VertexWeight& w : ws) {
+        if (w.weight == 0) continue;
+        const auto pose = poseWorld.find(w.boneId);
+        const auto bind = bindInverse.find(w.boneId);
+        if (pose == poseWorld.end() || bind == bindInverse.end()) continue;
+        const V2 p = apply(mul(pose->second, bind->second), vx, vy);
+        px += p.x * w.weight;
+        py += p.y * w.weight;
+        total += w.weight;
+      }
+      if (total != 0) {
+        if (total >= kFullyBound) {
+          ox = px / total;
+          oy = py / total;
+        } else {
+          const double rest = 1 - total;
+          ox = px + rest * vx;
+          oy = py + rest * vy;
+        }
       }
     }
     out[i * 4 + 0] = f32(ox);
@@ -1939,47 +2378,64 @@ Skeleton read_skeleton(const Json& skel) {
     s.bind = s.bones;
   }
   if (skel.at("weightPaint").is_object()) s.weightPaint = &skel.at("weightPaint");
+  s.dualQuaternion = skel.at("preserveVolume").is_string() && skel.at("preserveVolume").str() == "on";
   return s;
 }
 
-/// resolveActiveIkTargets (enabled targets, live positions/poles, IK mode applied).
-std::vector<IkTarget> resolve_active_ik_targets(const Json& skel, double t, const RigSampler& anim) {
-  std::vector<IkTarget> out;
+/// The IK/FK blend of a goal at `t`: the `ikMode.<bone>` track clamped to 0..1
+/// when it is keyed, else the stored mode ('fk' = 0; anything else = 1).
+double ik_blend_of(const Json& stored, const std::string& boneId, double t, const RigSampler& anim) {
+  const auto sampled = anim.sample("ikMode." + boneId, t);
+  if (sampled && std::isfinite(*sampled)) return jmax(0, jmin(1, *sampled));
+  if (stored.at("ikMode").is_string()) return stored.at("ikMode").str() == "fk" ? 0 : 1;
+  return 1;
+}
+
+/// Every stored IK goal with resolveIkTargets' sampling and its blend (enabled or not).
+std::vector<RigIkOut> resolve_ik_goals(const Json& skel, double t, const RigSampler& anim) {
+  std::vector<RigIkOut> out;
   const Json& list = skel.at("ikTargets");
   if (!list.is_array()) return out;
-  std::unordered_map<std::string, const Json*> byId;
-  for (const Json& tg : list.arr()) byId[jkey(tg.at("boneId"))] = &tg;
   const auto num = [](const std::optional<double>& v) { return v && std::isfinite(*v); };
   for (const Json& tg : list.arr()) {
-    if (tg.at("enabled").is_bool() && !tg.at("enabled").b()) continue;
     const std::string boneId = jkey(tg.at("boneId"));
     const auto liveX = anim.sample("ikTarget." + boneId + ".x", t);
     const auto liveY = anim.sample("ikTarget." + boneId + ".y", t);
     const auto poleX = anim.sample("ikPole." + boneId + ".x", t);
     const auto poleY = anim.sample("ikPole." + boneId + ".y", t);
-    IkTarget r;
-    r.boneId = boneId;
+    RigIkOut r;
+    r.bone = boneId;
+    r.enabled = !(tg.at("enabled").is_bool() && !tg.at("enabled").b());
     r.x = finite_or(liveX, jn(tg.at("x")));
     r.y = finite_or(liveY, jn(tg.at("y")));
     r.chainLength = jopt(tg.at("chainLength"));
     const Json& storedPole = tg.at("pole");
     if (num(poleX) || num(poleY)) {
-      r.pole = V2{finite_or(poleX, storedPole.at("x").is_number() ? storedPole.at("x").num() : 0),
-                  finite_or(poleY, storedPole.at("y").is_number() ? storedPole.at("y").num() : 0)};
+      r.pole = std::array<double, 2>{finite_or(poleX, storedPole.at("x").is_number() ? storedPole.at("x").num() : 0),
+                                     finite_or(poleY, storedPole.at("y").is_number() ? storedPole.at("y").num() : 0)};
     } else if (storedPole.is_object()) {
-      r.pole = V2{jn(storedPole.at("x")), jn(storedPole.at("y"))};
+      r.pole = std::array<double, 2>{jn(storedPole.at("x")), jn(storedPole.at("y"))};
     }
-    // chainModeOf: the track (thresholded at 0.5) wins over the stored mode ('ik' default).
-    const Json* stored = byId.at(boneId);
-    if (stored != nullptr) {
-      const auto sampled = anim.sample("ikMode." + boneId, t);
-      std::string mode;
-      if (sampled && std::isfinite(*sampled)) mode = *sampled >= 0.5 ? "ik" : "fk";
-      else if (stored->at("ikMode").is_string()) mode = stored->at("ikMode").str();
-      else if (stored->at("ikMode").is_undefined() || stored->at("ikMode").is_null()) mode = "ik";
-      if (mode != "ik") continue;
-    }
+    r.blend = ik_blend_of(tg, boneId, t, anim);
+    r.mode = r.blend >= 0.5 ? "ik" : "fk";
     out.push_back(std::move(r));
+  }
+  return out;
+}
+
+/// resolveActiveIkTargets: the enabled goals with any IK share, as solver targets.
+std::vector<IkTarget> active_ik_targets(const std::vector<RigIkOut>& goals) {
+  std::vector<IkTarget> out;
+  for (const RigIkOut& g : goals) {
+    if (!g.enabled || !(g.blend > 0)) continue;
+    IkTarget t;
+    t.boneId = g.bone;
+    t.x = g.x;
+    t.y = g.y;
+    t.chainLength = g.chainLength;
+    if (g.pole) t.pole = V2{(*g.pole)[0], (*g.pole)[1]};
+    t.blend = g.blend;
+    out.push_back(std::move(t));
   }
   return out;
 }
@@ -2004,6 +2460,43 @@ std::vector<Bone> resolve_live_bones(const std::vector<Bone>& bones, double t, c
   return out;
 }
 
+/// The skeleton's binding over `rest` (getSkeletonBinding): bind segments,
+/// geodesic weights, weight paint, seam band — from the cache or computed.
+/// `bindWorld` is compute_world(sk.bind). A paint that cannot apply is reported.
+std::shared_ptr<const BoneBinding> cached_bone_binding(const RestMesh& rest, const Skeleton& sk, const WorldMap& bindWorld,
+                                                       std::vector<std::string>& warnings) {
+  std::vector<Segment> segments;
+  for (const Bone& b : sk.bind) {
+    const auto it = bindWorld.find(b.id);
+    if (it == bindWorld.end()) continue;
+    segments.push_back({b.id, bone_root(it->second), bone_tip(it->second, b.length), b.influenceRadius});
+  }
+  const Json* paint = nullptr;
+  if (sk.weightPaint != nullptr) {
+    const Json& vc = sk.weightPaint->at("vertexCount");
+    const bool matches = vc.is_number() && vc.num() == static_cast<double>(rest.n());
+    if (matches && sk.weightPaint->at("bones").is_object()) paint = &sk.weightPaint->at("bones");
+    else if (matches) warnings.emplace_back("skeleton weight paint without a bones map — the automatic weights are used");
+  }
+  KeyWriter kw("bones");
+  kw.s(rest.key).u(segments.size());
+  for (const Segment& s : segments) {
+    kw.s(s.id).d(s.a.x).d(s.a.y).d(s.b.x).d(s.b.y).u(s.radius ? 1U : 0U).d(s.radius.value_or(0));
+  }
+  if (paint != nullptr) kw.s(js::stringify(*paint));
+  else kw.s("nopaint");
+  const std::string key = kw.take();
+  if (auto hit = caches().bones.find(key)) return hit;
+  auto b = std::make_shared<BoneBinding>();
+  b->segments = std::move(segments);
+  geodesic_auto_weights(rest, *b);
+  if (paint != nullptr) {
+    for (std::size_t i = 0; i < b->weights.size(); ++i) b->weights[i] = apply_weight_paint(b->weights[i], i, *paint);
+  }
+  const std::size_t bytes = bones_bytes(*b);
+  return caches().bones.insert(key, std::shared_ptr<const BoneBinding>(std::move(b)), bytes);
+}
+
 }  // namespace
 
 bool rig_present(const Json& fx) {
@@ -2013,11 +2506,58 @@ bool rig_present(const Json& fx) {
          (s.is_object() && s.at("bones").is_array() && !s.at("bones").arr().empty());
 }
 
+void rig_cache_clear() {
+  caches().rest.clear();
+  caches().factor.clear();
+  caches().bones.clear();
+  caches().coverage.clear();
+}
+
+rig::RigCacheStats rig_cache_stats() {
+  rig::RigCacheStats out;
+  for (const rig::RigCacheStats s : {caches().rest.stats(), caches().factor.stats(), caches().bones.stats(), caches().coverage.stats()}) {
+    out.entries += s.entries;
+    out.bytes += s.bytes;
+    out.hits += s.hits;
+    out.misses += s.misses;
+  }
+  return out;
+}
+
 namespace {
 
+/// The parsed mesh settings of a MeshRig (resolve_rest_mesh / build_rig_model
+/// share it): the defaults for malformed values, a fractional density floored —
+/// each reported as a warning.
+struct MeshParams {
+  double density = 22;
+  double expansion = 0;
+  std::optional<int> cells;
+};
+
+MeshParams mesh_params(const MeshRig& rig, std::vector<std::string>& warnings) {
+  MeshParams p;
+  if (rig.density.is_number()) p.density = rig.density.num();
+  else if (!rig.density.is_undefined() && !rig.density.is_null()) warnings.emplace_back("rig mesh density is not a number — the default (22) is used");
+  if (rig.expansion.is_number()) p.expansion = rig.expansion.num();
+  else if (!rig.expansion.is_undefined() && !rig.expansion.is_null()) warnings.emplace_back("rig mesh expansion is not a number — 0 is used");
+  const double gridD = jmax(2, jmin(50, p.density));
+  if (std::floor(gridD) != gridD) warnings.emplace_back("fractional rig mesh density — floored to " + std::to_string(static_cast<int>(std::floor(gridD))));
+  p.cells = static_cast<int>(std::floor(gridD));
+  return p;
+}
+
+/// silhouetteFromPathPoints → resolvePuppetSilhouette: a closed path of ≥ 3 points.
+std::optional<std::vector<V2>> path_silhouette(const RigInputs& in) {
+  if (in.pathOpen || in.pathPoints == nullptr || !in.pathPoints->is_array() || in.pathPoints->arr().size() < 3) return std::nullopt;
+  std::vector<V2> pts;
+  for (const Json& p : in.pathPoints->arr()) pts.push_back({jn(p.at("x")), jn(p.at("y"))});
+  return pts;
+}
+
 /// build_rig_mesh's rest-mesh half: the shared MeshRig (puppet settings win; a
-/// skeleton-only layer reads its own), then buildRestMesh.
-std::optional<RestMesh> resolve_rest_mesh(const RigInputs& in, bool hasPuppet, MeshRig& rig, RigResult& res) {
+/// skeleton-only layer reads its own), then buildRestMesh through the cache.
+std::shared_ptr<const RestMesh> resolve_rest_mesh(const RigInputs& in, bool hasPuppet, MeshRig& rig, std::vector<std::string>& warnings) {
   const Json& fx = *in.fx;
   const Json& puppet = fx.at("puppet");
   const Json& skel = fx.at("skeleton");
@@ -2028,30 +2568,10 @@ std::optional<RestMesh> resolve_rest_mesh(const RigInputs& in, bool hasPuppet, M
   rig.density = meshSrc.at("meshDensity");
   rig.expansion = meshSrc.at("meshExpansion");
   rig.silhouette = meshSrc.at("meshMode").is_string() && meshSrc.at("meshMode").str() == "silhouette";
-
-  // `rig.meshDensity ?? 22` / `rig.meshExpansion ?? 0`. A non-numeric value reads
-  // as the default and a fractional density is floored (the TS indexed a typed
-  // array at fractional offsets there — garbage, never a mesh worth matching).
-  double density = 22;
-  if (rig.density.is_number()) density = rig.density.num();
-  else if (!rig.density.is_undefined() && !rig.density.is_null()) res.warnings.emplace_back("rig mesh density is not a number — the default (22) is used");
-  double expansion = 0;
-  if (rig.expansion.is_number()) expansion = rig.expansion.num();
-  else if (!rig.expansion.is_undefined() && !rig.expansion.is_null()) res.warnings.emplace_back("rig mesh expansion is not a number — 0 is used");
-  const double gridD = jmax(2, jmin(50, density));
-  if (std::floor(gridD) != gridD) res.warnings.emplace_back("fractional rig mesh density — floored to " + std::to_string(static_cast<int>(std::floor(gridD))));
-  const std::optional<int> cells = static_cast<int>(std::floor(gridD));
-
-  // silhouetteFromPathPoints → resolvePuppetSilhouette: a closed path of ≥ 3 points.
-  std::optional<std::vector<V2>> silhouette;
-  if (!in.pathOpen && in.pathPoints != nullptr && in.pathPoints->is_array() && in.pathPoints->arr().size() >= 3) {
-    std::vector<V2> pts;
-    for (const Json& p : in.pathPoints->arr()) pts.push_back({jn(p.at("x")), jn(p.at("y"))});
-    silhouette = std::move(pts);
-  }
-
-  std::optional<RestMesh> built = build_rest_mesh(in.width, in.height, in.pad, rig, silhouette, cells, expansion, density, in.coverage);
-  if (!built) res.warnings.emplace_back("the rig's rest mesh could not be built — the layer draws undeformed");
+  const MeshParams mp = mesh_params(rig, warnings);
+  const rig::CoverageSettings cov = read_coverage_settings(meshSrc, hasPuppet ? &skel : &puppet);
+  auto built = cached_rest_mesh(in, rig, path_silhouette(in), mp.cells, mp.expansion, mp.density, cov);
+  if (!built) warnings.emplace_back("the rig's rest mesh could not be built — the layer draws undeformed");
   return built;
 }
 
@@ -2062,8 +2582,8 @@ std::optional<RestMeshView> rest_mesh_for(const RigInputs& in) {
   const Json& puppet = fx.at("puppet");
   const bool hasPuppet = puppet.is_object() && puppet.at("pins").is_array() && !puppet.at("pins").arr().empty();
   MeshRig rig;
-  RigResult res;
-  const std::optional<RestMesh> built = resolve_rest_mesh(in, hasPuppet, rig, res);
+  std::vector<std::string> warnings;
+  const std::shared_ptr<const RestMesh> built = resolve_rest_mesh(in, hasPuppet, rig, warnings);
   if (!built) return std::nullopt;
   return RestMeshView{built->v, built->tris};
 }
@@ -2078,7 +2598,7 @@ RigResult build_rig_mesh(const RigInputs& in, const RigSampler& anim) {
   if (!hasPuppet && !hasSkel) return res;
 
   MeshRig rig;
-  std::optional<RestMesh> built = resolve_rest_mesh(in, hasPuppet, rig, res);
+  const std::shared_ptr<const RestMesh> built = resolve_rest_mesh(in, hasPuppet, rig, res.warnings);
   if (!built) return res;
   const RestMesh& rest = *built;
   std::vector<float> deformed = rest.v;
@@ -2088,37 +2608,22 @@ RigResult build_rig_mesh(const RigInputs& in, const RigSampler& anim) {
     const std::vector<DeformPin> live = resolve_live_pins(rig.pins, in.rigT, anim);
     const bool lbs = puppet.at("solver").is_string() && puppet.at("solver").str() == "lbs";
     const std::optional<double> maxRot = jopt(puppet.at("maxRotationDeg"));
-    deformed = deform(live, rest, lbs, maxRot);
+    deformed = deform(live, built, lbs, maxRot);
     overlapDepth = overlap_depth_field(live, rest);
   }
 
   if (hasSkel) {
     const Skeleton sk = read_skeleton(skel);
     const std::vector<Bone> animated = resolve_live_bones(sk.bones, in.rigT, anim);
-    const std::vector<IkTarget> ik = resolve_active_ik_targets(skel, in.rigT, anim);
+    const std::vector<IkTarget> ik = active_ik_targets(resolve_ik_goals(skel, in.rigT, anim));
     const std::vector<Bone> posed = apply_ik(animated, ik);
     const WorldMap poseWorld = compute_world(posed);
-    // getSkeletonBinding: bind to the rest pose, weights by geodesic partition (+ paint).
+    // getSkeletonBinding: bind to the rest pose, weights by geodesic partition (+ paint) — cached per rest.
     const WorldMap bindWorld = compute_world(sk.bind);
     WorldMap bindInverse;
     for (const auto& [id, m] : bindWorld) bindInverse[id] = invert(m);
-    std::vector<Segment> segments;
-    for (const Bone& b : sk.bind) {
-      const auto it = bindWorld.find(b.id);
-      if (it == bindWorld.end()) continue;
-      segments.push_back({b.id, bone_root(it->second), bone_tip(it->second, b.length), b.influenceRadius});
-    }
-    std::vector<std::vector<VertexWeight>> weights = geodesic_auto_weights(rest, segments);
-    if (sk.weightPaint != nullptr) {
-      const Json& vc = sk.weightPaint->at("vertexCount");
-      const bool matches = vc.is_number() && vc.num() == static_cast<double>(rest.n());
-      if (matches && sk.weightPaint->at("bones").is_object()) {
-        for (std::size_t i = 0; i < weights.size(); ++i) weights[i] = apply_weight_paint(weights[i], i, sk.weightPaint->at("bones"));
-      } else if (matches) {
-        res.warnings.emplace_back("skeleton weight paint without a bones map — the automatic weights are used");
-      }
-    }
-    deformed = skin_rig_vertices(weights, poseWorld, bindInverse, deformed);
+    const std::shared_ptr<const BoneBinding> binding = cached_bone_binding(rest, sk, bindWorld, res.warnings);
+    deformed = skin_rig_vertices(binding->weights, poseWorld, bindInverse, deformed, sk.dualQuaternion);
   }
 
   DeformedMeshData out;
@@ -2228,54 +2733,26 @@ std::optional<V2> rest_point_from_deformed(V2 p, const RestMesh& rest, const std
   return std::nullopt;
 }
 
-/// Every stored IK goal with resolveIkTargets' sampling and chainModeOf's mode (enabled or not).
-std::vector<RigIkOut> resolve_ik_goals(const Json& skel, double t, const RigSampler& anim) {
-  std::vector<RigIkOut> out;
-  const Json& list = skel.at("ikTargets");
-  if (!list.is_array()) return out;
-  const auto num = [](const std::optional<double>& v) { return v && std::isfinite(*v); };
-  for (const Json& tg : list.arr()) {
-    const std::string boneId = jkey(tg.at("boneId"));
-    const auto liveX = anim.sample("ikTarget." + boneId + ".x", t);
-    const auto liveY = anim.sample("ikTarget." + boneId + ".y", t);
-    const auto poleX = anim.sample("ikPole." + boneId + ".x", t);
-    const auto poleY = anim.sample("ikPole." + boneId + ".y", t);
-    RigIkOut r;
-    r.bone = boneId;
-    r.enabled = !(tg.at("enabled").is_bool() && !tg.at("enabled").b());
-    r.x = finite_or(liveX, jn(tg.at("x")));
-    r.y = finite_or(liveY, jn(tg.at("y")));
-    r.chainLength = jopt(tg.at("chainLength"));
-    const Json& storedPole = tg.at("pole");
-    if (num(poleX) || num(poleY)) {
-      r.pole = std::array<double, 2>{finite_or(poleX, storedPole.at("x").is_number() ? storedPole.at("x").num() : 0),
-                                     finite_or(poleY, storedPole.at("y").is_number() ? storedPole.at("y").num() : 0)};
-    } else if (storedPole.is_object()) {
-      r.pole = std::array<double, 2>{jn(storedPole.at("x")), jn(storedPole.at("y"))};
-    }
-    const auto sampled = anim.sample("ikMode." + boneId, t);
-    if (sampled && std::isfinite(*sampled)) r.mode = *sampled >= 0.5 ? "ik" : "fk";
-    else if (tg.at("ikMode").is_string()) r.mode = tg.at("ikMode").str();
-    else r.mode = "ik";
-    out.push_back(std::move(r));
-  }
-  return out;
-}
-
 }  // namespace
 
 struct RigModel::Impl {
-  RestMesh rest;
+  std::shared_ptr<const RestMesh> rest;
   std::vector<float> puppetDeformed;
   bool skinned = false;
+  bool dualQuaternion = false;
   WorldMap poseWorld;
   WorldMap bindInverse;
-  std::vector<std::vector<VertexWeight>> weights;
-  std::vector<Segment> segments;
-  double band = 1e-6;
+  std::shared_ptr<const BoneBinding> binding;
+  static const BoneBinding& none() {
+    static const BoneBinding kEmpty;
+    return kEmpty;
+  }
+  [[nodiscard]] const BoneBinding& bones() const noexcept { return binding ? *binding : none(); }
 
   /// blendedMatrix (rigDeform.ts): Σ wᵢ·(poseᵢ·bindInvᵢ); a partial total spends the rest on the identity.
+  /// With preserveVolume the dual-quaternion blend (what the mesh renders with).
   [[nodiscard]] std::optional<Mat2D> blended(const std::vector<VertexWeight>& ws) const {
+    if (dualQuaternion) return dual_quaternion_blend(ws, poseWorld, bindInverse);
     double a = 0, b = 0, c = 0, d = 0, e = 0, f = 0, total = 0;
     for (const VertexWeight& w : ws) {
       if (w.weight == 0) continue;
@@ -2298,7 +2775,8 @@ struct RigModel::Impl {
   }
   [[nodiscard]] V2 skin(V2 p) const {
     if (!skinned) return p;
-    const auto m = blended(weights_at_point(rest, weights, p, segments, band));
+    const BoneBinding& bb = bones();
+    const auto m = blended(weights_at_point(*rest, bb.weights, p, bb.segments, bb.band));
     return m ? apply(*m, p.x, p.y) : p;
   }
 };
@@ -2308,12 +2786,12 @@ RigModel::RigModel(RigModel&&) noexcept = default;
 RigModel& RigModel::operator=(RigModel&&) noexcept = default;
 RigModel::~RigModel() = default;
 
-const std::vector<float>& RigModel::rest() const noexcept { return impl_->rest.v; }
-const std::vector<std::uint16_t>& RigModel::triangles() const noexcept { return impl_->rest.tris; }
+const std::vector<float>& RigModel::rest() const noexcept { return impl_->rest->v; }
+const std::vector<std::uint16_t>& RigModel::triangles() const noexcept { return impl_->rest->tris; }
 
 std::vector<std::uint32_t> RigModel::lattice_edges() const {
-  const std::vector<float>& r = impl_->rest.v;
-  const std::vector<std::uint16_t>& tris = impl_->rest.tris;
+  const std::vector<float>& r = impl_->rest->v;
+  const std::vector<std::uint16_t>& tris = impl_->rest->tris;
   const auto edges = [&](bool boxesOnly) {
     std::set<std::uint32_t> seen;
     std::vector<std::uint32_t> out;
@@ -2338,19 +2816,20 @@ std::vector<std::uint32_t> RigModel::lattice_edges() const {
     return out;
   };
   // A grid mesh draws boxes; an outline mesh (or a grid the box filter empties) every unique edge.
-  std::vector<std::uint32_t> boxes = impl_->rest.outline ? std::vector<std::uint32_t>{} : edges(true);
+  std::vector<std::uint32_t> boxes = impl_->rest->outline ? std::vector<std::uint32_t>{} : edges(true);
   return boxes.empty() ? edges(false) : boxes;
 }
 
 std::vector<double> RigModel::bone_weights(std::string_view bone) const {
   std::vector<double> out;
   if (!impl_->skinned) return out;
-  const std::size_t n = impl_->rest.n();
+  const std::size_t n = impl_->rest->n();
+  const auto& weights = impl_->bones().weights;
   out.reserve(n);
   for (std::size_t i = 0; i < n; ++i) {
     double w = 0;
-    if (i < impl_->weights.size()) {
-      for (const VertexWeight& vw : impl_->weights[i]) {
+    if (i < weights.size()) {
+      for (const VertexWeight& vw : weights[i]) {
         if (vw.boneId == bone) {
           w = vw.weight;
           break;
@@ -2364,8 +2843,9 @@ std::vector<double> RigModel::bone_weights(std::string_view bone) const {
 
 std::vector<std::pair<std::string, double>> RigModel::vertex_weights(std::size_t v) const {
   std::vector<std::pair<std::string, double>> out;
-  if (!impl_->skinned || v >= impl_->rest.n() || v >= impl_->weights.size()) return out;
-  for (const VertexWeight& w : impl_->weights[v]) out.emplace_back(w.boneId, w.weight);
+  const auto& weights = impl_->bones().weights;
+  if (!impl_->skinned || v >= impl_->rest->n() || v >= weights.size()) return out;
+  for (const VertexWeight& w : weights[v]) out.emplace_back(w.boneId, w.weight);
   std::ranges::stable_sort(out, [](const auto& a, const auto& b) { return b.second - a.second < 0; });
   return out;
 }
@@ -2378,9 +2858,10 @@ std::array<double, 2> RigModel::skin(double x, double y) const {
 std::array<double, 2> RigModel::unskin(double x, double y) const {
   if (!impl_->skinned) return {x, y};
   // unskinPoint: a fixed-count fixed point (UNSKIN_ITERATIONS = 12) — weight at the guess, invert, re-map.
+  const BoneBinding& bb = impl_->bones();
   V2 guess{x, y};
   for (int i = 0; i < 12; ++i) {
-    const auto m = impl_->blended(weights_at_point(impl_->rest, impl_->weights, guess, impl_->segments, impl_->band));
+    const auto m = impl_->blended(weights_at_point(*impl_->rest, bb.weights, guess, bb.segments, bb.band));
     if (!m) return {guess.x, guess.y};
     guess = apply(invert(*m), x, y);
   }
@@ -2388,7 +2869,7 @@ std::array<double, 2> RigModel::unskin(double x, double y) const {
 }
 
 std::optional<std::array<double, 2>> RigModel::rest_from_deformed(double x, double y) const {
-  const auto r = rest_point_from_deformed(V2{x, y}, impl_->rest, impl_->puppetDeformed);
+  const auto r = rest_point_from_deformed(V2{x, y}, *impl_->rest, impl_->puppetDeformed);
   if (!r) return std::nullopt;
   return std::array<double, 2>{r->x, r->y};
 }
@@ -2423,36 +2904,24 @@ std::optional<RigModel> build_rig_model(const RigInputs& in, const RigSampler& a
     rig.expansion = skel.at("meshExpansion");
     rig.silhouette = skel.at("meshMode").is_string() && skel.at("meshMode").str() == "silhouette";
   }
-  // As resolve_rest_mesh: malformed values read as the defaults, a fractional density floors.
-  double density = 22;
-  if (rig.density.is_number()) density = rig.density.num();
-  else if (!rig.density.is_undefined() && !rig.density.is_null()) warnings.emplace_back("rig mesh density is not a number — the default (22) is used");
-  double expansion = 0;
-  if (rig.expansion.is_number()) expansion = rig.expansion.num();
-  else if (!rig.expansion.is_undefined() && !rig.expansion.is_null()) warnings.emplace_back("rig mesh expansion is not a number — 0 is used");
-  const double gridD = jmax(2, jmin(50, density));
-  if (std::floor(gridD) != gridD) warnings.emplace_back("fractional rig mesh density — floored to " + std::to_string(static_cast<int>(std::floor(gridD))));
-  const std::optional<int> cells = static_cast<int>(std::floor(gridD));
-  std::optional<std::vector<V2>> silhouette;
-  if (!in.pathOpen && in.pathPoints != nullptr && in.pathPoints->is_array() && in.pathPoints->arr().size() >= 3) {
-    std::vector<V2> pts;
-    for (const Json& p : in.pathPoints->arr()) pts.push_back({jn(p.at("x")), jn(p.at("y"))});
-    silhouette = std::move(pts);
-  }
-  std::optional<RestMesh> built = build_rest_mesh(in.width, in.height, in.pad, rig, silhouette, cells, expansion, density, in.coverage);
+  const MeshParams mp = mesh_params(rig, warnings);
+  // The puppet's trace settings first (as its density), then the skeleton's.
+  static const Json kNoRig;
+  const rig::CoverageSettings cov = read_coverage_settings(hasPuppetRig ? puppet : kNoRig, skel.is_object() ? &skel : nullptr);
+  const std::shared_ptr<const RestMesh> built = cached_rest_mesh(in, rig, path_silhouette(in), mp.cells, mp.expansion, mp.density, cov);
   if (!built) {
     warnings.emplace_back("the rig's rest mesh could not be built — the layer draws undeformed");
     return std::nullopt;
   }
 
   auto impl = std::make_unique<RigModel::Impl>();
-  impl->rest = std::move(*built);
-  const RestMesh& rest = impl->rest;
+  impl->rest = built;
+  const RestMesh& rest = *built;
   std::vector<DeformPin> live;
   if (hasPins) {
     live = resolve_live_pins(rig.pins, in.rigT, anim);
     const bool lbs = puppet.at("solver").is_string() && puppet.at("solver").str() == "lbs";
-    impl->puppetDeformed = deform(live, rest, lbs, jopt(puppet.at("maxRotationDeg")));
+    impl->puppetDeformed = deform(live, built, lbs, jopt(puppet.at("maxRotationDeg")));
   } else {
     impl->puppetDeformed = rest.v;
   }
@@ -2464,39 +2933,14 @@ std::optional<RigModel> build_rig_model(const RigInputs& in, const RigSampler& a
     const Skeleton sk = read_skeleton(skel);
     const std::vector<Bone> animated = resolve_live_bones(sk.bones, in.rigT, anim);
     ikOut = resolve_ik_goals(skel, in.rigT, anim);
-    std::vector<IkTarget> active;
-    for (const RigIkOut& g : ikOut) {
-      if (!g.enabled || g.mode != "ik") continue;
-      IkTarget t;
-      t.boneId = g.bone;
-      t.x = g.x;
-      t.y = g.y;
-      t.chainLength = g.chainLength;
-      if (g.pole) t.pole = V2{(*g.pole)[0], (*g.pole)[1]};
-      active.push_back(std::move(t));
-    }
-    const std::vector<Bone> posed = apply_ik(animated, active);
+    const std::vector<Bone> posed = apply_ik(animated, active_ik_targets(ikOut));
     impl->poseWorld = compute_world(posed);
     const WorldMap bindWorld = compute_world(sk.bind);
     for (const auto& [id, m] : bindWorld) impl->bindInverse[id] = invert(m);
-    for (const Bone& b : sk.bind) {
-      const auto it = bindWorld.find(b.id);
-      if (it == bindWorld.end()) continue;
-      impl->segments.push_back({b.id, bone_root(it->second), bone_tip(it->second, b.length), b.influenceRadius});
-    }
-    impl->weights = geodesic_auto_weights(rest, impl->segments);
-    impl->band = seam_band(build_edge_graph(rest).meanEdge, impl->segments);
-    if (sk.weightPaint != nullptr) {
-      const Json& vc = sk.weightPaint->at("vertexCount");
-      const bool matches = vc.is_number() && vc.num() == static_cast<double>(rest.n());
-      if (matches && sk.weightPaint->at("bones").is_object()) {
-        for (std::size_t i = 0; i < impl->weights.size(); ++i) impl->weights[i] = apply_weight_paint(impl->weights[i], i, sk.weightPaint->at("bones"));
-      } else if (matches) {
-        warnings.emplace_back("skeleton weight paint without a bones map — the automatic weights are used");
-      }
-    }
+    impl->binding = cached_bone_binding(rest, sk, bindWorld, warnings);
     impl->skinned = true;
-    vertices = skin_rig_vertices(impl->weights, impl->poseWorld, impl->bindInverse, impl->puppetDeformed);
+    impl->dualQuaternion = sk.dualQuaternion;
+    vertices = skin_rig_vertices(impl->binding->weights, impl->poseWorld, impl->bindInverse, impl->puppetDeformed, sk.dualQuaternion);
     for (std::size_t i = 0; i < sk.bones.size(); ++i) {
       RigBoneOut o;
       o.id = sk.bones[i].id;
@@ -2521,10 +2965,8 @@ std::optional<RigModel> build_rig_model(const RigInputs& in, const RigSampler& a
     o.kind = pin.kind.empty() ? "advanced" : pin.kind;
     V2 c{live[i].x, live[i].y};
     if (o.kind == "bend") {
-      // A bend pin sits wherever the other pins carried it: its solved mesh vertex.
-      if (const auto it = rest.pinVertex.find(pin.id); it != rest.pinVertex.end() && impl->puppetDeformed.size() >= it->second * 4 + 2) {
-        c = V2{impl->puppetDeformed[it->second * 4], impl->puppetDeformed[it->second * 4 + 1]};
-      }
+      // A bend pin sits wherever the other pins carried it: its bound point in the solved mesh.
+      if (const auto p = rest.pin_point(pin.id, impl->puppetDeformed)) c = V2{(*p)[0], (*p)[1]};
     }
     const V2 drawn = impl->skin(c);
     o.x = drawn.x;

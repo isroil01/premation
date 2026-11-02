@@ -45,6 +45,8 @@ Registry build() {
       pd.def = p.at("default");
       def.params.push_back(std::move(pd));
     }
+    def.defaultParams = Json::object();
+    for (const auto& pd : def.params) def.defaultParams.set(pd.key, pd.def);
     if (e.has("newInstanceParams")) def.newInstanceParams = e.at("newInstanceParams");
     c.effectIndex.emplace(def.type, c.effects.size());
     c.effects.push_back(std::move(def));

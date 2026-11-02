@@ -80,7 +80,12 @@ inline constexpr int kFxgStrip = 18;
 inline constexpr int kFxgTap0 = 19;
 inline constexpr int kFxgSim0 = 23;
 inline constexpr std::size_t kFxgSimSlots = 8;
-inline constexpr int kFxgSlots = 31;
+/// Stream D (2026-11-02): 31 BACKDROP (read only) — the scene under the layer,
+/// copied by the composition pass before the chain of a layer whose entry
+/// carries `readsBackdrop` (Graph::backdrop()); transparent black otherwise
+/// (a layer-space chain on the 3D route, an entry without the flag).
+inline constexpr int kFxgBackdrop = 31;
+inline constexpr int kFxgSlots = 32;
 /// The mask rasters' targets (declared in passes.cpp).
 inline constexpr std::array<std::string_view, 2> kFxMaskTargets = {"fx-mask-0", "fx-mask-1"};
 /// The time taps' targets (declared in passes.cpp).
@@ -112,6 +117,8 @@ struct FxGraphIO {
   std::function<TexRef()> depth;
   /// A mask raster by key drawn into `dest` in the buffer's space (empty = none).
   std::function<TexRef(std::string_view key, std::string_view dest)> maskInto;
+  /// Stream D: the scene under the layer (BACKDROP), in the buffer's space; empty = unavailable.
+  std::function<TexRef()> backdrop;
 };
 
 struct FxGraphResult {

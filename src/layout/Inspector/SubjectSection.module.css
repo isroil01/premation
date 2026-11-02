@@ -8,8 +8,8 @@
 
 .empty {
   padding: var(--space-3);
-  border: 1px dashed var(--color-border-strong);
-  border-radius: var(--radius-md);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-sm);
 }
 
 .help {
@@ -53,26 +53,32 @@
 .grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-2);
+  gap: var(--space-1);
 }
 
+/* One control style for the whole section: a flat well, a hairline edge, the
+   accent only on the one primary verb (Follow). Labels only — what each verb
+   does is its tooltip. */
 .action,
 .actionPrimary,
 .follow {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: center;
-  gap: 2px;
-  min-height: 52px;
-  padding: var(--space-2) var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-width: 0;
+  height: var(--control-height-row);
+  padding: 0 var(--space-2);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-surface-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-0);
   color: var(--color-text-primary);
   font: inherit;
   text-align: left;
   cursor: pointer;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .actionPrimary,
@@ -81,7 +87,11 @@
   background: var(--color-primary-subtle);
 }
 
-.action:hover:not(:disabled),
+.action:hover:not(:disabled) {
+  background: var(--color-hover);
+  border-color: var(--color-border-strong);
+}
+
 .actionPrimary:hover:not(:disabled),
 .follow:hover:not(:disabled) {
   border-color: var(--color-primary-hover);
@@ -104,6 +114,10 @@
 }
 
 .actionTitle {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-weight: var(--panel-weight-button);
 }
 
@@ -115,23 +129,42 @@
 .primary,
 .secondary {
   align-self: flex-start;
-  height: 26px;
+  height: var(--control-height-row);
   padding: 0 var(--space-3);
   border-radius: var(--radius-sm);
   font: inherit;
+  font-weight: var(--panel-weight-button);
   cursor: pointer;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .primary {
   border: 1px solid var(--color-primary);
   background: var(--color-primary-subtle);
-  color: var(--color-primary-text);
+  color: var(--color-text-primary);
+}
+
+.primary:hover:not(:disabled) {
+  border-color: var(--color-primary-hover);
 }
 
 .secondary {
-  border: 1px solid var(--color-border-strong);
-  background: transparent;
-  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-0);
+  color: var(--color-text-primary);
+}
+
+.secondary:hover:not(:disabled) {
+  background: var(--color-hover);
+  border-color: var(--color-border-strong);
+}
+
+.primary:disabled,
+.secondary:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .looks {
@@ -196,19 +229,19 @@
 .rowActive {
   display: flex;
   align-items: center;
-  gap: var(--space-1);
-  min-height: 32px;
-  padding: 2px var(--space-1);
+  gap: 2px;
+  min-height: 28px;
+  padding: 0 var(--space-1);
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
 }
 
 .row:hover {
-  background: var(--color-surface-2);
+  background: var(--color-hover);
 }
 
+/* The active subject: a tint, no outline box. */
 .rowActive {
-  border-color: var(--color-primary);
   background: var(--color-primary-subtle);
 }
 
@@ -268,8 +301,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   padding: 0;
   border: 0;
   border-radius: var(--radius-sm);
@@ -357,14 +390,18 @@
   list-style: none;
 }
 
+/* An applied style: a plain row (no grey slab), lit on hover like the list. */
 .styleRow {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  min-height: 28px;
+  min-height: 26px;
   padding: 0 var(--space-1);
   border-radius: var(--radius-sm);
-  background: var(--color-surface-2);
+}
+
+.styleRow:hover {
+  background: var(--color-hover);
 }
 
 .styleName {
@@ -386,34 +423,42 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  min-height: 32px;
+  min-width: 0;
+  height: var(--control-height-row);
   padding: 0 var(--space-2);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
-  background: transparent;
+  background: var(--color-surface-0);
   color: var(--color-text-primary);
   font: inherit;
   text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   cursor: pointer;
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    border-color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .preset:hover {
-  border-color: var(--color-primary-hover);
-  background: var(--color-surface-2);
+  background: var(--color-hover);
+  border-color: var(--color-border-strong);
 }
 
-/* A small mark per shelf: an outline ring, a glow, a dimmed field, a colour look. */
+/* A small mark per shelf — outline ring, soft ring, dimmed field, colour look —
+   drawn in the text greys: blue is kept for "on", never for decoration. */
 .presetSwatch {
   flex: none;
-  width: 14px;
-  height: 14px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
-  border: 2px solid var(--color-text-secondary);
+  border: 1.5px solid var(--color-text-tertiary);
 }
 
 .preset[data-kind='glow'] .presetSwatch {
-  border-color: var(--color-primary);
-  box-shadow: 0 0 6px var(--color-primary);
+  border-color: var(--color-text-secondary);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-text-secondary) 25%, transparent);
 }
 
 .preset[data-kind='background'] .presetSwatch {
@@ -424,7 +469,150 @@
 
 .preset[data-kind='look'] .presetSwatch {
   border: 0;
-  background: var(--color-primary);
+  background: var(--color-text-secondary);
+}
+
+/* ── Style tiles (SubjectStyleShelf.tsx): a preset with its slider and swatch ── */
+
+.shelfHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 2px var(--space-1) 3px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-0);
+}
+
+.tile:hover {
+  border-color: var(--color-border-strong);
+}
+
+.tile[data-saved] {
+  border-style: dashed;
+}
+
+.tileHead {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.tileApply {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  height: calc(var(--control-height-row) - 4px);
+  padding: 0 var(--space-1);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tileApply:hover {
+  background: var(--color-hover);
+}
+
+.tileApply:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+}
+
+.tileName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The tile's swatch takes the chosen colour where the preset has one. */
+.tile[data-kind] .presetSwatch {
+  background: var(--tile-color, transparent);
+}
+
+.tile[data-kind='shadow'] .presetSwatch,
+.tile[data-kind='motion'] .presetSwatch {
+  border: 0;
+  background: var(--tile-color, var(--color-text-tertiary));
+  box-shadow: 2px 2px 0 color-mix(in srgb, var(--color-text-tertiary) 60%, transparent);
+}
+
+.tileStar,
+.tileStarOn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+}
+
+.tileStar:hover,
+.tileStarOn:hover {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+}
+
+.tileStarOn {
+  color: var(--color-primary);
+}
+
+.tileStar:focus-visible,
+.tileStarOn:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+/* Before / After: a small toggle; "on" (the styles off) in the accent, as any pressed state. */
+.before,
+.beforeOn {
+  flex: none;
+  height: 20px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--color-surface-0);
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--panel-font-size-help);
+  cursor: pointer;
+}
+
+.before:hover,
+.beforeOn:hover {
+  background: var(--color-hover);
+}
+
+.beforeOn {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.before:focus-visible,
+.beforeOn:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
 }
 /* ── View modes and tracking lanes (SubjectTracking.tsx) ───────────────────── */
 
@@ -442,8 +630,8 @@
   gap: 2px;
   padding: 2px;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-surface-1);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-0);
 }
 
 .viewMode {
@@ -475,10 +663,13 @@
   outline-offset: -2px;
 }
 
+/* A segmented choice reads like the panel's other strips (the Character
+   panel's `.seg`): raised grey, not the selection blue. */
 .viewModeOn,
 .viewModeOn:hover {
-  background: var(--color-primary-subtle);
+  background: var(--color-surface-3);
   color: var(--color-text-primary);
+  font-weight: var(--font-weight-semibold);
 }
 
 /* A small picture of each mode: a figure on its ground. */
@@ -682,18 +873,33 @@
 .spanModes {
   display: flex;
   align-items: center;
-  gap: 2px;
 }
 
+/* Whole shot | Part of it: one joined strip, like the panel's segmented rows. */
 .spanMode {
-  padding: 1px var(--space-2);
+  height: 20px;
+  padding: 0 var(--space-2);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: transparent;
+  border-radius: 0;
+  background: var(--color-surface-0);
   color: var(--color-text-tertiary);
   font: inherit;
   font-size: var(--panel-font-size-help);
   cursor: pointer;
+}
+
+.spanMode:first-child {
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+}
+
+.spanMode + .spanMode {
+  margin-left: -1px;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+/* The Keyframed note keeps its distance from the strip. */
+.spanModes > .meta {
+  margin-left: var(--space-2);
 }
 
 .spanMode:hover {
@@ -709,9 +915,9 @@
 
 .spanModeOn,
 .spanModeOn:hover {
-  border-color: var(--color-primary);
-  background: var(--color-primary-subtle);
+  background: var(--color-surface-3);
   color: var(--color-text-primary);
+  font-weight: var(--font-weight-semibold);
 }
 
 .spanFields {
@@ -750,10 +956,10 @@
 .heldNote {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
-  padding: var(--space-2);
-  border: 1px solid var(--color-warning);
-  border-radius: var(--radius-md);
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-left: 2px solid var(--color-warning);
   color: var(--color-text-secondary);
   font-size: var(--panel-font-size-help);
   line-height: 1.45;

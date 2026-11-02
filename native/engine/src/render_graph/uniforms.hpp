@@ -117,9 +117,12 @@ inline std::span<const float> pack_textured(Packer p, const Mat3& mvp, const Rec
 }
 
 /// packBlur.
+/// `spacingMul` (blur.wgsl blurParams.w): the tap spacing scaled up for a pass
+/// whose result is a soft halo nobody reads edges off (a glow's wide pass);
+/// 1 (or 0) = the default lattice.
 inline std::span<const float> pack_blur(Packer p, const Mat3& mvp, const Rect& uv, double dirX, double dirY,
-                                        double radiusPx) {
-  return p.mat3(mvp).rect(uv).vec4(dirX, dirY, radiusPx, 0).span();
+                                        double radiusPx, double spacingMul = 1) {
+  return p.mat3(mvp).rect(uv).vec4(dirX, dirY, radiusPx, spacingMul).span();
 }
 
 /// packFxBlock: mvp + uvRect + N param rows + fxBox.

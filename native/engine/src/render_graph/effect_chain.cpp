@@ -5,6 +5,7 @@
 #include "effect_chain.hpp"
 
 #include "effect_stats.hpp"
+#include "fx_bounds.hpp"
 #include "fx_distance.hpp"
 #include "fx_graph.hpp"
 #include "fx_keys.hpp"
@@ -607,8 +608,9 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
     it.sampler = ctx.linear_clamp();
     return c;
   };
-  auto blurPass = [&](const TexRef& src, std::string_view dest, double dirX, double dirY, double radius) -> TexRef {
-    const Commands c = one(Mat::BLUR_MATERIAL, pack_blur(ctx.packer(), mvp, targetUv, dirX, dirY, radius), src);
+  auto blurPass = [&](const TexRef& src, std::string_view dest, double dirX, double dirY, double radius,
+                      double spacingMul = 1) -> TexRef {
+    const Commands c = one(Mat::BLUR_MATERIAL, pack_blur(ctx.packer(), mvp, targetUv, dirX, dirY, radius, spacingMul), src);
     ctx.draw_into(dest, c, true);
     return texOf(dest);
   };
@@ -979,6 +981,7 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
         return maps.scene_depth(ctx, static_cast<std::uint32_t>(pw), static_cast<std::uint32_t>(ph), c2w, selfId);
       };
       io.maskInto = [&](std::string_view key, std::string_view dest) { return maskInto(key, dest); };
+      io.backdrop = [&]() { return maps.backdrop(ctx); };
       std::string why;
       if (const std::optional<FxGraphResult> r = run_fx_graph(ctx, fx, io, why)) {
         curTex = r->tex;
@@ -1051,9 +1054,17 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
         const TexRef h = blurPass(blurSrc, f1, 1.0 / pw, 0, rPx * kx);
         blurred = blurPass(h, f0, 0, 1.0 / ph, rPx * ky);
         if (type == "glow" && !f2.empty() && rPx >= 6) {
+          // The wide halo at 2.2 x the radius, blurred from the NARROW result
+          // rather than the source: a Gaussian of σ' over a Gaussian of rPx is
+          // the Gaussian of √(rPx² + σ'²) = wideR, the same halo — but its
+          // input is already smooth to rPx, so the taps may sit kGlowWideSpacing
+          // times further apart (29 fetches a pixel a pass instead of 85 at
+          // radius 40) without the stepping a spread lattice shows on a hard
+          // edge (three-d-outer-glow golden). fx_bounds grows the reach the same way.
           const double wideR = rPx * 2.2;
-          const TexRef wh = blurPass(blurSrc, f1, 1.0 / pw, 0, wideR * kx);
-          wide = blurPass(wh, f2, 0, 1.0 / ph, wideR * ky);
+          const double wideSigma = std::sqrt(std::max(0.0, wideR * wideR - rPx * rPx));
+          const TexRef wh = blurPass(blurred, f1, 1.0 / pw, 0, wideSigma * kx, kGlowWideSpacing);
+          wide = blurPass(wh, f2, 0, 1.0 / ph, wideSigma * ky, kGlowWideSpacing);
         }
       } else if (spreadPx > 0) {
         blurred = blurSrc;
@@ -1424,8 +1435,20 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
         rows = {{{fx.num("lw"), fx.num("lh"), fx.num("bump"), fx.num("gain")}, {fx.at("l", 0), fx.at("l", 1), fx.at("l", 2), fx.num("specGain")}}};
         m = Mat::PLASTIC_FX_MATERIAL;
       } else if (type == "glass") {
-        rows = {{{fx.num("lw"), fx.num("lh"), fx.num("dispK"), fx.num("hgt")}, {fx.num("lx"), fx.num("ly"), fx.num("gain"), fx.num("shine")}}};
-        m = Mat::GLASS_FX_MATERIAL;
+        // Stream D: Source: Backdrop — the bump (the blurred layer) displaces
+        // the scene under the layer, cut by the layer's alpha (binding 4).
+        const TexRef backdrop = fx.flag("readsBackdrop") ? maps.backdrop(ctx) : TexRef{};
+        const std::array<Vec4, 3> glassRows{{{fx.num("lw"), fx.num("lh"), fx.num("dispK"), fx.num("hgt")},
+                                             {fx.num("lx"), fx.num("ly"), fx.num("gain"), fx.num("shine")},
+                                             {backdrop ? 1.0 : 0.0, 0, 0, 0}}};
+        Commands gc = one(Mat::GLASS_FX_MATERIAL, pack_fx_block(ctx.packer(), mvp, targetUv, glassRows, fxBox),
+                          backdrop ? backdrop : curTex);
+        gc.last().mask = ref;
+        gc.last().origin = curTex;
+        ctx.draw_into(dest, gc, true);
+        curTex = texOf(dest);
+        curName = dest;
+        continue;
       } else if (type == "vector-blur") {
         rows = {{{fx.num("lw"), fx.num("lh"), fx.num("amount"), fx.num("K")}, {fx.num("cosR"), fx.num("sinR"), fx.num("step"), 0}}};
         m = Mat::VECTOR_BLUR_FX_MATERIAL;
@@ -1444,7 +1467,12 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
       // E4: under fill opacity a style is shaped by the silhouette and lands on
       // the faded contents (STYLE_FILL_FX); otherwise the reference pass.
       const bool styled = silhouette && silhouette_style(type);
-      const TexRef shape = styled ? silhouette : curTex;
+      TexRef shape = styled ? silhouette : curTex;
+      if (type == "blobbylize" && !styled && !poolHasMatte && !fx.text("blobLayerId").empty()) {
+        // Stream D L6: the blob surface from another layer (softened as the
+        // layer's own would be), drawn where it sits; the layer still colours it.
+        if (const TexRef blob = maps.map_layer(ctx, byId, fx.text("blobLayerId"), selfId)) shape = blob;
+      }
       TexRef ref = shape;
       std::string_view refName = styled ? kFxSilhouette : curName;
       const double sigma = fx.num("sigmaPx");
@@ -1753,8 +1781,36 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
         }
       }
     } else if (const auto p = p_table().find(std::string(type)); p != p_table().end()) {
-      const auto rows = p_rows(fx);
-      add(p->second, pack_fx_block(ctx.packer(), mvp, targetUv, rows, fxBox), ctx.linear_clamp());
+      std::vector<Vec4> rows = p_rows(fx);
+      if (type == "caustics") {
+        // Stream D L6: the Bottom layer (binding 3) and the Water surface layer
+        // (binding 4), each drawn where it sits; the first is parked in an aux
+        // target since map_layer draws both into the matte target. Row 3 tells
+        // the shader which arrived; unset, both bindings hold the layer itself.
+        TexRef bottom = poolHasMatte ? TexRef{} : maps.map_layer(ctx, byId, fx.text("bottomLayerId"), selfId);
+        if (bottom) {
+          Commands keep;
+          emit_textured(ctx, keep, mvp, Color::white(), 1, Blend::none, bottom, ctx.linear_clamp(), targetUv, kIdentityColor, true);
+          ctx.draw_into(kFxAux[2], keep, true);
+          bottom = texOf(kFxAux[2]);
+        }
+        const TexRef water = poolHasMatte ? TexRef{} : maps.map_layer(ctx, byId, fx.text("waterLayerId"), selfId);
+        while (rows.size() < 4) rows.push_back({0, 0, 0, 0});
+        rows[3][0] = bottom ? 1.0 : 0.0;
+        rows[3][1] = water ? 1.0 : 0.0;
+        DrawItem& it = add(p->second, pack_fx_block(ctx.packer(), mvp, targetUv, rows, fxBox), ctx.linear_clamp());
+        it.mask = bottom ? bottom : curTex;
+        it.origin = water ? water : curTex;
+      } else if (type == "frosted-glass") {
+        // Stream D L2: Source: Backdrop — the scene under the layer scattered,
+        // cut by the layer's own alpha (binding 3, always the layer).
+        const TexRef backdrop = fx.flag("readsBackdrop") ? maps.backdrop(ctx) : TexRef{};
+        DrawItem& it = add(p->second, pack_fx_block(ctx.packer(), mvp, targetUv, rows, fxBox), ctx.linear_clamp());
+        if (backdrop) it.texture = backdrop;
+        it.mask = curTex;
+      } else {
+        add(p->second, pack_fx_block(ctx.packer(), mvp, targetUv, rows, fxBox), ctx.linear_clamp());
+      }
     } else if (const auto dt = depth_table().find(std::string(type)); dt != depth_table().end()) {
       // Camera program D1: screen-space chains only (the 3D route's layer
       // buffer has no comp placement); without a depth the effect draws
@@ -1794,13 +1850,29 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
       Packer pk = ctx.packer();
       add(Mat::FRACTAL_NOISE_MATERIAL, pk.mat3(mvp).rect(targetUv).vec4(fx.num("scale"), 0, 0, 4).span(), ctx.linear_clamp());
     } else if (type == "displacement-map") {
-      TexRef map = poolHasMatte ? TexRef{} : maps.map_layer(ctx, byId, fx.text("mapLayerId"), selfId);
-      if (!map) map = curTex;
-      Packer pk = ctx.packer();
-      add(Mat::DISPLACEMENT_MAP_MATERIAL,
-          pk.mat3(mvp).rect(targetUv).vec4(fx.num("amount") * kx / pw, fx.num("amount") * ky / ph, 0, 0).span(),
-          ctx.linear_clamp())
-          .mask = map;
+      // Stream D L5 (displacement-map.wgsl): AE's channels, max per axis, map
+      // behaviour, edge behaviour and expand output; `amount` alone (an older
+      // entry) is Red / Green at ±amount as before. Source: Backdrop reads the
+      // scene under the layer (binding 4) through the layer's alpha.
+      const std::string_view mapId = fx.text("mapLayerId");
+      TexRef map = poolHasMatte ? TexRef{} : maps.map_layer(ctx, byId, mapId, selfId);
+      Rect mapBox = fxBox;
+      if (!map) {
+        map = curTex;
+      } else if (const auto mit = byId.find(mapId); mit != byId.end() && space == nullptr) {
+        mapBox = renderable_box(ctx, mit->second);
+      }
+      const double maxH = fx.num("maxH", fx.num("amount"));
+      const double maxV = fx.num("maxV", fx.num("amount"));
+      const bool fromBackdrop = fx.flag("readsBackdrop");
+      const TexRef backdrop = fromBackdrop ? maps.backdrop(ctx) : TexRef{};
+      const std::array<Vec4, 4> rows{{{maxH * kx / pw, maxV * ky / ph, fx.num("hChannel", 0), fx.num("vChannel", 1)},
+                                      {fx.num("mapMode", 0), fx.num("edge", 0), backdrop ? 1.0 : 0.0, fx.flag("expand", true) ? 1.0 : 0.0},
+                                      {mapBox.x, mapBox.y, mapBox.width, mapBox.height},
+                                      {0, 0, 0, 0}}};
+      DrawItem& it = add(Mat::DISPLACEMENT_MAP_MATERIAL, pack_fx_block(ctx.packer(), mvp, targetUv, rows, fxBox), ctx.linear_clamp());
+      it.mask = map;
+      it.origin = backdrop ? backdrop : curTex;
     } else if (type == "compound-blur") {
       TexRef map = poolHasMatte ? TexRef{} : maps.map_layer(ctx, byId, fx.text("mapLayerId"), selfId);
       if (!map) map = curTex;
@@ -1810,13 +1882,49 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
           ctx.linear_clamp())
           .mask = map;
     } else if (type == "set-matte") {
-      const TexRef matte = poolHasMatte ? TexRef{} : maps.map_layer(ctx, byId, fx.text("matteLayerId"), selfId);
+      TexRef matte = poolHasMatte ? TexRef{} : maps.map_layer(ctx, byId, fx.text("matteLayerId"), selfId);
       if (matte) {
+        // Stream B4: Behind Subject's choke and softness, on the matte before it is bound — a
+        // separable min / max then a separable Gaussian (subject-edge.wgsl, in windows of at most
+        // 32 texels / sigma 16 per pass, as subject_matte.cpp edge_plan), in place of the 13-tap
+        // disk the shader read through (banded past a few px, no choke).
+        const double chokeTex = fx.num("chokePx") * kx;
+        const double sigmaTex = fx.num("featherPx") * kx / 2;
+        const double yPerX = kx > 0 ? ky / kx : 1;
+        if (std::abs(chokeTex) >= 0.5 || sigmaTex >= 0.1) {
+          std::size_t auxAt = 0;
+          const auto edgePass = [&](double mode, double dirX, double dirY, double amount, const TexRef& in) -> TexRef {
+            Packer pk = ctx.packer();
+            Commands c = one(Mat::SUBJECT_EDGE_MATERIAL,
+                             pk.mat3(mvp).rect(targetUv).vec4(mode, dirX, dirY, amount).vec4(1 / pw, 1 / ph, 0, 0).span(), in, Blend::none);
+            c.last().sampler = ctx.nearest_clamp();
+            c.last().mask = in;
+            c.last().origin = in;
+            ctx.draw_into(kFxAux[auxAt], c, true);
+            const TexRef out = texOf(kFxAux[auxAt]);
+            auxAt = 1 - auxAt;
+            return out;
+          };
+          const auto separable = [&](double mode, double amount) {
+            matte = edgePass(mode, 1, 0, amount, matte);
+            matte = edgePass(mode, 0, 1, amount * yPerX, matte);
+          };
+          constexpr double kGaussMode = 1, kErodeMode = 2, kDilateMode = 3;
+          constexpr double kMaxMorph = 32, kMaxSigma = 16;
+          for (long r = std::lround(std::abs(chokeTex)); r > 0;) {
+            const long now = std::min(r, static_cast<long>(kMaxMorph));
+            separable(chokeTex > 0 ? kErodeMode : kDilateMode, static_cast<double>(now));
+            r -= now;
+          }
+          if (sigmaTex >= 0.1) {
+            const auto n = static_cast<std::size_t>(std::max(1.0, std::ceil(sigmaTex * sigmaTex / (kMaxSigma * kMaxSigma))));
+            const double each = sigmaTex / std::sqrt(static_cast<double>(n));
+            for (std::size_t i = 0; i < n; ++i) separable(kGaussMode, each);
+          }
+        }
         Packer pk = ctx.packer();
         add(Mat::SET_MATTE_MATERIAL,
-            // featherPx (Behind Subject's softness): the matte read through a small disk, in the buffer's uv.
-            pk.mat3(mvp).rect(targetUv).vec4(fx.flag("useLuminance") ? 1 : 0, fx.flag("invert") ? 1 : 0, fx.num("featherPx") * kx / pw,
-                                             fx.num("featherPx") * ky / ph).span(),
+            pk.mat3(mvp).rect(targetUv).vec4(fx.flag("useLuminance") ? 1 : 0, fx.flag("invert") ? 1 : 0, 0, 0).span(),
             ctx.linear_clamp())
             .mask = matte;
       }

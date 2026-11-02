@@ -56,6 +56,7 @@ export type TimelineGroupKey =
   | 'contents'
   | 'masks'
   | 'effects'
+  | 'rig'
   | 'transform'
   | 'styles'
   | 'camera'
@@ -70,17 +71,20 @@ export const TIMELINE_GROUP_ORDER: Readonly<Record<TimelineGroupKey, number>> = 
   contents: 1,
   masks: 2,
   effects: 3,
-  transform: 4,
-  styles: 5,
+  // AE lists the Puppet effect under Effects, above Transform: the rig (puppet
+  // pins, bones, IK goals) twirls open there.
+  rig: 4,
+  transform: 5,
+  styles: 6,
   // AE twirls Camera Options / Light Options right under Transform; a layer
   // only ever has one of the two, so they share the slot in spirit.
-  camera: 6,
-  light: 7,
+  camera: 7,
+  light: 8,
   // AE's Geometry Options sits directly above Material Options.
-  geometry: 8,
-  material: 9,
-  audio: 10,
-  time: 11,
+  geometry: 9,
+  material: 10,
+  audio: 11,
+  time: 12,
 };
 
 /** The synthetic path of the whole-mask keyframe row (see `maskRow` below). */
@@ -130,8 +134,19 @@ export function groupForPropWith(prop: string, facts?: MetaNodeFacts): TimelineG
   return prefixGroup(prop) ?? groupOfMeta(resolvePropertyMetaWith(prop, facts).group);
 }
 
+/**
+ * A rig keyframe TRACK (rigSpecs.ts): a puppet pin's `puppet.<pin>.<prop>`, a
+ * bone's `bone.<id>.<prop>`, an IK goal's `ikTarget.<id>.x|y` / `ikPole.<id>.x|y`
+ * / `ikMode.<id>` — the names the rig bindings claim (native rig.cpp, ptree.cpp
+ * `is_rig_track`).
+ */
+export function isRigTrack(prop: string): boolean {
+  return /^(puppet|bone|ikTarget|ikPole|ikMode)\./.test(prop);
+}
+
 /** The groups decided by the track name alone. */
 function prefixGroup(prop: string): TimelineGroupKey | null {
+  if (isRigTrack(prop)) return 'rig';
   if (prop === MASK_ANIM_PROP || prop.startsWith('mask.')) return 'masks';
   // AE lists Paint as an effect: Effects ▸ Paint ▸ Brush N.
   if (prop.startsWith('paint.')) return 'effects';

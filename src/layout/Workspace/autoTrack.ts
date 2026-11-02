@@ -8,16 +8,20 @@
  * the subject was while the subject moves on. Here every subject edit on
  * footage that moves starts tracking by itself, in the background:
  *
- *   first selection      the subject is Followed over the work area, both
- *                        ways from the frame it was selected on
+ *   first selection      the subject is Followed a few seconds either side of
+ *                        the frame it was selected on (AUTO_FOLLOW_SPAN_S,
+ *                        clamped to the work area) — not the whole work area,
+ *                        which the explicit Follow button still does; an edit
+ *                        beyond that span later extends the track
  *   a fix on a tracked   only the frames between the fixes either side are
  *   subject              re-tracked from the fixed frame (retrackSubject)
  *
  * Edits close together (Shift-click, Shift-click, Alt-click) wait for a pause
  * (SETTLE_MS) and run once; an edit while a walk of that subject runs cancels
- * the walk, which then starts over from the newer matte. Locked subjects and
- * stills are left alone. Turned off with the Tracking block's "Track
- * automatically" (subjectStore.autoTrack).
+ * the walk, which then starts over from the newer matte. The walk is
+ * background work: it never sets the tools busy (rotoBrushStore.tracking).
+ * Locked subjects and stills are left alone. Turned off with the Tracking
+ * block's "Track automatically" (subjectStore.autoTrack).
  */
 
 import { useSubjectStore } from '@stores/subjectStore';
@@ -26,28 +30,28 @@ import { settingsFps } from '@core/mirror/compFacts';
 import { onSubjectEdited } from '@core/workspace/rotoBrushTool';
 import { subjectLocked } from '@core/workspace/subjects';
 import { fetchSubjectTracks, isTracked, retrackRange } from '@core/workspace/subjectTracks';
-import { cancelSubjectWalk, followSubject, layerMoves, retrackSubject } from './subjectActions';
+import { cancelSubjectWalk, followSubjectNear, layerMoves, retrackSubject } from './subjectActions';
 
 /** How long the edits must pause before tracking starts. */
 const SETTLE_MS = 1200;
 
 const pending = new Map<string, ReturnType<typeof setTimeout>>();
 
-/** What tracking an edit at `time` asks for: a whole Follow, a re-track between fixes, or nothing. */
+/** What tracking an edit at `time` asks for: a Follow around the edit, a re-track between fixes, or nothing. */
 export async function trackingFor(nodeId: string, subject: string, time: number): Promise<'follow' | 'retrack' | null> {
   if (!layerMoves(nodeId) || subjectLocked(nodeId, subject)) return null;
   const fps = settingsFps(activeCompSettingsNow());
   const frames = (await fetchSubjectTracks(nodeId)).find((s) => s.subject === subject)?.frames ?? [];
   if (frames.length === 0) return null;  // the edit left nothing (an Alt-click took it all)
   if (!isTracked(frames, fps)) return 'follow';
-  // A fix outside the tracked frames (beyond the work area it was followed over) is left as it is.
+  // A fix outside the tracked frames (beyond the span it was followed over) is left as it is.
   return retrackRange(frames, time, fps) ? 'retrack' : null;
 }
 
 async function run(nodeId: string, subject: string, time: number): Promise<void> {
   if (!useSubjectStore.getState().autoTrack) return;
   const what = await trackingFor(nodeId, subject, time);
-  if (what === 'follow') await followSubject(nodeId, subject, time);
+  if (what === 'follow') await followSubjectNear(nodeId, subject, time);
   else if (what === 'retrack') await retrackSubject(nodeId, subject, time);
 }
 

@@ -148,6 +148,30 @@ function positionRow(nodeId: string, a: AnimatedTrack, src: PropertyRowSources):
   };
 }
 
+/**
+ * A keyed RIG row (C2): the tree's row keeps its identity, label and value
+ * fields once animated — a pin's "Position" stays one row drawing the data
+ * track's keys with its x / y fields; a bone's Position / Scale and an IK
+ * goal's Target / Pole (two tracks keyed as one property) stay one row like
+ * Transform Position, addressed by their API path (`spec.merged`).
+ *
+ * The registry has no labels for `puppet.<pin>.rotation`-style names (they
+ * would read as their path), and the generic split would turn a bone's
+ * Position into two "Position" rows — so the row projection's own label and
+ * value props are kept instead of the generic member rows.
+ */
+function rigRow(nodeId: string, spec: StaticPropertyRow, lead: AnimatedTrack, src: PropertyRowSources): TimelinePropertyTrack {
+  const valueProps = (spec.valueProps.length > 0 ? spec.valueProps : spec.members).filter((p) => canWriteValue(src.tree, p));
+  return {
+    prop: spec.prop,
+    label: spec.label,
+    group: spec.group,
+    keyframes: keyRefs(nodeId, lead, undefined),
+    stopwatchProps: [...spec.members],
+    ...(valueProps.length > 0 ? { valueProps, valueUnit: spec.valueUnit } : {}),
+  };
+}
+
 /** The Mask Shape row — whole-mask snapshots: one diamond per time across the masks. */
 function maskRow(nodeId: string, spec: StaticPropertyRow, masks: ReadonlyArray<AnimatedTrack>): TimelinePropertyTrack {
   const byTime = new Map<number, Keyframe>();
@@ -234,6 +258,11 @@ export function buildPropertyRows(nodeId: string, src: PropertyRowSources = mirr
       continue;
     }
     const lead = animated.get(keyed[0]!)!;
+    if (spec.group === 'rig') {
+      for (const p of spec.members) animated.delete(p);
+      out.push(rigRow(nodeId, spec, lead, src));
+      continue;
+    }
     if (spec.merged === POSITION_PSEUDO_PROP) {
       for (const p of lead.tracks) animated.delete(p);
       out.push({ ...positionRow(nodeId, lead, src), group: spec.group });

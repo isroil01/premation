@@ -58,6 +58,7 @@ import {
   layerStyleEffectId,
   LAYER_STYLE_NUMBER_PARAMS,
   LAYER_STYLE_COLOR_PARAMS,
+  type GlassStyle,
   type LayerStyles,
   type StrokeStylePosition,
 } from '@core/effects/layerStyles';
@@ -77,6 +78,32 @@ function strokePositions(): { id: StrokeStylePosition; label: string }[] {
     { id: 'inside', label: t('effects.styles.inside', 'Inside') },
     { id: 'center', label: t('effects.styles.center', 'Center') },
   ];
+}
+
+/** Liquid glass (stream D): where the glass surface's normal comes from. */
+function glassSurfaces(): { id: NonNullable<GlassStyle['surface']>; label: string }[] {
+  return [
+    { id: 'edge', label: t('effects.styles.glassSurfaceEdge', 'Edge') },
+    { id: 'dome', label: t('effects.styles.glassSurfaceDome', 'Dome') },
+    { id: 'luma', label: t('effects.styles.glassSurfaceLuma', 'Luminance') },
+    { id: 'layer', label: t('effects.styles.glassSurfaceLayer', 'Layer') },
+  ];
+}
+
+/** The comp's OTHER layers at the same level, top first (the glass Bump layer picker). */
+function siblingLayerOptions(nodeId: string): Array<{ id: string; name: string }> {
+  const m = documentMirror();
+  const self = m.layer(nodeId);
+  const comp = self ? m.comp(self.comp) : undefined;
+  if (!self || !comp) return [];
+  const out: Array<{ id: string; name: string }> = [];
+  for (let i = comp.layers.length - 1; i >= 0; i--) {
+    const id = comp.layers[i]!;
+    if (id === nodeId) continue;
+    const l = m.layer(id);
+    if (l && l.parent === self.parent) out.push({ id, name: l.name });
+  }
+  return out;
 }
 
 /** Animation prop path for one numeric layer-style field. */
@@ -898,6 +925,74 @@ export function LayerStylesControls({ nodeId }: { nodeId: string }): JSX.Element
                 onChange={(v) => void patchLayerStyleEdit(nodeId, 'glass', { specularAngle: v })} aria-label={t('effects.styles.glassSpecularAngleValue', 'Glass specular angle value')} />
             </div>
           )}
+
+          {/* LIQUID GLASS (stream D, 2026-11-02): a surface under the glass. `edge`
+              is the original material; the others give the backdrop a normal to
+              bend through (glass-liquid.wgsl) — a dome over the alpha, the layer's
+              luminance, or another layer's. */}
+          <div className={styles.blendRow}>
+            <span className={styles.blendLabel}>{t('effects.styles.glassSurface', 'Surface')}</span>
+            {glassSurfaces().map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                className={styles.blendLabel}
+                aria-pressed={(gl.surface ?? 'edge') === s.id}
+                style={{
+                  opacity: (gl.surface ?? 'edge') === s.id ? 1 : 0.55,
+                  textDecoration: (gl.surface ?? 'edge') === s.id ? 'underline' : 'none',
+                  background: 'transparent',
+                  border: 'none',
+                  cursor: 'pointer',
+                  padding: '0 2px',
+                }}
+                onClick={() => void patchLayerStyleEdit(nodeId, 'glass', { surface: s.id })}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+          {(gl.surface ?? 'edge') === 'layer' && (
+            <div className={styles.blendRow}>
+              <span className={styles.blendLabel}>{t('effects.styles.glassBumpLayer', 'Bump layer')}</span>
+              <select
+                value={gl.bumpLayerId ?? ''}
+                onChange={(ev) => void patchLayerStyleEdit(nodeId, 'glass', { bumpLayerId: ev.currentTarget.value })}
+                aria-label={t('effects.styles.glassBumpLayer', 'Bump layer')}
+                className={styles.paramSelect}
+              >
+                <option value="">{t('effects.styles.glassBumpNone', 'None (this layer’s luminance)')}</option>
+                {siblingLayerOptions(nodeId).map((s) => (
+                  <option key={s.id} value={s.id}>{s.name || s.id}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          {(gl.surface ?? 'edge') !== 'edge' && (
+            <>
+              <div className={styles.maskControls}>
+                <StyleNum nodeId={nodeId} path={glassPropPath('thickness' as GlassParam)}
+                  label={t('effects.styles.glassThickness', 'Thickness')} value={gl.thickness ?? 24} min={0} max={400} unit="px"
+                  onChange={(v) => void patchLayerStyleEdit(nodeId, 'glass', { thickness: v })} />
+                <StyleNum nodeId={nodeId} path={glassPropPath('ior' as GlassParam)}
+                  label={t('effects.styles.glassIor', 'Index of refraction')} value={gl.ior ?? 1.5} min={1} max={3} step={0.01} precision={2}
+                  onChange={(v) => void patchLayerStyleEdit(nodeId, 'glass', { ior: v })} />
+              </div>
+              <div className={styles.maskControls}>
+                <StyleNum nodeId={nodeId} path={glassPropPath('dispersion' as GlassParam)}
+                  label={t('effects.styles.glassDispersion', 'Dispersion')} value={Math.round((gl.dispersion ?? 0) * 100)} min={0} max={100} unit="%" trackFactor={0.01}
+                  onChange={(v) => void patchLayerStyleEdit(nodeId, 'glass', { dispersion: v / 100 })} />
+              </div>
+            </>
+          )}
+          <div className={styles.maskControls}>
+            <StyleNum nodeId={nodeId} path={glassPropPath('caustic' as GlassParam)}
+              label={t('effects.styles.glassCaustic', 'Caustic')} value={Math.round((gl.caustic ?? 0) * 100)} min={0} max={200} unit="%" trackFactor={0.01}
+              onChange={(v) => void patchLayerStyleEdit(nodeId, 'glass', { caustic: v / 100 })} />
+            <StyleNum nodeId={nodeId} path={glassPropPath('fresnel' as GlassParam)}
+              label={t('effects.styles.glassFresnel', 'Fresnel rim')} value={Math.round((gl.fresnel ?? 0) * 100)} min={0} max={200} unit="%" trackFactor={0.01}
+              onChange={(v) => void patchLayerStyleEdit(nodeId, 'glass', { fresnel: v / 100 })} />
+          </div>
         </>
       ) : null}
     </>

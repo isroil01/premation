@@ -53,6 +53,28 @@ const VECTOR_MEMBERS: Readonly<Record<string, readonly string[]>> = {
 
 const COLOR_CHANNELS = ['_r', '_g', '_b', '_a'] as const;
 
+/** A puppet pin's Position (`puppet/pins/<pin>/position`): a vec2 kept as ONE data track. */
+const PIN_POSITION_PATH = /^puppet\/pins\/[^/]+\/position$/;
+
+/** Whether an API path is a puppet pin's Position. */
+export function isPinPositionPath(path: string): boolean {
+  return PIN_POSITION_PATH.test(path);
+}
+
+/**
+ * The per-axis views of a pin's Position track — `<track>.x` / `<track>.y`.
+ *
+ * A pin's position is stored as one data track holding a point (the solver's
+ * key), so unlike Transform Position it has no `x` / `y` member tracks of its
+ * own. The graph editor plots curves per dimension and a value field edits one
+ * number, so the index also answers these two names: member 0 and 1 of the
+ * same vec2 property. They are views, never stored; a write through either
+ * lands on the whole key (`memberPatchFields`, `trackWrites`).
+ */
+export function pinPositionAxes(track: string): readonly [string, string] {
+  return [`${track}.x`, `${track}.y`];
+}
+
 /** The member tracks of one property node. */
 export function membersOf(info: PropertyInfo): readonly string[] {
   if (info.kind !== 'property') return [];
@@ -132,6 +154,13 @@ function indexOf(tree: MirrorTreeLike): Map<string, TrackRef> {
         info,
       });
     });
+    // A pin's Position: its x / y views over the one data track (see `pinPositionAxes`).
+    if (members.length === 1 && info.dimensions === 2 && isPinPositionPath(info.path)) {
+      const axes = pinPositionAxes(members[0]!);
+      axes.forEach((axis, i) => {
+        if (!idx!.has(axis)) idx!.set(axis, { path: info.path, member: i, members: axes, factor: 1, info });
+      });
+    }
     // Also reachable by its own path and match name.
     if (!idx.has(info.path)) idx.set(info.path, { path: info.path, member: 0, members, factor: 1, info });
     if (!idx.has(info.matchName) && members.length !== 1) {

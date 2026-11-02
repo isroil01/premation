@@ -14,16 +14,53 @@ import { SketchRecorder, DEFAULT_SKETCH_TOLERANCE } from '@core/rig/puppetSketch
 import { edit } from '@core/engine/uiEdits';
 import { engine } from '@core/engine/engineInstance';
 import { compTime } from '@core/engine/propRefs';
-import { rigPaths, rigMatch, rigValues, rigKey, rigRemove } from '@core/engine/rigPaths';
+import { rigPaths, rigMatch, rigValues, rigRemove } from '@core/engine/rigPaths';
 import { useGesture } from '@hooks/useGesture';
 import {
   MAIN_VIEWPORT, overlayLayer, requestOverlayLayers, setOverlayRigFocus, subscribeOverlayGeometry,
 } from '@stores/overlayGeometry';
-import { rigRestPoints, RigPointerQueue } from './rigPointer';
+import { applyRigDragBasis, rigRestPoints, rigDragBasis, RigPointerQueue, type RigDragBasis } from './rigPointer';
+import { useRigSelectionStore } from '@stores/rigSelectionStore';
+import { pinPositionCommands, pinPropCommands, rigAutoKey } from '@layout/Inspector/rigEdits';
+import type { Command } from '@motion/engine-api';
 import { t } from '@core/i18n';
 
 /** Radius (screen px) of the advanced-pin gizmo ring. */
 const GIZMO_R = 26;
+
+const NO_PINS: readonly string[] = [];
+
+/**
+ * One pin drag (C2). The pointer is mapped into the pin (rest) space through
+ * `basis` — an affine fit of the rig pose around the grab point, queried ONCE
+ * at pointer-down (`rigDragBasis`) — so every move is local arithmetic and
+ * the engine sees one write per animation frame, not a getRigPose round trip
+ * per pointer event. `starts` holds every selected pin's live position /
+ * rotation at pointer-down: a move or rotate applies the same delta to all of
+ * them (group move), AE's multi-pin drag.
+ */
+interface PinDrag {
+  pinId: string;
+  startScreen: { x: number; y: number };
+  /** Alt-drag rotates; the gizmo's square handle scales; Ctrl records. */
+  mode: 'move' | 'rotate' | 'scale' | 'sketch';
+  /** The rotate / scale pivot (the pin before the skeleton) at pointer-down. */
+  center: { x: number; y: number };
+  startAngleDeg: number;
+  startRotationDeg: number;
+  startDist?: number;
+  startScale?: number;
+  /** Decided once at pointer-down (rigEdits `rigAutoKey(true)`), never mid-gesture. */
+  autoKey: boolean;
+  /** The pins the drag moves / rotates together, with their live values at pointer-down. */
+  starts: Map<string, { x: number; y: number; rotation: number; bend: boolean }>;
+  basis: RigDragBasis | null;
+  /** Resolves once `basis` is set (the first getRigPose answered). */
+  ready: Promise<void>;
+  /** The latest pointer position (layer space) not yet written. */
+  pendingLocal: { x: number; y: number } | null;
+  raf: number | null;
+}
 
 /** The overlay geometry the pins draw from: the rig (pins, lattice, focus path) and the layer's box. */
 const PUPPET_KINDS: ReadonlyArray<OverlayKind> = ['rig', 'bounds', 'transform'];
@@ -83,20 +120,20 @@ export function PuppetOverlay({ host }: { host?: TrackPointHost } = {}): JSX.Ele
   // B4: the stored rig from the mirror (mesh expansion); everything posed comes with the frame.
   const puppetRig = useMirrorJson<PuppetRig>(active ? selectedNodeId : null, 'layer/puppet');
 
-  const [selectedPinId, setSelectedPinId] = useState<string | null>(null);
+  // C2: the pin selection lives in the rig selection store (the Rig panel's
+  // cards and "Key selected" share it). Several pins may be selected
+  // (Shift-click, marquee); the LAST is the primary — the gizmo and motion path.
+  const pinIds = useRigSelectionStore((s) => (s.nodeId === selectedNodeId ? s.pinIds : NO_PINS));
+  const selectedPinId = pinIds[pinIds.length - 1] ?? null;
+  const setSelectedPinId = useCallback((pinId: string | null): void => {
+    if (!selectedNodeId) return;
+    useRigSelectionStore.getState().selectPins(selectedNodeId, pinId ? [pinId] : []);
+  }, [selectedNodeId]);
   const [hoveredPinId, setHoveredPinId] = useState<string | null>(null);
-  const dragInfoRef = useRef<{
-    pinId: string;
-    startScreen: { x: number; y: number };
-    /** Alt-drag rotates; the gizmo's square handle scales; Ctrl records. */
-    mode: 'move' | 'rotate' | 'scale' | 'sketch';
-    /** The rotate / scale pivot (the pin before the skeleton) at pointer-down. */
-    center: { x: number; y: number };
-    startAngleDeg: number;
-    startRotationDeg: number;
-    startDist?: number;
-    startScale?: number;
-  } | null>(null);
+  /** Shift-drag on empty canvas: the selection rectangle, screen px. */
+  const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  const marqueeRef = useRef<{ x0: number; y0: number; additive: boolean } | null>(null);
+  const dragInfoRef = useRef<PinDrag | null>(null);
   /** Live Puppet Sketch recorder (3A) — accumulates while Ctrl-dragging. */
   const sketchRef = useRef<SketchRecorder | null>(null);
   const [sketchTolerance, setSketchTolerance] = useState(DEFAULT_SKETCH_TOLERANCE);
@@ -129,7 +166,7 @@ export function PuppetOverlay({ host }: { host?: TrackPointHost } = {}): JSX.Ele
     // (position/rotation/scale/stiffness/overlap); undo restores both.
     void edit('Delete Puppet Pin', rigRemove(nodeId, [rigPaths.pin(pinId)]));
     if (selectedPinId === pinId) setSelectedPinId(null);
-  }, [selectedPinId]);
+  }, [selectedPinId, setSelectedPinId]);
 
   // Force re-render on render ticks / camera movements. `onRender` returns a
   // disposer now (it used to be a single-slot setter, so this subscription was
@@ -172,15 +209,17 @@ export function PuppetOverlay({ host }: { host?: TrackPointHost } = {}): JSX.Ele
   // Keyboard listener to delete selected pin
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (activeTool !== 'puppet-pin' || !selectedNodeId || !selectedPinId) return;
+      if (activeTool !== 'puppet-pin' || !selectedNodeId || pinIds.length === 0) return;
       if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault();
-        deletePin(selectedNodeId, selectedPinId);
+        // Every selected pin, with its keyframes, as ONE undo entry.
+        void edit(pinIds.length > 1 ? 'Delete Puppet Pins' : 'Delete Puppet Pin', rigRemove(selectedNodeId, pinIds.map((id) => rigPaths.pin(id))));
+        useRigSelectionStore.getState().selectPins(selectedNodeId, []);
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [activeTool, selectedNodeId, selectedPinId, deletePin]);
+  }, [activeTool, selectedNodeId, pinIds]);
 
   if (!active) return null;
   const nodeId = selectedNodeId!;
@@ -257,14 +296,110 @@ export function PuppetOverlay({ host }: { host?: TrackPointHost } = {}): JSX.Ele
   };
 
   // Pointer drag operations
+
+  /** The selected pins' live values at pointer-down (the drag's group); the grabbed pin is always in. */
+  const dragStarts = (pinId: string): PinDrag['starts'] => {
+    const ids = pinIds.includes(pinId) ? pinIds : [pinId];
+    const starts: PinDrag['starts'] = new Map();
+    for (const id of ids) {
+      const p = pins.find((q) => q.id === id);
+      if (p) starts.set(id, { x: p.cx, y: p.cy, rotation: p.rotation ?? 0, bend: p.kind === 'bend' });
+    }
+    return starts;
+  };
+
+  /** Start a drag: ONE getRigPose for the basis; the writes begin once it answers. */
+  const beginDrag = (drag: Omit<PinDrag, 'basis' | 'ready' | 'pendingLocal' | 'raf'>, local: { x: number; y: number }): PinDrag => {
+    const d: PinDrag = { ...drag, basis: null, ready: Promise.resolve(), pendingLocal: null, raf: null };
+    d.ready = rigDragBasis(nodeId, time, local).then((basis) => {
+      // Set even after pointer-up: the release waits on `ready` and flushes the last position.
+      d.basis = basis;
+      if (d.mode === 'rotate') {
+        const r = basis.rest0;
+        d.startAngleDeg = (Math.atan2(r.y - d.center.y, r.x - d.center.x) * 180) / Math.PI;
+      } else if (d.mode === 'scale') {
+        const r = basis.rest0;
+        d.startDist = Math.max(1e-3, Math.hypot(r.x - d.center.x, r.y - d.center.y));
+      }
+      // Still dragging: write what the pointer did meanwhile (the release flushes itself).
+      if (dragInfoRef.current === d) flushDrag(d, false);
+    });
+    dragInfoRef.current = d;
+    return d;
+  };
+
+  /**
+   * Write the pending pointer position: the whole selection's new pose as ONE
+   * gesture message. Throttled to the animation frame (a pointer can report at
+   * 1 kHz; the engine builds one frame per write it receives).
+   */
+  const flushDrag = (d: PinDrag, shift: boolean): void => {
+    if (d.raf !== null) {
+      cancelAnimationFrame(d.raf);
+      d.raf = null;
+    }
+    const local = d.pendingLocal;
+    const basis = d.basis;
+    if (!local || !basis) return;
+    d.pendingLocal = null;
+    const rest = applyRigDragBasis(basis, local);
+    const cmds: Command[] = [];
+    if (d.mode === 'rotate') {
+      const { x: cx, y: cy } = d.center;
+      const angleDeg = (Math.atan2(rest.y - cy, rest.x - cx) * 180) / Math.PI;
+      let delta = angleDeg - d.startAngleDeg;
+      // Shift constrains rotation to 15° increments, matching AE's gizmo.
+      if (shift) delta = Math.round((d.startRotationDeg + delta) / 15) * 15 - d.startRotationDeg;
+      for (const [id, s] of d.starts) cmds.push(...pinPropCommands(nodeId, id, 'rotation', s.rotation + delta, time, d.autoKey));
+    } else if (d.mode === 'scale') {
+      const c = d.center;
+      const dist = Math.hypot(rest.x - c.x, rest.y - c.y);
+      let scale = (d.startScale ?? 1) * (dist / (d.startDist ?? 1));
+      // Shift constrains scale to 5% steps, matching AE's gizmo.
+      if (shift) scale = Math.round(scale * 20) / 20;
+      cmds.push(...pinPropCommands(nodeId, d.pinId, 'scale', Math.max(0.01, scale), time, d.autoKey));
+    } else if (d.mode === 'sketch') {
+      // Record against the LIVE playhead (composition seconds — the axis the
+      // keys are sent on) so the captured path is spread across real time
+      // rather than collapsing onto one frame.
+      sketchRef.current?.add(rest.x, rest.y, time);
+    } else {
+      // The grabbed pin follows the pointer; the rest of the selection moves by the same delta (rest space).
+      const dx = rest.x - basis.rest0.x;
+      const dy = rest.y - basis.rest0.y;
+      for (const [id, s] of d.starts) {
+        if (s.bend) continue;
+        cmds.push(...pinPositionCommands(nodeId, id, { x: s.x + dx, y: s.y + dy }, time, d.autoKey));
+      }
+    }
+    if (cmds.length > 0) gesture.send(cmds);
+    controller.requestRender();
+  };
+
+  const queueDragMove = (d: PinDrag, local: { x: number; y: number }, shift: boolean): void => {
+    d.pendingLocal = local;
+    if (!d.basis || d.raf !== null) return;
+    d.raf = requestAnimationFrame(() => {
+      d.raf = null;
+      flushDrag(d, shift);
+    });
+  };
+
   const onPointerDownPin = (e: React.PointerEvent, pinId: string) => {
     e.stopPropagation();
     suppressClickAddRef.current = true;
-    setSelectedPinId(pinId);
     const svg = svgRef.current;
     if (!svg) return;
     const rect = svg.getBoundingClientRect();
     const startScreen = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+
+    // Shift-click extends the selection (AE); no drag starts from it.
+    if (e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
+      useRigSelectionStore.getState().togglePin(nodeId, pinId);
+      return;
+    }
+    // A pin already in a multi-selection keeps it (the drag moves them all); any other click selects it alone.
+    if (!pinIds.includes(pinId)) setSelectedPinId(pinId);
 
     // Ctrl/Cmd = Puppet Sketch (record in real time during playback).
     // Alt = rotate the deformation around the pin. Plain drag = move.
@@ -285,13 +420,10 @@ export function PuppetOverlay({ host }: { host?: TrackPointHost } = {}): JSX.Ele
     gesture.begin(
       mode === 'sketch' ? `Sketch Puppet Pin ${pinId}` : mode === 'rotate' ? `Rotate Puppet Pin ${pinId}` : `Move Puppet Pin ${pinId}`,
     );
-    const drag = { pinId, startScreen, mode, center, startAngleDeg: 0, startRotationDeg: pin?.rotation ?? 0 };
-    dragInfoRef.current = drag;
-    if (mode === 'rotate') {
-      withRestPoint(startScreen.x, startScreen.y, (local) => {
-        drag.startAngleDeg = (Math.atan2(local.y - center.y, local.x - center.x) * 180) / Math.PI;
-      });
-    }
+    beginDrag(
+      { pinId, startScreen, mode, center, startAngleDeg: 0, startRotationDeg: pin?.rotation ?? 0, autoKey: rigAutoKey(true), starts: dragStarts(pinId) },
+      screenToLocal(startScreen.x, startScreen.y),
+    );
     capturePointer(svg, e.pointerId);
   };
 
@@ -299,27 +431,20 @@ export function PuppetOverlay({ host }: { host?: TrackPointHost } = {}): JSX.Ele
   const onPointerDownScale = (e: React.PointerEvent, pinId: string) => {
     e.stopPropagation();
     suppressClickAddRef.current = true;
-    setSelectedPinId(pinId);
+    if (!pinIds.includes(pinId)) setSelectedPinId(pinId);
     const svg = svgRef.current;
     if (!svg) return;
     const rect = svg.getBoundingClientRect();
     const startScreen = { x: e.clientX - rect.left, y: e.clientY - rect.top };
     const center = pinRotationCenter(pinId);
-    const drag = {
-      pinId,
-      startScreen,
-      mode: 'scale' as const,
-      center,
-      startAngleDeg: 0,
-      startRotationDeg: 0,
-      startDist: 1,
-      startScale: pins.find((p) => p.id === pinId)?.scale ?? 1,
-    };
-    dragInfoRef.current = drag;
-    withRestPoint(startScreen.x, startScreen.y, (local) => {
-      drag.startDist = Math.max(1e-3, Math.hypot(local.x - center.x, local.y - center.y));
-    });
     gesture.begin(`Scale Puppet Pin ${pinId}`);
+    beginDrag(
+      {
+        pinId, startScreen, mode: 'scale', center, startAngleDeg: 0, startRotationDeg: 0, startDist: 1,
+        startScale: pins.find((p) => p.id === pinId)?.scale ?? 1, autoKey: rigAutoKey(true), starts: dragStarts(pinId),
+      },
+      screenToLocal(startScreen.x, startScreen.y),
+    );
     capturePointer(svg, e.pointerId);
   };
 
@@ -345,15 +470,38 @@ export function PuppetOverlay({ host }: { host?: TrackPointHost } = {}): JSX.Ele
     capturePointer(svg, e.pointerId);
   };
 
+  /** Shift-drag on empty canvas: a marquee over the pins (adds to the selection). */
+  const onPointerDownOverlay = (e: React.PointerEvent) => {
+    if (!e.shiftKey || e.target !== svgRef.current) return;
+    const svg = svgRef.current;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    const x0 = e.clientX - rect.left;
+    const y0 = e.clientY - rect.top;
+    marqueeRef.current = { x0, y0, additive: true };
+    setMarquee({ x0, y0, x1: x0, y1: y0 });
+    suppressClickAddRef.current = true;
+    capturePointer(svg, e.pointerId);
+  };
+
   const onPointerMove = (e: React.PointerEvent) => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    const sx = e.clientX - rect.left;
+    const sy = e.clientY - rect.top;
+
+    const mq = marqueeRef.current;
+    if (mq) {
+      setMarquee({ x0: mq.x0, y0: mq.y0, x1: sx, y1: sy });
+      return;
+    }
+
     // Tangent handles take precedence — they sit on top of the mesh.
     const tan = tangentDragRef.current;
     if (tan) {
-      const svg = svgRef.current;
-      if (!svg) return;
-      const rect = svg.getBoundingClientRect();
       const alt = e.altKey;
-      withRestPoint(e.clientX - rect.left, e.clientY - rect.top, (handle) => {
+      withRestPoint(sx, sy, (handle) => {
         if (!tan.keyId) return;
         // Plain drag mirrors the opposite handle (a smooth point, the AE default);
         // Alt breaks the point so the two sides move independently. Absolute
@@ -371,53 +519,43 @@ export function PuppetOverlay({ host }: { host?: TrackPointHost } = {}): JSX.Ele
 
     const drag = dragInfoRef.current;
     if (!drag) return;
-    const svg = svgRef.current;
-    if (!svg) return;
-    const rect = svg.getBoundingClientRect();
-    const shift = e.shiftKey;
-
     // Rest space: pin POSITION tracks are stored in rest space (the puppet
     // solve runs in rest space before the skeleton skins on top), so the
-    // pointer goes back through the pose first (getRigPose).
-    withRestPoint(e.clientX - rect.left, e.clientY - rect.top, (localCoords) => {
-      if (drag.mode === 'rotate') {
-        // Live update the pin rotation (scalar keyframe track) directly.
-        const { x: cx, y: cy } = drag.center;
-        const angleDeg = (Math.atan2(localCoords.y - cy, localCoords.x - cx) * 180) / Math.PI;
-        let rotation = drag.startRotationDeg + (angleDeg - drag.startAngleDeg);
-        // Shift constrains rotation to 15° increments, matching AE's gizmo.
-        if (shift) rotation = Math.round(rotation / 15) * 15;
-        // Puppet pins always key (AE's pins are animated from the start).
-        gesture.send(rigKey(nodeId, rigPaths.pinProp(drag.pinId, 'rotation'), time, rigValues.scalar(rotation)));
-      } else if (drag.mode === 'scale') {
-        const c = drag.center;
-        const d = Math.hypot(localCoords.x - c.x, localCoords.y - c.y);
-        let scale = (drag.startScale ?? 1) * (d / (drag.startDist ?? 1));
-        // Shift constrains scale to 5% steps, matching AE's gizmo.
-        if (shift) scale = Math.round(scale * 20) / 20;
-        // API unit: percent.
-        gesture.send(rigKey(nodeId, rigPaths.pinProp(drag.pinId, 'scale'), time, rigValues.scalar(Math.max(0.01, scale) * 100)));
-      } else if (drag.mode === 'sketch') {
-        // Record against the LIVE playhead (composition seconds — the axis the
-        // keys are sent on) so the captured path is spread across real time
-        // rather than collapsing onto one frame.
-        sketchRef.current?.add(localCoords.x, localCoords.y, time);
-      } else {
-        // The pin's Position key at the playhead, absolute per move.
-        gesture.send(rigKey(nodeId, rigPaths.pinProp(drag.pinId, 'position'), time, rigValues.vec2(localCoords.x, localCoords.y)));
-      }
-      controller.requestRender();
-    });
+    // pointer goes back through the pose — the drag's basis, fitted at pointer-down.
+    queueDragMove(drag, screenToLocal(sx, sy), e.shiftKey);
   };
 
   const onPointerUp = (e: React.PointerEvent) => {
-    const tan = tangentDragRef.current;
-    if (tan) {
-      tangentDragRef.current = null;
-      const svg = svgRef.current;
+    const svg = svgRef.current;
+    const release = (): void => {
       if (svg) {
         try { svg.releasePointerCapture(e.pointerId); } catch {}
       }
+    };
+
+    const mq = marqueeRef.current;
+    if (mq) {
+      marqueeRef.current = null;
+      release();
+      const rect = svg?.getBoundingClientRect();
+      const x1 = rect ? e.clientX - rect.left : mq.x0;
+      const y1 = rect ? e.clientY - rect.top : mq.y0;
+      const [lx, hx] = [Math.min(mq.x0, x1), Math.max(mq.x0, x1)];
+      const [ly, hy] = [Math.min(mq.y0, y1), Math.max(mq.y0, y1)];
+      const inside = pins.filter((p) => {
+        const s = localToScreen(p.x, p.y);
+        return s.x >= lx && s.x <= hx && s.y >= ly && s.y <= hy;
+      }).map((p) => p.id);
+      const next = mq.additive ? [...pinIds.filter((id) => !inside.includes(id)), ...inside] : inside;
+      useRigSelectionStore.getState().selectPins(nodeId, next);
+      setMarquee(null);
+      return;
+    }
+
+    const tan = tangentDragRef.current;
+    if (tan) {
+      tangentDragRef.current = null;
+      release();
       void queueRef.current.then(() => gesture.end());
       return;
     }
@@ -425,27 +563,25 @@ export function PuppetOverlay({ host }: { host?: TrackPointHost } = {}): JSX.Ele
     const drag = dragInfoRef.current;
     if (!drag) return;
     dragInfoRef.current = null;
-    const svg = svgRef.current;
-    if (svg) {
-      try {
-        svg.releasePointerCapture(e.pointerId);
-      } catch {}
-    }
+    release();
+    const shift = e.shiftKey;
 
-    // Puppet Sketch: reduce the raw stream to a few eased keyframes and write
-    // them as the pin's position track. One recording = one undo step.
-    if (drag.mode === 'sketch') {
-      void queueRef.current.then(async () => {
+    // The last pointer position lands before the gesture closes: wait for the
+    // basis (the first answer) if it is still in flight, then flush.
+    void drag.ready.then(async () => {
+      flushDrag(drag, shift);
+      // Puppet Sketch: reduce the raw stream to a few eased keyframes and write
+      // them as the pin's position track. One recording = one undo step.
+      if (drag.mode === 'sketch') {
         const kfs = sketchRef.current?.finish({ tolerance: sketchTolerance }) ?? [];
         sketchRef.current = null;
         setIsRecording(false);
         if (kfs.length > 0) await sendSketch(drag.pinId, kfs);
         else await gesture.end();
-      });
-      return;
-    }
-
-    void queueRef.current.then(() => gesture.end());
+        return;
+      }
+      await gesture.end();
+    });
   };
 
   /**
@@ -561,10 +697,24 @@ export function PuppetOverlay({ host }: { host?: TrackPointHost } = {}): JSX.Ele
         zIndex: 10,
         cursor: 'crosshair',
       }}
+      onPointerDown={onPointerDownOverlay}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onClick={onClickOverlay}
     >
+      {/* Shift-drag marquee: the pins inside join the selection on release. */}
+      {marquee && (
+        <rect
+          x={Math.min(marquee.x0, marquee.x1)}
+          y={Math.min(marquee.y0, marquee.y1)}
+          width={Math.abs(marquee.x1 - marquee.x0)}
+          height={Math.abs(marquee.y1 - marquee.y0)}
+          fill="rgba(41, 136, 255, 0.12)"
+          stroke="rgba(41, 136, 255, 0.9)"
+          strokeWidth={1}
+          pointerEvents="none"
+        />
+      )}
       {meshPath && (
         <path
           d={meshPath}
@@ -650,7 +800,8 @@ export function PuppetOverlay({ host }: { host?: TrackPointHost } = {}): JSX.Ele
         const color = pinColor(kind);
         const isBendPin = kind === 'bend';
         const screen = localToScreen(pin.x, pin.y);
-        const isSelected = selectedPinId === pin.id;
+        const isSelected = pinIds.includes(pin.id);
+        const isPrimary = selectedPinId === pin.id;
         const isHovered = hoveredPinId === pin.id;
 
         return (
@@ -698,7 +849,7 @@ export function PuppetOverlay({ host }: { host?: TrackPointHost } = {}): JSX.Ele
 
             {/* Advanced / Bend gizmo — AE's rotate ring + scale square. Position,
                 Starch and Overlap pins only move. */}
-            {isSelected && pinHasTransformGizmo(kind) && (
+            {isPrimary && pinHasTransformGizmo(kind) && (
               <g>
                 <circle
                   cx={screen.x} cy={screen.y} r={GIZMO_R}

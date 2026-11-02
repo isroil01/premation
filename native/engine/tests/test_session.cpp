@@ -958,6 +958,63 @@ TEST_CASE("session: gesture ids live in the id state and survive New Project", "
   REQUIRE(begin() == 3U);
 }
 
+TEST_CASE("session: a client reconnect (second Hello) commits the gesture the old client left open",
+          "[session][history][gesture]") {
+  // The editor page reloaded while the engine process lived on: nothing closed
+  // stdin, so on_disconnect never ran, and the AI turn's gesture held the one
+  // slot. The new page's Hello must settle it (§5.1: COMMIT) or the new page
+  // can never edit ("Another edit is still in progress").
+  Harness h;
+  (void)h.hello();
+  const auto comp = make_comp(h);
+  const auto layer = make_layer(h, comp);
+  const auto entriesBefore = history(h).entries.size();
+  const DocState before = state_of(h.session.document());
+
+  const auto r = h.run(cmd(api::BeginGesture{"AI: slide the title"}));
+  REQUIRE(is_ok(r));
+  const auto g = result_as<api::GestureRef>(r).gesture;
+  REQUIRE(is_ok(set_prop(h, layer, "transform/position", vec2(40, 40))));
+  REQUIRE(h.session.gesture_open());
+
+  // The reloaded page says Hello again on the same pipe and gets a FRESH Welcome
+  // (Harness::hello returns the first one ever sent: read the newest here).
+  const std::size_t sentBefore = h.messages.size();
+  (void)h.hello();
+  std::optional<api::Welcome> fresh;
+  for (std::size_t i = sentBefore; i < h.messages.size(); ++i) {
+    if (h.messages[i].kind() == api::EngineMessage::Kind::welcome) fresh = std::get<api::Welcome>(h.messages[i].v);
+  }
+  REQUIRE(fresh.has_value());
+  REQUIRE(fresh->engine == "premation-engine");
+  REQUIRE(fresh->revision == h.session.revision());
+  REQUIRE_FALSE(h.session.gesture_open());
+
+  // The old gesture became ONE committed entry: nothing the user saw is lost, and it undoes as one step.
+  const auto hist = history(h);
+  REQUIRE(hist.entries.size() == entriesBefore + 1);
+  REQUIRE(hist.entries.back().label == "AI: slide the title");
+  REQUIRE(is_error(h.run(cmd(api::EndGesture{g, true})), api::ErrorCode::no_gesture));
+
+  // The new client can open its own gesture, edit, and close it.
+  const auto r2 = h.run(cmd(api::BeginGesture{"Move"}));
+  REQUIRE(is_ok(r2));
+  const auto g2 = result_as<api::GestureRef>(r2).gesture;
+  REQUIRE(g2 != g);
+  REQUIRE(is_ok(set_prop(h, layer, "transform/position", vec2(50, 50))));
+  REQUIRE(is_ok(h.run(cmd(api::EndGesture{g2, true}))));
+  REQUIRE(history(h).entries.size() == entriesBefore + 2);
+  REQUIRE(is_ok(h.run(cmd(api::Undo{}))));
+  REQUIRE(is_ok(h.run(cmd(api::Undo{}))));
+  REQUIRE(state_of(h.session.document()) == before);
+
+  // A reconnect with nothing open changes no history.
+  (void)h.hello();
+  REQUIRE(history(h).entries.size() == entriesBefore + 2);
+  REQUIRE(is_ok(h.run(cmd(api::BeginGesture{"again"}))));
+  REQUIRE(is_ok(h.run(cmd(api::EndGesture{0, true}))));
+}
+
 TEST_CASE("session: applyPreset keys land at the composition time on an offset layer", "[session][g2]") {
   Harness h;
   (void)h.hello();

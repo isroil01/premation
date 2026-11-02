@@ -34,7 +34,9 @@ FxReach spread(const PxBox& in, double x, double y) {
 /// bilinear fetch per pair of neighbours at spacing 1, never past the pair's
 /// outer tap) — the last one under 3.5σ + spacing out; the slack holds its
 /// fractional second texel. σ <= 0 samples the centre only.
-double blur_reach(double sigma) { return sigma > 0 ? 3.5 * sigma + std::max(1.0, sigma * 2.5 / 30) + kTapSlack : 0; }
+double blur_reach(double sigma, double spacingMul = 1) {
+  return sigma > 0 ? 3.5 * sigma + std::max(1.0, sigma * 2.5 / 30) * spacingMul + kTapSlack : 0;
+}
 
 /// Every number the entry carries is finite. A NaN radius reaches the shaders
 /// as NaN weights over the whole frame: such an entry is not measured.
@@ -54,7 +56,12 @@ std::optional<FxReach> reach_of(const Fx& fx, std::string_view t, const PxBox& i
     const double dilate = spreadPx > 0 ? spreadPx + 1 + kTapSlack : 0;
     double blur = blur_reach(rPx);
     // The glow's wide pass at 2.2 × the radius (drawn when the pool has a third free target).
-    if (t == "glow" && rPx >= 6) blur = std::max(blur, blur_reach(rPx * 2.2));
+    // The glow's wide pass blurs the narrow result again by √(wideR² − rPx²), its
+    // taps kGlowWideSpacing apart: the two reaches add (effect_chain.cpp).
+    if (t == "glow" && rPx >= 6) {
+      const double wideR = rPx * 2.2;
+      blur = std::max(blur, blur + blur_reach(std::sqrt(std::max(0.0, wideR * wideR - rPx * rPx)), kGlowWideSpacing));
+    }
     // The dilated, blurred silhouette; blur and glow lay it with the contents.
     const PxBox halo = grow(in, dilate + blur, dilate + blur);
     if (t != "drop-shadow") return FxReach{halo, halo};
@@ -106,6 +113,15 @@ std::optional<FxReach> reach_of(const Fx& fx, std::string_view t, const PxBox& i
   // sharpen.wgsl: the four neighbours one texel out (its alpha stays, its colour
   // goes negative beside an edge — a non-zero texel).
   if (t == "sharpen") return spread(in, 1 + kTapSlack, 1 + kTapSlack);
+  // Layer-box passes: directional-blur / radial-blur / wave-warp /
+  // turbulent-displace.wgsl sample only inside the layer's box (samplePx is
+  // zero past it, the warps clamp to it) and return the input texel unchanged
+  // outside the box; vignette.wgsl scales the input texel. The box is the
+  // renderable's bounds, which is the content box the chain starts from, so
+  // nothing lands outside `in` — the smear stays inside the layer.
+  if (t == "directional-blur" || t == "radial-blur" || t == "wave-warp" || t == "turbulent-displace" || t == "vignette") {
+    return same(in);
+  }
   if (t == "stroke") {
     // stroke-sdf.wgsl lights a texel within width + 1 of an inside texel's centre;
     // stroke.wgsl scans a disc of the width (at most 64 texels).
@@ -123,6 +139,37 @@ std::optional<FxReach> reach_of(const Fx& fx, std::string_view t, const PxBox& i
   // result is transparent wherever its input is. A reach past the input is in
   // layer px, which this view does not convert: not measured.
   if (fx.has("reachPx") && fx.num("reachPx") == 0) return same(in);
+  // Stream D (2026-11-02): a reach in LAYER px converts to texels through the
+  // input box — the renderable's bounds in texels over its `lw` × `lh` layer px
+  // (fx_graph.cpp's texPerPx is that same quotient). A rotated or motion-
+  // sampled box is wider than the layer, so the larger of the two axes' ratios
+  // is at least the layer's scale on every axis: a reach that is exact or larger.
+  const auto layerTexelsPerPx = [&]() -> double {
+    const double lw = fx.num("lw");
+    const double lh = fx.num("lh");
+    if (!(lw > 0) || !(lh > 0)) return 0;
+    return std::max((in.x1 - in.x0) / lw, (in.y1 - in.y0) / lh);
+  };
+  if (t == "fx-graph" && fx.flag("reachMeasured") && fx.num("reachPx") > 0) {
+    // A deep effect whose packer measured its farthest tap (Graph::measured()).
+    const double s = layerTexelsPerPx();
+    if (s <= 0) return std::nullopt;
+    const double r = fx.num("reachPx") * s + kTapSlack;
+    return spread(in, r, r);
+  }
+  if (t == "displacement-map" && fx.has("lw")) {
+    // displacement-map.wgsl: a texel reads at most max(|maxH|, |maxV|) layer px
+    // away (a channel at full swing), so a texel outside the input lands non-zero
+    // only within that of it (the backdrop source is masked by the layer's own
+    // alpha: the same box). With Expand Output off the shader clips to the layer box.
+    const double s = layerTexelsPerPx();
+    if (s <= 0) return std::nullopt;
+    if (!fx.flag("expand", true)) return same(in);
+    // An entry with only `amount` (an older producer) moves both axes by it (effect_chain.cpp).
+    const double rx = std::abs(fx.num("maxH", fx.num("amount"))) * s + kTapSlack;
+    const double ry = std::abs(fx.num("maxV", fx.num("amount"))) * s + kTapSlack;
+    return spread(in, rx, ry);
+  }
   return std::nullopt;
 }
 

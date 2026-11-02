@@ -12114,6 +12114,7 @@ void encode(wire::Writer& w, const SubjectEdit& v) {
   w.varint(16U); w.varint(static_cast<std::uint32_t>(v.op));
   w.varint(25U); w.f64(v.radius);
   w.varint(32U); w.boolean(v.cut);
+  if (v.hardness.has_value()) { w.varint(41U); w.f64(*v.hardness); }
 }
 
 Status decode(wire::Reader& r, SubjectEdit& out) {
@@ -12143,6 +12144,12 @@ Status decode(wire::Reader& r, SubjectEdit& out) {
       case 32U: {
         if (!r.boolean(out.cut)) return Status::truncated;
         has_cut = true;
+        break;
+      }
+      case 41U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.hardness = std::move(e);
         break;
       }
       default:
@@ -30710,6 +30717,13 @@ void encode(wire::Writer& w, const RenderGlass& v) {
   w.varint(97U); w.f64(v.specular_intensity);
   w.varint(105U); w.f64(v.specular_falloff);
   w.varint(113U); w.f64(v.grain);
+  w.varint(121U); w.f64(v.bump_source);
+  w.varint(129U); w.f64(v.thickness);
+  w.varint(137U); w.f64(v.ior);
+  w.varint(145U); w.f64(v.dispersion);
+  w.varint(153U); w.f64(v.caustic);
+  w.varint(161U); w.f64(v.fresnel);
+  if (v.bump_layer_id.has_value()) { w.varint(170U); w.str(*v.bump_layer_id); }
 }
 
 Status decode(wire::Reader& r, RenderGlass& out) {
@@ -30727,6 +30741,12 @@ Status decode(wire::Reader& r, RenderGlass& out) {
   bool has_specular_intensity = false;
   bool has_specular_falloff = false;
   bool has_grain = false;
+  bool has_bump_source = false;
+  bool has_thickness = false;
+  bool has_ior = false;
+  bool has_dispersion = false;
+  bool has_caustic = false;
+  bool has_fresnel = false;
   while (!r.at_end()) {
     std::uint64_t key = 0;
     if (!r.varint(key)) return Status::truncated;
@@ -30801,6 +30821,42 @@ Status decode(wire::Reader& r, RenderGlass& out) {
         has_grain = true;
         break;
       }
+      case 121U: {
+        if (!r.f64(out.bump_source)) return Status::truncated;
+        has_bump_source = true;
+        break;
+      }
+      case 129U: {
+        if (!r.f64(out.thickness)) return Status::truncated;
+        has_thickness = true;
+        break;
+      }
+      case 137U: {
+        if (!r.f64(out.ior)) return Status::truncated;
+        has_ior = true;
+        break;
+      }
+      case 145U: {
+        if (!r.f64(out.dispersion)) return Status::truncated;
+        has_dispersion = true;
+        break;
+      }
+      case 153U: {
+        if (!r.f64(out.caustic)) return Status::truncated;
+        has_caustic = true;
+        break;
+      }
+      case 161U: {
+        if (!r.f64(out.fresnel)) return Status::truncated;
+        has_fresnel = true;
+        break;
+      }
+      case 170U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.bump_layer_id = std::move(e);
+        break;
+      }
       default:
         if (!r.skip(key)) return Status::truncated;
         break;
@@ -30820,6 +30876,12 @@ Status decode(wire::Reader& r, RenderGlass& out) {
   if (!has_specular_intensity) return Status::missing_field;
   if (!has_specular_falloff) return Status::missing_field;
   if (!has_grain) return Status::missing_field;
+  if (!has_bump_source) return Status::missing_field;
+  if (!has_thickness) return Status::missing_field;
+  if (!has_ior) return Status::missing_field;
+  if (!has_dispersion) return Status::missing_field;
+  if (!has_caustic) return Status::missing_field;
+  if (!has_fresnel) return Status::missing_field;
   return Status::ok;
 }
 

@@ -443,6 +443,7 @@ export type EffectType =
   | 'matte-stroke'
   | 'selective-color-ai'
   | 'object-matte'
+  | 'goo'
   // deepfx:union:end
   | 'scribble';
 
@@ -927,6 +928,11 @@ function refineMatteParams(edgeRadius: number, smooth: number, contrast: number)
     { key: 'decontaminationAmount', label: 'Decontamination Amount', type: 'number', unit: '%', min: 0, max: 100, precision: 0, default: 100 },
   ];
 }
+
+/** Displacement Map's channel menu (AE's order; stream D L5): the map channel a
+ *  texel is moved by, 0.5 = no move. Full / Half are constants, Off moves nothing. */
+const DISPLACEMENT_CHANNELS = ['Red', 'Green', 'Blue', 'Alpha', 'Luminance', 'Hue', 'Lightness', 'Saturation', 'Full', 'Half', 'Off']
+  .map((label, value) => ({ value, label }));
 
 export const EFFECT_DEFS: EffectDef[] = [
   scalar('blur', 'Blur', 'px', 0, BLUR_MAX_PX, 6, (a) => `blur(${a}px)`),
@@ -2303,11 +2309,24 @@ export const EFFECT_DEFS: EffectDef[] = [
     type: 'displacement-map',
     label: 'Displace',
     gpuOnly: true,
+    // Stream D L5 (2026-11-02): After Effects' Displacement Map controls
+    // (native/engine/catalog/effects.json is the source). `amount` IS Max
+    // Horizontal; a document without Max Vertical moves both axes by it, so
+    // every older document renders as before.
     params: [
-      { key: 'amount', label: 'Amount', type: 'number', unit: 'px', min: -100, max: 100, default: 20 },
       // The layer whose pixels drive the displacement (AE's Displacement Map
-      // Layer). '' = unset → the layer displaces by its own content (legacy).
-      { key: 'mapLayerId', label: 'Map Layer', type: 'layer', default: '' },
+      // Layer). '' = unset → the layer displaces by its own content.
+      { key: 'mapLayerId', label: 'Displacement Map Layer', type: 'layer', noneLabel: 'None (this layer)', default: '' },
+      { key: 'source', label: 'Displace', type: 'enum', default: 0, options: [{ value: 0, label: 'This Layer' }, { value: 1, label: 'Backdrop (the scene below)' }] },
+      { key: 'hChannel', label: 'Use For Horizontal Displacement', type: 'enum', default: 0, options: DISPLACEMENT_CHANNELS },
+      { key: 'amount', label: 'Max Horizontal Displacement', type: 'number', unit: 'px', min: -32000, max: 32000, default: 20 },
+      { key: 'vChannel', label: 'Use For Vertical Displacement', type: 'enum', default: 1, options: DISPLACEMENT_CHANNELS },
+      // On (the default, and every older document): Max Vertical = Max Horizontal, the original ±amount on both axes.
+      { key: 'linkVertical', label: 'Vertical = Horizontal', type: 'checkbox', default: true },
+      { key: 'maxVertical', label: 'Max Vertical Displacement', type: 'number', unit: 'px', min: -32000, max: 32000, default: 20 },
+      { key: 'mapBehavior', label: 'Displacement Map Behavior', type: 'enum', default: 0, options: [{ value: 0, label: 'As Placed in Comp' }, { value: 1, label: 'Center Map' }, { value: 2, label: 'Stretch Map to Fit' }, { value: 3, label: 'Tile Map' }] },
+      { key: 'edgeBehavior', label: 'Edge Behavior', type: 'enum', default: 0, options: [{ value: 0, label: 'Clamp Edge Pixels' }, { value: 1, label: 'Wrap Pixels Around' }, { value: 2, label: 'Transparent' }] },
+      { key: 'expandOutput', label: 'Expand Output', type: 'checkbox', default: true },
     ],
     css: () => '',
   },
@@ -4137,6 +4156,8 @@ export const EFFECT_DEFS: EffectDef[] = [
     type: 'glass',
     label: 'Glass',
     params: [
+      // Stream D: the bump may displace the scene under the layer instead of the layer itself.
+      { key: 'source', label: 'Refract', type: 'enum', default: 0, options: [{ value: 0, label: 'This Layer' }, { value: 1, label: 'Backdrop (the scene below)' }] },
       { key: 'bumpSoftness', label: 'Softness', type: 'number', unit: 'px', min: 0, max: 20, default: 4 },
       { key: 'height', label: 'Height', type: 'number', min: -100, max: 100, default: 30 },
       { key: 'displacement', label: 'Displacement', type: 'number', unit: 'px', min: 0, max: 100, default: 12 },
@@ -5058,6 +5079,8 @@ export const EFFECT_DEFS: EffectDef[] = [
     label: 'CC Blobbylize',
     gpuOnly: true,
     params: [
+      // Stream D L6: AE's Blob Layer — another layer's softened alpha is the blob surface.
+      { key: 'blobLayerId', label: 'Blob Layer', type: 'layer', noneLabel: 'None (this layer)', default: '' },
       { key: 'softness', label: 'Softness', type: 'number', unit: 'px', min: 0, max: 400, default: 20 },
       { key: 'cutAway', label: 'Cut Away', type: 'number', unit: '%', min: 0, max: 100, default: 40 },
       { key: 'lightIntensity', label: 'Light Intensity', type: 'number', unit: '%', min: 0, max: 400, default: 100 },
@@ -5122,6 +5145,10 @@ export const EFFECT_DEFS: EffectDef[] = [
     label: 'Caustics',
     gpuOnly: true,
     params: [
+      // Stream D L6: AE's Bottom and Water layers (the layer itself when unset).
+      { key: 'bottomLayerId', label: 'Bottom', type: 'layer', group: 'Bottom', noneLabel: 'None (this layer)', default: '' },
+      { key: 'waterLayerId', label: 'Water Surface', type: 'layer', group: 'Water', noneLabel: 'None (waves only)', default: '' },
+      { key: 'waterGain', label: 'Surface Height', type: 'number', group: 'Water', unit: '%', min: 0, max: 400, default: 100 },
       { key: 'scale', label: 'Wave Scale', type: 'number', unit: 'px', min: 10, max: 4000, default: 160 },
       { key: 'distortion', label: 'Surface Distortion', type: 'number', unit: '%', min: 0, max: 300, default: 30 },
       { key: 'intensity', label: 'Light Intensity', type: 'number', unit: '%', min: 0, max: 400, default: 100 },
@@ -5635,6 +5662,8 @@ export const EFFECT_DEFS: EffectDef[] = [
     label: 'Frosted Glass',
     gpuOnly: true,
     params: [
+      // Stream D: frost the scene under the layer instead of the layer itself.
+      { key: 'source', label: 'Frost', type: 'enum', default: 0, options: [{ value: 0, label: 'This Layer' }, { value: 1, label: 'Backdrop (the scene below)' }] },
       { key: 'amount', label: 'Frost', type: 'number', unit: 'px', min: 0, max: 400, default: 8 },
       { key: 'smoothness', label: 'Smoothness', type: 'number', unit: '%', min: 0, max: 100, default: 40 },
       { key: 'seed', label: 'Random Seed', type: 'number', min: 0, max: 9999, precision: 0, default: 1 },
@@ -6118,6 +6147,7 @@ export const EFFECT_DEFS: EffectDef[] = [
     params: [
       { key: 'heightLayer', label: 'Height Layer', type: 'layer', noneLabel: 'None (this layer)', default: '' },
       { key: 'heightSource', label: 'Height From', type: 'enum', default: 0, options: [{ value: 0, label: 'Luminance' }, { value: 1, label: 'Alpha' }, { value: 2, label: 'Red' }, { value: 3, label: 'Green' }, { value: 4, label: 'Blue' }] },
+      { key: 'source', label: 'Refract', type: 'enum', default: 0, options: [{ value: 0, label: 'This Layer' }, { value: 1, label: 'Backdrop (the scene below)' }] },
       { key: 'invertHeight', label: 'Invert Height', type: 'checkbox', default: false },
       { key: 'depth', label: 'Depth', type: 'number', unit: 'px', min: 0, max: 500, default: 30 },
       { key: 'smoothness', label: 'Smoothness', type: 'number', unit: 'px', min: 0, max: 100, default: 4 },
@@ -7091,6 +7121,28 @@ export const EFFECT_DEFS: EffectDef[] = [
       { key: 'shiftEdge', label: 'Shift Edge', type: 'number', group: 'Roto Brush Matte', unit: '%', min: -100, max: 100, default: 0 },
       { key: 'chatterAmount', label: 'Reduce Chatter', type: 'number', group: 'Roto Brush Matte', unit: '%', min: 0, max: 100, default: 30 },
       { key: 'renderRefineEdge', label: 'Render Refine Edge', type: 'checkbox', default: true },
+    ],
+    css: () => '',
+  },
+  {
+    /* Liquid merge (the metaball / "gooey" filter): the layer's alpha blurred and thresholded so nearby shapes fuse into one blob with a soft meniscus, then shaded from the blob's distance field — a dome normal with a light, specular highlight and Fresnel rim, tinted. Works on a precomp of many blobs, or on a masked adjustment layer over the whole scene. GPU only (docs/PROGRAM_DEEP_EFFECTS.md). */
+    type: 'goo',
+    label: 'Goo',
+    gpuOnly: true,
+    params: [
+      { key: 'blur', label: 'Blur', type: 'number', unit: 'px', min: 0, max: 200, default: 12 },
+      { key: 'threshold', label: 'Threshold', type: 'number', unit: '%', min: 1, max: 100, default: 50 },
+      { key: 'softness', label: 'Softness', type: 'number', unit: '%', min: 0, max: 100, default: 10 },
+      { key: 'color', label: 'Color', type: 'enum', group: 'Shading', default: 0, options: [{ value: 0, label: 'Layer' }, { value: 1, label: 'Tint' }] },
+      { key: 'tint', label: 'Tint', type: 'color', group: 'Shading', default: '#36c6ff' },
+      { key: 'shine', label: 'Shine', type: 'number', group: 'Shading', unit: '%', min: 0, max: 400, default: 50 },
+      { key: 'highlight', label: 'Highlight Color', type: 'color', group: 'Shading', default: '#ffffff' },
+      { key: 'shininess', label: 'Shininess', type: 'number', group: 'Shading', min: 1, max: 400, default: 40 },
+      { key: 'lightAngle', label: 'Light Direction', type: 'number', group: 'Shading', unit: '°', min: -3600, max: 3600, default: -45 },
+      { key: 'lightElevation', label: 'Light Elevation', type: 'number', group: 'Shading', unit: '°', min: 0, max: 90, default: 50 },
+      { key: 'rim', label: 'Fresnel Rim', type: 'number', group: 'Shading', unit: '%', min: 0, max: 200, default: 20 },
+      { key: 'ambient', label: 'Ambient', type: 'number', group: 'Shading', unit: '%', min: 0, max: 200, default: 85 },
+      { key: 'dome', label: 'Dome Radius', type: 'number', group: 'Shading', unit: 'px', min: 0, max: 500, default: 0 },
     ],
     css: () => '',
   },

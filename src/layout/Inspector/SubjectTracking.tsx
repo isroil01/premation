@@ -222,7 +222,7 @@ export function SubjectTracking({ nodeId, subjects, active, rev, locked }: {
         </label>
         {held && (
           <div className={styles.heldNote} role="status">
-            {t('inspector.subject.heldNote', 'Held: selected on {n} frame(s), so the same shape shows on every frame — a style on it stays where the subject was while the subject moves.', { n: mine.length })}
+            {t('inspector.subject.heldNoteShort', 'Selected on {n} frame(s) only — styles stay put while the subject moves.', { n: mine.length })}
             <button type="button" className={styles.primary} disabled={locked} onClick={() => { void followSubject(nodeId, active.id, (mine.find((f) => f.fix) ?? mine[0]!).time); }}>
               {t('inspector.subject.trackNow', 'Track through the shot')}
             </button>
@@ -236,10 +236,10 @@ export function SubjectTracking({ nodeId, subjects, active, rev, locked }: {
         {tracked && (
           <>
             <div className={styles.reviewHead}>
-              <span className={styles.listTitle}>
+              <span className={spans.length > 0 ? styles.listTitle : styles.meta}>
                 {spans.length > 0
                   ? t('inspector.subject.reviewCount', 'Frames to review · {n}', { n: spans.length })
-                  : t('inspector.subject.reviewNone', 'Nothing to review: the tracker was sure of every frame.')}
+                  : t('inspector.subject.reviewNoneShort', 'Every frame confident')}
               </span>
             </div>
             {spans.length > 0 && (

@@ -16,7 +16,7 @@
 import * as path from 'node:path';
 import manifest from './models.json';
 
-export type ModelId = 'object-matte' | 'face-landmarks' | 'depth-anything' | 'hand-landmarks' | 'sam2-video' | 'vitmatte';
+export type ModelId = 'object-matte' | 'object-matte-gpu' | 'face-landmarks' | 'depth-anything' | 'hand-landmarks' | 'sam2-video' | 'vitmatte';
 
 export interface ManifestFile {
   /** The file name on disk, the one the engine looks for. */

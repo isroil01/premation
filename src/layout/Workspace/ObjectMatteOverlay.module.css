@@ -148,6 +148,11 @@
   pointer-events: none;
 }
 
+/* The found object's name line: which one of the frame's objects, and how much of the frame. */
+.hoverName {
+  font-weight: 600;
+}
+
 .hoverPath {
   display: flex;
   align-items: center;

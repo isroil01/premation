@@ -50,6 +50,10 @@ struct EffectDef {
   bool gpuOnly = false;
   std::vector<EffectParamDef> params;
   std::optional<Json> newInstanceParams;
+  /// {key: default} over `params`, built once with the registry: params_of
+  /// starts from a copy of it instead of assembling it per call (that ran once
+  /// per property read, hundreds of times per edit on an effect-heavy layer).
+  Json defaultParams;
   [[nodiscard]] const EffectParamDef* param(std::string_view key) const noexcept;
   /// The first `number` param (the legacy primary).
   [[nodiscard]] const EffectParamDef* primary() const noexcept;

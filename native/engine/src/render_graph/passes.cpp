@@ -268,6 +268,7 @@ std::unique_ptr<RenderGraph> build_default_graph() {
   g->declare_target(std::string(kFxSilhouette), full("rgba16float"));
   g->declare_target(std::string(kFxScopeMask), full("rgba8unorm"));
   g->declare_target(std::string(kFxBlendInput), full("rgba16float"));
+  g->declare_target(std::string(kFxBackdrop), full("rgba16float"));  // stream D: the scene under the layer
   for (const std::string_view n : kFxMaskTargets) g->declare_target(std::string(n), full("rgba8unorm"));  // Program X: fx-graph masks
   for (const std::string_view n : kFxTapTargets) g->declare_target(std::string(n), full("rgba16float"));  // Program X1: time taps
   for (const std::string_view n : kFxAux) g->declare_target(std::string(n), full(std::string(kDataTargetFormat)));

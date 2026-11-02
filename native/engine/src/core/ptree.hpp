@@ -22,6 +22,8 @@ inline constexpr std::string_view kAudioPanProp = "audioPan";
 /// A text layer's Background: the switch, and its colour (keyframeable; a colour row).
 inline constexpr std::string_view kTextBackground = "background";
 inline constexpr std::string_view kTextBackgroundColor = "backgroundColor";
+/// The timeline group of a layer's rig rows (a puppet's pins, a skeleton's bones) — propertyTree.ts `'rig'`.
+inline constexpr std::string_view kRigGroup = "rig";
 
 struct StaticPropertyRow {
   std::string prop;
@@ -37,6 +39,10 @@ struct StaticPropertyRow {
 
 /// `groupForProp(prop, nodeId)`.
 [[nodiscard]] std::string group_for_prop(const Document& d, std::string_view prop, const Node* node);
+/// A rig keyframe TRACK name (`puppet.<pin>.*`, `bone.<id>.*`, `ikTarget.<id>.*`, `ikPole.<id>.*`, `ikMode.<id>`).
+[[nodiscard]] bool is_rig_track(std::string_view prop) noexcept;
+/// The layer's rig rows (C2): Puppet ▸ Mesh / Pins ▸ <pin>; Skeleton ▸ Mesh / Bones ▸ <bone> (+ its IK goal).
+[[nodiscard]] std::vector<StaticPropertyRow> rig_rows(const Document& d, const Node& n);
 /// The Text component's Background switch is on.
 [[nodiscard]] bool text_background_on(const Node& n);
 

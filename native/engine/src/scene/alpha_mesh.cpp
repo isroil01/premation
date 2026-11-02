@@ -5,11 +5,14 @@
 #include <cmath>
 #include <limits>
 #include <map>
+#include <memory>
+#include <string>
 #include <utility>
 #include <variant>
 
 #include "alpha_contours.hpp"
 #include "jsmath.hpp"
+#include "rig_cache.hpp"
 
 namespace premation::scene::rig {
 
@@ -23,6 +26,10 @@ constexpr std::size_t kMaxPoints = 2600;     // MAX_POINTS
 /// The share of a region its kept triangles must cover (a triangulation that
 /// falls short would leave part of the picture undrawn).
 constexpr double kMinRegionCoverage = 0.97;
+/// Delaunay work ceiling (in-circle tests + cavity edge checks). A shuffled
+/// insertion of the largest region (kMaxPoints) needs well under a tenth of
+/// it; it exists so no outline can hold the core thread (~0.3 s at most).
+constexpr std::size_t kDelaunayWorkBudget = 120'000'000;
 constexpr double kMaskThreshold = 128;       // MASK_THRESHOLD
 constexpr double kMiterLimit = 3;            // MITER_LIMIT
 constexpr double kEdgeProbeInset = 0.05;     // EDGE_PROBE_INSET
@@ -248,14 +255,52 @@ std::optional<std::vector<std::int32_t>> delaunay(const std::vector<double>& px,
                        (((cdx * cdx) + (cdy * cdy)) * ((adx * bdy) - (bdx * ady)));
     return det > eps;
   };
+  // Insertion order. The callers list the outline's samples first, in order
+  // along it, then the lattice: a run of near-collinear boundary samples makes
+  // slivers whose circumcircles hold every later point, so each insertion
+  // tore down and rebuilt most of the mesh — cubic, 12 s and more on the core
+  // thread at a Puppet Expansion of 50 (the "engine busy: setProperties"
+  // freeze). A shuffled order is the textbook cure (expected O(1) cavity per
+  // point). Seeded, so a mesh is the same on every run (determinism).
+  std::vector<std::int64_t> order(n);
+  for (std::size_t i = 0; i < n; ++i) order[i] = static_cast<std::int64_t>(i);
+  std::uint64_t seed = 0x9E3779B97F4A7C15ULL ^ n;
+  for (std::size_t i = n; i > 1; --i) {
+    seed = (seed * 6364136223846793005ULL) + 1442695040888963407ULL;
+    std::swap(order[i - 1], order[static_cast<std::size_t>((seed >> 33U) % i)]);
+  }
+  // A hard ceiling on the work (a count, never the clock): input the shuffle
+  // does not tame comes back as "no mesh" — the caller coarsens or falls back
+  // to the covered grid — instead of holding the core thread.
+  std::size_t budget = kDelaunayWorkBudget;
+  std::size_t deadCount = 0;
   std::vector<std::size_t> badTris;
   std::vector<std::int64_t> edges;
-  for (std::int64_t p = 0; p < N; ++p) {
+  for (const std::int64_t p : order) {
+    // Dead triangles are dropped once they outnumber the live ones: the scan
+    // below is over what is still in the mesh, not over everything ever made.
+    if (deadCount > 64 && deadCount * 2 > dead.size()) {
+      std::size_t w = 0;
+      for (std::size_t t = 0; t < dead.size(); ++t) {
+        if (dead[t]) continue;
+        for (std::size_t k = 0; k < 3; ++k) tri[(w * 3) + k] = tri[(t * 3) + k];
+        ++w;
+      }
+      tri.resize(w * 3);
+      dead.assign(w, false);
+      deadCount = 0;
+    }
+    if (dead.size() > budget) return std::nullopt;
+    budget -= dead.size();
     badTris.clear();
     for (std::size_t t = 0; t < dead.size(); ++t) {
       if (dead[t]) continue;
       if (in_circle(tri[t * 3], tri[(t * 3) + 1], tri[(t * 3) + 2], p)) badTris.push_back(t);
     }
+    // The cavity's boundary is deduplicated pairwise (quadratic in its size):
+    // a cavity this large is the degenerate case the budget exists for.
+    if (badTris.size() * badTris.size() > budget) return std::nullopt;
+    budget -= badTris.size() * badTris.size();
     if (badTris.empty()) continue;  // exact duplicate / cocircular — skip it
     edges.clear();
     for (const std::size_t t : badTris) {
@@ -279,6 +324,7 @@ std::optional<std::vector<std::int32_t>> delaunay(const std::vector<double>& px,
       }
     }
     for (const std::size_t t : badTris) dead[t] = true;
+    deadCount += badTris.size();
     int added = 0;
     for (std::size_t e = 0; e < edges.size(); e += 2) {
       const std::int64_t a = edges[e];
@@ -388,7 +434,10 @@ std::variant<std::monostate, OverBudget, Triangulated> triangulate_region(const 
     py[i] = pts[i].y;
   }
   const auto idx = delaunay(px, py, n);
-  if (!idx) return std::monostate{};
+  // Not a speck to skip: the region is there and could not be filled at this
+  // spacing (over the work budget, a collapsed cavity). Coarser next, then the
+  // covered grid — never a piece of the picture silently left out.
+  if (!idx) return OverBudget{};
   Triangulated out;
   const double minTriArea = spacing * spacing * 1e-3;
   for (std::size_t t = 0; t + 2 < idx->size(); t += 3) {
@@ -455,6 +504,97 @@ CoverageMask coverage_mask_from_image_data(std::span<const std::uint8_t> data, i
   h = (h ^ static_cast<std::uint32_t>(threshold)) * 16777619U;
   for (const std::uint8_t c : m.cells) h = (h ^ c) * 16777619U;
   m.key = "cov" + std::to_string(m.cols) + "x" + std::to_string(m.rows) + ":" + std::to_string(h);
+  return m;
+}
+
+std::shared_ptr<const AlphaPlane> alpha_plane_from_rgba(std::span<const std::uint8_t> rgba, int width, int height) {
+  auto plane = std::make_shared<AlphaPlane>();
+  const int W = std::max(1, width);
+  const int H = std::max(1, height);
+  // Integer box reduction by `f` (1 = a straight copy): deterministic, no filtering choices.
+  const int f = std::max(1, (std::max(W, H) + kCoverageSourceMax - 1) / kCoverageSourceMax);
+  plane->width = (W + f - 1) / f;
+  plane->height = (H + f - 1) / f;
+  const auto pw = static_cast<std::size_t>(plane->width);
+  plane->alpha.assign(pw * static_cast<std::size_t>(plane->height), 0);
+  for (int oy = 0; oy < plane->height; ++oy) {
+    const int y0 = oy * f;
+    const int y1 = std::min(H, y0 + f);
+    for (int ox = 0; ox < plane->width; ++ox) {
+      const int x0 = ox * f;
+      const int x1 = std::min(W, x0 + f);
+      std::uint32_t sum = 0;
+      std::uint32_t count = 0;
+      for (int y = y0; y < y1; ++y) {
+        const std::size_t rowBase = static_cast<std::size_t>(y) * static_cast<std::size_t>(W);
+        for (int x = x0; x < x1; ++x) {
+          const std::size_t o = ((rowBase + static_cast<std::size_t>(x)) * 4) + 3;
+          if (o < rgba.size()) sum += rgba[o];
+          ++count;
+        }
+      }
+      const std::uint32_t a = count > 0 ? (sum + (count / 2)) / count : 0;
+      plane->alpha[(static_cast<std::size_t>(oy) * pw) + static_cast<std::size_t>(ox)] = static_cast<std::uint8_t>(std::min<std::uint32_t>(255, a));
+    }
+  }
+  Fnv64 h;
+  h.pod(plane->width);
+  h.pod(plane->height);
+  h.bytes(plane->alpha.data(), plane->alpha.size());
+  plane->key = "alpha" + std::to_string(plane->width) + "x" + std::to_string(plane->height) + ":" + h.hex();
+  return plane;
+}
+
+double coverage_cell_px(double traceAccuracy) {
+  const double a = std::isfinite(traceAccuracy) ? std::max(0.0, std::min(100.0, traceAccuracy)) : kTraceAccuracyDefault;
+  // 16 px at 0 down to 2 px at 100, geometric: each +25 halves the cell.
+  return 16.0 * std::pow(0.125, a / 100.0);
+}
+
+CoverageMask coverage_mask_from_alpha(std::shared_ptr<const AlphaPlane> plane, const CoverageSettings& s) {
+  CoverageMask m;
+  if (!plane || plane->width < 1 || plane->height < 1) return m;
+  const int W = plane->width;
+  const int H = plane->height;
+  const double cell = coverage_cell_px(s.traceAccuracy);
+  const auto cellsAcross = [cell](int px) {
+    const double n = std::round(static_cast<double>(px) / cell);
+    return std::max(1, std::min({kCoverageMaxCells, px, static_cast<int>(std::max(1.0, n))}));
+  };
+  m.cols = cellsAcross(W);
+  m.rows = cellsAcross(H);
+  const double thr = std::isfinite(s.alphaThreshold) ? std::max(0.0, std::min(255.0, std::floor(s.alphaThreshold))) : kAlphaThresholdDefault;
+  const auto threshold = static_cast<std::uint32_t>(thr);
+  const auto cols = static_cast<std::size_t>(m.cols);
+  m.cells.assign(cols * static_cast<std::size_t>(m.rows), 0);
+  const auto pw = static_cast<std::size_t>(W);
+  for (int ry = 0; ry < m.rows; ++ry) {
+    const int y0 = static_cast<int>((static_cast<std::int64_t>(ry) * H) / m.rows);
+    const int y1 = std::max(y0 + 1, static_cast<int>((static_cast<std::int64_t>(ry + 1) * H) / m.rows));
+    for (int cx = 0; cx < m.cols; ++cx) {
+      const int x0 = static_cast<int>((static_cast<std::int64_t>(cx) * W) / m.cols);
+      const int x1 = std::max(x0 + 1, static_cast<int>((static_cast<std::int64_t>(cx + 1) * W) / m.cols));
+      std::uint32_t covered = 0;
+      for (int y = y0; y < y1; ++y) {
+        const std::size_t rowBase = static_cast<std::size_t>(y) * pw;
+        for (int x = x0; x < x1; ++x) {
+          if (plane->alpha[rowBase + static_cast<std::size_t>(x)] >= threshold) ++covered;
+        }
+      }
+      const auto total = static_cast<std::uint32_t>((y1 - y0) * (x1 - x0));
+      m.cells[(static_cast<std::size_t>(ry) * cols) + static_cast<std::size_t>(cx)] =
+          static_cast<double>(covered) >= kCoverageMinFill * static_cast<double>(total) ? 1 : 0;
+    }
+  }
+  Fnv64 h;
+  h.bytes(plane->key.data(), plane->key.size());
+  h.pod(s.traceAccuracy);
+  h.pod(thr);
+  h.pod(m.cols);
+  h.pod(m.rows);
+  h.bytes(m.cells.data(), m.cells.size());
+  m.key = "cov" + std::to_string(m.cols) + "x" + std::to_string(m.rows) + ":" + h.hex();
+  m.source = std::move(plane);
   return m;
 }
 
@@ -568,7 +708,10 @@ std::optional<AlphaMeshGeometry> build_alpha_outline_geometry(double width, doub
   const double cell = std::min(width / std::max(1, mask.cols), height / std::max(1, mask.rows));
   for (int attempt = 0; attempt < 4; ++attempt) {
     const double spacing = base * mjs::pow(1.6, attempt);
-    const double edge = std::min(spacing, std::max(1.0, cell * 0.75));
+    // A finer mask (R2: cells of a few px) would otherwise keep the boundary
+    // sampling fine while the lattice coarsens, and an outline over the point
+    // budget never got under it: each retry coarsens the boundary step too.
+    const double edge = std::min(spacing, std::max(1.0, cell * 0.75) * mjs::pow(1.6, attempt));
     std::vector<Pt2> verts;
     std::vector<std::int32_t> tris;
     bool ok = true;

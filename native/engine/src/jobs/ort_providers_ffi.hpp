@@ -16,6 +16,7 @@
 #include <fstream>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 
 #if defined(_WIN32) && __has_include(<dml_provider_factory.h>)
@@ -36,11 +37,25 @@
 
 namespace premation::jobs::ort {
 
-/// CPU-only options. `threads` > 0 caps the intra-op pool (a live stream wants few).
+/// The intra-op pool for a CPU session that did not ask for a size: two cores
+/// short of the machine (at least one), so the editor's UI, the engine's own
+/// render thread and the job worker's frame decode keep running while a model
+/// does. ORT's default is every core.
+inline int default_cpu_threads() {
+  const unsigned cores = std::thread::hardware_concurrency();
+  return cores == 0 ? 1 : static_cast<int>(std::max(1U, cores - 2U));
+}
+
+/// CPU-only options. `threads` > 0 caps the intra-op pool (a live stream wants
+/// few); 0 = default_cpu_threads(). The pool never spins between runs
+/// (allow_spinning=0): a hover's decoder call is followed by seconds of
+/// nothing, and spinning threads would burn a core each the whole while.
 inline Ort::SessionOptions cpu_options(int threads = 0) {
   Ort::SessionOptions o;
   o.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
-  if (threads > 0) o.SetIntraOpNumThreads(threads);
+  o.SetIntraOpNumThreads(threads > 0 ? threads : default_cpu_threads());
+  o.AddConfigEntry("session.intra_op.allow_spinning", "0");
+  o.AddConfigEntry("session.inter_op.allow_spinning", "0");
   return o;
 }
 

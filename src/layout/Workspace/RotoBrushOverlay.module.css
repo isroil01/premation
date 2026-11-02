@@ -7,7 +7,8 @@
   position: absolute;
   inset: 0;
   z-index: 6;
-  cursor: crosshair;
+  /* The brush circle (.cursor) is the pointer; the OS arrow would sit on top of it. */
+  cursor: none;
   touch-action: none;
 }
 
@@ -18,6 +19,63 @@
   height: 100%;
   overflow: visible;
   pointer-events: none;
+}
+
+/* The Selection Brush's instant footprint: what the matte will be, under the SVG. */
+.footprint {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+/* ── The brush circle ────────────────────────────────────────────── */
+.cursor {
+  pointer-events: none;
+}
+
+.cursorRing {
+  fill: none;
+  stroke: var(--color-overlay-handle);
+  stroke-width: 1;
+}
+
+/* A dark ring just outside the bright one, so the circle reads over white footage. */
+.cursorHalo {
+  fill: none;
+  stroke: var(--color-overlay-handle-halo);
+  stroke-width: 1;
+}
+
+/* Where the brush is fully opaque (hardness < 100 %): a dashed inner ring. */
+.cursorHardness {
+  fill: none;
+  stroke: var(--color-overlay-handle);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  opacity: 0.8;
+}
+
+.cursorDot {
+  fill: var(--color-overlay-handle);
+}
+
+/* The stroke in flight (its colour follows the kind through the parent's attribute). */
+.liveStroke {
+  fill: none;
+  stroke: var(--color-success);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.85;
+}
+
+.live {
+  pointer-events: none;
+}
+
+.live[data-kind='bg'] .liveStroke {
+  stroke: var(--color-danger);
 }
 
 /* Foreground = "keep this". Background = "cut this". Two hues rather than

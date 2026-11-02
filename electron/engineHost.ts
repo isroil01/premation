@@ -45,8 +45,10 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import type { BrowserWindow, IpcMainEvent, IpcMainInvokeEvent } from 'electron';
 import { handle, on } from './ipcGuard';
-import { peekEnvelope, peekRequest, transcribeProviderOf, withCausedBy, withEnvelopeSeq, withTranscribeCredential, type EngineFrameMessage, type FrameGeometryMessage, type FrameReadyMessage, type SlotsMessage } from './engineFraming';
+import { peekEnvelope, peekRequest, responseIsError, transcribeProviderOf, withCausedBy, withEnvelopeSeq, withTranscribeCredential, type EngineFrameMessage, type FrameGeometryMessage, type FrameReadyMessage, type SlotsMessage } from './engineFraming';
 import { CMD, EngineCommandLog } from './engineCommandLog';
+import { decodeEngineMessage, encodeEngineMessage } from './generated/engineCodec';
+import type { EngineMessage } from './generated/engineTypes';
 import { EngineLogFile } from './engineLogFile';
 import type { PixelFrame } from './pixelChannel';
 import { hostBridgePath, loadDmabufBridge, loadIoSurfaceBridge } from './ioSurfaceBridge';
@@ -635,6 +637,8 @@ export interface EngineHostOptions {
   sessionFootageDir?: string;
   /** The user's installed Object Matte model folder (<userData>/models/object-matte; objectMatteModel.ts). */
   samUserDir?: string;
+  /** The float Object Matte encoder for the GPU (<userData>/models/object-matte-gpu; models.json `object-matte-gpu`). */
+  samGpuUserDir?: string;
   /** The face landmark model folder (<userData>/models/face-landmarks; faceModel.ts). */
   faceUserDir?: string;
   /** The depth model folder (<userData>/models/depth-anything; depthModel.ts) — camera program D3. */
@@ -698,6 +702,58 @@ interface InFlight {
   seq: number;
 }
 
+/**
+ * Which window holds the engine's ONE gesture slot (§5.1). The engine never
+ * sees a page: main is its only client, so a page reload (location.reload)
+ * closes no pipe and the gesture that page opened — an AI turn's, a drag's —
+ * stays open in an engine that lives on; every later `beginGesture` from the
+ * reloaded page answers `gestureOpen` and the editor cannot edit. Main watches
+ * the begin/end pairs go by (it never decodes a request; the response of a
+ * `beginGesture` is decoded for the id) and, when the owner's page goes away
+ * (`pageReset`), ends that gesture itself.
+ */
+export class OpenGestureTracker {
+  private owner: { sender: EngineRequestSender; gesture: number } | null = null;
+
+  /** The open gesture `sender` holds, or null. */
+  held(sender: EngineRequestSender): number | null {
+    return this.owner !== null && this.owner.sender === sender ? this.owner.gesture : null;
+  }
+
+  /** One answered request from `sender` (both encoded). */
+  note(request: Uint8Array, response: Uint8Array, sender: EngineRequestSender): void {
+    const cmd = peekRequest(request);
+    if (!cmd || cmd.body !== 'command') return;
+    if (cmd.commandId !== CMD.beginGesture && cmd.commandId !== CMD.endGesture) return;
+    if (responseIsError(response) !== false) return;
+    if (cmd.commandId === CMD.endGesture) {
+      // `0` ends "the open one", whoever opened it (uiEdits' leaked-gesture recovery).
+      this.owner = null;
+      return;
+    }
+    let msg: EngineMessage;
+    try {
+      msg = decodeEngineMessage(response);
+    } catch {
+      return;
+    }
+    if (msg.kind !== 'response' || msg.value.outcome.kind !== 'command' || msg.value.outcome.value.type !== 'beginGesture') return;
+    this.owner = { sender, gesture: msg.value.outcome.value.gesture };
+  }
+
+  /** `sender`'s page is gone: its gesture (if any) is no longer owned. Returns the orphan's id. */
+  release(sender: EngineRequestSender): number | null {
+    const gesture = this.held(sender);
+    if (gesture !== null) this.owner = null;
+    return gesture;
+  }
+
+  /** The engine forgot everything (a restart replayed from the log; the log holds the ends main sent). */
+  reset(): void {
+    this.owner = null;
+  }
+}
+
 /** What the renderer is told after a restart the HOST recovered (the renderer client must not replay). */
 export interface HostRecoveryInfo {
   replayedByHost: true;
@@ -715,6 +771,8 @@ export class EngineHost {
   /** Main's seq space on the engine connection: every window's requests renumbered. */
   private hostSeq = 0;
   private readonly inFlight = new Map<number, InFlight>();
+  /** Which window holds the engine's gesture slot; ended by main when that page goes away. */
+  readonly gestures = new OpenGestureTracker();
   /** While a restarted engine is being replayed into: requests wait, events are not relayed. */
   private recovering: Promise<void> | null = null;
   private lastRecovery: HostRecoveryInfo | null = null;
@@ -790,6 +848,10 @@ export class EngineHost {
               ...(o.sessionFootageDir ? { PREMATION_SESSION_FOOTAGE: o.sessionFootageDir } : {}),
               // The model the user installed wins when both its files are there (read per job).
               ...(o.samUserDir ? { PREMATION_SAM_USER_DIR: o.samUserDir } : {}),
+              // The float encoder (models.json `object-matte-gpu`, on demand): the engine runs it on
+              // a GPU provider when the folder holds vision_encoder.onnx (read per job). A developer's
+              // own PREMATION_SAM_GPU_DIR wins.
+              ...(o.samGpuUserDir && !process.env.PREMATION_SAM_GPU_DIR ? { PREMATION_SAM_GPU_DIR: o.samGpuUserDir } : {}),
               ...(o.faceUserDir ? { PREMATION_FACE_USER_DIR: o.faceUserDir } : {}),
               ...(o.depthUserDir ? { PREMATION_DEPTH_USER_DIR: o.depthUserDir } : {}),
               // Read at every startLiveInput, so an install applies to the next start.
@@ -916,9 +978,45 @@ export class EngineHost {
     this.supervisor.restart(`chromium GPU process gone (${reason})`);
   }
 
-  /** A page (re)loaded or went away (default: the main window's): its receivers are gone until it says otherwise. */
+  /**
+   * A page (re)loaded or went away (default: the main window's): its receivers
+   * are gone until it says otherwise, and a gesture it held is ended by main —
+   * the engine lives on and would otherwise keep the slot for ever.
+   */
   pageReset(sender: number = this.mainWindowKey()): void {
     this.frames.setReceiverReady(false, false, sender);
+    const orphan = this.gestures.release(sender);
+    if (orphan !== null) void this.endOrphanGesture(orphan, sender);
+  }
+
+  /**
+   * End a gesture whose page is gone. COMMIT, as the engine itself does when
+   * its client disconnects (§5.1): the gesture's edits were applied and shown
+   * while they were made, so committing loses nothing the user saw and keeps
+   * them undoable as one entry; discarding would silently revert work the user
+   * may have gone on from. The request is main's own (no window to answer) and
+   * goes on the command log like any other, so a replay after a restart ends
+   * the gesture at the same point.
+   */
+  private async endOrphanGesture(gesture: number, sender: EngineRequestSender): Promise<void> {
+    const sup = this.supervisor;
+    while (this.recovering) await this.recovering;
+    this.hostSeq += 1;
+    const bytes = encodeEngineMessage({
+      kind: 'request',
+      value: { seq: this.hostSeq, body: { kind: 'command', value: { type: 'endGesture', gesture, commit: true } }, origin: 'ui' },
+    });
+    try {
+      const res = await sup.request(bytes);
+      this.commandLog.record(bytes, res, peekEnvelope(res)?.revision ?? 0);
+      this.o.log?.(`[engine] gesture ${gesture} of window ${sender} committed by main: its page went away${responseIsError(res) ? ' (the engine had already closed it)' : ''}`);
+    } catch (e) {
+      // The engine is gone too: a restart replays the log, which holds no end for
+      // this gesture; the replayed `beginGesture` reopens it, and the tracker
+      // starts over (reset in recoverRestarted) — the page's own recovery
+      // (uiEdits, aiTransaction) closes a slot nobody owns.
+      this.o.log?.(`[engine] gesture ${gesture} of window ${sender} not ended: ${e instanceof Error ? e.message : String(e)}`);
+    }
   }
 
   status(): EngineHostStatusReply {
@@ -983,6 +1081,7 @@ export class EngineHost {
       const res = await sup.request(sent);
       const revision = peekEnvelope(res)?.revision ?? 0;
       this.commandLog.record(logged, res, revision);
+      if (sender !== undefined) this.gestures.note(logged, res, sender);
       return { ok: true, bytes: withEnvelopeSeq(res, peek.seq) ?? res };
     } catch (e) {
       if (e instanceof EngineGoneError) return { ok: false, reason: 'gone', message: e.message };
@@ -1024,6 +1123,7 @@ export class EngineHost {
     let done!: () => void;
     const gate = new Promise<void>((resolve) => { done = resolve; });
     this.recovering = gate;
+    this.gestures.reset();
     const t0 = Date.now();
     let replayed = 0;
     let mismatches = 0;

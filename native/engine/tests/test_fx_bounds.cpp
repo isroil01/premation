@@ -122,8 +122,11 @@ TEST_CASE("fx_reach: blurs reach their last tap — 3.5 sigma plus one tap spaci
 }
 
 TEST_CASE("fx_reach: a glow adds its spread and its wide pass (2.2 x the radius)") {
-  // radius 10 → rPx 11.5 ≥ 6: the wide pass at 25.3 reaches 3.5 × 25.3 + 25.3 × 2.5 / 30 + 2.
-  const double r = 3.5 * 25.3 + 25.3 * 2.5 / 30 + 2;
+  // radius 10 → rPx 11.5 ≥ 6: the narrow pass reaches 3.5 × 11.5 + 1 + 2, and the
+  // wide pass blurs that again by √(25.3² − 11.5²) with its taps kGlowWideSpacing (3)
+  // times further apart: 3.5 σ' + σ' × 2.5 / 30 × 3 + 2 more.
+  const double wideSigma = std::sqrt(25.3 * 25.3 - 11.5 * 11.5);
+  const double r = (3.5 * 11.5 + 1 + 2) + (3.5 * wideSigma + wideSigma * 2.5 / 30 * 3 + 2);
   const auto g = fx_reach(entry("glow", {{"radiusPx", 10}}), kIn, kView);
   REQUIRE(g);
   check_box(g->out, 100 - r, 100 - r, 200 + r, 150 + r);
@@ -186,10 +189,21 @@ TEST_CASE("fx_reach: strokes, sharpen, inner styles and per-texel entries") {
     REQUIRE(r);
     check_box(r->out, 100, 100, 200, 150);
   }
+  // The layer-box passes smear inside the layer's box only (the input texel
+  // comes back unchanged outside it), whatever their length or amount.
+  for (const auto& e : {entry("directional-blur", {{"length", 400}, {"steps", 64}, {"lw", 100}, {"lh", 50}}),
+                        entry("radial-blur", {{"amount", 90}, {"steps", 64}, {"lw", 100}, {"lh", 50}}),
+                        entry("wave-warp", {{"height", 300}, {"k", 0.1}, {"lw", 100}, {"lh", 50}}),
+                        entry("turbulent-displace", {{"amount", 500}}), entry("vignette", {{"amount", -1}})}) {
+    const auto r = fx_reach(e, kIn, kView);
+    REQUIRE(r);
+    check_box(r->out, 100, 100, 200, 150);
+    check_box(r->passes, 100, 100, 200, 150);
+  }
 }
 
 TEST_CASE("fx_reach: unknown reach — unlisted entries and non-finite params") {
-  for (const char* t : {"turbulent-displace", "displacement-map", "transform", "plugin", "native-plugin", "fx-overlay",
+  for (const char* t : {"displacement-map", "transform", "plugin", "native-plugin", "fx-overlay",
                         "stamp-field", "vegas", "checkerboard", "motion-tile", "lens-flare"}) {
     CHECK_FALSE(fx_reach(entry(t, {}), kIn, kView));
   }
@@ -225,4 +239,42 @@ TEST_CASE("scissor_of: whole texels, clamped to the buffer") {
   CHECK(scissor_of({-kInf, -kInf, kInf, kInf}, 64, 48) == std::array<std::uint32_t, 4>{0, 0, 64, 48});
   const double nan = std::numeric_limits<double>::quiet_NaN();
   CHECK(scissor_of({nan, nan, nan, nan}, 64, 48) == std::array<std::uint32_t, 4>{0, 0, 0, 0});
+}
+
+// ── Stream D (2026-11-02): reaches in layer px through the input box ────────
+
+TEST_CASE("fx_reach: a measured fx-graph reach converts layer px to texels through the input box") {
+  // kIn is 100 x 50 texels; a 100 x 50 layer is 1 texel a px: 10 px + 2 slack.
+  const auto measured = fx_reach(entry("fx-graph", {{"reachPx", 10}, {"lw", 100}, {"lh", 50}, {"reachMeasured", 1}}), kIn, kView);
+  REQUIRE(measured);
+  check_box(measured->out, 88, 88, 212, 162);
+  check_box(measured->passes, 88, 88, 212, 162);
+  // A 50 x 50 layer drawn 100 texels wide is 2 texels a px on x (the larger ratio wins on both axes: exact or larger).
+  const auto scaled = fx_reach(entry("fx-graph", {{"reachPx", 10}, {"lw", 50}, {"lh", 50}, {"reachMeasured", 1}}), kIn, kView);
+  REQUIRE(scaled);
+  check_box(scaled->out, 78, 78, 222, 172);
+  // Unmeasured (no flag) or without the layer size: unknown, as before.
+  CHECK_FALSE(fx_reach(entry("fx-graph", {{"reachPx", 10}, {"lw", 100}, {"lh", 50}}), kIn, kView));
+  CHECK_FALSE(fx_reach(entry("fx-graph", {{"reachPx", 10}, {"reachMeasured", 1}}), kIn, kView));
+  // reachPx 0 stays per-pixel.
+  const auto zero = fx_reach(entry("fx-graph", {{"reachPx", 0}, {"reachMeasured", 1}}), kIn, kView);
+  REQUIRE(zero);
+  check_box(zero->out, 100, 100, 200, 150);
+}
+
+TEST_CASE("fx_reach: a Displacement Map reaches its max per axis in layer px; Expand Output off clips to the input") {
+  // A 50 x 25 layer in the 100 x 50 box: 2 texels a px; 5 px and 3 px of displacement.
+  const auto d = fx_reach(entry("displacement-map", {{"maxH", 5}, {"maxV", 3}, {"lw", 50}, {"lh", 25}}), kIn, kView);
+  REQUIRE(d);
+  check_box(d->out, 88, 92, 212, 158);
+  check_box(d->passes, 88, 92, 212, 158);
+  const auto clipped = fx_reach(entry("displacement-map", {{"maxH", 5}, {"maxV", 3}, {"lw", 50}, {"lh", 25}, {"expand", 0}}), kIn, kView);
+  REQUIRE(clipped);
+  check_box(clipped->out, 100, 100, 200, 150);
+  // Negative maxima reach as far.
+  const auto neg = fx_reach(entry("displacement-map", {{"maxH", -5}, {"maxV", -3}, {"lw", 50}, {"lh", 25}}), kIn, kView);
+  REQUIRE(neg);
+  check_box(neg->out, 88, 92, 212, 158);
+  // An entry without the layer size (an older producer) is still unknown.
+  CHECK_FALSE(fx_reach(entry("displacement-map", {{"amount", 5}}), kIn, kView));
 }

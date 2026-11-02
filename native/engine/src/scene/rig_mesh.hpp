@@ -15,9 +15,23 @@
 //   geodesicWeights.ts, weightPaint.ts, ik.ts
 //
 // Float64 arithmetic with Float32 storage exactly where the TypeScript keeps a
-// Float32Array; V8 `Math.*` through motion::js. Fixed iteration counts, no
-// threading, no caches whose state could change a result — same input, same
-// bytes (CLAUDE.md determinism).
+// Float32Array; V8 `Math.*` through motion::js. No threading inside a solve.
+//
+// Since 2026-11-02 (rigging program, stream C1) the port has moved past the
+// TypeScript in four places, each pinned by tests/test_rig_cache.cpp:
+//   R1  the per-rest-state products — rest mesh + pin bindings + harmonic
+//       weights + Laplacian topology, the ARAP Cholesky factor, the skeleton's
+//       geodesic bone weights, a re-cut coverage mask — live in bounded,
+//       VALUE-keyed LRU caches (rig_cache.hpp). A key is the serialised inputs
+//       that determine the product, so a hit is bit-identical to a miss; a
+//       frame only runs the ARAP right-hand side, the skinning and the sort.
+//       build_rig_mesh and build_rig_model share the caches.
+//   R2  image coverage is cut from the decoded alpha at ~coverage_cell_px per
+//       cell (traceAccuracy) and kept by area share over alphaThreshold.
+//   R3  a pin binds to its containing triangle (barycentric), and the harmonic
+//       weights are solved to tolerance (CG on the cotangent Laplacian).
+//   R4  8 ARAP outer iterations with a cached factor; `preserveVolume`
+//       dual-quaternion skinning; the IK/FK track blends 0..1.
 #pragma once
 
 #include <array>
@@ -31,9 +45,16 @@
 #include <vector>
 
 #include "alpha_mesh.hpp"
+#include "rig_cache.hpp"
 #include "scene_types.hpp"
 
 namespace premation::scene {
+
+using rig::RigCacheStats;
+/// Drops every cached rest-state product (tests; a hit must equal a miss).
+void rig_cache_clear();
+/// The caches' entry / byte / hit / miss totals.
+[[nodiscard]] RigCacheStats rig_cache_stats();
 
 /// The animation reads the rig needs (AnimationEngine.sample / sampleData on the layer's node).
 struct RigSampler {
@@ -100,6 +121,8 @@ struct RigIkOut {
   std::optional<std::array<double, 2>> pole;
   std::optional<double> chainLength;
   std::string mode;  ///< 'ik' | 'fk'
+  /// IK weight 0..1 (rig_mesh.cpp reads it into IkTarget::blend; 0 = the goal is skipped).
+  double blend = 1;
 };
 
 /// The rig of one layer resolved at a time, for the overlays and getRigPose:

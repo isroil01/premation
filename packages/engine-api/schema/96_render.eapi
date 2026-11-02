@@ -101,6 +101,14 @@ struct RenderGlass {
   refraction: f64 = 1; edgeWidth: f64 = 2; aberration: f64 = 3; saturation: f64 = 4;
   tint: Color = 5; tintOpacity: f64 = 6; rim: Color = 7; rimOpacity: f64 = 8; rimWidth: f64 = 9;
   rimAngle: f64 = 10; specularAngle: f64 = 11; specularIntensity: f64 = 12; specularFalloff: f64 = 13; grain: f64 = 14;
+  /// Liquid glass (stream D, 2026-11-02): where the surface normal comes from — 0 the alpha-edge gradient
+  /// (the original glass), 1 a dome over the alpha's distance field, 2 the layer's luminance as height,
+  /// 3 another layer's luminance (`bumpLayerId`). 0 with caustic = fresnel = 0 is the original shader, bit for bit.
+  bumpSource: f64 = 15;
+  /// Dome radius / height scale, px; the refractive index and its per-channel spread (fraction);
+  /// the inner caustic highlight and the Fresnel rim, 0..1.
+  thickness: f64 = 16; ior: f64 = 17; dispersion: f64 = 18; caustic: f64 = 19; fresnel: f64 = 20;
+  bumpLayerId?: string = 21;
 }
 
 struct RenderMotionSample {

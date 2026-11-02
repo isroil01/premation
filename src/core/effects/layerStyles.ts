@@ -233,6 +233,25 @@ export interface GlassStyle {
   /** Low-opacity noise, 0..1. A blurred gradient bands on any real display;
    *  this removes it and reads as material rather than as a filter. */
   grain: number;
+  // ── Liquid glass (stream D, 2026-11-02) — every field optional: a document
+  // without them renders the original glass, bit for bit. ──
+  /** Where the surface normal comes from: `edge` (the alpha-edge gradient,
+   *  the original), `dome` (a dome over the alpha's distance field — a drop
+   *  of liquid), `luma` (the layer's luminance as height), `layer` (another
+   *  layer's luminance, `bumpLayerId`). Keyframeable as `glass.surface` 0..3. */
+  surface?: 'edge' | 'dome' | 'luma' | 'layer';
+  /** Dome radius / height scale, comp px. */
+  thickness?: number;
+  /** Refractive index the view ray bends through (1 = none). */
+  ior?: number;
+  /** Per-channel spread of the index, 0..1. */
+  dispersion?: number;
+  /** Inner caustic highlight where the surface faces the light, 0..1+. */
+  caustic?: number;
+  /** Fresnel rim (rim colour) where the surface faces away from the viewer, 0..1+. */
+  fresnel?: number;
+  /** The layer whose luminance is the surface when `surface` is `layer`. */
+  bumpLayerId?: string;
 }
 
 /** A glass panel that looks like glass out of the box — the point of shipping
@@ -258,6 +277,14 @@ export function defaultGlassStyle(): GlassStyle {
     specularIntensity: 0.38,
     specularFalloff: 10,
     grain: 0.04,
+    // Liquid glass: off by default — `edge` with no caustic / Fresnel is the
+    // original material; the dome values are what a switch to `dome` gets.
+    surface: 'edge',
+    thickness: 24,
+    ior: 1.5,
+    dispersion: 0,
+    caustic: 0,
+    fresnel: 0,
   };
 }
 

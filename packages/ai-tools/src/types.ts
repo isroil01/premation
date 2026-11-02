@@ -251,9 +251,18 @@ export interface AnimFacade {
   setKeyframes?(keys: readonly { nodeId: string; prop: string; t: number; value: number; easing?: string }[]): Promise<void>;
   /**
    * Upsert a `points`-kind data keyframe (e.g. a puppet pin's position track,
-   * `puppet.<pinId>.position`).
+   * `puppet.<pinId>.position`). `opts`: the key's temporal ease (an easing
+   * name, or a cubic bezier [x1, y1, x2, y2]) and its SPATIAL tangents — the
+   * path handles into and out of the key, in the track's units (layer px),
+   * relative to the key's value.
    */
-  setPointsKeyframe(nodeId: string, prop: string, t: number, points: readonly { x: number; y: number }[]): Promise<void>;
+  setPointsKeyframe(
+    nodeId: string,
+    prop: string,
+    t: number,
+    points: readonly { x: number; y: number }[],
+    opts?: { easing?: string; bezier?: readonly number[]; tangentIn?: readonly number[]; tangentOut?: readonly number[] },
+  ): Promise<void>;
   removeKeyframe(nodeId: string, prop: string, t: number): Promise<void>;
   setEasing(nodeId: string, prop: string, t: number, easing: string): Promise<void>;
   setBezier(nodeId: string, prop: string, t: number, bezier: readonly number[]): Promise<void>;
@@ -268,7 +277,9 @@ export interface AnimFacade {
   isExpressionEnabled(nodeId: string, prop: string): Promise<boolean>;
   /** Keyframes per animated prop; `t` in composition seconds. */
   tracks(nodeId: string): Promise<readonly { prop: string; keyframes: readonly KeyframeView[] }[]>;
-  /** Animated values at composition time `t`. */
+  /** Member props (as `tracks` names them) an enabled expression currently drives. */
+  expressionProps?(nodeId: string): Promise<readonly string[]>;
+  /** Animated and expression-driven values at composition time `t`. */
   evaluate(nodeId: string, t: number): Promise<Record<string, number>>;
   applyPreset(nodeId: string, name: string, atTime: number): Promise<boolean>;
   listPresets(): Promise<readonly string[]>;

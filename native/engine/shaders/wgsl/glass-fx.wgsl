@@ -1,9 +1,12 @@
 
-struct Object { mvp: mat3x3<f32>, uvRect: vec4<f32>, p0: vec4<f32>, p1: vec4<f32>, fxBox: vec4<f32> };
+// Stream D (2026-11-02): p2.x = source (0 the layer, 1 the scene under it: `tex`
+// is then the backdrop and the result is cut by the layer's own alpha, binding 4).
+struct Object { mvp: mat3x3<f32>, uvRect: vec4<f32>, p0: vec4<f32>, p1: vec4<f32>, p2: vec4<f32>, fxBox: vec4<f32> };
 @group(0) @binding(0) var<uniform> obj : Object;
 @group(0) @binding(1) var tex : texture_2d<f32>;
 @group(0) @binding(2) var smp : sampler;
 @group(0) @binding(3) var tex2 : texture_2d<f32>;
+@group(0) @binding(4) var alphaTex : texture_2d<f32>;
 struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
 @vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
   var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
@@ -169,12 +172,14 @@ fn gradPx(px : vec2<f32>, lwh : vec2<f32>, divide : bool) -> vec2<f32> {
   let lwh = obj.p0.xy;
   let pp = (fieldQ(uv) - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001)) * lwh;
   let s0 = textureSampleLevel(tex, smp, uv, 0.0);
-  if (pp.x < 0.0 || pp.y < 0.0 || pp.x > lwh.x || pp.y > lwh.y) { return s0; }
+  // Source: Backdrop — the layer's silhouette cuts the refracted scene (1 for the layer itself).
+  let cut = select(1.0, textureSampleLevel(alphaTex, smp, uv, 0.0).a, obj.p2.x > 0.5);
+  if (pp.x < 0.0 || pp.y < 0.0 || pp.x > lwh.x || pp.y > lwh.y) { return s0 * cut; }
   let g = gradPx(pp, lwh, true);
   let sm = samplePx(pp + g * obj.p0.z, lwh);
   if (sm.a <= 0.0) { return vec4<f32>(0.0); }
   let facing = (-g.x * obj.p1.x - g.y * obj.p1.y) * obj.p0.w;
   let f2 = clamp(facing * 0.02, 0.0, 1.0);
   let c = decodeS(sm);
-  return encodeOut(c.rgb * (1.0 + obj.p1.z * facing * 0.04) + obj.p1.w * obj.p1.z * f2 * f2, c.a);
+  return encodeOut(c.rgb * (1.0 + obj.p1.z * facing * 0.04) + obj.p1.w * obj.p1.z * f2 * f2, c.a) * cut;
 }

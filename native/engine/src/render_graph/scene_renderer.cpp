@@ -211,6 +211,7 @@ bool SceneRenderer::render_impl(const api::RenderFrameFile& file, const wgpu::Te
   using Clock = std::chrono::steady_clock;
   const auto t0 = Clock::now();
   ViewportState vp = ViewportState::from(file.view);  // the pass context's (P8b shifts it for a scope)
+  vp.playing = playing_;
   const wgpu::TextureFormat surfaceFormat =
       target != nullptr ? targetFormat
       : file.view.surface_format == api::RenderTextureFormat::rgba8unorm ? wgpu::TextureFormat::RGBA8Unorm

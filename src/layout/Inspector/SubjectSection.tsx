@@ -40,12 +40,12 @@ import {
   type Subject,
   type SubjectEdge,
 } from '@core/workspace/subjects';
-import { cancelSubjectWalk, ensureSubjectTracked, followSubject, subjectActions, subjectStateOf, type SubjectState } from '@layout/Workspace/subjectActions';
-import { SUBJECT_STYLES, applySubjectStyle } from '@layout/Workspace/subjectStyles';
+import { cancelSubjectWalk, followSubject, subjectActions, subjectStateOf, type SubjectState } from '@layout/Workspace/subjectActions';
 import { openTextBehind } from '@layout/Workspace/TextBehindDialog';
 import { useEngineEdit } from './useEngineEdit';
 import { SubjectTracking } from './SubjectTracking';
 import { SubjectStyleSpan } from './SubjectStyleSpan';
+import { SubjectStyleShelf } from './SubjectStyleShelf';
 import { activeCompSettingsNow } from '@hooks/useMirrorFrame';
 import { settingsDurationSeconds, settingsFps } from '@core/mirror/compFacts';
 import { playheadSeconds } from '@core/timeline/timelineView';
@@ -90,7 +90,7 @@ export function SubjectSection({ nodeId }: { nodeId: string }): JSX.Element | nu
     return (
       <div className={styles.empty}>
         <p className={styles.help}>
-          {t('inspector.subject.emptyHelp2', 'Select people and objects with the Object Matte tool: hover to see what can be picked, click to make a subject. Each one gets its own edge, styles and tracking here.')}
+          {t('inspector.subject.emptyHelpShort', 'Click a person or object with the Object Matte tool to make a subject.')}
         </p>
         <button type="button" className={styles.primary} onClick={select.run}>{select.label}</button>
       </div>
@@ -215,16 +215,15 @@ export function SubjectSection({ nodeId }: { nodeId: string }): JSX.Element | nu
         <div className={styles.blockHead}>
           <span className={styles.dot} />
           <span className={styles.blockTitle}>{t('inspector.subject.edgeTitle', 'Edge · {name}', { name: active.name })}</span>
-          <span className={styles.meta}>{t('inspector.subject.live', 'live, every frame')}</span>
         </div>
         {edgeField('feather', t('inspector.subject.feather', 'Feather'), { min: 0, max: 200, unit: 'px', step: 0.5 })}
         {edgeField('choke', t('inspector.subject.choke', 'Expand / Choke'), { min: -50, max: 50, unit: 'px' })}
         {edgeField('contrast', t('inspector.subject.contrast', 'Contrast'), { min: 0, max: 100, unit: '%' })}
         {edgeField('smooth', t('inspector.subject.smooth', 'Temporal smooth'), { min: 0, max: 100, unit: '%' })}
-        <label className={styles.check}>
+        <label className={styles.check} title={t('inspector.subject.invertHint', 'Everything but the subject')}>
           <input type="checkbox" checked={!!active.invert}
             onChange={(e) => update(t('inspector.subject.invertLabel', 'Invert Subject'), active.id, { invert: e.currentTarget.checked })} />
-          {t('inspector.subject.invert', 'Invert (everything but the subject)')}
+          {t('inspector.subject.invertShort', 'Invert')}
         </label>
       </div>
 
@@ -234,18 +233,19 @@ export function SubjectSection({ nodeId }: { nodeId: string }): JSX.Element | nu
         <div className={styles.blockHead}>
           <span className={styles.blockTitle}>{t('inspector.subject.useAs', 'Use {name}', { name: active.name })}</span>
         </div>
+        {/* Labels only; what each does is its tooltip — the column stays scannable. */}
         <button type="button" className={styles.follow} disabled={active.locked}
-          onClick={() => { void followSubject(nodeId, active.id); }}>
-          <span className={styles.actionTitle}>{followed > 1 ? t('inspector.subject.refollow', 'Follow again through the shot') : t('workspace.subjects.action.follow', 'Follow Through Shot')}</span>
-          <span className={styles.actionDesc}>{followed > 1
+          title={followed > 1
             ? t('inspector.subject.followedOverRetrack', 'Followed over {n} frames · to fix one frame, edit it and Re-track from it (Tracking above)', { n: followed })
-            : t('workspace.subjects.action.followDesc', 'Carry the selection to every frame')}</span>
+            : t('workspace.subjects.action.followDesc', 'Carry the selection to every frame')}
+          onClick={() => { void followSubject(nodeId, active.id); }}>
+          <span className={styles.actionTitle}>{followed > 1 ? t('inspector.subject.refollowShort', 'Follow again') : t('workspace.subjects.action.follow', 'Follow Through Shot')}</span>
+          {followed > 1 && <span className={styles.meta}>{t('inspector.subject.followedShort', '{n} frames', { n: followed })}</span>}
         </button>
         <div className={styles.grid}>
           {use.map((a) => (
             <button key={a.id} type="button" className={styles.action} disabled={a.disabled} title={a.description} onClick={a.run}>
               <span className={styles.actionTitle}>{a.label}</span>
-              <span className={styles.actionDesc}>{a.description}</span>
             </button>
           ))}
         </div>
@@ -256,7 +256,7 @@ export function SubjectSection({ nodeId }: { nodeId: string }): JSX.Element | nu
           <span className={styles.blockTitle}>{t('inspector.subject.styles', 'Styles · {name}', { name: active.name })}</span>
         </div>
         {styled.length === 0 ? (
-          <p className={styles.help}>{t('inspector.subject.noStyles', 'No style yet. Pick one below — each is ordinary effects you can tweak in Effect Controls.')}</p>
+          <p className={styles.help}>{t('inspector.subject.noStylesShort', 'No styles yet — pick one below.')}</p>
         ) : (
           <ul className={styles.styleList}>
             {styled.map((e) => (
@@ -280,37 +280,24 @@ export function SubjectSection({ nodeId }: { nodeId: string }): JSX.Element | nu
             ))}
           </ul>
         )}
-        <div className={styles.presets} role="group" aria-label={t('inspector.subject.presets', 'Style presets')}>
-          {SUBJECT_STYLES.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              className={styles.preset}
-              data-kind={p.kind}
-              title={p.hint()}
-              onClick={() => {
-                useSelectionStore.getState().set([nodeId]);
-                void applySubjectStyle(nodeId, subjects.length > 1 ? active.id : null, p).then((ok) => { if (ok) void ensureSubjectTracked(nodeId, active.id); });
-              }}
-            >
-              <span className={styles.presetSwatch} aria-hidden="true" />
-              {p.label()}
-            </button>
-          ))}
-        </div>
+        <SubjectStyleShelf
+          nodeId={nodeId}
+          subject={subjects.length > 1 ? active.id : null}
+          activeId={active.id}
+          styled={styled.map((e) => ({ id: e.id, enabled: e.enabled !== false }))}
+        />
       </div>
-      <p className={styles.help}>
-        {t('inspector.subject.footnote2', 'Object Matte tool: click a new object for a new subject · Shift-click adds to the active one · Alt-click cuts from it · Tab picks a part.')}
-      </p>
+      {/* The tool's clicks live in the Edit button's tooltip, not a paragraph under it. */}
       <button
         type="button"
         className={styles.secondary}
+        title={t('inspector.subject.footnote2', 'Object Matte tool: click a new object for a new subject · Shift-click adds to the active one · Alt-click cuts from it · Tab picks a part.')}
         onClick={() => {
           useSelectionStore.getState().set([nodeId]);
           useUIStore.getState().setActiveTool('object-matte');
         }}
       >
-        {t('inspector.subject.edit', 'Edit')}
+        {t('inspector.subject.editMatte', 'Edit with Object Matte')}
       </button>
     </div>
   );

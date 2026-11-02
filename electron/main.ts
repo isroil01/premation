@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell, dialog, Menu, protocol, net, sharedTexture, clipboard, type WebContents } from 'electron';
+import { app, BrowserWindow, shell, dialog, Menu, protocol, net, sharedTexture, clipboard, type Rectangle, type WebContents } from 'electron';
 import { handle, on } from './ipcGuard';
 import {
   devUiPlatformOverride,
@@ -27,6 +27,7 @@ import { shouldStartBackend, startBackend, stopBackend } from './backend';
 import { registerIndexIpc } from './localIndexDb';
 import { registerThumbIpc } from './thumbCache';
 import { registerRevealIpc } from './ipc/reveal';
+import { registerProblemReportIpc } from './ipc/problemReport';
 import { registerFootageFileIpc } from './ipc/footageFiles';
 import { registerScriptIpc } from './ipc/scripts';
 import { registerDiskCacheIpc } from './ipc/diskCache';
@@ -78,6 +79,7 @@ import {
 import { enforceProjectExtension } from './projectSavePath';
 import { vaultEncryptionAvailable } from './vaultCrypto';
 import { McpHost, removeFromApps, removeFromClaude } from './mcp/ipc';
+import { isAppPage, isWebUrl } from './appNavigation';
 import { DEEP_LINK_SCHEME, routeDeepLink } from './deepLink';
 
 const isDev = process.env.NODE_ENV === 'development';
@@ -136,12 +138,12 @@ function findDeepLink(argv: string[]): string | undefined {
 }
 
 /**
- * A `premation://connections` link that arrived before the app was ready: on
+ * A `premation://connections` or `billing` link that arrived before the app was ready: on
  * macOS the link that LAUNCHED the app comes through `open-url` before `ready`,
  * when there is no window to send it to. The cold-start code in whenReady
  * delivers it once the page has loaded (Windows / Linux carry it in argv).
  */
-let connectionsLinkBeforeReady: string | undefined;
+let pageLinkBeforeReady: string | undefined;
 
 /** Parse a premation:// deep link and route it to the renderer. */
 function handleDeepLink(url: string | undefined): void {
@@ -150,7 +152,7 @@ function handleDeepLink(url: string | undefined): void {
 
   const win = mainWindow;
   if (!win || win.isDestroyed()) {
-    if (route.kind === 'connections' && !app.isReady()) connectionsLinkBeforeReady = url;
+    if ((route.kind === 'connections' || route.kind === 'billing') && !app.isReady()) pageLinkBeforeReady = url;
     return;
   }
 
@@ -167,6 +169,7 @@ function handleDeepLink(url: string | undefined): void {
   if (win.isMinimized()) win.restore();
   win.focus();
   if (route.kind === 'connections') win.webContents.send('deepLink:connections');
+  if (route.kind === 'billing') win.webContents.send('deepLink:billing');
 }
 
 // ── Uninstall: take Premation out of Claude's config ─────────────────────
@@ -428,6 +431,12 @@ function registerFileIpc(): void {
   });
 
   handle('app:version', () => app.getVersion());
+  // Why the previous page died, once (recoverGonePage): the reloaded page reports it.
+  handle('app:takeRendererGone', () => {
+    const reason = lastRendererGone;
+    lastRendererGone = null;
+    return reason;
+  });
   handle('app:quit', () => app.quit());
 }
 
@@ -930,6 +939,17 @@ function createMainWindow(): BrowserWindow {
     return { action: 'deny' };
   });
 
+  // Nothing replaces the editor page. A link that would leave it goes to the
+  // system browser instead (electron/appNavigation.ts).
+  const appHome = isDev
+    ? DEV_SERVER_URL
+    : pathToFileURL(path.join(__dirname, '..', 'dist', 'index.html')).href;
+  win.webContents.on('will-navigate', (event) => {
+    if (isAppPage(event.url, appHome)) return;
+    event.preventDefault();
+    if (isWebUrl(event.url)) void shell.openExternal(event.url);
+  });
+
   buildApplicationMenu(win);
   if (hasTitleBarOverlay(chrome)) overlayWindows.add(win);
 
@@ -943,7 +963,10 @@ function createMainWindow(): BrowserWindow {
   win.webContents.on('did-start-navigation', (details) => {
     if (details.isMainFrame && !details.isSameDocument) engineHost?.pageReset();
   });
-  win.webContents.on('render-process-gone', () => engineHost?.pageReset());
+  win.webContents.on('render-process-gone', (_event, details) => {
+    engineHost?.pageReset();
+    recoverGonePage(win, details.reason);
+  });
 
   // The renderer draws the bar at first paint, so it reads the chrome off the
   // URL rather than asking over IPC (src/core/config/uiPlatform.ts).
@@ -985,21 +1008,80 @@ function registerOAuthIpc(): void {
   });
 }
 
+/**
+ * A window whose page died (out of memory, a renderer crash) was left blank
+ * until the app was restarted, and nothing was reported: the page that would
+ * have reported it was the thing that died. Now it reloads — the document is
+ * the engine's, so the editor comes back on the same project
+ * (engineOwnedSession: adoptLiveDocument) — and the reloaded page reports why
+ * the last one went (`app:takeRendererGone`).
+ *
+ * Twice a minute at most: a page that dies on load must not become a reload loop.
+ */
+const RELOAD_WINDOW_MS = 60_000;
+const MAX_RELOADS_PER_WINDOW = 2;
+const pageReloads = new WeakMap<BrowserWindow, number[]>();
+let lastRendererGone: string | null = null;
+
+function recoverGonePage(win: BrowserWindow, reason: string): void {
+  // `clean-exit` is a page that closed itself (a quit, a reload), not a crash.
+  if (reason === 'clean-exit' || win.isDestroyed()) return;
+  lastRendererGone = reason;
+  console.error(`[window] the page went away (${reason})`);
+  const now = Date.now();
+  const recent = (pageReloads.get(win) ?? []).filter((t) => now - t < RELOAD_WINDOW_MS);
+  if (recent.length >= MAX_RELOADS_PER_WINDOW) {
+    console.error('[window] not reloading again: the page keeps going away');
+    return;
+  }
+  recent.push(now);
+  pageReloads.set(win, recent);
+  win.webContents.reload();
+}
+
 /** Open pop-out windows (F2: each is a mirror the engine's events are relayed to). */
 const popoutWindows = new Set<BrowserWindow>();
+/** One window per panel: undocking a panel that is already out brings its window forward. */
+const popoutByPanel = new Map<string, BrowserWindow>();
+/** Where each panel's window was when it closed, so undocking it again puts it back there (this run only). */
+const popoutBounds = new Map<string, Rectangle>();
+
+/** A first-time window's size: the shape of what it holds. */
+function popoutDefaultSize(panelId: string): { width: number; height: number } {
+  if (panelId === 'timeline') return { width: 1280, height: 440 };
+  if (panelId === 'viewport' || panelId === 'presentation') return { width: 1280, height: 780 };
+  return { width: 420, height: 720 };
+}
 
 function registerPopoutIpc(): void {
-  handle('popout:spawnWindow', (event, panelId: string) => {
-    const parentWin = BrowserWindow.fromWebContents(event.sender);
+  handle('popout:spawnWindow', (event, rawId: unknown) => {
+    if (typeof rawId !== 'string' || rawId.length === 0 || rawId.length > 256) return;
+    const panelId = rawId;
+    const existing = popoutByPanel.get(panelId);
+    if (existing && !existing.isDestroyed()) {
+      if (existing.isMinimized()) existing.restore();
+      existing.focus();
+      return;
+    }
+
+    const parentWin = BrowserWindow.fromWebContents(event.sender) ?? mainWindow;
+    const chrome = resolveUiChrome({
+      osPlatform: process.platform,
+      isDev,
+      override: isDev ? devUiPlatformOverride(process.env, path.join(__dirname, '..')) : undefined,
+    });
+    const bounds = popoutBounds.get(panelId);
     const popoutWin = new BrowserWindow({
-      width: 1000,
-      height: 700,
-      minWidth: 400,
-      minHeight: 300,
-      title: `${panelId} — Premation`,
+      ...(bounds ?? popoutDefaultSize(panelId)),
+      minWidth: 320,
+      minHeight: 240,
+      title: 'Premation',
       backgroundColor: '#0a0a0b',
+      show: false,
       autoHideMenuBar: true,
-      frame: false,
+      // The main window's chrome: native caption buttons (Windows overlay /
+      // macOS traffic lights) rather than a frameless window with drawn ones.
+      ...windowChromeOptions(chrome),
       parent: parentWin ?? undefined,
       webPreferences: {
         preload: path.join(__dirname, 'preload.js'),
@@ -1008,35 +1090,59 @@ function registerPopoutIpc(): void {
         // Same as the main window — see the note there.
         sandbox: true,
         webgl: true,
+        devTools: isDev,
       },
     });
+    if (hasTitleBarOverlay(chrome)) overlayWindows.add(popoutWin);
 
-    const isDev = process.env.NODE_ENV === 'development';
     // One route segment however the id is spelled: a plugin panel is `plugin:<id>/<panel>` (src/core/layout/popoutPath.ts).
-    const segment = encodeURIComponent(String(panelId));
-    const popoutUrl = isDev
-      ? `${DEV_SERVER_URL}/#/popout/${segment}`
-      : `file://${path.join(__dirname, '..', 'dist', 'index.html')}#/popout/${segment}`;
+    // The chrome rides on the query, as for the main window (src/core/config/uiPlatform.ts).
+    const hash = `/popout/${encodeURIComponent(panelId)}`;
+    const query = uiChromeQuery(chrome);
 
     // F2: the engine relays its events to every pop-out (a second mirror).
     // C: a pop-out's viewport is its own engine surface — its receivers reset
     // with its page, and closing it drops its frames and viewports.
     popoutWindows.add(popoutWin);
+    popoutByPanel.set(panelId, popoutWin);
     const popoutKey = popoutWin.webContents.id;
     // (Another document only — see the main window's listener above.)
     popoutWin.webContents.on('did-start-navigation', (details) => {
       if (details.isMainFrame && !details.isSameDocument) engineHost?.pageReset(popoutKey);
     });
-    popoutWin.webContents.on('render-process-gone', () => engineHost?.pageReset(popoutKey));
+    popoutWin.webContents.on('render-process-gone', (_event, details) => {
+      engineHost?.pageReset(popoutKey);
+      recoverGonePage(popoutWin, details.reason);
+    });
+    popoutWin.on('close', () => {
+      if (!popoutWin.isMinimized() && !popoutWin.isMaximized()) popoutBounds.set(panelId, popoutWin.getBounds());
+    });
     popoutWin.on('closed', () => {
       popoutWindows.delete(popoutWin);
+      if (popoutByPanel.get(panelId) === popoutWin) popoutByPanel.delete(panelId);
       engineHost?.windowClosed(popoutKey);
+      // The editor puts the panel back where it came from (src/layout/EditorLayout/popoutWindows.ts).
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('popout:closed', panelId);
     });
 
-    void popoutWin.loadURL(popoutUrl);
+    if (isDev) {
+      void popoutWin.loadURL(`${DEV_SERVER_URL}/?${new URLSearchParams(query).toString()}#${hash}`);
+    } else {
+      void popoutWin.loadFile(path.join(__dirname, '..', 'dist', 'index.html'), { query, hash });
+    }
     popoutWin.once('ready-to-show', () => popoutWin.show());
   });
 
+  // The editor re-docked the panel: its window goes.
+  handle('popout:close', (_event, panelId: unknown) => {
+    if (typeof panelId !== 'string') return;
+    const win = popoutByPanel.get(panelId);
+    if (win && !win.isDestroyed()) win.close();
+  });
+
+  // Which panels are out right now — an editor page that reloaded adopts them.
+  handle('popout:list', () =>
+    [...popoutByPanel.entries()].filter(([, w]) => !w.isDestroyed()).map(([id]) => id));
 }
 
 /**
@@ -1349,6 +1455,8 @@ app.whenReady().then(() => {
   registerIndexIpc(app);
   registerThumbIpc(app);
   registerRevealIpc();
+  // Help ▸ Report a Problem: scrubbed diagnostics + a viewport capture (electron/ipc/problemReport.ts).
+  registerProblemReportIpc(() => (engineHost ? { ...engineHost.status(), lastRecovery: engineHost.recovery } : null) as Record<string, unknown> | null);
   // Edit ▸ Edit Original: open footage in its default app, watch it, reload on save (electron/ipc/footageFiles.ts).
   registerFootageFileIpc();
   // File ▸ Scripts: the user Scripts folder and the Script Editor's files (electron/ipc/scripts.ts).
@@ -1497,6 +1605,7 @@ app.whenReady().then(() => {
     // folder file:sessionFootageDir hands the page).
     sessionFootageDir: ensureDir(path.join(app.getPath('userData'), 'session-footage')),
     samUserDir: modelUserDir(app.getPath('userData'), 'object-matte'),
+    samGpuUserDir: modelUserDir(app.getPath('userData'), 'object-matte-gpu'),
     faceUserDir: modelUserDir(app.getPath('userData'), 'face-landmarks'),
     depthUserDir: modelUserDir(app.getPath('userData'), 'depth-anything'),
     handUserDir: modelUserDir(app.getPath('userData'), 'hand-landmarks'),
@@ -1580,10 +1689,10 @@ app.whenReady().then(() => {
   });
 
   // Cold start via a premation:// link (Windows/Linux put it in argv; a macOS
-  // `premation://connections` launch was held by handleDeepLink). Wait for the
+  // `connections` or `billing` launch was held by handleDeepLink). Wait for the
   // renderer to be ready to receive before forwarding the code.
-  const coldLink = findDeepLink(process.argv) ?? connectionsLinkBeforeReady;
-  connectionsLinkBeforeReady = undefined;
+  const coldLink = findDeepLink(process.argv) ?? pageLinkBeforeReady;
+  pageLinkBeforeReady = undefined;
   if (coldLink) {
     win.webContents.once('did-finish-load', () => handleDeepLink(coldLink));
   }

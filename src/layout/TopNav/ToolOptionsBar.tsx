@@ -95,6 +95,8 @@ export function ToolOptionsBar({ inline = false }: ToolOptionsBarProps = {}): JS
   const snapToPixel = useViewportDisplayStore((s) => s.snapToPixel);
   const puppetPinKind = useUIStore((s) => s.puppetPinKind);
   const setPuppetPinKind = useUIStore((s) => s.setPuppetPinKind);
+  const puppetAlwaysKey = useUIStore((s) => s.puppetAlwaysKey);
+  const setPuppetAlwaysKey = useUIStore((s) => s.setPuppetAlwaysKey);
   const boneRigMode = useUIStore((s) => s.boneRigMode);
   const setBoneRigMode = useUIStore((s) => s.setBoneRigMode);
   const boneWeightMode = useUIStore((s) => s.boneWeightMode);
@@ -249,6 +251,13 @@ export function ToolOptionsBar({ inline = false }: ToolOptionsBarProps = {}): JS
             );
           })}
         </div>
+        {/* AE: pins are animated from the moment they move. Off, pins keep the app's rule (keyed when animated or auto-keyframe). */}
+        <Checkbox
+          label={t('topNav.toolOptions.puppetAlwaysKey', 'Always key pins')}
+          title={t('topNav.toolOptions.puppetAlwaysKeyHint', 'Every pin drag or typed pin value writes a keyframe at the playhead (After Effects). Off: a key only when the property is animated or auto-keyframe is on.')}
+          checked={puppetAlwaysKey}
+          onChange={(e) => setPuppetAlwaysKey(e.target.checked)}
+        />
       </>
     );
   } else if (activeTool === 'bone') {
@@ -319,26 +328,20 @@ export function ToolOptionsBar({ inline = false }: ToolOptionsBarProps = {}): JS
     );
   } else if (activeTool === 'mask-rect' || activeTool === 'mask-ellipse' || activeTool === 'mask-pen') {
     const ok = selectedIds.length === 1;
+    const hint = activeTool === 'mask-rect'
+      ? t('topNav.toolOptions.maskRectHint', 'Drag a rectangle mask on the selected layer.')
+      : activeTool === 'mask-ellipse'
+        ? t('topNav.toolOptions.maskEllipseHint', 'Drag an ellipse mask on the selected layer.')
+        : t('topNav.toolOptions.maskPenHint', 'Click to place mask points. Close the path to finish.');
+    const needsTarget = t('topNav.toolOptions.maskNeedsTarget', 'Select exactly one layer — mask tools need a target.');
+    const editTip = t('topNav.toolOptions.maskEditTip', 'Edit modes, feather and opacity in Effects → Masks. Direct Select reshapes points.');
+    // Each hint carries its text as a title: a narrow row ends it in "…".
     content = (
       <>
         <span className={styles.optLabel}>{t('topNav.toolOptions.mask', 'Mask')}</span>
-        <span className={styles.hint}>
-          {activeTool === 'mask-rect'
-            ? t('topNav.toolOptions.maskRectHint', 'Drag a rectangle mask on the selected layer.')
-            : activeTool === 'mask-ellipse'
-              ? t('topNav.toolOptions.maskEllipseHint', 'Drag an ellipse mask on the selected layer.')
-              : t('topNav.toolOptions.maskPenHint', 'Click to place mask points. Close the path to finish.')}
-        </span>
-        {!ok && (
-          <span className={`${styles.hint} ${styles.hintWarning}`}>
-            {t('topNav.toolOptions.maskNeedsTarget', 'Select exactly one layer — mask tools need a target.')}
-          </span>
-        )}
-        {ok && (
-          <span className={styles.hint}>
-            {t('topNav.toolOptions.maskEditTip', 'Edit modes, feather and opacity in Effects → Masks. Direct Select reshapes points.')}
-          </span>
-        )}
+        <span className={styles.hint} title={hint}>{hint}</span>
+        {!ok && <span className={`${styles.hint} ${styles.hintWarning}`} title={needsTarget}>{needsTarget}</span>}
+        {ok && <span className={`${styles.hint} ${styles.hintSecondary}`} title={editTip}>{editTip}</span>}
       </>
     );
   } else if (activeTool === 'roto' || activeTool === 'object-matte' || activeTool === 'selection-brush' || activeTool === 'refine-edge') {
@@ -408,6 +411,7 @@ function RotoOptions({ objectMatteTool = false, brush }: { objectMatteTool?: boo
   const kind = useRotoBrushStore((s) => s.kind);
   const setKind = useRotoBrushStore((s) => s.setKind);
   const size = useRotoBrushStore((s) => s.size);
+  const hardness = useRotoBrushStore((s) => s.hardness);
   const featherPx = useRotoBrushStore((s) => s.featherPx);
   const strokes = useRotoBrushStore((s) => s.strokes);
   const busy = useRotoBrushStore((s) => s.busy);
@@ -441,13 +445,13 @@ function RotoOptions({ objectMatteTool = false, brush }: { objectMatteTool?: boo
     const end = direction === 'backward' ? origin + 1 / settingsFps(settings) : wa ? wa.end : settingsDurationSeconds(settings);
     if (!(end > start)) {
       store.setStatus(t('topNav.roto.nothingInDirection', 'Nothing in that direction to propagate into.'));
-      subject: activeSubjectId(nodeId),
       return;
     }
     store.setBusy(true, 0);
     store.setStatus(t('topNav.roto.objectMatteBusy', 'Object Matte…'));
     propagateObjectMatte(nodeId, store.strokes, {
       origin, start, end, fps: settingsFps(settings), direction, featherPx: store.featherPx, refine: store.refine, box: store.box,
+      subject: activeSubjectId(nodeId),
     }, (f) => {
       useRotoBrushStore.getState().setBusy(true, f);
       return useRotoBrushStore.getState().busy;
@@ -501,6 +505,10 @@ function RotoOptions({ objectMatteTool = false, brush }: { objectMatteTool?: boo
         <Row label={t('topNav.toolOptions.size', 'Size')}>
           <ValueField value={size} unit="px" min={2} max={200} precision={0} onChange={(v) => useRotoBrushStore.getState().setSize(Number(v))} />
         </Row>
+        {/* The footprint's edge (Selection Brush paints it, Refine Edge softens within it); [ ] size, Shift [ ] hardness on the canvas. */}
+        <Row label={t('topNav.toolOptions.hardness', 'Hardness')}>
+          <ValueField value={hardness} unit="%" min={0} max={100} precision={0} onChange={(v) => useRotoBrushStore.getState().setHardness(Number(v))} />
+        </Row>
         <span className={styles.hint} title={brush === 'exact'
           ? t('topNav.roto.selectionBrushPaintHint', 'Paints the selection exactly where you brush; Alt-paint erases. No edge snapping.')
           : t('topNav.roto.refineEdgeBandHint', 'Paint along hair or fur: the edge under the brush becomes soft, strand by strand.')}>
@@ -552,6 +560,9 @@ function RotoOptions({ objectMatteTool = false, brush }: { objectMatteTool?: boo
       </div>
       <Row label={t('topNav.toolOptions.size', 'Size')}>
         <ValueField value={size} unit="px" min={2} max={200} precision={0} onChange={(v) => useRotoBrushStore.getState().setSize(Number(v))} />
+      </Row>
+      <Row label={t('topNav.toolOptions.hardness', 'Hardness')}>
+        <ValueField value={hardness} unit="%" min={0} max={100} precision={0} onChange={(v) => useRotoBrushStore.getState().setHardness(Number(v))} />
       </Row>
       </>)}
       <Row label={t('topNav.toolOptions.feather', 'Feather')}>

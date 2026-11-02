@@ -1,9 +1,11 @@
 // imageAlphaCoverage.ts for the C++ document (D1: rigs on image layers): an
-// image layer's bitmap decoded, drawn into a ≤64² canvas, read back and turned
-// into the puppet coverage mask (alpha_mesh.cpp coverage_mask_from_image_data).
-// Cached per key + file stamp (the TS caches by asset id or src); a decode that
-// fails is remembered and yields no mask — the bbox grid, as the TypeScript's
-// `failed` set does. An SVG is drawn by the C++ SVG renderer (svg_layer.cpp,
+// image layer's bitmap decoded, its alpha reduced to ≤ 1024 px on the long side
+// (rig::AlphaPlane) and cut into the puppet coverage mask at the default trace
+// settings (alpha_mesh.cpp coverage_mask_from_alpha; a layer's own
+// traceAccuracy / alphaThreshold re-cut it in rig_mesh.cpp). Cached per key +
+// file stamp in a bounded LRU (rig_cache.hpp); a decode that fails is remembered
+// and yields no mask — the bbox grid, as the TypeScript's `failed` set did. An
+// SVG is drawn by the C++ SVG renderer (svg_layer.cpp,
 // the texture feed's rasterizeSvg) where the TS decodes it through an <img>;
 // a relative path resolves against the project folder (`mediaBase`, as the
 // texture feed does). A source the engine cannot reach — a session blob: /

@@ -439,6 +439,8 @@ export interface SubjectEditRequest {
   strokes?: ReadonlyArray<ReadonlyArray<{ x: number; y: number }>>;
   /** Brush radius, layer px. */
   radius?: number;
+  /** Brush edge, 0…100 (100 = a hard disc; lower = a soft falloff over the outer part of the radius). Default 100. */
+  hardness?: number;
   box?: RotoBox | null;
 }
 
@@ -449,26 +451,97 @@ export interface SubjectEditResult {
 }
 
 /**
+ * The prompts a subject's frame has been given so far (layer-local px): a
+ * Shift-click ADDS to what the earlier clicks and box described, so the model
+ * is asked with all of them together — one object described by several points
+ * — rather than with the new click alone merged in afterwards. Session state
+ * (it mirrors the edits already in the document); a plain click starts over.
+ */
+export interface FramePrompts {
+  clicks: Array<{ x: number; y: number }>;
+  negatives: Array<{ x: number; y: number }>;
+  box: RotoBox | null;
+}
+
+const framePrompts = new Map<string, FramePrompts>();
+const FRAME_PROMPTS_KEEP = 64;
+
+/** The key of a subject's frame: the layer, the subject and the frame (half a frame of slack at 240 fps). */
+const framePromptsKey = (nodeId: string, subject: string, timeSec: number): string => `${nodeId}:${subject}:${Math.round(timeSec * 480)}`;
+
+/**
+ * The prompt set to send for this edit, and what to remember after it:
+ *   replace            the request's own prompts (the frame starts over)
+ *   add (segment)      every earlier positive and negative with the new ones, and the box
+ *                      the selection started from, so the model sees one object
+ *   subtract           the new click alone as the thing to take away (the earlier positives
+ *                      would make the delta the whole subject); remembered as a negative,
+ *                      so a later add keeps it out
+ *   paint / refine     the request's own strokes; nothing remembered
+ */
+export function cumulativePrompts(prev: FramePrompts | undefined, req: SubjectEditRequest): { send: FramePrompts; keep: FramePrompts | null } {
+  const clicks = [...(req.clicks ?? [])];
+  const negatives = [...(req.negatives ?? [])];
+  const own: FramePrompts = { clicks, negatives, box: req.box ?? null };
+  if (req.tool !== 'segment') return { send: own, keep: prev ?? null };
+  if (req.op === 'replace' || !prev) {
+    const keep: FramePrompts = req.op === 'subtract' ? { clicks: [], negatives: [...clicks, ...negatives], box: null } : own;
+    return { send: own, keep };
+  }
+  if (req.op === 'subtract') {
+    return { send: own, keep: { clicks: prev.clicks, negatives: [...prev.negatives, ...clicks, ...negatives], box: prev.box } };
+  }
+  const all: FramePrompts = {
+    clicks: [...prev.clicks, ...clicks],
+    negatives: [...prev.negatives, ...negatives],
+    box: req.box ?? prev.box,
+  };
+  return { send: all, keep: all };
+}
+
+/** Forget a frame's prompts (the subject was removed, or its selection undone). */
+export function forgetFramePrompts(nodeId: string, subject?: string): void {
+  for (const key of [...framePrompts.keys()]) {
+    if (key.startsWith(subject === undefined ? `${nodeId}:` : `${nodeId}:${subject}:`)) framePrompts.delete(key);
+  }
+}
+
+/**
  * Edit the layer's SUBJECT on the frame at `timeSec`: its soft matte (a
  * picture, not a mask path) is segmented, painted or refined and merged into
  * the layer's stored matte, one undo entry. The subject is a selection — the
  * footage stays whole until Remove Background; effects read it through Apply
  * To and text through Behind Subject. Null when there was nothing to edit.
  */
+/**
+ * How a job's edits reach the document. Absent: the engine applies the result
+ * itself when the job finishes (one history entry) — but never while a gesture
+ * is open (session_jobs.cpp), so a caller running INSIDE a gesture (the AI
+ * turn, one gesture = one undo entry) hands in `applyResult`: the job is
+ * started held (`apply: false`), it finishes at once, and the caller applies
+ * the held result through its own session (`applyJobResult` in the gesture).
+ */
+export interface JobApplyOptions {
+  applyResult?: (jobId: string) => Promise<void>;
+}
+
 export async function runSubjectEdit(
   nodeId: string,
   timeSec: number,
   req: SubjectEditRequest,
   subject: string = FIRST_SUBJECT,
+  applyOpts: JobApplyOptions = {},
 ): Promise<SubjectEditResult | null> {
   refuseLocked(nodeId, subject);
   const size = await layerSize(nodeId);
   if (!size) return null;
   const toPx = (p: { x: number; y: number }) => ({ x: p.x + size.width / 2, y: p.y + size.height / 2 });
-  const rect = req.box ? boxToRect(req.box, size) : null;
+  const key = framePromptsKey(nodeId, subject, timeSec);
+  const { send, keep } = cumulativePrompts(framePrompts.get(key), req);
+  const rect = send.box ? boxToRect(send.box, size) : null;
   const box = rect && rect.width > 1 && rect.height > 1 ? rect : null;
   const strokes = (req.strokes ?? []).filter((s) => s.length > 0);
-  if (!box && strokes.length === 0 && (req.clicks?.length ?? 0) === 0) return null;
+  if (!box && strokes.length === 0 && send.clicks.length === 0) return null;
   // The old tool's cut masks give way to the subject (a layer made before the subject was a matte).
   const replace = mirrorMaskHeaders(documentMirror().tree(nodeId)).filter((m) => m.name === ROTO_PATH_NAME).map((m) => m.id);
   const out = requireEngineJob(await runEngineJob<{ coverage?: number; outline?: number[] }>({
@@ -476,20 +549,28 @@ export async function runSubjectEdit(
     value: {
       layer: nodeId,
       range: { start: secondsToFlicks(timeSec), duration: secondsToFlicks(1 / 30) },
-      prompts: (req.clicks ?? []).map(toPx),
-      backgroundPrompts: (req.negatives ?? []).map(toPx),
+      prompts: send.clicks.map(toPx),
+      backgroundPrompts: send.negatives.map(toPx),
       encoderModel: '',
       decoderModel: '',
       replaceMasks: replace,
       ...(box ? { box } : {}),
       strokes: strokes.map((s) => ({ time: secondsToFlicks(timeSec), points: s.map(toPx), background: false })),
-      edit: { tool: req.tool, op: req.op, radius: Math.max(0.5, req.radius ?? 10), cut: false },
+      edit: { tool: req.tool, op: req.op, radius: Math.max(0.5, req.radius ?? 10), cut: false, hardness: Math.max(0, Math.min(100, req.hardness ?? 100)) },
       subject,
     },
-  }), 'Object Matte');
+  }, applyOpts.applyResult ? { apply: false } : {}), 'Object Matte');
   if (out.status !== 'done') {
     if (out.status === 'failed') throw new Error(out.error?.message ?? 'Object Matte failed');
     return null;
+  }
+  if (applyOpts.applyResult) await applyOpts.applyResult(out.job.id);
+  if (keep) {
+    framePrompts.delete(key);
+    framePrompts.set(key, keep);
+    while (framePrompts.size > FRAME_PROMPTS_KEEP) framePrompts.delete(framePrompts.keys().next().value!);
+  } else {
+    framePrompts.delete(key);
   }
   for (const l of subjectEditListeners) l(nodeId, subject, timeSec);
   return { coverage: out.result?.coverage ?? 0, outline: out.result?.outline ?? [] };
@@ -587,7 +668,7 @@ export async function propagateObjectMatte(
     subject?: string;
     /** Re-track only start…end (between two fixes): the subject's frames and outline keys outside it stay. */
     keepOutside?: boolean;
-  },
+  } & JobApplyOptions,
   onProgress?: (f: number) => boolean | void,
 ): Promise<RotoBrushResult> {
   const subject = opts.subject ?? FIRST_SUBJECT;
@@ -644,12 +725,13 @@ export async function propagateObjectMatte(
         },
       },
     },
-    { onProgress: (f) => { if (onProgress?.(f) === false) cancel?.(); } },
+    { onProgress: (f) => { if (onProgress?.(f) === false) cancel?.(); }, ...(opts.applyResult ? { apply: false } : {}) },
   ), 'Object Matte');
   cancel = handle.cancel;
   const out = await handle.done;
   if (out.status === 'cancelled') return { keyframes: 0, frames: 0, status: 'cancelled' };
   if (out.status !== 'done') throw new Error(out.error?.message ?? 'Object Matte failed');
+  if (opts.applyResult) await opts.applyResult(out.job.id);
   const frames = out.result?.frames ?? 0;
   return { keyframes: frames, frames, status: 'completed' };
 }

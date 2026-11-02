@@ -27,6 +27,9 @@ export const GLASS_PARAMS = [
   'rimOpacity', 'rimWidth', 'rimAngle',
   'specularAngle', 'specularIntensity', 'specularFalloff',
   'grain',
+  // Stream D L4 (liquid glass): the surface's own terms; `surface` itself is a
+  // switch (STYLE_FIELDS), `bumpLayerId` a layer reference.
+  'thickness', 'ior', 'dispersion', 'caustic', 'fresnel',
 ] as const;
 export type GlassParam = (typeof GLASS_PARAMS)[number];
 
@@ -76,6 +79,14 @@ export interface ResolvedGlass {
   specularIntensity: number;
   specularFalloff: number;
   grain: number;
+  // Stream D L4 (liquid glass) — the engine's glass_port.cpp reads the same.
+  surface: 'edge' | 'dome' | 'luma' | 'layer';
+  thickness: number;
+  ior: number;
+  dispersion: number;
+  caustic: number;
+  fresnel: number;
+  bumpLayerId?: string;
 }
 
 /**
@@ -119,6 +130,15 @@ export function resolveGlass(
     specularIntensity: Math.max(0, val('specularIntensity', style.specularIntensity)),
     specularFalloff: Math.max(0.1, val('specularFalloff', style.specularFalloff)),
     grain: clamp01(val('grain', style.grain)),
+    // Liquid glass: absent in older documents → the original glass (surface
+    // `edge`, no caustic, no Fresnel), exactly as glass_port.cpp reads it.
+    surface: style.surface === 'dome' || style.surface === 'luma' || style.surface === 'layer' ? style.surface : 'edge',
+    thickness: Math.max(0, val('thickness', style.thickness)),
+    ior: Math.max(1, val('ior', style.ior)),
+    dispersion: clamp01(val('dispersion', style.dispersion)),
+    caustic: Math.max(0, val('caustic', style.caustic)),
+    fresnel: Math.max(0, val('fresnel', style.fresnel)),
+    bumpLayerId: typeof style.bumpLayerId === 'string' && style.bumpLayerId ? style.bumpLayerId : undefined,
   };
 }
 

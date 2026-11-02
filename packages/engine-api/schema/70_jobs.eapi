@@ -138,7 +138,8 @@ struct ObjectMatteJob {
 }
 enum SubjectTool { segment = 0; paint = 1; refine = 2; }
 enum SubjectOp { replace = 0; add = 1; subtract = 2; }
-struct SubjectEdit { tool: SubjectTool = 1; op: SubjectOp = 2; radius: f64 = 3; cut: bool = 4; }
+/// `hardness` 0–100 (absent = 100): the brush's edge for `paint` — 100 a hard disc, lower a soft falloff over the outer part of the radius.
+struct SubjectEdit { tool: SubjectTool = 1; op: SubjectOp = 2; radius: f64 = 3; cut: bool = 4; hardness?: f64 = 5; }
 /// A correction stroke on one frame (AE parity 3.1).
 struct ObjectMatteStroke { time: Time = 1; points: Vec2[] = 2; background: bool = 3; }
 /// Matte refinement (AE parity 3.2; AE's Refine Edge / Refine Soft Matte): `edgeRadius` px of the band refined against the picture (hair), `decontaminate` 0–1 (edge colour from the background removed), `motionBlur` (matte blurred along the motion, `shutterAngle` degrees, default 180), `feather` px, `choke` −100…100 %, `reduceChatter` 0–100 % (temporal smoothing of the edge).

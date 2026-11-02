@@ -1,9 +1,15 @@
 // Caustics (caustics) -- AE's Caustics: the layer seen as the bottom of moving water, refracted, under a bright caustic light web.
 // Generated from the fx60 spec (docs/PROGRAM_PERFORMANCE.md E). Layer px through fxBox.
-struct Object { mvp: mat3x3<f32>, uvRect: vec4<f32>, p0: vec4<f32>, p1: vec4<f32>, p2: vec4<f32>, fxBox: vec4<f32> };
+// Stream D (2026-11-02): p3 = (bottom layer set, water layer set, water gain, 0) — the
+// Bottom layer (binding 3) is what the water refracts instead of the layer itself; the Water
+// layer's luminance (binding 4) is a height added to the procedural surface and lights the
+// caustic web where it is bright. Unset, both bindings hold the layer: the original picture.
+struct Object { mvp: mat3x3<f32>, uvRect: vec4<f32>, p0: vec4<f32>, p1: vec4<f32>, p2: vec4<f32>, p3: vec4<f32>, fxBox: vec4<f32> };
 @group(0) @binding(0) var<uniform> obj : Object;
 @group(0) @binding(1) var tex : texture_2d<f32>;
 @group(0) @binding(2) var smp : sampler;
+@group(0) @binding(3) var bottomTex : texture_2d<f32>;
+@group(0) @binding(4) var waterTex : texture_2d<f32>;
 struct VOut { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
 @vertex fn vs(@location(0) pos : vec2<f32>) -> VOut {
   var o : VOut; o.pos = vec4<f32>((obj.mvp * vec3<f32>(pos, 1.0)).xy, 0.0, 1.0); o.uv = obj.uvRect.xy + pos * obj.uvRect.zw; return o;
@@ -153,6 +159,12 @@ fn causticAt(uvq : vec2<f32>, time : f32) -> f32 {
   c = 1.17 - pow(c, 1.4);
   return pow(abs(c), 8.0);
 }
+// The Water layer's luminance (straight display, by coverage) at a layer px.
+fn waterLumaPx(px : vec2<f32>) -> f32 {
+  let w = textureSampleLevel(waterTex, smp, pxUv(clamp(px, vec2<f32>(0.5), gLwh - vec2<f32>(0.5))), 0.0);
+  let d = toDisp(w);
+  return luma(d.rgb) * d.a;
+}
 @fragment fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   let P = prm();
   gLwh = max(vec2<f32>(P.lw, P.lh), vec2<f32>(1.0, 1.0));
@@ -165,10 +177,20 @@ fn causticAt(uvq : vec2<f32>, time : f32) -> f32 {
   let hc = fbmT(q * 1.3, P.t * 0.6, P.seed, 3);
   let hx = fbmT(q * 1.3 + vec2<f32>(e, 0.0), P.t * 0.6, P.seed, 3) - hc;
   let hy = fbmT(q * 1.3 + vec2<f32>(0.0, e), P.t * 0.6, P.seed, 3) - hc;
-  let off = vec2<f32>(hx, hy) / e * P.dist * P.scale * 0.05;
-  let bottom = sampleClampPx(pp + off);
+  var off = vec2<f32>(hx, hy) / e * P.dist * P.scale * 0.05;
+  // The Water layer's luminance as a height on top of the waves (one px finite differences).
+  let useWater = obj.p3.y > 0.5;
+  let wgain = obj.p3.z;
+  let wc = waterLumaPx(pp);
+  let wx = waterLumaPx(pp + vec2<f32>(1.0, 0.0)) - waterLumaPx(pp - vec2<f32>(1.0, 0.0));
+  let wy = waterLumaPx(pp + vec2<f32>(0.0, 1.0)) - waterLumaPx(pp - vec2<f32>(0.0, 1.0));
+  if (useWater) { off = off + vec2<f32>(wx, wy) * P.dist * P.scale * 0.5 * wgain; }
+  let bottomOwn = sampleClampPx(pp + off);
+  let bottomMap = textureSampleLevel(bottomTex, smp, pxUv(clamp(pp + off, vec2<f32>(0.5), gLwh - vec2<f32>(0.5))), 0.0);
+  let bottom = select(bottomOwn, bottomMap, obj.p3.x > 0.5);
   let base = bottom.rgb / max(bottom.a, 0.00001);
-  let c = causticAt(q, P.t * 0.5 + 23.0);
+  var c = causticAt(q, P.t * 0.5 + 23.0);
+  if (useWater) { c = c + max(wc * 2.0 - 1.0, 0.0) * 1.5 * wgain; }
   let light = P.light * (P.amb + c * P.strength * 2.0) * P.inten;
   return vec4<f32>(base * light * src.a, src.a);
 }

@@ -3,11 +3,13 @@ import { READ_TOOL_DEFS } from './read';
 import { WRITE_TOOL_DEFS } from './write';
 import { CRAFT_TOOL_DEFS, LATE_TOOL_DEFS } from './craft';
 import { COMPOSE_TOOL_DEFS } from './compose';
+import { MEDIA_TOOL_DEFS } from './media';
 
 export * from './read';
 export * from './write';
 export * from './craft';
 export * from './compose';
+export * from './media';
 
 /**
  * Every tool the AI can reach.
@@ -27,4 +29,6 @@ export const ALL_TOOL_DEFS: readonly AiToolDef[] = [
   // this list entirely. Two sources of truth for the tool surface is how a
   // drift check can read the whole registry and still miss five of it.
   ...LATE_TOOL_DEFS,
+  // Footage: subjects, tracking, transcription, assets, editor state (stream E).
+  ...MEDIA_TOOL_DEFS,
 ];
