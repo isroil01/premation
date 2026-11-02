@@ -160,6 +160,13 @@ if("coreml" IN_LIST FEATURES)
     if(coreml_patched STREQUAL coreml_text AND NOT coreml_text MATCHES "coreml_proto EXPORT")
         message(FATAL_ERROR "onnxruntime_providers_coreml.cmake changed: coreml_proto's install was not found")
     endif()
+    # Exported, its include directory must not be the build tree (CMake refuses:
+    # "INTERFACE_INCLUDE_DIRECTORIES ... prefixed in the build directory").
+    set(coreml_before "${coreml_patched}")
+    string(REPLACE "\"\${CMAKE_CURRENT_BINARY_DIR}\")" "\"$<BUILD_INTERFACE:\${CMAKE_CURRENT_BINARY_DIR}>\")" coreml_patched "${coreml_patched}")
+    if(coreml_patched STREQUAL coreml_before AND NOT coreml_before MATCHES "BUILD_INTERFACE")
+        message(FATAL_ERROR "onnxruntime_providers_coreml.cmake changed: coreml_proto's include directory was not found")
+    endif()
     file(WRITE "${coreml_cmake}" "${coreml_patched}")
 endif()
 

@@ -61,6 +61,8 @@ TEST_CASE("PDF footage: points are pixels, drawn sharp at the display size, clea
 
   const PdfFacts f = pdf_file_facts(path);
   INFO(f.error);
+  // A build without PDFium (the Linux engine today) says so instead of drawing.
+  if (!f.ok && f.error.find("does not include") != std::string::npos) SKIP("this build has no PDFium");
   REQUIRE(f.ok);
   CHECK(f.width == 200);
   CHECK(f.height == 100);
