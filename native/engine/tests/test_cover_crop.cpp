@@ -3,8 +3,11 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include <algorithm>
 #include <cmath>
+#include <optional>
 #include <string>
+#include <string_view>
 
 #include "docexpr.hpp"
 #include "docio.hpp"
@@ -153,4 +156,60 @@ TEST_CASE("a cover slot crops in UV and a backdrop blur is no longer unported", 
   REQUIRE(drawn != nullptr);
   REQUIRE(drawn->uv_rect.has_value());
   CHECK_THAT(drawn->uv_rect->height, Catch::Matchers::WithinAbs(tallH, 1e-9));
+}
+
+TEST_CASE("a layer whose mask paths are all mode None has no mask raster", "[scene][mask]") {
+  // A followed subject's outline is a mode-None mask keyed on every frame. It shapes nothing
+  // (mask.ts maskIsActive), yet it used to cost a layer-sized white raster and texture per frame.
+  const char* project = R"({
+    "version":"1.9.0",
+    "scene":{"version":"1.0.0","nodes":[
+      {"id":"comp_root","name":"Composition 1","parent":null,"children":["outline","cut"],
+       "transform":{"position":{"x":0,"y":0},"rotation":0,"scale":{"x":1,"y":1}},
+       "visible":true,"locked":false,
+       "components":[{"id":"comp_root_meta","type":"group","props":{"__kind":"group"}}]},
+      {"id":"outline","name":"outline","children":[],"parent":"comp_root",
+       "transform":{"position":{"x":0,"y":0},"rotation":0,"scale":{"x":1,"y":1}},
+       "components":[
+         {"id":"outline_t","type":"Transform","props":{"__kind":"image","x":960,"y":540,"rotation":0,"scaleX":100,"scaleY":100,"width":1920,"height":1080,"assetId":"clipWide","src":"file:///clips/clipWide"}},
+         {"id":"outline_s","type":"Style","props":{"opacity":100}},
+         {"id":"outline_fx","type":"fx","props":{"mask":{"paths":[{"id":"m1","mode":"none","closed":true,"points":[{"x":-100,"y":-100},{"x":100,"y":-100},{"x":0,"y":100}]}]}}}],
+       "visible":true,"locked":false},
+      {"id":"cut","name":"cut","children":[],"parent":"comp_root",
+       "transform":{"position":{"x":0,"y":0},"rotation":0,"scale":{"x":1,"y":1}},
+       "components":[
+         {"id":"cut_t","type":"Transform","props":{"__kind":"image","x":960,"y":540,"rotation":0,"scaleX":100,"scaleY":100,"width":1920,"height":1080,"assetId":"clipWide","src":"file:///clips/clipWide"}},
+         {"id":"cut_s","type":"Style","props":{"opacity":100}},
+         {"id":"cut_fx","type":"fx","props":{"mask":{"paths":[{"id":"m1","mode":"none","closed":true,"points":[{"x":-100,"y":-100},{"x":100,"y":-100},{"x":0,"y":100}]},{"id":"m2","mode":"add","closed":true,"points":[{"x":-50,"y":-50},{"x":50,"y":-50},{"x":0,"y":50}]}]}}}],
+       "visible":true,"locked":false}
+    ]},
+    "animation":{"tracks":{},"expressions":{}},
+    "comps":{"comp_root":{"id":"comp_root","name":"comp_root","width":1920,"height":1080,"fps":30,"durationSeconds":10,"background":"#101014"}},
+    "motionBlur":{"enabled":false,"shutterAngle":180,"shutterPhase":-90,"samples":8,"adaptiveSampleLimit":128},
+    "openTabs":{"tabOrder":["tab1"],"activeTabId":"tab1","tabs":{"tab1":{"id":"tab1","compositionId":"comp_root","breadcrumbPath":["comp_root"],"title":"comp_root","time":0,"frame":0}}}
+  })";
+  const auto parsed = premation::js::parse(project);
+  REQUIRE(parsed.has_value());
+  doc::Document d;
+  doc::EditorView view;
+  (void)doc::restore_document(d, view, *parsed, {asset("clipWide", 3840, 2160, 1)});
+  doc::ExprCache cache;
+  const doc::DocExprEnv env(d, view, cache);
+  const sc::BuildContext ctx{d, view, env, cache, nullptr, {}};
+  const sc::Snapshot snap = sc::build_snapshot(ctx, sc::snapshot_comp_of(d, "comp_root"), 0, std::nullopt);
+  const sc::RLayer* outline = layer(snap, "outline");
+  REQUIRE(outline != nullptr);
+  REQUIRE(outline->mask.is_object());  // the path is still there for Track Mask / Path Stroke
+
+  const sc::FrameBuild frame = sc::build_frame_scene(snap, 1);
+  const auto requested = [&](std::string_view key) {
+    return std::ranges::any_of(frame.textures, [&](const sc::TextureRequest& t) { return t.key == key; });
+  };
+  CHECK_FALSE(requested("mask:outline"));
+  CHECK(requested("mask:cut"));
+  for (const premation::api::Renderable& r : frame.scene.renderables) {
+    INFO(r.id);
+    if (r.id == "outline") CHECK_FALSE(r.mask_texture_key.has_value());
+    if (r.id == "cut") CHECK(r.mask_texture_key == std::optional<std::string>("mask:cut"));
+  }
 }
