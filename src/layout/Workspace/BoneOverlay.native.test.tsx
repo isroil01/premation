@@ -16,7 +16,9 @@ import { isWeightPaintEmpty } from '@core/rig/weightPaint';
 import { clearHistory, setupAppEngine, historyLabels, settleEdits, waitForFrame } from '@core/engine/__testHelpers__/appEngine';
 import { docView } from '@core/engine/__testHelpers__/docView';
 import { rigTestLayer } from './__testHelpers__/rigLayer';
-import { selectedRigBone, useRigSelectionStore } from '@stores/rigSelectionStore';
+import { selectedRigBone, selectedRigBones, useRigSelectionStore } from '@stores/rigSelectionStore';
+import { useRigPoseClipboard } from '@stores/rigPoseClipboard';
+import { secondsToFlicks } from '@motion/engine-api';
 import { usePreferenceStore } from '@stores/preferenceStore';
 
 jest.mock('@core/workspace/WorkspaceController', () => ({
@@ -201,6 +203,138 @@ describe('bone authoring', () => {
     await idle();
     expect((await docView()).getTrackKeyframes(L, 'bone.fore.rotation')?.length).toBeGreaterThan(0);
     expect((await historyLabels()).at(-1)).toBe('Pose Bone fore');
+  });
+});
+
+describe('multi-select', () => {
+  beforeEach(() => { useUIStore.getState().setBoneRigMode('pose'); });
+  const selected = (): readonly string[] => selectedRigBones(L);
+  /** A bone's group as mounted now: the selected ones change stroke, so this goes by paint order. */
+  const groupOf = (c: HTMLElement, id: 'upper' | 'fore'): Element => {
+    const bones = c.querySelectorAll('svg > g[style*="pointer"]');
+    return bones[id === 'upper' ? 0 : 1]!;
+  };
+  const highlighted = (c: HTMLElement): number => c.querySelectorAll('polygon[stroke="var(--color-overlay-rig-selected)"]').length;
+
+  it('Shift-click adds and removes bones, starts no drag, and both draw as selected', async () => {
+    const { container } = render(<BoneOverlay />);
+    await idle();
+    fireEvent.pointerDown(groupOf(container, 'upper'), { clientX: -40, clientY: 0, pointerId: 1, shiftKey: true });
+    await idle();
+    expect(selected()).toEqual(['upper']);
+    fireEvent.pointerDown(groupOf(container, 'fore'), { clientX: 20, clientY: 0, pointerId: 1, shiftKey: true });
+    await idle();
+    expect(selected()).toEqual(['upper', 'fore']);
+    expect(selectedRigBone(L)).toBe('fore');
+    expect(highlighted(container)).toBe(2);
+    fireEvent.pointerDown(groupOf(container, 'upper'), { clientX: -40, clientY: 0, pointerId: 1, shiftKey: true });
+    await idle();
+    expect(selected()).toEqual(['fore']);
+    expect((await historyLabels()).filter((l) => l.startsWith('Pose'))).toEqual([]);
+  });
+
+  it('a Shift-drag on empty canvas marquees the bones it reaches and adds to the selection', async () => {
+    act(() => useRigSelectionStore.getState().selectBones(L, ['upper']));
+    const { container } = render(<BoneOverlay />);
+    await idle();
+    const svg = await svgOf(container);
+    // The fore bone runs from x = -10 to 40; the rect catches only its tip.
+    fireEvent.pointerDown(live(container, svg), { clientX: 30, clientY: -20, pointerId: 3, shiftKey: true });
+    fireEvent.pointerMove(live(container, svg), { clientX: 60, clientY: 20, pointerId: 3, shiftKey: true });
+    await act(async () => { await Promise.resolve(); });
+    expect(container.querySelector('[data-bone-marquee]')).not.toBeNull();
+    fireEvent.pointerUp(live(container, svg), { clientX: 60, clientY: 20, pointerId: 3 });
+    await idle();
+    expect(container.querySelector('[data-bone-marquee]')).toBeNull();
+    expect(selected()).toEqual(['upper', 'fore']);
+    expect((await skelOf())!.bones).toHaveLength(2);
+  });
+
+  it('a marquee over nothing changes nothing', async () => {
+    act(() => useRigSelectionStore.getState().selectBones(L, ['upper']));
+    const { container } = render(<BoneOverlay />);
+    await idle();
+    const svg = await svgOf(container);
+    fireEvent.pointerDown(live(container, svg), { clientX: 200, clientY: 200, pointerId: 3, shiftKey: true });
+    fireEvent.pointerUp(live(container, svg), { clientX: 240, clientY: 240, pointerId: 3 });
+    await idle();
+    expect(selected()).toEqual(['upper']);
+  });
+
+  it('pressing a selected bone keeps the selection; a plain click on it then selects it alone', async () => {
+    act(() => useRigSelectionStore.getState().selectBones(L, ['upper', 'fore']));
+    const { container } = render(<BoneOverlay />);
+    await idle();
+    const svg = await svgOf(container);
+    fireEvent.pointerDown(groupOf(container, 'upper'), { clientX: -40, clientY: 0, pointerId: 1 });
+    expect(selected()).toEqual(['upper', 'fore']);
+    fireEvent.pointerUp(live(container, svg), { clientX: -40, clientY: 0, pointerId: 1 });
+    await idle();
+    expect(selected()).toEqual(['upper']);
+  });
+
+  it('dragging a selected bone poses it and keeps the selection', async () => {
+    act(() => {
+      usePreferenceStore.setState({ timelineAutoKeyframe: true });
+      useRigSelectionStore.getState().selectBones(L, ['upper', 'fore']);
+    });
+    const { container } = render(<BoneOverlay />);
+    await idle();
+    const svg = await svgOf(container);
+    fireEvent.pointerDown(groupOf(container, 'fore'), { clientX: 30, clientY: 0, pointerId: 1 });
+    fireEvent.pointerMove(live(container, svg), { clientX: 30, clientY: 40, pointerId: 1 });
+    fireEvent.pointerUp(live(container, svg), { clientX: 30, clientY: 40, pointerId: 1 });
+    await idle();
+    expect(selected()).toEqual(['upper', 'fore']);
+    expect((await docView()).getTrackKeyframes(L, 'bone.fore.rotation')?.length).toBeGreaterThan(0);
+  });
+
+  it('Delete in draw mode removes every selected bone as one entry, a child with its parent', async () => {
+    act(() => {
+      useUIStore.getState().setBoneRigMode('draw');
+      useRigSelectionStore.getState().selectBones(L, ['fore', 'upper']);
+    });
+    render(<BoneOverlay />);
+    await idle();
+    fireEvent.keyDown(window, { key: 'Delete' });
+    await idle();
+    expect(((await skelOf())?.bones ?? [])).toHaveLength(0);
+    expect((await historyLabels()).at(-1)).toBe('Delete Bone');
+  });
+});
+
+describe('the pose bar', () => {
+  it('shows over the canvas in Pose mode only', async () => {
+    const { container } = render(<BoneOverlay />);
+    await idle();
+    expect(container.querySelector('[data-bone-pose-bar]')).toBeNull();
+    act(() => useUIStore.getState().setBoneRigMode('pose'));
+    await idle();
+    expect(container.querySelector('[data-bone-pose-bar]')).not.toBeNull();
+  });
+
+  it('copies and pastes the selected bone from the canvas', async () => {
+    await h.batch('pose', [
+      { type: 'addKeyframes', keys: [{ prop: { layer: L, path: 'skeleton/bones/fore/rotation' }, time: secondsToFlicks(0), value: { kind: 'scalar', value: 40 }, spatialIn: [], spatialOut: [] }] },
+    ]);
+    act(() => {
+      useUIStore.getState().setBoneRigMode('pose');
+      useRigSelectionStore.getState().selectBones(L, ['fore']);
+    });
+    const { findByRole } = render(<BoneOverlay />);
+    await idle();
+    fireEvent.click(await findByRole('button', { name: 'Copy pose' }));
+    await idle();
+    expect(useRigPoseClipboard.getState().pose?.bones.has('fore')).toBe(true);
+    expect(useRigPoseClipboard.getState().pose?.bones.has('upper')).toBe(false);
+    // The bone moves on, then the paste puts the copied pose back at the playhead.
+    await h.batch('moved', [
+      { type: 'addKeyframes', keys: [{ prop: { layer: L, path: 'skeleton/bones/fore/rotation' }, time: secondsToFlicks(0), value: { kind: 'scalar', value: 70 }, spatialIn: [], spatialOut: [] }] },
+    ]);
+    fireEvent.click(await findByRole('button', { name: 'Paste pose' }));
+    await idle();
+    expect((await historyLabels()).at(-1)).toBe('Paste Pose');
+    expect(((await docView()).getTrackKeyframes(L, 'bone.fore.rotation')?.[0]?.value ?? 0) * (180 / Math.PI)).toBeCloseTo(40, 3);
   });
 });
 

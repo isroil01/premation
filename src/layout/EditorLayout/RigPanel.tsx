@@ -24,6 +24,7 @@ import { useActiveWorkspace } from '@stores/projectStore';
 import { useRigSelectionStore } from '@stores/rigSelectionStore';
 import { edit } from '@core/engine/uiEdits';
 import { keyRigAtPlayheadCommands } from '@layout/Inspector/rigEdits';
+import { RigPoseButtons } from '@layout/Inspector/RigPoseButtons';
 import { getEventBus } from '@core/events/EventBus';
 import { useMirrorLayer, useMirrorTree } from '@hooks/useMirror';
 import { BoneControls } from '@layout/Inspector/BoneControls';
@@ -31,6 +32,8 @@ import { PuppetControls } from '@layout/Inspector/PuppetControls';
 import { renderInspector } from '@layout/Inspector/InspectorContent';
 import styles from './panels.module.css';
 import { t } from '@core/i18n';
+
+const NO_BONES: readonly string[] = [];
 
 export function RigPanel(): JSX.Element {
   const selected = useSelectionStore((s) => s.ids);
@@ -63,28 +66,31 @@ export function RigPanel(): JSX.Element {
 
 /**
  * "Key selected" / "Key all" (C2): one keyframe at the playhead on the pose of
- * the selected pins and the selected bone, or of every pin and bone — AE's
- * "set a keyframe here" over a whole pose, one undo entry (rigEdits
- * `keyRigAtPlayheadCommands`). Hidden while the layer has no rig.
+ * the selected pins and bones, or of every pin and bone — AE's "set a keyframe
+ * here" over a whole pose, one undo entry (rigEdits `keyRigAtPlayheadCommands`).
+ * Copy, Paste and Mirror Pose sit under it on a skeleton. Hidden while the layer
+ * has no rig.
  */
 function KeyPoseRow({ nodeId }: { nodeId: string }): JSX.Element | null {
   const layer = useMirrorLayer(nodeId);
   const tree = useMirrorTree(layer ? nodeId : null);
   const seconds = useActiveWorkspace()?.time ?? 0;
   const pinIds = useRigSelectionStore((s) => (s.nodeId === nodeId ? s.pinIds : []));
-  const boneId = useRigSelectionStore((s) => (s.nodeId === nodeId ? s.boneId : null));
-  const hasRig = !!tree && (tree.nodes.has('puppet') || tree.nodes.has('skeleton'));
+  const boneIds = useRigSelectionStore((s) => (s.nodeId === nodeId ? s.boneIds : NO_BONES));
+  const hasSkeleton = !!tree?.nodes.has('skeleton');
+  const hasRig = !!tree && (tree.nodes.has('puppet') || hasSkeleton);
   if (!layer || !hasRig) return null;
-  const anySelected = pinIds.length > 0 || !!boneId;
+  const anySelected = pinIds.length > 0 || boneIds.length > 0;
   return (
+    <>
     <div className={styles.searchRow} style={{ display: 'flex', gap: 6 }}>
       <Button
         size="sm"
         variant="secondary"
         disabled={!anySelected}
-        title={t('editor.rig.keySelectedHint', 'Keyframe the selected pins and bone at the playhead')}
+        title={t('editor.rig.keySelectedHint', 'Keyframe the selected pins and bones at the playhead')}
         onClick={() => {
-          void edit('Key Selected Rig', keyRigAtPlayheadCommands(nodeId, seconds, { pins: pinIds, bones: boneId ? [boneId] : [] }));
+          void edit('Key Selected Rig', keyRigAtPlayheadCommands(nodeId, seconds, { pins: pinIds, bones: boneIds }));
         }}
       >
         <Icon name="diamond" size="sm" /> {t('editor.rig.keySelected', 'Key selected')}
@@ -98,6 +104,12 @@ function KeyPoseRow({ nodeId }: { nodeId: string }): JSX.Element | null {
         <Icon name="diamond" size="sm" /> {t('editor.rig.keyAll', 'Key all')}
       </Button>
     </div>
+    {hasSkeleton && (
+      <div className={styles.searchRow} style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        <RigPoseButtons nodeId={nodeId} seconds={seconds} />
+      </div>
+    )}
+    </>
   );
 }
 

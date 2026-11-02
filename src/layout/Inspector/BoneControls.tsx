@@ -75,6 +75,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
   const boneRigMode = useUIStore((s) => s.boneRigMode);
   const rigSelectionNodeId = useRigSelectionStore((s) => s.nodeId);
   const selectedBoneId = useRigSelectionStore((s) => s.boneId);
+  const selectedBoneIds = useRigSelectionStore((s) => s.boneIds);
   const selectedControllerId = useRigSelectionStore((s) => s.controllerId);
   const eng = useEngineEdit();
   // The bone-name field edits a local draft and commits ONE rename on blur /
@@ -492,7 +493,7 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
           </div>
           <div role="tree" aria-label={t('inspector.bone.hierarchyAria', 'Bone hierarchy')}>
             {orderedBones.map(({ bone, depth }) => {
-              const selected = selectedBone?.id === bone.id;
+              const selected = rigSelectionNodeId === nodeId ? selectedBoneIds.includes(bone.id) : selectedBone?.id === bone.id;
               const hasIk = ikTargets.some((target) => target.boneId === bone.id);
               return (
                 <button
@@ -501,7 +502,10 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                   role="treeitem"
                   aria-level={depth + 1}
                   aria-selected={selected}
-                  onClick={() => selectBone(bone.id)}
+                  onClick={(e) => {
+                    if (e.shiftKey) useRigSelectionStore.getState().toggleBone(nodeId, bone.id);
+                    else selectBone(bone.id);
+                  }}
                   style={{
                     width: '100%',
                     display: 'flex',
