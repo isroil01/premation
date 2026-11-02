@@ -414,7 +414,7 @@ class Parser {
     return false;
   }
   [[nodiscard]] static Str describe(const Tok& t) {
-    if (t.type == TokType::kEof) return Str(u"end of expression");
+    if (t.type == TokType::kEof) return {u"end of expression"};
     if (t.type == TokType::kTemplate) return lq() + u"`" + rq();
     return lq() + t.value + rq();
   }

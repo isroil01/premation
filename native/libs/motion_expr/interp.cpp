@@ -2552,10 +2552,11 @@ Value Interp::temporal_wiggle(Args a) {
 }
 
 Value Interp::comp_fn(Args a) {
-  if (!a[0].is_string()) throw_eval(u"comp() needs a composition name, e.g. comp(\"Main\").");
+  const Value name = a[0];
+  if (!name.is_string() || name.s == nullptr) throw_eval(u"comp() needs a composition name, e.g. comp(\"Main\").");
   std::optional<CompFacts> f;
-  if (ctx_.host != nullptr) f = ctx_.host->comp_facts(a[0].s);
-  if (!f) throw_eval(u"No composition named " + lq() + *a[0].s + rq() + u".");
+  if (ctx_.host != nullptr) f = ctx_.host->comp_facts(name.s);
+  if (!f) throw_eval(u"No composition named " + lq() + *name.s + rq() + u".");
   const CompInfo& c = f->info;
   return plain({
       {.key = KeyId::k_name, .value = str(f->name)},

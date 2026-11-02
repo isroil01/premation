@@ -51,14 +51,14 @@ Value cell_value(Interp& in, std::string_view cell) {
   if (!trimmed.empty()) {
     char* end = nullptr;
     const double v = std::strtod(trimmed.c_str(), &end);
-    if (end == trimmed.c_str() + trimmed.size() && std::isfinite(v)) return Value::number(v);
+    if (end != nullptr && static_cast<std::size_t>(end - trimmed.c_str()) == trimmed.size() && std::isfinite(v)) return Value::number(v);
   }
   return in.str(utf8_to_utf16(cell));
 }
 
 class JsonReader {
  public:
-  JsonReader(Interp& in, std::string_view text) : in_(in), s_(text) {}
+  JsonReader(Interp& in, std::string_view text) : in_(&in), s_(text) {}
 
   Value document() {
     Value v = value(0);
@@ -100,7 +100,7 @@ class JsonReader {
     const char c = s_[i_];
     if (c == '{') return object(depth);
     if (c == '[') return array(depth);
-    if (c == '"') return in_.str(string());
+    if (c == '"') return in_->str(string());
     if (s_.compare(i_, 4, "true") == 0) {
       i_ += 4;
       return Value::boolean(true);
@@ -125,7 +125,7 @@ class JsonReader {
     const std::string num(s_.substr(start, i_ - start));
     char* end = nullptr;
     const double v = num.empty() ? 0 : std::strtod(num.c_str(), &end);
-    if (num.empty() || end != num.c_str() + num.size()) {
+    if (num.empty() || end == nullptr || static_cast<std::size_t>(end - num.c_str()) != num.size()) {
       i_ = start;
       fail("a value was expected");
     }
@@ -175,18 +175,18 @@ class JsonReader {
   Value array(int depth) {
     ++i_;
     std::vector<Value> items;
-    if (eat(']')) return in_.array(std::move(items));
+    if (eat(']')) return in_->array(std::move(items));
     while (true) {
       items.push_back(value(depth + 1));
       if (eat(',')) continue;
       if (eat(']')) break;
       fail("',' or ']' was expected");
     }
-    return in_.array(std::move(items));
+    return in_->array(std::move(items));
   }
   Value object(int depth) {
     ++i_;
-    Obj* o = in_.arena().obj(ObjKind::kPlain);
+    Obj* o = in_->arena().obj(ObjKind::kPlain);
     if (eat('}')) return Value::object(o);
     while (true) {
       skip_ws();
@@ -195,7 +195,7 @@ class JsonReader {
       if (!eat(':')) fail("':' was expected");
       const Value v = value(depth + 1);
       const KeyId kid = key_of(key);
-      const Str* name = kid == KeyId::kUnknown ? in_.arena().str(std::move(key)) : nullptr;
+      const Str* name = kid == KeyId::kUnknown ? in_->arena().str(std::move(key)) : nullptr;
       bool found = false;
       for (Prop& p : o->props) {
         if (p.key == kid && (name == nullptr || (p.name != nullptr && *p.name == *name))) {
@@ -212,7 +212,7 @@ class JsonReader {
     return Value::object(o);
   }
 
-  Interp& in_;
+  Interp* in_;  // never null: the reader lives inside one Interp call
   std::string_view s_;
   std::size_t i_ = 0;
 };
