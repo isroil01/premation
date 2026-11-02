@@ -1101,6 +1101,9 @@ std::string object_matte_child(const std::string& inputJson, JobControl& control
     r.set("provider", Json::string(models.provider()));
     r.set("objects", std::move(objects));
     Json tj = Json::object();
+    tj.set("open", Json::number(timings.open));
+    tj.set("read", Json::number(timings.read));
+    tj.set("load", Json::number(timings.load));
     tj.set("encode", Json::number(timings.encode));
     tj.set("decode", Json::number(findMs));
     tj.set("points", Json::number(static_cast<double>(grid.size())));

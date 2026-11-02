@@ -3,6 +3,7 @@
  */
 
 import { decodeDpx } from './dpx';
+import { assertDecodableSize } from './imageLimits';
 
 function srgb(linear: number): number {
   const c = Math.max(0, Math.min(1, linear));
@@ -17,6 +18,7 @@ export function isDpxFile(file: File): boolean {
 export async function convertDpxToPngFile(file: File, exposure = 0): Promise<File> {
   const img = decodeDpx(await file.arrayBuffer());
   const gain = 2 ** exposure;
+  assertDecodableSize('DPX', img.width, img.height);
   const n = img.width * img.height;
   const rgba = new Uint8ClampedArray(n * 4);
   for (let i = 0; i < n; i++) {

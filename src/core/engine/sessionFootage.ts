@@ -15,6 +15,7 @@
 
 import type { EngineClient, JobSpec } from '@motion/engine-api';
 import { useAssetStore } from '@stores/assetStore';
+import { engineFailure } from './engineFailure';
 
 export interface SessionFootageRecord {
   src: string;
@@ -82,7 +83,7 @@ async function materializeItem(client: EngineClient, item: string, deps: Session
   if (disk && engineCanReadFootage(disk)) {
     if (disk === current) return;
     const relinked = await client.execute({ type: 'relinkItem', item, path: disk, keepInterpretation: true });
-    if (!relinked.ok) throw new Error(relinked.error.message);
+    if (!relinked.ok) throw engineFailure(relinked.error);
     return;
   }
   const url = page?.src?.trim() || current;
@@ -95,7 +96,7 @@ async function materializeItem(client: EngineClient, item: string, deps: Session
   await deps.writeBytes(file, bytes);
   if (file === current) return;
   const relinked = await client.execute({ type: 'relinkItem', item, path: file, keepInterpretation: true });
-  if (!relinked.ok) throw new Error(relinked.error.message);
+  if (!relinked.ok) throw engineFailure(relinked.error);
 }
 
 const defaultDeps: SessionFootageDeps = {

@@ -154,9 +154,14 @@ std::optional<std::array<double, 4>> css_rgb_channels(std::string_view s) {
 // ── effects ──────────────────────────────────────────────────────────────
 
 Json default_params(const EffectDef& def) {
-  Json out = Json::object();
-  for (const auto& p : def.params) out.set(p.key, p.def);
-  return out;
+  // The catalog's definitions carry the table (catalog_data.cpp); a native
+  // plugin's (NativeEffects) is built here on first use, in place.
+  if (!def.defaultParams.is_object()) {
+    Json out = Json::object();
+    for (const auto& p : def.params) out.set(p.key, p.def);
+    return out;
+  }
+  return def.defaultParams;
 }
 
 Json new_instance_params_of(const EffectDef& def) {
@@ -192,6 +197,16 @@ std::vector<Json> read_node_effects(const Node& n) {
   out.reserve(list->arr().size());
   for (const Json& e : list->arr()) out.push_back(migrate_effect(e));
   return out;
+}
+
+Json read_node_effect(const Node& n, std::string_view id) {
+  const Json* list = fx_member(n, "effects");
+  if (list == nullptr || !list->is_array()) return Json();
+  for (const Json& e : list->arr()) {
+    const Json* i = e.find("id");
+    if (i != nullptr && i->is_string() && i->str() == id) return migrate_effect(e);
+  }
+  return Json();
 }
 
 std::vector<Json> get_node_effects(const Document& d, std::string_view nodeId) {

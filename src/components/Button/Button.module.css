@@ -109,6 +109,21 @@
   border-color: color-mix(in srgb, var(--color-text-primary) 42%, transparent);
 }
 
+/*
+ * Inside a docked panel (Properties, Effect Controls, Assets…) the pill reads
+ * as a dashboard CTA dropped into a dense AE-style column, beside the square
+ * fields, strips and chips around it. There the pair keeps its colours but
+ * takes the panel's control shape: 2px corners, a hairline edge, the panel
+ * `button` weight. The top bar (Preview / Export) and dialogs sit outside the
+ * dock columns and keep the pill.
+ */
+[data-dock-column] .root[data-variant="primary"],
+[data-dock-column] .root[data-variant="secondary"] {
+  border-radius: var(--radius-control);
+  border-width: 1px;
+  font-weight: var(--panel-weight-button);
+}
+
 .root[data-variant="primary"]:active:not(:disabled),
 .root[data-variant="secondary"]:active:not(:disabled),
 .root[data-variant="ghost"]:active:not(:disabled) {

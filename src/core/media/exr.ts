@@ -1,3 +1,4 @@
+import { assertDecodableSize } from './imageLimits';
 /**
  * OpenEXR codec — the file-format half of the EXR/HDR pipeline.
  *
@@ -221,9 +222,9 @@ export async function decodeExr(buf: ArrayBuffer): Promise<ExrImage> {
 
   const width = dataWindow.xMax - dataWindow.xMin + 1;
   const height = dataWindow.yMax - dataWindow.yMin + 1;
-  if (width <= 0 || height <= 0 || width * height > 268_435_456) {
-    throw new Error('EXR data window is empty or unreasonably large.');
-  }
+  // One float plane per channel: the page-wide decode ceiling (imageLimits),
+  // not the old 268 Mpx that let a 16k × 16k file ask for 3 GB and crash the editor.
+  assertDecodableSize('EXR', width, height);
 
   const bytesPerPixel = channels.reduce((sum, c) => sum + PIXEL_BYTES[c.pixelType as 0 | 1 | 2], 0);
   const blocks = Math.ceil(height / linesPerBlock);

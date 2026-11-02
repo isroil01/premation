@@ -1469,6 +1469,7 @@ export function AssetsPanel(): JSX.Element {
               />
               <Segmented
                 size="sm"
+                className={styles.assetViewSeg}
                 value={view}
                 onChange={setView}
                 options={[

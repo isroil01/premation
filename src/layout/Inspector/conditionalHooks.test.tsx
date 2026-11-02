@@ -139,6 +139,14 @@ const EXTRA_PROPS: Readonly<Record<string, Readonly<Record<string, unknown>>>> =
   // The stopwatch + navigator control every non-PropertyRow row shares. Same
   // argument as MultiPropertyRow: it governs named tracks, so it needs them.
   "AnimToggle.AnimToggle": { tracks: ["opacity"], label: "Opacity", animated: false, onToggle: () => {} },
+  // SubjectSection's tracking block: drawn only for the active subject, which
+  // its parent always passes. The node still vanishes; the subject is given.
+  "SubjectTracking.SubjectTracking": {
+    subjects: [{ id: "s1", name: "Subject 1", color: "#2bb3a3" }],
+    active: { id: "s1", name: "Subject 1", color: "#2bb3a3" },
+    rev: 0,
+    locked: false,
+  },
 };
 
 describe.each(SECTIONS)('%s survives its node disappearing mid-session', (_name, Section) => {

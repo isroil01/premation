@@ -19,43 +19,51 @@
   color: var(--color-text-secondary);
 }
 
+/* Four across in the usual column: the preview is the tile, no card around it
+   (a box around a box read as clutter). */
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(58px, 1fr));
-  gap: var(--space-2);
+  grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+  gap: var(--space-3) var(--space-2);
 }
 
 .swatch {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 8px 4px;
-  background: color-mix(in srgb, var(--color-surface-2) 35%, transparent);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 6px;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: var(--space-1) 2px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  color: var(--color-text-secondary);
-  transition: var(--motion-hover-transition);
+  color: var(--color-text-tertiary);
+  transition:
+    background-color var(--motion-duration-fast) var(--motion-ease-standard),
+    color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
 .swatch:hover {
-  background: color-mix(in srgb, var(--color-surface-2) 75%, transparent);
-  border-color: var(--color-border-strong);
+  background: var(--color-hover);
   color: var(--color-text-primary);
-  transform: translateY(-1px);
+}
+
+.swatch:active {
+  transform: translateY(1px);
 }
 
 .swatch:focus-visible {
-  outline: 2px solid var(--color-primary);
+  outline: 1px solid var(--color-focus-ring);
   outline-offset: 1px;
 }
 
 /* Checkerboard behind the chip so translucent presets (Glass, Neon) read as
    translucent in the preview instead of blending into the panel. */
 .chip {
-  width: 44px;
-  height: 28px;
+  width: 100%;
+  max-width: 52px;
+  height: 30px;
   border-radius: 6px;
   overflow: hidden;
   flex: none;
@@ -70,15 +78,18 @@
   background-position: 0 0, 0 4px, 4px -4px, -4px 0;
 }
 
-/* A preset's name under its swatch: the panel `label` role. */
+/* A preset's name under its swatch: the panel `help` size, up to two lines —
+   "Gradient Text" and "Long Shadow" were cut to "Gradient…" / "Long Sh…". */
 .label {
   font-family: var(--panel-font-family);
-  font-size: var(--panel-font-size);
+  font-size: var(--panel-font-size-help);
   font-weight: var(--panel-weight-label);
-  line-height: 1.1;
+  line-height: 1.2;
   text-align: center;
-  max-width: 58px;
+  width: 100%;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow-wrap: anywhere;
 }

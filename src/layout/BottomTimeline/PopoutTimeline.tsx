@@ -69,7 +69,7 @@ export function PopoutTimeline(): JSX.Element {
       the same controller, so the two stay in step.
     */
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
-      <TransportBar />
+      <TransportBar playbackOnly />
       <div style={{ flex: 1, minHeight: 0 }}>
     <BottomTimeline
       model={model}

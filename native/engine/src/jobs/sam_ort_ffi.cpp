@@ -78,16 +78,17 @@ class OrtModels final : public Models {
     // The float encoder on a GPU provider when one is there and opens it (the quantized
     // SlimSAM crashes DirectML, ort_providers_ffi.hpp); otherwise the quantized on the CPU,
     // where it is the faster of the two.
-    std::string gpu;
-    (void)ort::session_options(gpu);
-    if (!gpuEncoderPath.empty() && gpu != "cpu") {
+    if (!gpuEncoderPath.empty()) {
       try {
-        // The export's one free dimension pinned, so the GPU provider plans static shapes.
         std::string provider;
         Ort::SessionOptions o = ort::session_options(provider);
-        Ort::ThrowOnError(Ort::GetApi().AddFreeDimensionOverrideByName(o, "batch_size", 1));        encoder_.emplace(env_, path_of(gpuEncoderPath).c_str(), o);
-        encoderProvider_ = provider;
-        return;
+        if (provider != "cpu") {
+          // The export's one free dimension pinned, so the GPU provider plans static shapes.
+          Ort::ThrowOnError(Ort::GetApi().AddFreeDimensionOverrideByName(o, "batch_size", 1));
+          encoder_.emplace(env_, path_of(gpuEncoderPath).c_str(), o);
+          encoderProvider_ = provider;
+          return;
+        }
       } catch (const Ort::Exception& e) {
         ort::note_gpu_refusal("the GPU encoder", e.what());
         encoder_.reset();

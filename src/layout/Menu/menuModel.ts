@@ -1046,7 +1046,8 @@ export const APP_MENU: MenuGroupModel[] = [
       { commandId: 'help.searchDocs', label: 'Search Documentation…' },
       { commandId: 'help.whatsNew', label: "What's New…" },
       { separator: true },
-      // Bug reports from a shipped build (no DevTools): the log folder and a pasteable report.
+      // Bug reports from a shipped build (no DevTools): the report dialog, the log folder and a pasteable report.
+      { commandId: 'help.reportProblem', label: 'Report a Problem…' },
       { commandId: 'help.openLogs', label: 'Open Logs Folder' },
       { commandId: 'help.copyDiagnostics', label: 'Copy Diagnostics Report' },
       { separator: true },

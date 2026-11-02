@@ -165,11 +165,17 @@ inline bool has_integer_quant_ops(const ORTCHAR_T* path) {
 /// `cpuThreads` caps the CPU pool of the CPU session (0 = ORT's default).
 inline Ort::Session open_session(const Ort::Env& env, const ORTCHAR_T* path, std::string& provider, int cpuThreads = 0,
                                  std::string* gpuError = nullptr) {
-  Ort::SessionOptions gpu = session_options(provider);
-  if (provider == "dml" && has_integer_quant_ops(path)) {
-    provider = "cpu";  // see has_integer_quant_ops: a crash, not an error
+#if defined(PREMATION_ORT_DML)
+  // Asked before session_options: appending DirectML is slow (about 1.5 s over one SlimSAM load)
+  // and such a model would only drop it. See has_integer_quant_ops: a crash, not an error.
+  if (!cpu_forced() && directml_loadable() && has_integer_quant_ops(path)) {
+    provider = "cpu";
     if (gpuError != nullptr) *gpuError = "integer-quantized model";
+    const Ort::SessionOptions cpu = cpu_options(cpuThreads);
+    return Ort::Session(env, path, cpu);
   }
+#endif
+  Ort::SessionOptions gpu = session_options(provider);
   if (provider != "cpu") {
     try {
       return Ort::Session(env, path, gpu);

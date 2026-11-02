@@ -27,6 +27,7 @@ import { libraryMediaUrl } from '@core/library/premium/catalog';
 import type { PremiumCatalogItem, PremiumKind } from '@core/library/premium/packFormat';
 import { usePremiumAccess, useOpenBilling, useOpenSignIn, type PremiumAccess } from '@hooks/usePremiumAccess';
 import { useProSalesOpen } from '@hooks/useProSalesOpen';
+import { useCloudOffer, useCloudTrialDays } from '@hooks/useCloudOffer';
 import { markLayerTransitionDrag } from '@layout/Timeline/transitionDrag';
 import { useEntitlementStore } from '@stores/entitlementStore';
 import { usePremiumLibraryStore } from '@stores/premiumLibraryStore';
@@ -398,6 +399,8 @@ export function PremiumSheet({ item, access, onClose }: {
   const openBilling = useOpenBilling();
   const openSignIn = useOpenSignIn();
   const salesOpen = useProSalesOpen();
+  const offerLine = useCloudOffer();
+  const trialDays = useCloudTrialDays();
 
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
@@ -438,7 +441,13 @@ export function PremiumSheet({ item, access, onClose }: {
   } else if (access === 'signedOut' && openSignIn) {
     primary = <Button variant="primary" size="sm" onClick={leaveVia(openSignIn)}>{t('editor.library.sheet.signIn', 'Sign in')}</Button>;
   } else if (openBilling && salesOpen) {
-    primary = <Button variant="primary" size="sm" onClick={leaveVia(openBilling)}>{t('editor.library.sheet.getCloud', 'Get Premation Cloud')}</Button>;
+    primary = (
+      <Button variant="primary" size="sm" onClick={leaveVia(openBilling)}>
+        {trialDays > 0
+          ? t('editor.library.sheet.startTrial', 'Try Premation Cloud free')
+          : t('editor.library.sheet.getCloud', 'Get Premation Cloud')}
+      </Button>
+    );
   } else if (openBilling) {
     primary = <Button variant="secondary" size="sm" onClick={leaveVia(openBilling)}>{t('editor.library.sheet.seePlans', 'See plans')}</Button>;
   }
@@ -502,6 +511,9 @@ export function PremiumSheet({ item, access, onClose }: {
                 ? t('editor.library.sheet.salesClosed', 'Premation Cloud is not on sale right now — check back soon.')
                 : t('editor.library.sheet.included', 'Every Pro template, transition, sound and Lottie comes with Premation Cloud.')}
           </p>
+          {!unlocked && access !== 'signedOut' && openBilling && salesOpen && offerLine ? (
+            <p className={styles.sheetHelp}>{offerLine}</p>
+          ) : null}
         </div>
       </div>
     </div>

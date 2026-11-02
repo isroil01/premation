@@ -123,12 +123,15 @@ export function TitleBar(): JSX.Element | null {
           <MacWindowControls />
         </div>
         <div className={`${styles.center} ${styles.macTitle}`}>{popout ?? 'Premation'}</div>
-        <div className={styles.right}>
-          {/* The page's own controls (see routeSlot.ts). Never on the editor route. */}
-          <div id={TITLE_BAR_ROUTE_SLOT_ID} className={styles.routeSlot} />
-          <UpdateButton />
-          <ClaudeIndicator />
-        </div>
+        {/* A pop-out is the panel and its name: the app's own controls stay in the app window. */}
+        {!popout && (
+          <div className={styles.right}>
+            {/* The page's own controls (see routeSlot.ts). Never on the editor route. */}
+            <div id={TITLE_BAR_ROUTE_SLOT_ID} className={styles.routeSlot} />
+            <UpdateButton />
+            <ClaudeIndicator />
+          </div>
+        )}
       </div>
     );
   }
@@ -162,11 +165,12 @@ export function TitleBar(): JSX.Element | null {
             one thing here the user has not already gone looking for. Renders
             nothing when nothing is pending, which is almost always. */}
         {/* The page's own controls (see routeSlot.ts). Never on the editor route. */}
-        {!isEditor && <div id={TITLE_BAR_ROUTE_SLOT_ID} className={styles.routeSlot} />}
-        <UpdateButton />
+        {!isEditor && !popout && <div id={TITLE_BAR_ROUTE_SLOT_ID} className={styles.routeSlot} />}
+        {/* A pop-out is the panel and its name: the app's own controls stay in the app window. */}
+        {!popout && <UpdateButton />}
         {/* Claude for Premation: off = nothing drawn. On the editor route the
             pill sits in EditorChromeActions, which the macOS toolbar shares. */}
-        {!isEditor && <ClaudeIndicator />}
+        {!isEditor && !popout && <ClaudeIndicator />}
         {isEditor && <EditorChromeActions />}
         {controls === 'drawn' && <WindowsCaptionButtons />}
       </div>

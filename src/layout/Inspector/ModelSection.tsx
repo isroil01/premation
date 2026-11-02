@@ -203,7 +203,7 @@ export function ModelSection({ nodeId }: { nodeId: string }): JSX.Element | null
         ))}
       </div>
       <p className={s.hint}>
-        {t('inspector.model.hint', 'Blend shapes from the imported model. Weights stack, so several targets can be held at once.')}
+        {t('inspector.model.hintShort', 'Weights stack — several shapes can be held at once.')}
       </p>
     </div>
   );

@@ -70,6 +70,18 @@ describe('confirmPlanChange', () => {
   });
 });
 
+describe('cancelDialogCopy on a free trial', () => {
+  it('never offers a refund, even when the server calls a $0 invoice refundable', () => {
+    const copy = cancelDialogCopy(
+      { eligible: true, deadline: '2030-06-15T00:00:00.000Z', amountLabel: '$0', reason: null },
+      '2030-06-08T00:00:00.000Z',
+      { trial: true },
+    );
+    expect(copy.mode).toBe('confirm');
+    expect(copy.message).toContain("You won't be charged");
+  });
+});
+
 describe('cancelDialogCopy', () => {
   const periodEnd = '2027-03-12T00:00:00.000Z';
   const until = new Date(periodEnd).toLocaleDateString();

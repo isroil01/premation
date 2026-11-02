@@ -365,6 +365,7 @@ class EngineFrameBuilder final : public FrameBuilder, public TextQueries, public
   void set_media_base(std::string_view dir) override {
     if (dir != mediaBase_) mediaBase_ = std::string(dir);
   }
+  void set_cancel_flag(const std::atomic<std::uint32_t>* flag) noexcept override { cancel_ = flag; }
 
   // B4 round 2: text measured on the same fonts the frames are built with (under the session's build lock, like build()).
   TextQueries* text_queries() noexcept override { return this; }
@@ -459,6 +460,7 @@ class EngineFrameBuilder final : public FrameBuilder, public TextQueries, public
       out->effectTypes = document_effect_types(d);
       out->mediaBase = mediaBase_;
       BuildContext ctx = context(d, view, expr, cache);
+      ctx.cancel = cancel_;                      // an edit waiting for the lock stops this build (BuildCancelled)
       ctx.hiddenLayers = viewport.hiddenLayers;  // setViewportHiddenLayers: the text under the in-place editor
       ctx.focusLayers = viewport.focusLayers;    // setViewportFocus: layers outside the set are dim references
       ctx.useProxies = viewport.useProxies;      // setUseProxies: footage from its enabled proxy (viewport frames only)
@@ -843,6 +845,8 @@ class EngineFrameBuilder final : public FrameBuilder, public TextQueries, public
   std::uint64_t builtFrames_ = 0;
   wire::Writer hashWriter_;  // P6: frame_content_hash's scratch, reused across frames
   std::string mediaBase_;
+  /// The session's edits-waiting counter (set_cancel_flag); null until set.
+  const std::atomic<std::uint32_t>* cancel_ = nullptr;
   /// B4 round 5: the rig as the overlays see it, over this builder's media.
   DocRigQueries rig_{RigMediaHooks{
       [this](const doc::Document& d, const doc::Node& n, std::string& unreachable) { return rig_coverage(d, n, unreachable); },
@@ -900,6 +904,7 @@ class ViewportDrawer final : public render::BuiltFrameDrawer {
 #endif
     const api::RenderFrameFile& file = prepare(frame, width, height);
     rg::FrameStats st;
+    renderer_->set_playing(frame.playing);  // P8b: moving layers reuse their effect chains while playing
     const bool ok = renderer_->render_into(file, target, wgpu::TextureFormat::RGBA8Unorm, st, error);
     // D4: a frame is final unless footage on it was drawn from a nearest decoded
     // frame or skipped — what the media source REPORTS for this draw, not "it
@@ -1040,6 +1045,7 @@ class ViewportDrawer final : public render::BuiltFrameDrawer {
     const api::RenderFrameFile& file = prepare(frame, width, height, true);
     rg::Frame px;
     rg::FrameStats st;
+    renderer_->set_playing(false);
     if (!renderer_->render(file, &px, st, error)) return false;
     note_fx_skips(st);
     if (px.width == 0 || px.height == 0 || px.rgba.size() != std::size_t{px.width} * px.height * 4) {

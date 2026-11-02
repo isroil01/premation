@@ -970,7 +970,7 @@ export function TextAnimatorControls({ nodeId }: { nodeId: string }): JSX.Elemen
 
       {animators.length === 0 ? (
         <div className={styles.empty}>
-          {t('inspector.textAnimator.empty', 'No animators. Add one to animate characters, words, or lines — then keyframe its selector Offset to stagger them.')}
+          {t('inspector.textAnimator.emptyShort', 'No animators yet — add one to animate characters, words or lines.')}
         </div>
       ) : (
         <>

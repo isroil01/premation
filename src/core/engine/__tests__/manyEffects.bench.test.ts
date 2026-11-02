@@ -35,7 +35,7 @@ const MIX = [
 describe('many effects', () => {
   it(`${LAYERS} layers × ${FX} effects: edit, play, stay alive`, async () => {
     if (!nativeEngineExe()) return;
-    const native = await startNativeEngine({ extraArgs: ['--frame-cache-mb', '0', '--log-level', 'warn'] });
+    const native = await startNativeEngine({ extraArgs: ['--frame-cache-mb', '0', '--log-level', process.env.STRESS_LOG ?? 'warn'] });
     const client = new ProcessEngineClient(native.bridge);
     let phase = 'idle';
     const busy: Array<{ what: string; ms: number } | null> = [];
@@ -147,7 +147,7 @@ const sweep = process.env.STRESS_SWEEP === '1' ? describe : describe.skip;
 sweep('many effects: cost per effect type', () => {
   it('ranks the mix', async () => {
     if (!nativeEngineExe()) return;
-    const native = await startNativeEngine({ extraArgs: ['--frame-cache-mb', '0', '--log-level', 'warn'] });
+    const native = await startNativeEngine({ extraArgs: ['--frame-cache-mb', '0', '--log-level', process.env.STRESS_LOG ?? 'warn'] });
     const client = new ProcessEngineClient(native.bridge);
     let phase = 'idle';
     const frames: number[] = [];

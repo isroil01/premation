@@ -26,13 +26,16 @@ import { customConfirm, DialogFooter } from '@components/Modal';
 import {
   api,
   isAuthenticated,
+  paidOffer,
   paidSalesOpen,
+  trialOpenTo,
   type BillingSummary,
   type PlanDto,
 } from '@core/api/client';
 import { billingEnabled } from '@core/config/edition';
 import { t } from '@core/i18n/t';
 import { useCachedQuery } from '@hooks/useCachedQuery';
+import { openPaymentPage, useCheckoutStore } from '@stores/checkoutStore';
 import { useEntitlementStore } from '@stores/entitlementStore';
 import { openModal } from '@stores/modalStore';
 import { cancelDialogCopy, confirmPlanChange, planIntent } from './planIntent';
@@ -51,6 +54,15 @@ type BillingInterval = 'month' | 'year';
 function atInterval(plan: PlanDto, interval: BillingInterval): PlanDto {
   if (interval !== 'year' || plan.priceCents <= 0 || !plan.yearlyPriceLabel) return plan;
   return { ...plan, priceLabel: plan.yearlyPriceLabel, interval: 'year' };
+}
+
+/**
+ * Whether there is a subscription to change, not just one in the account's past.
+ * A lapsed subscriber still has `hasSubscription`, but coming back is a new
+ * checkout at full price, with nothing to prorate.
+ */
+function hasLiveSubscription(summary: BillingSummary): boolean {
+  return summary.hasSubscription && summary.plan.priceCents > 0;
 }
 
 /** "$7.50" — cents as dollars, trailing ".00" dropped (the server's own format). */
@@ -90,6 +102,13 @@ function comparisonRows(plans: readonly PlanDto[]): { label: string; cells: (str
     { label: t('billing.compare.fullEditor', 'The full editor — every effect, local projects and export'), cells: plans.map(() => true) },
     { label: t('billing.compare.aiAssistant', 'AI assistant with your own provider key'), cells: plans.map(() => true) },
     { label: t('billing.compare.connect', 'Connect Claude, ChatGPT, Cursor or Antigravity'), cells: plans.map(() => true) },
+    // Every Library card is public; only the premium payloads are the paid plan's.
+    {
+      label: t('billing.compare.library', 'Library templates, Lottie, transitions and sound effects'),
+      cells: plans.map((p) =>
+        p.id === 'free' ? t('billing.compare.libraryFree', 'Free items') : t('billing.compare.libraryAll', 'Everything'),
+      ),
+    },
     // Premation's own plugins are the paid plan's; third-party plugins stay free.
     { label: t('billing.compare.plugins', 'Premation plugins'), cells: plans.map((p) => p.id !== 'free') },
     {
@@ -132,8 +151,9 @@ export function currentPlanLine(summary: BillingSummary): string | null {
         : null;
   const head = interval ? `${summary.plan.name} · ${interval}` : summary.plan.name;
   if (!date) return head;
-  return ending
-    ? t('billing.planLine.ends', '{plan} · ends {date}', { plan: head, date: fmtDate(date) })
+  if (ending) return t('billing.planLine.ends', '{plan} · ends {date}', { plan: head, date: fmtDate(date) });
+  return summary.subscriptionStatus === 'on_trial'
+    ? t('billing.planLine.trial', '{plan} · free trial, first payment {date}', { plan: head, date: fmtDate(date) })
     : t('billing.planLine.renews', '{plan} · renews {date}', { plan: head, date: fmtDate(date) });
 }
 
@@ -156,7 +176,9 @@ type CancelChoice = 'refund' | 'period_end' | null;
  * choice is the safe default.
  */
 function confirmCancel(summary: BillingSummary): Promise<CancelChoice> {
-  const copy = cancelDialogCopy(summary.refund, summary.endsAt ?? summary.currentPeriodEnd);
+  const copy = cancelDialogCopy(summary.refund, summary.endsAt ?? summary.currentPeriodEnd, {
+    trial: summary.subscriptionStatus === 'on_trial',
+  });
   if (copy.mode === 'confirm') {
     return customConfirm(copy.title, copy.message, { confirmLabel: copy.confirmLabel, isDanger: true }).then(
       (ok) => (ok ? 'period_end' : null),
@@ -212,6 +234,98 @@ function readError(err: unknown): string {
   return msg || (err instanceof Error ? err.message : t('billing.error.generic', 'Something went wrong.'));
 }
 
+/** The server's refusal code, for the two that mean this page is out of date. */
+function refusalCode(err: unknown): string | undefined {
+  const body = (err as { body?: { code?: string; message?: string | { code?: string } } }).body;
+  return body?.code ?? (typeof body?.message === 'object' ? body.message.code : undefined);
+}
+
+/**
+ * The checkout open in the browser. The app stays usable behind it, so this says
+ * what is going on and offers the ways out of a browser that never opened, a
+ * tab that got closed, and a confirmation that is late.
+ */
+function CheckoutPanel(): JSX.Element | null {
+  const phase = useCheckoutStore((s) => s.phase);
+  const url = useCheckoutStore((s) => s.url);
+  const openFailed = useCheckoutStore((s) => s.openFailed);
+  const reopen = useCheckoutStore((s) => s.reopen);
+  const checkNow = useCheckoutStore((s) => s.checkNow);
+  const dismiss = useCheckoutStore((s) => s.dismiss);
+  const [copied, setCopied] = useState(false);
+  const panel = useRef<HTMLDivElement>(null);
+  const shown = phase !== 'idle';
+
+  // The button that started this can sit far down a long page.
+  useEffect(() => {
+    if (shown) panel.current?.scrollIntoView?.({ block: 'nearest' });
+  }, [shown]);
+
+  if (!shown) return null;
+
+  const copyLink = (): void => {
+    if (!url) return;
+    void navigator.clipboard.writeText(url).then(() => setCopied(true), () => undefined);
+  };
+
+  const copy =
+    phase === 'browser'
+      ? openFailed
+        ? {
+            title: t('billing.checkout.openFailedTitle', 'Your browser did not open'),
+            body: t('billing.checkout.openFailedBody', 'Try again, or copy the link and paste it into any browser to finish.'),
+          }
+        : {
+            title: t('billing.checkout.browserTitle', 'Finish checkout in your browser'),
+            body: t(
+              'billing.checkout.browserBody',
+              'Your plan updates here as soon as you are done. You can keep working in the meantime.',
+            ),
+          }
+      : phase === 'confirming'
+        ? {
+            title: t('billing.checkout.confirmingTitle', 'Confirming your subscription…'),
+            body: t('billing.checkout.confirmingBody', 'This usually takes a few seconds.'),
+          }
+        : {
+            title: t('billing.checkout.delayedTitle', 'This is taking longer than usual'),
+            body: t(
+              'billing.checkout.delayedBody',
+              'If you finished checkout, your plan updates here on its own, usually within a few minutes.',
+            ),
+          };
+
+  return (
+    <div className={styles.callout} role="status" ref={panel}>
+      <Icon name={openFailed ? 'warning' : 'info'} size="sm" className={styles.calloutIcon} />
+      <div className={styles.calloutBody}>
+        <strong>{copy.title}</strong>
+        <span>{copy.body}</span>
+        <div className={styles.calloutActions}>
+          {phase === 'browser' ? (
+            <Button variant="secondary" size="sm" onClick={() => void reopen()}>
+              {openFailed ? t('billing.checkout.tryAgain', 'Try again') : t('billing.checkout.reopen', 'Open checkout again')}
+            </Button>
+          ) : null}
+          {phase === 'browser' ? (
+            <Button variant="ghost" size="sm" onClick={copyLink}>
+              {copied ? t('billing.checkout.copied', 'Link copied') : t('billing.checkout.copyLink', 'Copy link')}
+            </Button>
+          ) : null}
+          {phase === 'delayed' ? (
+            <Button variant="secondary" size="sm" onClick={() => void checkNow()}>
+              {t('billing.checkout.checkNow', 'Check now')}
+            </Button>
+          ) : null}
+          <Button variant="ghost" size="sm" onClick={dismiss}>
+            {t('billing.checkout.dismiss', 'Dismiss')}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** The memo key for this page's data — shared with the dashboard's hover prefetch. */
 export const BILLING_QUERY_KEY = 'billing:summary+plans';
 
@@ -237,6 +351,9 @@ export function BillingSection(): JSX.Element | null {
   const [busy, setBusy] = useState<string | null>(null);
   const [billingInterval, setBillingInterval] = useState<BillingInterval>('month');
   const handledReturn = useRef(false);
+  // One checkout at a time: a second would be a second subscription.
+  const checkoutOpen = useCheckoutStore((s) => s.phase !== 'idle');
+  const portalOpen = useRef(false);
 
   // Every answer, first or refreshed, is also the entitlement the rest of the
   // app gates on.
@@ -246,6 +363,7 @@ export function BillingSection(): JSX.Element | null {
       access: summary.access,
       message: summary.access.write ? '' : summary.statusMessage,
       salesOpen: paidSalesOpen(plans),
+      offer: paidOffer(plans, trialOpenTo(summary)),
     });
   }, [summary, plans]);
 
@@ -292,8 +410,12 @@ export function BillingSection(): JSX.Element | null {
       .then(async ({ resynced }) => {
         await load(true);
         await useEntitlementStore.getState().refresh({ force: true });
+        // A trial checkout takes no money, so "payment confirmed" would be untrue.
+        const { subscriptionStatus } = await api.getBilling();
         setNotice(
-          resynced
+          subscriptionStatus === 'on_trial'
+            ? t('billing.notice.trialStarted', 'Your free trial has started. The full Library and Premation plugins are ready.')
+            : resynced
             ? t('billing.notice.paymentConfirmed', 'Payment confirmed. Your plan and access are up to date.')
             : t(
                 'billing.notice.checkoutCompleted',
@@ -307,6 +429,17 @@ export function BillingSection(): JSX.Element | null {
         setSearchParams(next, { replace: true });
       });
   }, [load, searchParams, setSearchParams]);
+
+  // Back from the customer portal in the browser, where anything may have changed.
+  useEffect(() => {
+    const onFocus = (): void => {
+      if (!portalOpen.current) return;
+      portalOpen.current = false;
+      void load(true).then(() => useEntitlementStore.getState().refresh({ force: true }));
+    };
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [load]);
 
   // There are no plans to be on in the local edition. Renders nothing at all —
   // after the hooks above, so hook order is identical in both editions — which
@@ -328,6 +461,10 @@ export function BillingSection(): JSX.Element | null {
     try {
       await fn();
     } catch (err) {
+      // Paid in another tab, or sales closed since this page loaded: redraw from
+      // the truth, or the same button stays there refusing.
+      const code = refusalCode(err);
+      if (code === 'already_subscribed' || code === 'sales_closed') await load(true);
       setError(readError(err));
     } finally {
       setBusy(null);
@@ -338,7 +475,7 @@ export function BillingSection(): JSX.Element | null {
     result: { action?: string; url?: string; planId?: string; interval?: string; amountLabel?: string },
   ): Promise<void> => {
     if (result.url) {
-      window.location.href = result.url;
+      await useCheckoutStore.getState().begin(result.url);
       return;
     }
     await load(true);
@@ -346,7 +483,7 @@ export function BillingSection(): JSX.Element | null {
     const messages: Record<string, string> = {
       upgraded: t(
         'billing.notice.upgraded',
-        'Welcome to Premation Cloud. Unlimited cloud projects and the longer history apply now.',
+        'Welcome to Premation Cloud. The full Library, Premation plugins and unlimited cloud projects are ready.',
       ),
       downgraded: t('billing.notice.downgraded', 'Plan switched. The new rate applies on the next invoice.'),
       cancelled: t('billing.notice.cancelled', 'Cancellation scheduled. You keep paid access until the date shown above.'),
@@ -411,7 +548,7 @@ export function BillingSection(): JSX.Element | null {
     if (!summary) return Promise.resolve();
     const intent = planIntent(summary.plan, plan, {
       cancelled: Boolean(summary.subscriptionCancelled),
-      hasSubscription: summary.hasSubscription,
+      hasSubscription: hasLiveSubscription(summary),
     });
     if (intent.kind === 'cancel') return cancelFlow();
     return run(plan.id, async () => {
@@ -434,7 +571,13 @@ export function BillingSection(): JSX.Element | null {
   const portal = (): Promise<void> =>
     run('portal', async () => {
       const { url } = await api.openBillingPortal();
-      window.location.href = url;
+      if ((await openPaymentPage(url).catch(() => null)) === null) {
+        setError(t('billing.portal.openFailed', 'Your browser did not open. Check your default browser and try again.'));
+        return;
+      }
+      if (!window.motionEditor?.oauth) return;
+      portalOpen.current = true;
+      setNotice(t('billing.portal.opened', 'Opened in your browser. Changes you make there show here when you come back.'));
     });
 
   const resync = (): Promise<void> =>
@@ -475,7 +618,11 @@ export function BillingSection(): JSX.Element | null {
     salesOpen || Boolean(summary?.hasSubscription) || (summary?.plan.priceCents ?? 0) > 0;
   // The monthly/yearly switch appears only when the server sells a yearly variant.
   const yearlyOffered = plans.some((p) => p.priceCents > 0 && Boolean(p.yearlyPriceLabel));
-  const shownPlans = plans.map((p) => atInterval(p, yearlyOffered ? billingInterval : 'month'));
+  // The catalog advertises the trial to everyone; an account gets one.
+  const trialOpen = summary ? trialOpenTo(summary) : false;
+  const shownPlans = plans.map((p) =>
+    atInterval(trialOpen ? p : { ...p, trialDays: 0 }, yearlyOffered ? billingInterval : 'month'),
+  );
   const usage = summary?.cloudProjects;
   const monthsFree = Math.max(0, ...plans.map(yearlyMonthsFree));
   const rows = comparisonRows(plans);
@@ -500,6 +647,8 @@ export function BillingSection(): JSX.Element | null {
         : 'year'
       : null;
   const canCancel = subscriptionLive && !cancellationPending && !refunded;
+  const onTrial = summary?.subscriptionStatus === 'on_trial';
+  const planLocked = busy !== null || checkoutOpen;
 
   return (
     <div className={styles.section}>
@@ -528,7 +677,9 @@ export function BillingSection(): JSX.Element | null {
                       ? t('billing.badge.cancellationScheduled', 'Cancellation Scheduled')
                       : isBeta
                         ? t('billing.badge.beta', 'Beta Access')
-                        : access?.reason === 'active' || access?.reason === 'grace'
+                        : summary.subscriptionStatus === 'on_trial'
+                          ? t('billing.badge.trial', 'Free Trial')
+                          : access?.reason === 'active' || access?.reason === 'grace'
                           ? t('billing.badge.active', 'Active Subscription')
                           : access?.reason === 'staff'
                             ? t('billing.badge.operator', 'Operator')
@@ -568,7 +719,11 @@ export function BillingSection(): JSX.Element | null {
                   ) : null}
                   {canCancel ? (
                     <Button variant="ghost" size="sm" disabled={busy !== null} onClick={() => void cancelFlow()}>
-                      {busy === 'cancel' ? t('billing.working', 'Working…') : t('billing.cancel.button', 'Cancel subscription')}
+                      {busy === 'cancel'
+                        ? t('billing.working', 'Working…')
+                        : onTrial
+                          ? t('billing.cancel.trialConfirm', 'Cancel trial')
+                          : t('billing.cancel.button', 'Cancel subscription')}
                     </Button>
                   ) : null}
                 </div>
@@ -588,7 +743,9 @@ export function BillingSection(): JSX.Element | null {
                 <span className={styles.metaLabel}>
                   {summary.subscriptionStatus === 'cancelled'
                     ? t('billing.meta.paidThrough', 'Access paid through')
-                    : t('billing.meta.periodEnds', 'Current period ends')}
+                    : onTrial
+                      ? t('billing.meta.trialEnds', 'Free trial ends')
+                      : t('billing.meta.periodEnds', 'Current period ends')}
                 </span>
                 <span className={styles.metaValue}>
                   {new Date(summary.currentPeriodEnd).toLocaleDateString()}
@@ -627,12 +784,14 @@ export function BillingSection(): JSX.Element | null {
                 <Button
                   variant="primary"
                   size="sm"
-                  disabled={busy !== null}
+                  disabled={planLocked}
                   onClick={() => void choosePlan(upgradeTo)}
                 >
                   {busy === upgradeTo.id
                     ? t('billing.working', 'Working…')
-                    : t('billing.upgradeTo', 'Upgrade to {plan}', { plan: upgradeTo.name })}
+                    : upgradeTo.trialDays
+                      ? t('billing.intent.startTrial', 'Start {days}-day free trial', { days: upgradeTo.trialDays })
+                      : t('billing.upgradeTo', 'Upgrade to {plan}', { plan: upgradeTo.name })}
                 </Button>
               ) : null
             }
@@ -713,6 +872,8 @@ export function BillingSection(): JSX.Element | null {
         </div>
       )}
 
+      <CheckoutPanel />
+
       {error ? (
         <div className={styles.errorAlert} role="alert">
           <Icon name="warning" size="sm" />
@@ -765,7 +926,7 @@ export function BillingSection(): JSX.Element | null {
               {salesOpen
                 ? t(
                     'billing.plans.descOpen',
-                    'The editor is free. Premation Cloud is the hosting: more cloud projects and longer history. Cancel anytime.',
+                    'The editor is free. Premation Cloud adds the full Library, Premation plugins, unlimited cloud projects and longer history. Cancel anytime.',
                   )
                 : t(
                     'billing.plans.descPaused',
@@ -801,7 +962,7 @@ export function BillingSection(): JSX.Element | null {
               const current = p.id === summary.plan.id;
               const intent = planIntent(summary.plan, p, {
                 cancelled: cancellationPending,
-                hasSubscription: summary.hasSubscription,
+                hasSubscription: hasLiveSubscription(summary),
               });
               const thisBusy = busy === p.id;
               return (
@@ -833,6 +994,19 @@ export function BillingSection(): JSX.Element | null {
                         })}
                       </p>
                     ) : null}
+                    {p.trialDays && p.trialDays > 0 && p.purchasable !== false ? (
+                      <p className={styles.priceSub}>
+                        {p.interval === 'year'
+                          ? t('billing.plan.trialYearly', '{days} days free, then {price}/year. Cancel before then and you pay nothing.', {
+                              days: p.trialDays,
+                              price: p.priceLabel,
+                            })
+                          : t('billing.plan.trialMonthly', '{days} days free, then {price}/month. Cancel before then and you pay nothing.', {
+                              days: p.trialDays,
+                              price: p.priceLabel,
+                            })}
+                      </p>
+                    ) : null}
                   </div>
 
                   {p.description ? <p className={styles.planDescription}>{p.description}</p> : null}
@@ -858,7 +1032,7 @@ export function BillingSection(): JSX.Element | null {
                         variant={intent.kind === 'cancel' ? 'ghost' : 'primary'}
                         size="sm"
                         fullWidth
-                        disabled={busy !== null}
+                        disabled={planLocked}
                         onClick={() => void choosePlan(p)}
                       >
                         {thisBusy ? t('billing.working', 'Working…') : intent.label}
@@ -956,6 +1130,7 @@ export function BillingSection(): JSX.Element | null {
                   'billing.security',
                   'Payments processed securely by Lemon Squeezy. Cancel anytime — your projects are never deleted.',
                 )}
+                {window.motionEditor?.oauth ? ` ${t('billing.opensInBrowser', 'Checkout opens in your web browser.')}` : ''}
               </span>
             </div>
           </div>

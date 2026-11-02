@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Premation Cloud product image</title>
+<!-- Source of the Lemon Squeezy product image. The posters are the real Library
+     items from ~/dev/premation-library and the Deep Glow listing cover.
+     Render: run render-image.sh beside this file, which fetches them first. -->
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root { --bg: #0b0d11; --ink: #f4f6f9; --ink-2: #a6adb8; --line: rgba(255, 255, 255, .1); --blue: #4097ff; }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: 100%; height: 100%; background: var(--bg); overflow: hidden; }
+  body { font-family: Geist, "Segoe UI", sans-serif; color: var(--ink); position: relative; }
+
+  .copy { position: absolute; z-index: 2; display: flex; flex-direction: column; }
+  .brand { display: flex; align-items: center; gap: 16px; font-size: 32px; font-weight: 600; letter-spacing: -.02em; }
+  .brand img { height: 44px; }
+  h1 { font-weight: 600; letter-spacing: -.04em; line-height: 1.02; text-wrap: balance; }
+  ul { list-style: none; padding: 0; display: grid; }
+  li { display: flex; align-items: center; gap: 14px; color: var(--ink-2); font-weight: 500; border-top: 1px solid var(--line); }
+  li::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 2px; background: var(--blue); }
+
+  .shelf { position: absolute; display: grid; grid-template-columns: repeat(var(--cols), 1fr); gap: 14px; }
+  .col { display: flex; flex-direction: column; gap: 14px; }
+  .col img { display: block; width: 100%; border-radius: 8px; outline: 1px solid var(--line); outline-offset: -1px; }
+
+  /* Landscape: words left, the shelf bleeding off the top, right and bottom. */
+  body.landscape .copy { left: 84px; top: 84px; bottom: 84px; width: 600px; justify-content: space-between; }
+  body.landscape h1 { font-size: 88px; }
+  body.landscape li { font-size: 25px; padding: 19px 0; }
+  body.landscape { --cols: 3; }
+  body.landscape .col:nth-child(4) { display: none; }
+  body.landscape .shelf { left: 740px; right: -90px; top: -120px; }
+
+  /* Square: words on top, the shelf bleeding off three sides below them. */
+  body.square .copy { left: 72px; right: 72px; top: 68px; gap: 34px; }
+  body.square h1 { font-size: 84px; max-width: 16ch; }
+  body.square ul { display: none; }
+  body.square { --cols: 4; }
+  body.square .shelf { left: -70px; right: -70px; top: 370px; }
+  body.square .col:nth-child(even) { margin-top: 56px; }
+
+  body.landscape .col:nth-child(2) { margin-top: -130px; }
+  body.landscape .col:nth-child(3) { margin-top: 70px; }
+</style>
+</head>
+<body>
+  <div class="copy">
+    <div class="brand"><img src="brand-mark.png" alt=""><span>Premation Cloud</span></div>
+    <h1>Start from more than a blank comp.</h1>
+    <ul>
+      <li>The full Library</li>
+      <li>Premation plugins</li>
+      <li>Unlimited cloud projects</li>
+      <li>90 days of version history</li>
+    </ul>
+  </div>
+  <div class="shelf">
+    <div class="col">
+      <img src="posters/chrome-horizon.webp" alt="">
+      <img src="posters/festival-poster.webp" alt="">
+      <img src="posters/aurora-title.webp" alt="">
+      <img src="posters/bento-feature-reel.webp" alt="">
+      <img src="posters/data-story.webp" alt="">
+    </div>
+    <div class="col">
+      <img src="posters/liquid-glass-app.webp" alt="">
+      <img src="posters/swiss-grid-opener.webp" alt="">
+      <img src="posters/editorial-split.webp" alt="">
+      <img src="posters/pulse-dashboard.webp" alt="">
+      <img src="posters/maison-slideshow.webp" alt="">
+      <img src="posters/podcast-audiogram.webp" alt="">
+    </div>
+    <div class="col">
+      <img src="posters/deep-glow.jpg" alt="">
+      <img src="posters/drop-story.webp" alt="">
+      <img src="posters/product-spotlight.webp" alt="">
+      <img src="posters/grain-orb-sting.webp" alt="">
+      <img src="posters/polaroid-stack.webp" alt="">
+    </div>
+    <div class="col">
+      <img src="posters/launch-story.webp" alt="">
+      <img src="posters/testimonial-card.webp" alt="">
+      <img src="posters/trailer-title.webp" alt="">
+      <img src="posters/editorial-quote.webp" alt="">
+    </div>
+  </div>
+<script>document.body.className = new URLSearchParams(location.search).get('size') || 'landscape';</script>
+</body>
+</html>

@@ -59,8 +59,8 @@ export function TrackConfidenceGraph({ result, time, corrections, minConfidence 
       </svg>
       <figcaption className={styles.cardHint}>
         {low > 0
-          ? t('inspector.trackConfidence.captionWeak', 'Confidence per point · {n} weak or coasted frames (shaded). Drag a point on a weak frame to correct it, then track on.', { n: low })
-          : t('inspector.trackConfidence.caption', 'Confidence per point. Drag a point on a weak frame to correct it, then track on.')}
+          ? t('inspector.trackConfidence.captionWeakShort', 'Confidence · {n} weak frames shaded', { n: low })
+          : t('inspector.trackConfidence.captionShort', 'Confidence per point')}
       </figcaption>
     </figure>
   );

@@ -52,6 +52,12 @@ describe('catalog rows', () => {
     expect(sanitizeCatalog(null)).toEqual([]);
     warn.mockRestore();
   });
+
+  it('takes absent media as null (the launch server sent audio: null on every template)', () => {
+    const [row] = sanitizeCatalog({ items: [{ ...META, audio: null }] });
+    expect(row?.id).toBe('pro.template.aurora-title');
+    expect(row && 'audio' in row).toBe(false);
+  });
 });
 
 // ── Transitions ───────────────────────────────────────────────────

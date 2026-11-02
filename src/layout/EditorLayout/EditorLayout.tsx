@@ -33,6 +33,8 @@ import { Icon } from '@components/Icon';
 import { useLayoutStore, COLLAPSED_SIDEBAR_SIZE, MIN_VIEWER_PX, type RegionId } from '@stores/layoutStore';
 import { installAutoTrack } from '@layout/Workspace/autoTrack';
 import { installSubjectTransformHint } from '@layout/Workspace/subjectTransformHint';
+import { Button } from '@components/Button';
+import { installPopoutWindows, popOutPanel } from './popoutWindows';
 import styles from './EditorLayout.module.css';
 import { t } from '@core/i18n';
 
@@ -74,6 +76,8 @@ export function EditorLayout({
   useEffect(() => installAutoTrack(), []);
   // Dragging a layer that has subjects moves the whole clip: say so, offer to separate the subject.
   useEffect(() => installSubjectTransformHint(), []);
+  // Pop-out windows open, close and re-dock with the layout store's external panels.
+  useEffect(() => installPopoutWindows(), []);
   const left = useLayoutStore((s) => s.regions.leftSidebar);
   const right = useLayoutStore((s) => s.regions.rightInspector);
   const bottom = useLayoutStore((s) => s.regions.bottomTimeline);
@@ -159,11 +163,16 @@ export function EditorLayout({
     <div className={styles.workspacePane} key="viewport">
       {isViewportExternal ? (
           <div className={styles.detached}>
-            <Icon name="export" size="lg" />
-            <span className={styles.detachedLabel}>{t('editor.layout.previewExternal', 'Preview Canvas is open in an external window')}</span>
-            <button className={styles.detachedAction} onClick={() => dockPanel('viewport')}>
-              {t('editor.layout.redockPreview', 'Re-dock preview')}
-            </button>
+            <Icon name="pop-out" size="lg" />
+            <span className={styles.detachedLabel}>{t('editor.layout.viewerInWindow', 'The Composition viewer is in its own window')}</span>
+            <div className={styles.detachedActions}>
+              <Button size="sm" variant="ghost" onClick={() => popOutPanel('viewport')}>
+                {t('editor.layout.showWindow', 'Show Window')}
+              </Button>
+              <Button size="sm" variant="primary" onClick={() => dockPanel('viewport')}>
+                {t('editor.layout.dockHere', 'Dock Here')}
+              </Button>
+            </div>
           </div>
         ) : (
           // The viewport is handed to the tab strip as its permanent
@@ -203,11 +212,16 @@ export function EditorLayout({
     <div className={styles.timelinePane} key="timeline">
       {isTimelineExternal ? (
         <div className={`${styles.detached} ${styles.detachedRow}`}>
-          <Icon name="export" size="md" />
-          <span className={styles.detachedLabel}>{t('editor.layout.timelineExternal', 'Timeline is open in an external window')}</span>
-          <button className={styles.detachedAction} onClick={() => dockPanel('timeline')}>
-            {t('editor.layout.redockTimeline', 'Re-dock timeline')}
-          </button>
+          <Icon name="pop-out" size="md" />
+          <span className={styles.detachedLabel}>{t('editor.layout.timelineInWindow', 'The Timeline is in its own window')}</span>
+          <div className={styles.detachedActions}>
+            <Button size="sm" variant="ghost" onClick={() => popOutPanel('timeline')}>
+              {t('editor.layout.showWindow', 'Show Window')}
+            </Button>
+            <Button size="sm" variant="primary" onClick={() => dockPanel('timeline')}>
+              {t('editor.layout.dockHere', 'Dock Here')}
+            </Button>
+          </div>
         </div>
       ) : (
         timeline

@@ -12,7 +12,9 @@ import { AiChatProvider } from '@layout/AiChat/AiChatContext';
 import { panelIdFromPopoutSegment } from '@core/layout/popoutPath';
 import { t } from '@core/i18n';
 import { pluginContribRevision, pluginPanel, subscribePluginContrib } from '@core/nativePlugins/pluginContrib';
+import { EmptyState } from '@components/EmptyState';
 import { Providers } from '../providers/Providers';
+import styles from './PopoutRoute.module.css';
 
 function PopoutContent(): JSX.Element {
   // The segment is encoded (a plugin panel's id holds a '/': core/layout/popoutPath.ts).
@@ -39,14 +41,10 @@ function PopoutContent(): JSX.Element {
     // replica refreshes from `exportDocument`, the mirror follows the engine).
   }, [panelId, panel, contrib]);
 
-  if (!panelId) {
-    return <div style={{ color: '#fff', padding: 20 }}>{t('pages.popout.noPanelId', 'No panel ID specified.')}</div>;
-  }
-
-  // Handle special full-screen popout types: Viewport, Timeline, Presentation Mode
+  // Special full-window pop-outs: Viewport, Timeline, Presentation Mode.
   if (panelId === 'viewport') {
     return (
-      <div style={{ width: '100%', height: '100%', background: '#121213', overflow: 'hidden' }}>
+      <div className={styles.fill}>
         <WorkspaceViewport />
       </div>
     );
@@ -54,7 +52,7 @@ function PopoutContent(): JSX.Element {
 
   if (panelId === 'timeline') {
     return (
-      <div style={{ width: '100%', height: '100%', background: '#121213', overflow: 'hidden' }}>
+      <div className={styles.fill}>
         <PopoutTimeline />
       </div>
     );
@@ -64,29 +62,27 @@ function PopoutContent(): JSX.Element {
     return <PresentationModeWindow />;
   }
 
-  const renderers = getAllPanelRenderers();
+  const renderers = panelId ? getAllPanelRenderers() : {};
   // P7d: a plugin panel resolves by its id even before this window knows the plugin list.
-  const renderContent = renderers[panelId] ?? pluginToolPanelRenderer(panelId);
+  const renderContent = panelId ? renderers[panelId] ?? pluginToolPanelRenderer(panelId) : undefined;
 
   return (
-    <div
-      style={{
-        width: '100%',
-        height: '100%',
-        background: 'var(--color-surface-1, #121213)',
-        color: 'var(--color-text-primary)',
-        display: 'flex',
-        flexDirection: 'column',
-        overflow: 'hidden',
-      }}
-    >
+    <div className={styles.panel}>
       {/* No header row: the window's title bar names the panel (TitleBar). */}
-      <div style={{ flex: 1, overflow: 'auto', position: 'relative' }}>
+      <div className={styles.body}>
         {/* The AI panel reads its chat state from <AiChatProvider>, which only
             EditorShell mounts — a popped-out AI panel needs its own. */}
         {renderContent
           ? (panelId === 'ai' ? <AiChatProvider>{renderContent()}</AiChatProvider> : renderContent())
-          : <div style={{ padding: 20 }}>{t('pages.popout.panelContent', 'Panel Content ({panelId})', { panelId })}</div>}
+          : (
+            <EmptyState
+              icon="pop-out"
+              title={t('pages.popout.unavailableTitle', 'Nothing to show here')}
+              message={t('pages.popout.unavailable', 'This panel is not available in a separate window.')}
+              // Closing the window docks the panel back (EditorLayout/popoutWindows).
+              action={{ label: t('pages.popout.dockBack', 'Dock Back'), onClick: () => void (window.electronAPI?.window?.close?.() ?? window.close()) }}
+            />
+          )}
       </div>
     </div>
   );

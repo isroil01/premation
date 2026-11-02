@@ -28,7 +28,8 @@ const std::map<std::string, std::string, std::less<>>& effect_table() {
     {"CC Radial Blur", "radial-blur"},
     {"CC Radial Fast Blur", "radial-fast-blur"},
     {"CC Vector Blur", "vector-blur"},
-    {"ADBE Glo2", "glow"},
+    // AE's Glow brightens what is above a threshold in its own colours: a bloom, not our coloured halo.
+    {"ADBE Glo2", "vr-glow"},
     {"ADBE Drop Shadow", "drop-shadow"},
     {"ADBE Radial Shadow", "radial-shadow"},
     {"ADBE Bevel Alpha", "bevel-alpha"},

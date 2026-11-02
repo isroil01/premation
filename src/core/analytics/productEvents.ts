@@ -141,20 +141,71 @@ export function trackProjectCreated(source?: ProjectSource): void {
  */
 export function failureReason(err: unknown): string {
   const message = err instanceof Error ? err.message : typeof err === 'string' ? err : '';
+  // An engine refusal keeps its code (`busy`, `timeout`, `decode`…): the
+  // class name alone filed every one of them under `EngineRequestError`.
+  const engineCode = (err as { name?: unknown; code?: unknown } | null)?.name === 'EngineRequestError'
+    ? (err as { code?: unknown }).code
+    : undefined;
+  if (typeof engineCode === 'string') return asCode(`engine_${engineCode}`);
+  // A main-process handler that threw reaches the page as a PLAIN Error —
+  // "Error invoking remote method 'file:readFile': …" — which the dashboard
+  // showed as `Error`. The channel is ours (never user data) and says where.
+  const ipc = /Error invoking remote method '([^']+)'/.exec(message);
+  if (ipc) return asCode(`ipc_${ipc[1]!.replace(/[^A-Za-z0-9_-]/g, '-')}`);
   const rules: Array<[RegExp, string]> = [
     [/out of memory|\boom\b|allocation failed|array buffer allocation/i, 'out_of_memory'],
+    [/Maximum call stack|stack overflow/i, 'stack_overflow'],
     [/ENOSPC|no space left|disk (is )?full|quota/i, 'disk_full'],
     [/EACCES|EPERM|permission denied|not allowed to/i, 'permission'],
-    [/device (was )?lost|webgpu|gpu/i, 'gpu'],
+    // The engine process: a request that outlived a restart, a hang, the
+    // supervisor giving up — before `timed out` could call it the network.
+    [/premation-engine|\bengine\b/i, 'engine'],
+    [/device (was )?lost|webgpu|gpu|shader|wgsl|pipeline/i, 'gpu'],
     [/encoder|encode|codec|VideoEncoder|AudioEncoder|ffmpeg/i, 'encoder'],
     [/decode|demux|corrupt|invalid data/i, 'decode'],
     [/unsupported|not supported/i, 'unsupported'],
-    [/network|failed to fetch|timed? ?out|offline/i, 'network'],
+    [/network|failed to fetch|timed? ?out|offline|ECONNREFUSED|ECONNRESET|EPIPE|\b(401|403|404|429|5\d\d)\b/i, 'network'],
     [/no audible audio/i, 'no_audio'],
+    [/\bfont\b/i, 'font'],
+    [/\bjson\b|unexpected token|parse/i, 'parse'],
+    [/not found|no such|missing|does not exist/i, 'missing'],
+    [/assert|invariant|expected/i, 'assertion'],
   ];
   for (const [re, code] of rules) if (re.test(message)) return code;
   const name = err instanceof Error ? err.name : '';
+  // A plain `Error` says nothing on a dashboard; the error's source says a little.
+  if (name === 'Error') return message ? 'error' : 'error_empty';
   return /^[A-Za-z0-9_-]{1,48}$/.test(name) ? name : 'unknown';
+}
+
+/** A code the server keeps (`[A-Za-z0-9_-]{1,48}`, motion-back product-analytics). */
+function asCode(raw: string): string {
+  const code = raw.replace(/[^A-Za-z0-9_-]/g, '-').slice(0, 48);
+  return code || 'unknown';
+}
+
+/**
+ * The C++ engine crashed or hung and the supervisor restarted it (or gave
+ * up). The page survives that, so no error event ever fired: an engine crash
+ * — the one the user sees as a frozen viewer and a "restarted" toast — was
+ * missing from the dashboard altogether.
+ */
+export function trackEngineRestart(cause: string): void {
+  trackCrashCode('worker', `engine_${cause}`);
+}
+
+/**
+ * The previous page died under the user (out of memory, a renderer crash):
+ * main remembers why and the reloaded page reports it — the dead page could not.
+ */
+export function trackRendererGone(reason: string): void {
+  trackCrashCode('window', `renderer_${reason}`);
+}
+
+function trackCrashCode(source: 'window' | 'worker', reason: string): void {
+  if (crashes >= MAX_CRASHES_PER_SESSION) return;
+  crashes++;
+  track('crash', { source, reason: asCode(reason) });
 }
 
 /** A crash, deduplicated and capped per session. */
@@ -345,6 +396,11 @@ export function installProductAnalytics(): () => void {
 
   // Signed in already (a restored session): this launch is an app open.
   trackOnce('app_opened');
+
+  // The page before this one died (main reloaded it): say why, now that a page can.
+  void window.motionEditor?.app?.takeRendererGone?.()
+    .then((reason) => { if (reason) trackRendererGone(reason); })
+    .catch(() => { /* an older shell without the channel */ });
 
   return () => {
     for (const s of subs) s.dispose();

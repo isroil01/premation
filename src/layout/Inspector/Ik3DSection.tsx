@@ -208,8 +208,8 @@ export function Ik3DSection({ nodeId }: { nodeId: string }): JSX.Element | null 
 
       <p className={s.hint}>
         {target
-          ? t('inspector.ik3d.bakeHelp', 'Bake writes real rotation keyframes on every joint but the tip — the graph editor and The Smoother work on them like any other animation.')
-          : t('inspector.ik3d.pickHelp', 'Pick the layer the chain should reach for. Damping is the largest turn one joint takes per solver step.')}
+          ? t('inspector.ik3d.bakeHelpShort', 'Bake writes rotation keys on every joint but the tip.')
+          : t('inspector.ik3d.pickHelpShort', 'Pick the layer the chain reaches for.')}
       </p>
     </div>
   );

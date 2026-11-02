@@ -37,7 +37,9 @@ export function sanitizeCatalog(raw: unknown): PremiumCatalogItem[] {
       console.warn(`[library] skipped a catalog row: ${problem}`);
       continue;
     }
-    const item = row as PremiumCatalogItem;
+    const item = { ...(row as PremiumCatalogItem) };
+    // Absent media as null → absent, the shape PremiumCatalogItem promises.
+    for (const k of ['poster', 'preview', 'audio'] as const) if (item[k] === null) delete item[k];
     if (seen.has(item.id)) continue;
     seen.add(item.id);
     out.push(item);

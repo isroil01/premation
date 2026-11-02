@@ -1,7 +1,9 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { BillingSection, checkoutReturnState, currentPlanLine, yearlyMonthsFree } from './BillingSection';
 import { api, type BillingSummary, type PlanDto } from '@core/api/client';
+import { useCheckoutStore } from '@stores/checkoutStore';
+import { useEntitlementStore } from '@stores/entitlementStore';
 import { useModalStore } from '@stores/modalStore';
 import { resetCachedQueriesForTests } from '@hooks/useCachedQuery';
 
@@ -126,6 +128,70 @@ describe('BillingSection', () => {
     const yearly = screen.getByRole('button', { name: 'Subscribe — $90/yr' });
     fireEvent.click(yearly);
     await waitFor(() => expect(api.startCheckout).toHaveBeenCalledWith('pro', 'year'));
+  });
+
+  describe('on desktop', () => {
+    const CHECKOUT = 'https://premation.lemonsqueezy.com/checkout/custom/abc';
+    let openExternal: jest.Mock;
+
+    beforeEach(() => {
+      openExternal = jest.fn().mockResolvedValue(undefined);
+      (window as unknown as { motionEditor: unknown }).motionEditor = { oauth: { openExternal } };
+    });
+
+    afterEach(() => {
+      act(() => useCheckoutStore.getState().dismiss());
+      delete (window as unknown as { motionEditor?: unknown }).motionEditor;
+    });
+
+    it('keeps the app and sends checkout to the browser, one at a time', async () => {
+      jest.mocked(api.startCheckout).mockResolvedValue({ action: 'checkout', url: CHECKOUT });
+      renderBilling();
+      fireEvent.click(await screen.findByRole('button', { name: 'Subscribe — $19/mo' }));
+
+      expect(await screen.findByText('Finish checkout in your browser')).toBeInTheDocument();
+      expect(openExternal).toHaveBeenCalledWith(CHECKOUT);
+      expect(screen.getByRole('button', { name: 'Subscribe — $19/mo' })).toBeDisabled();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+      expect(screen.queryByText('Finish checkout in your browser')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Subscribe — $19/mo' })).toBeEnabled();
+    });
+
+    it('offers the link by hand when the browser will not open', async () => {
+      openExternal.mockRejectedValue(new Error('no browser'));
+      jest.mocked(api.startCheckout).mockResolvedValue({ action: 'checkout', url: CHECKOUT });
+      renderBilling();
+      fireEvent.click(await screen.findByRole('button', { name: 'Subscribe — $19/mo' }));
+
+      expect(await screen.findByText('Your browser did not open')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Copy link' })).toBeInTheDocument();
+    });
+
+    it('opens the portal in the browser and redraws on coming back', async () => {
+      jest.mocked(api.getBilling).mockResolvedValue(
+        summary({ plan: plans[1]!, hasSubscription: true, subscriptionStatus: 'active' }),
+      );
+      jest.mocked(api.openBillingPortal).mockResolvedValue({ url: 'https://portal.test/x' });
+      renderBilling();
+      fireEvent.click(await screen.findByRole('button', { name: 'Manage payment method' }));
+      expect(await screen.findByText(/Opened in your browser/)).toBeInTheDocument();
+      expect(openExternal).toHaveBeenCalledWith('https://portal.test/x');
+
+      jest.mocked(api.getBilling).mockClear();
+      window.dispatchEvent(new Event('focus'));
+      await waitFor(() => expect(api.getBilling).toHaveBeenCalledWith({ force: true }));
+    });
+
+    it('redraws when the server says this account already subscribed', async () => {
+      jest.mocked(api.startCheckout).mockRejectedValue(
+        Object.assign(new Error('refused'), { body: { code: 'already_subscribed', message: 'You already have an active subscription.' } }),
+      );
+      renderBilling();
+      fireEvent.click(await screen.findByRole('button', { name: 'Subscribe — $19/mo' }));
+      expect(await screen.findByRole('alert')).toHaveTextContent('You already have an active subscription.');
+      expect(api.getBilling).toHaveBeenCalledWith({ force: true });
+    });
   });
 
   it('shows cloud project usage against the Free cap', async () => {
@@ -306,6 +372,53 @@ describe('subscription lifecycle', () => {
       `Premation Cloud \u00b7 renews ${fmt(renewsAt)}`,
     );
     expect(currentPlanLine(summary())).toBeNull();
+  });
+
+  it('a free trial reads as a trial: the first payment date, and no refund talk on cancel', async () => {
+    const trial = subscriber({
+      subscriptionStatus: 'on_trial',
+      interval: 'month',
+      refund: { eligible: false, deadline: null, amountLabel: null, reason: 'not_yearly' },
+    });
+    expect(currentPlanLine(trial)).toBe(`Premation Cloud · Monthly · free trial, first payment ${fmt(renewsAt)}`);
+    jest.mocked(api.getBilling).mockResolvedValue(trial);
+    renderBilling();
+    expect(await screen.findByText('Free trial ends')).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel trial' }));
+    expect(await screen.findByText(/You won't be charged/)).toBeInTheDocument();
+    expect(screen.queryByText(/not refunded/)).toBeNull();
+  });
+
+  it('a new subscription quotes the trial at the chosen period, and the comparison lists the Library', async () => {
+    jest.mocked(api.getBilling).mockResolvedValue(summary());
+    jest.mocked(api.listPlans).mockResolvedValue([
+      { ...cloudPlans[0]!, limits: { cloudProjects: 5, historyDays: 7 } },
+      { ...cloudPlans[1]!, limits: { cloudProjects: null, historyDays: 90 }, trialDays: 7 },
+    ]);
+    renderBilling();
+    expect(await screen.findByText('7 days free, then $9/month. Cancel before then and you pay nothing.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Start 7-day free trial' })).toBeInTheDocument();
+    expect(screen.getByRole('rowheader', { name: /^Library templates/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^Yearly/ }));
+    expect(screen.getByText('7 days free, then $90/year. Cancel before then and you pay nothing.')).toBeInTheDocument();
+  });
+
+  it('offers a returning subscriber a plain subscription: no second trial, nothing prorated', async () => {
+    jest.mocked(api.getBilling).mockResolvedValue(
+      summary({ hasSubscription: true, trialAvailable: false, subscriptionStatus: 'expired' }),
+    );
+    jest.mocked(api.listPlans).mockResolvedValue([cloudPlans[0]!, { ...cloudPlans[1]!, trialDays: 7 }]);
+    renderBilling();
+    expect(await screen.findByRole('button', { name: 'Subscribe — $9/mo' })).toBeInTheDocument();
+    expect(screen.queryByText(/days free/)).toBeNull();
+    expect(screen.queryByRole('button', { name: /free trial/ })).toBeNull();
+  });
+
+  it('tells the paywalls there is no trial left for this account', async () => {
+    jest.mocked(api.getBilling).mockResolvedValue(summary({ hasSubscription: true, trialAvailable: false }));
+    jest.mocked(api.listPlans).mockResolvedValue([cloudPlans[0]!, { ...cloudPlans[1]!, trialDays: 7 }]);
+    renderBilling();
+    await waitFor(() => expect(useEntitlementStore.getState().offer).toEqual({ priceLabel: '$9', trialDays: 0 }));
   });
 
   it('shows the plan line in the hero', async () => {

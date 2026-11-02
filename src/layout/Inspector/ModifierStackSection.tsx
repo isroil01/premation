@@ -328,8 +328,8 @@ export function ModifierStackSection({ nodeId }: { nodeId: string }): JSX.Elemen
 
   return (
     <div className={styles.root}>
-      <p className={styles.hint}>
-        {t('inspector.modifierStack.intro', 'An ordered pipeline on one property. Each row takes the value from the row above — starting at the keyframed value — so the ORDER changes the result. The whole stack compiles to one expression.')}
+      <p className={styles.hint} title={t('inspector.modifierStack.intro', 'An ordered pipeline on one property. Each row takes the value from the row above — starting at the keyframed value — so the ORDER changes the result. The whole stack compiles to one expression.')}>
+        {t('inspector.modifierStack.introShort', 'Runs top to bottom — order changes the result.')}
       </p>
 
       <div className={styles.row}>

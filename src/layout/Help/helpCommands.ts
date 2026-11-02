@@ -13,12 +13,14 @@ import { asCommandId } from '@app-types/common';
 import { getCommandRegistry, type Command } from '@core/commands/Command';
 import { openWhatsNew } from './WhatsNewDialog';
 import { openHelp } from './openHelp';
+import { openReportProblem } from './ReportProblemDialog';
 import { t } from '@core/i18n';
 
 export const HELP_WHATS_NEW_COMMAND = asCommandId('help.whatsNew');
 export const HELP_DOCS_COMMAND = asCommandId('help.docs');
 export const HELP_OPEN_LOGS_COMMAND = asCommandId('help.openLogs');
 export const HELP_COPY_DIAGNOSTICS_COMMAND = asCommandId('help.copyDiagnostics');
+export const HELP_REPORT_PROBLEM_COMMAND = asCommandId('help.reportProblem');
 
 /** The desktop bridge's diagnostics half (absent in the browser / tests). */
 function diag(): NonNullable<Window['motionEditor']>['diag'] | undefined {
@@ -45,6 +47,18 @@ export function buildHelpCommands(): ReadonlyArray<Command> {
       enabled: () => true,
       execute: () => {
         void openHelp('editor');
+      },
+    },
+    // The front door for bug reports: a screenshot, the user's words and safe
+    // diagnostics, straight to the console's queue (motion-back problem-reports).
+    {
+      id: HELP_REPORT_PROBLEM_COMMAND,
+      label: t('help.reportProblem.command', 'Report a Problem…'),
+      description: t('help.reportProblem.description', 'Send the team a screenshot of the viewer, what happened, and safe diagnostics.'),
+      icon: 'warning',
+      enabled: () => true,
+      execute: () => {
+        void openReportProblem();
       },
     },
     // A shipped build has no DevTools: these are how a user reports a blank

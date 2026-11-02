@@ -42,6 +42,14 @@ struct FrameScene {
 /// the render graph instead of the C2 quad compositor.
 struct BuiltFrame;
 
+/// Thrown out of a frame build whose cancel flag rose: an edit is waiting for
+/// the build lock, and the frame being built describes a document that is
+/// about to change, so finishing it would only make the edit wait. Not a
+/// std::exception on purpose — the builder's per-layer isolation catches
+/// std::exception and continues; this must reach the build worker, which
+/// drops the task and asks for a fresh frame once the edit has landed.
+struct BuildCancelled {};
+
 /// A composition viewport frame drawn in COMP space: the comp rectangle alone,
 /// at the view's own scale (the same pixels the slot would show — nothing is
 /// resampled), in a texture of `width` × `height` whose pixel (0, 0) lands on

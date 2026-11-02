@@ -31,6 +31,22 @@ describe('premation://connections', () => {
   });
 });
 
+describe('premation://billing', () => {
+  it.each([
+    'premation://billing',
+    'premation://billing/',
+    'premation://Billing',
+    // The query is ignored: nothing a link says can claim a payment.
+    'premation://billing?checkout=success&plan=pro',
+  ])('routes %s with nothing but the destination', (url) => {
+    expect(routeDeepLink(url)).toEqual({ kind: 'billing' });
+  });
+
+  it.each(['premation://billing/portal', 'premation://billingx'])('does not route %s', (url) => {
+    expect(routeDeepLink(url)).toEqual({ kind: 'focus' });
+  });
+});
+
 describe('other premation:// links', () => {
   it.each([
     'premation://plugin/x',

@@ -101,10 +101,35 @@ export function reportEngineAepImport(fileLabel: string, result: EngineAepImport
   openReport(fileLabel, { summary, aeVersion: result.summary.aeVersion, warnings, expressions: result.summary.expressions });
 }
 
+/**
+ * The failure's code for the dashboard: what KIND of file could not be opened,
+ * never its name or contents. The engine's messages (core/aep/riff.cpp,
+ * aepx.cpp, handlers_misc.cpp) and the page's own are sorted here; anything
+ * new falls back to `aep_unreadable`, which a month of twelve identical rows
+ * showed tells nobody what to fix.
+ */
+export function aepFailureReason(message: string): string {
+  const rules: Array<[RegExp, string]> = [
+    [/needs the desktop app/i, 'aep_needs_desktop'],
+    [/does not convert After Effects/i, 'aep_engine_unsupported'],
+    [/looks like a RIFF media file/i, 'aep_riff_media'],
+    [/expected "RIFX"|unexpected form type/i, 'aep_not_rifx'],
+    [/too short/i, 'aep_too_short'],
+    [/XML project|AfterEffectsProject|bdata/i, 'aep_xml'],
+    [/no compositions/i, 'aep_no_comps'],
+    [/implausible|nested more deeply/i, 'aep_corrupt'],
+    [/could not read|short read|larger than 1 GB|it is a folder/i, 'aep_io'],
+    [/no file port|no project file port/i, 'aep_no_port'],
+    [/timed? ?out|busy|did not answer/i, 'aep_engine_busy'],
+  ];
+  for (const [re, code] of rules) if (re.test(message)) return code;
+  return 'aep_unreadable';
+}
+
 /** The file could not be read at all. */
 export function reportAepImportFailure(fileLabel: string, message: string): void {
   // The message names the file and quotes its contents; only a code goes out.
-  track('import_failed', { kind: 'other', reason: 'aep_unreadable' });
+  track('import_failed', { kind: 'other', reason: aepFailureReason(message) });
   useUIStore.getState().notify({
     level: 'error',
     message: `Could not open “${fileLabel}” — ${message}`,

@@ -440,7 +440,18 @@ fn shade3dN(world : vec3<f32>, nrmIn : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f
   // shadeParams.z is Blinn-Phong shininess when positive, and −roughness when
   // the PBR model is selected (see packShade3D). Same slot, same layout.
   let pbr = obj.shadeParams.z < 0.0;
-  let rough = clamp(-obj.shadeParams.z, 0.02, 1.0);
+  // Specular antialiasing (Tokuyoshi & Kaplanyan 2019, applied as Filament
+  // does): where the interpolated normal turns a lot inside one pixel - a thin
+  // tube, a tight bevel, a sphere's rim - a lobe narrower than that pixel's
+  // span of normals renders as a bright one-pixel stroke that sparkles as the
+  // object moves. The normal's screen-space variance is folded into the GGX
+  // alpha^2 (roughness^4) so the lobe is at least as wide as what the pixel
+  // sees; a flat face has zero variance and keeps its bytes.
+  let dNx = dpdx(nrmIn);
+  let dNy = dpdy(nrmIn);
+  let specAaKernel = min(2.0 * 0.15 * (dot(dNx, dNx) + dot(dNy, dNy)), 0.1);
+  let rough0 = clamp(-obj.shadeParams.z, 0.02, 1.0);
+  let rough = clamp(sqrt(sqrt(rough0 * rough0 * rough0 * rough0 + specAaKernel)), 0.02, 1.0);
   let alpha2 = rough * rough * rough * rough; // GGX α = roughness², squared again in D
   // F0: a dielectric reflects ~4 % at normal incidence at the default
   // Specular Intensity (0.5), scaled by that intensity so the slider keeps its
@@ -449,7 +460,10 @@ fn shade3dN(world : vec3<f32>, nrmIn : vec3<f32>, baseRgb : vec3<f32>) -> vec3<f
   let F0 = mix(vec3<f32>(0.08 * obj.shadeParams.y), baseRgb, metal);
   // Toon: shadeParams.z carries the band count, not a shininess — shade with
   // a fixed tight exponent so the stepped highlight stays a crisp blob.
-  let shin = select(max(obj.shadeParams.z, 1.0), 32.0, toonFlag);
+  // The Phong exponent through the same kernel (alpha^2 = 2 / (shin + 2));
+  // toon keeps its fixed tight exponent, a stepped highlight being its point.
+  let shin0 = max(obj.shadeParams.z, 1.0);
+  let shin = select(max(2.0 / (2.0 / (shin0 + 2.0) + specAaKernel) - 2.0, 1.0), 32.0, toonFlag);
   // Sampled ONCE, before the loop: the shadow term is a fact about this
   // fragment and this map, not about which light is being accumulated, and
   // nine texture taps per light for one answer would be eight wasted.

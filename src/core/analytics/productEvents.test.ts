@@ -8,6 +8,8 @@
 let signedIn = true;
 jest.mock('@core/api/session', () => ({ hasSession: () => signedIn }));
 
+import { EngineRequestError } from '@motion/engine-api';
+import { engineFailure } from '@core/engine/engineFailure';
 import { setEdition } from '@core/config/edition';
 import { usePreferenceStore } from '@stores/preferenceStore';
 import {
@@ -21,7 +23,9 @@ import {
   setProductEventSender,
   track,
   trackCrash,
+  trackEngineRestart,
   trackOnce,
+  trackRendererGone,
   trackProjectCreated,
   type EventBatch,
 } from './productEvents';
@@ -112,6 +116,39 @@ describe('what an event may say', () => {
     expect(failureReason(new Error('VideoEncoder configure failed'))).toBe('encoder');
     expect(failureReason(new TypeError('x is undefined in /Users/ada/secret'))).toBe('TypeError');
     expect(failureReason('something odd')).toBe('unknown');
+    // A plain Error is sorted by what it says, never by the words themselves.
+    expect(failureReason(new Error('premation-engine restarted (hang); request dropped'))).toBe('engine');
+    expect(failureReason(new Error('the engine is unavailable after 3 crashes'))).toBe('engine');
+    expect(failureReason(new Error('engine request timed out'))).toBe('engine');
+    expect(failureReason(new RangeError('Maximum call stack size exceeded'))).toBe('stack_overflow');
+    expect(failureReason(new Error('Unexpected token < in JSON at position 0'))).toBe('parse');
+    expect(failureReason(new Error('font "Inter Display" is missing a glyph'))).toBe('font');
+    expect(failureReason(new Error('layer "Hero Title" not found'))).toBe('missing');
+    expect(failureReason(new Error('fetch failed: 503'))).toBe('network');
+    expect(failureReason(new Error('something nobody wrote a rule for yet'))).toBe('error');
+    expect(failureReason(new Error(''))).toBe('error_empty');
+  });
+
+  it('keeps an engine refusal\'s code and names the IPC channel a main-process handler threw on', () => {
+    const refused = new EngineRequestError({ code: 'busy', message: 'the engine is busy rendering "Hero Title"' });
+    expect(failureReason(refused)).toBe('engine_busy');
+    // engineFailure: the engine's own sentence for the user, its code for the dashboard.
+    const kept = engineFailure({ code: 'decode', message: 'could not decode C:\\Users\\ada\\clip.mov' });
+    expect(kept.message).toBe('could not decode C:\\Users\\ada\\clip.mov');
+    expect(failureReason(kept)).toBe('engine_decode');
+    const ipc = new Error("Error invoking remote method 'file:readFile': Error: ENOENT: no such file, open 'C:\\Users\\ada\\a.png'");
+    expect(failureReason(ipc)).toBe('ipc_file-readFile');
+  });
+
+  it('reports engine restarts and a page that died, as codes the server keeps', () => {
+    trackEngineRestart('hang');
+    trackRendererGone('oom');
+    const crashes = __peekQueue().filter((e) => e.name === 'crash').map((e) => e.props);
+    expect(crashes).toEqual([
+      { source: 'worker', reason: 'engine_hang' },
+      { source: 'window', reason: 'renderer_oom' },
+    ]);
+    for (const c of crashes) expect(String(c?.reason)).toMatch(/^[A-Za-z0-9_-]{1,48}$/);
   });
 
   it('ignores aborts and layout noise, and caps crashes per session', () => {

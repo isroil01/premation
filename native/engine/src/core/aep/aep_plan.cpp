@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <optional>
 #include <set>
+#include <string_view>
 
 #include "core/aep/aep_ease.hpp"
 #include "core/aep/aep_effects.hpp"
@@ -132,9 +134,11 @@ void plan_transform(const PlanContext& ctx, PlannedLayer& out) {
     take("ADBE Position", 1, "y", ctx.comp.height / 2);
     take("ADBE Position", 2, "z", 0);
   }
-  // Anchor: AE's top-left origin → this editor's centre origin.
-  take("ADBE Anchor Point", 0, "anchorX", 0, Affine{1, -ctx.width / 2, 1});
-  take("ADBE Anchor Point", 1, "anchorY", 0, Affine{1, -ctx.height / 2, 1});
+  // Anchor: AE's top-left origin → this editor's centre origin. Text has no box in AE: its anchor
+  // is relative to the text origin, which the Text `textAnchor: "alignment"` reproduces here.
+  const bool text = ctx.layer.kind == LayerKind::text;
+  take("ADBE Anchor Point", 0, "anchorX", 0, Affine{1, text ? 0 : -ctx.width / 2, 1});
+  take("ADBE Anchor Point", 1, "anchorY", 0, Affine{1, text ? 0 : -ctx.height / 2, 1});
   take("ADBE Scale", 0, "scaleX", 1, Affine{1, 0, 100});
   take("ADBE Scale", 1, "scaleY", 1, Affine{1, 0, 100});
   take("ADBE Rotate Z", 0, "rotation", 0);
@@ -248,9 +252,11 @@ void plan_masks(const PlanContext& ctx, PlannedLayer& out) {
     m.locked = mask.locked;
     m.color = {mask.color[0], mask.color[1], mask.color[2]};
     m.closed = mask.shape->closed;
+    // A text layer's masks are relative to its text origin, not to a box corner.
+    const bool text = ctx.layer.kind == LayerKind::text;
     for (const AepShapeVertex& v : mask.shape->vertices) {
-      const double x = v.x - ctx.width / 2;
-      const double y = v.y - ctx.height / 2;
+      const double x = text ? v.x : v.x - ctx.width / 2;
+      const double y = text ? v.y : v.y - ctx.height / 2;
       // AE stores tangents as offsets; this editor stores the handle positions.
       m.points.push_back({x, y, x + v.inX, y + v.inY, x + v.outX, y + v.outY});
     }
@@ -260,6 +266,87 @@ void plan_masks(const PlanContext& ctx, PlannedLayer& out) {
     m.expansion = scalar_of(expansion, 0);
     out.masks.push_back(std::move(m));
     ctx.summary.masks += 1;
+  }
+}
+
+void put_param(PlannedEffect& e, const std::string& key, js::Json v) {
+  for (auto& [k, val] : e.params) {
+    if (k == key) {
+      val = std::move(v);
+      return;
+    }
+  }
+  e.params.emplace_back(key, std::move(v));
+}
+
+/// The AE parameter labelled `label` (normalised), from its `pard`.
+const AepProp* ae_param(const AepProp& effect, std::string_view label) {
+  for (const AepProp& c : effect.children) {
+    if (!c.isGroup && c.name && normalize_label(*c.name) == label) return &c;
+  }
+  return nullptr;
+}
+
+/// `key` ← the AE parameter labelled `label` as `v·scale + offset`, keyframes included. An absent
+/// parameter is at AE's default, `fallback` (in AE's units); nullopt leaves ours at its default.
+void take_param(PlannedEffect& e, const AepProp& effect, std::string_view label, const std::string& key, double scale,
+                double offset, std::optional<double> fallback = std::nullopt) {
+  const AepProp* p = ae_param(effect, label);
+  const std::optional<double> raw = p != nullptr && !p->value.empty() ? std::optional<double>(p->value[0]) : fallback;
+  if (!raw) return;
+  put_param(e, key, js::Json::number(*raw * scale + offset));
+  std::erase_if(e.tracks, [&](const PlannedTrack& t) { return t.prop == key; });
+  if (p != nullptr && !p->keyframes.empty()) {
+    ConvertOptions opts;
+    opts.scale = scale;
+    opts.offset = offset;
+    e.tracks.push_back({key, to_keyframe_track(p->keyframes, 0, opts)});
+  }
+}
+
+/// Where AE stores a parameter in other units or another convention than the effect it maps to.
+/// Matching by label carries the number across; this makes it mean the same thing.
+void convert_ae_units(const AepProp& effect, PlannedEffect& e) {
+  if (e.type == "drop-shadow") {
+    // Opacity is 0–255 in the file; Direction is clockwise from up (ours: from +x).
+    take_param(e, effect, "opacity", "opacity", 100.0 / 255, 0);
+    take_param(e, effect, "direction", "angle", 1, -90);
+  } else if (e.type == "fast-box-blur") {
+    // AE's popups count from 1 (Horizontal and Vertical, Horizontal, Vertical); ours from 0.
+    take_param(e, effect, "blurdimensions", "dimensions", 1, -1);
+  } else if (e.type == "noise") {
+    take_param(e, effect, "amountofnoise", "amount", 1, 0);
+    // "Use Color Noise" (on by default) is the inverse of Monochrome.
+    const AepProp* color = ae_param(effect, "noisetype");
+    const bool colorNoise = color == nullptr || color->value.empty() || color->value[0] != 0;
+    put_param(e, "monochrome", js::Json::boolean(!colorNoise));
+  } else if (e.type == "vr-glow") {
+    // AE Glow: threshold 0–255, intensity a multiplier, Original Colors unless "A & B Colors".
+    take_param(e, effect, "glowthreshold", "threshold", 100.0 / 255, 0, 153);
+    take_param(e, effect, "glowradius", "radius", 1, 0, 10);
+    take_param(e, effect, "glowintensity", "brightness", 100, 0, 1);
+    const AepProp* colors = ae_param(effect, "glowcolors");
+    const AepProp* colorA = ae_param(effect, "colora");
+    if (colors != nullptr && !colors->value.empty() && colors->value[0] == 2) {
+      put_param(e, "tintEnable", js::Json::boolean(true));
+      put_param(e, "tint", js::Json::string(colorA != nullptr ? color_hex(colorA->value) : "#ffffff"));
+    }
+  } else if (e.type == "gradient-ramp") {
+    // Start/End Color, and the direction from Start of Ramp to End of Ramp (already pixels).
+    const AepProp* a = ae_param(effect, "startcolor");
+    const AepProp* b = ae_param(effect, "endcolor");
+    put_param(e, "colorA", js::Json::string(a != nullptr ? color_hex(a->value) : "#000000"));
+    put_param(e, "colorB", js::Json::string(b != nullptr ? color_hex(b->value) : "#ffffff"));
+    const AepProp* from = ae_param(effect, "startoframp");
+    const AepProp* to = ae_param(effect, "endoframp");
+    if (from != nullptr && to != nullptr && from->value.size() >= 2 && to->value.size() >= 2) {
+      const double dx = to->value[0] - from->value[0];
+      const double dy = to->value[1] - from->value[1];
+      if (dx != 0 || dy != 0) put_param(e, "angle", js::Json::number(std::atan2(dy, dx) * 180 / 3.141592653589793));
+    } else {
+      put_param(e, "angle", js::Json::number(90));  // AE's default: top to bottom
+    }
+    take_param(e, effect, "blendwithoriginal", "blend", -1, 100);
   }
 }
 
@@ -312,7 +399,8 @@ void plan_effects(const PlanContext& ctx, PlannedLayer& out) {
           e.tracks.push_back({pt.keyY, to_keyframe_track(prop->keyframes, 1)});
         }
       }
-      e.defaultsOnly = target.defaultsOnly;
+      convert_ae_units(entry, e);
+      e.defaultsOnly = target.defaultsOnly && e.params.empty();
       out.effects.push_back(std::move(e));
       ctx.summary.effects += 1;
     }
@@ -407,6 +495,18 @@ AepImportPlan plan_aep_import(const AepProject& project) {
   for (const AepComp& comp : project.comps) {
     PlannedComp pc;
     for (const AepLayer& layer : comp.layers) pc.layers.push_back(plan_layer(layer, comp, sources, plan.warnings, plan.summary));
+    // AE switches a track matte's video off; this editor never draws a matte source as a plain
+    // layer but only builds one whose eye is on, so the source comes across switched on.
+    for (std::size_t i = 0; i < pc.layers.size(); ++i) {
+      const auto& matte = pc.layers[i].matte;
+      if (!matte) continue;
+      const std::optional<std::string> sourceUid = matte->sourceUid ? matte->sourceUid
+                                                   : i > 0 ? std::optional<std::string>(pc.layers[i - 1].uid)
+                                                           : std::nullopt;
+      for (PlannedLayer& source : pc.layers) {
+        if (sourceUid && source.uid == *sourceUid) source.flags.enabled = true;
+      }
+    }
     plan.summary.layers += static_cast<std::uint32_t>(pc.layers.size());
     // Counted from the tracks that survived (a 2-D layer's dropped z track is not a keyframe).
     for (const PlannedLayer& l : pc.layers) {

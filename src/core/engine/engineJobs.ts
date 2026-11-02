@@ -20,6 +20,7 @@ import { engine } from './engineInstance';
 import { engineOwnsDocumentNow } from './engineOwnership';
 import { materializeSessionFootage } from './sessionFootage';
 import { t } from '@core/i18n';
+import { engineFailure } from './engineFailure';
 
 export interface EngineJobOutcome<R = unknown> {
   status: 'done' | 'failed' | 'cancelled';
@@ -104,7 +105,8 @@ export async function startEngineJob<R = unknown>(spec: JobSpec, opts: StartEngi
   if (!res.ok) {
     unsubscribe();
     if (res.error.code === 'unsupported') return null;
-    throw new Error(res.error.message);
+    // The engine's error, code and all: a plain Error lost it (and the dashboard filed it under `Error`).
+    throw engineFailure(res.error);
   }
   id = res.value.job;
   for (const b of early.splice(0)) onBatch(b);

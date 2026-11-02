@@ -177,8 +177,9 @@ export function catalogItemProblem(v: unknown): string | null {
   if (v.peaks !== undefined && (!Array.isArray(v.peaks) || !v.peaks.every((p) => finite(p) && p >= 0 && p <= 1))) return 'bad peaks';
   if (v.mode !== undefined && v.mode !== 'scene' && v.mode !== 'element') return 'bad mode';
   if (v.fieldLabels !== undefined && (!Array.isArray(v.fieldLabels) || !v.fieldLabels.every((l) => str(l, 60)))) return 'bad fieldLabels';
+  // Absent media may come as null (motion-back did that until the Library launch).
   for (const k of ['poster', 'preview', 'audio'] as const) {
-    if (v[k] !== undefined && !str(v[k], 400)) return `bad ${k}`;
+    if (v[k] !== undefined && v[k] !== null && !str(v[k], 400)) return `bad ${k}`;
   }
   return null;
 }

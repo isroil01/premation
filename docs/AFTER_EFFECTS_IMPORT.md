@@ -31,7 +31,7 @@ project After Effects still needs to open.
 | **Keyframes** | Times, values, hold/linear/bezier interpolation, temporal eases, spatial tangents, roving. See *Easing* below. |
 | **Masks** | Outline, mode, inversion, feather, opacity, expansion. |
 | **Effects** | ~200 effects map onto this editor's own (see `aepEffects.ts`). Parameters are matched by label. |
-| **Text** | The string, font, size, fill colour, justification, tracking, faux bold/italic. |
+| **Text** | The string, font, size, fill colour, justification, tracking, faux bold/italic. Point text is anchored at its origin (alignment edge, first baseline) as in AE. |
 | **Footage** | Files are relinked from the paths AE recorded; solids become solid layers with their colour; placeholders come across as placeholders. |
 | **Nested comps** | A comp used as a layer becomes a comp layer pointing at the imported composition. |
 | **Expressions** | Carried as text on the property that had them — **not evaluated**. Re-enable one to run it here. |
@@ -49,6 +49,11 @@ These are reported in the import dialog rather than being silent:
 - **Expressions are not evaluated** on import.
 - **Camera and light layers** come across as layers, but their AE-specific
   options are not mapped parameter for parameter.
+- **Gradient Ramp** keeps its colours and direction, but spans the whole layer
+  rather than running exactly from Start of Ramp to End of Ramp; a radial ramp
+  comes across linear.
+- **Masks on text layers** are placed relative to the text origin without the
+  measured text box, so they can sit slightly off.
 
 ---
 
@@ -127,6 +132,14 @@ looks the way it does:
   fractions of the layer's size; mask vertices are fractions of a bounding box
   that is itself a fraction of the layer.
 - **The influence in a keyframe's ease is a fraction** (0.75), not a percentage.
+- **Some effect parameters keep AE's internal units**: Drop Shadow Opacity and
+  Glow Threshold are 0–255, Drop Shadow Direction is clockwise from up, and
+  popups count from 1. `convert_ae_units` (aep_plan.cpp) translates them.
+- **A text or shape layer's mask box is in layer pixels**, not a fraction of a
+  size: those layers have no source.
+- **A track matte's video is switched off in AE.** This editor never draws a
+  matte source as a plain layer, but only builds one whose eye is on, so the
+  importer switches matte sources on.
 - **Text is COS, and its body is a dictionary with no `<<` around it.** Its
   strings are UTF-16BE behind a byte-order mark, and its parentheses nest.
 - **Blending-mode indices are neither contiguous nor in menu order.**

@@ -86,7 +86,16 @@ import { t } from '@core/i18n';
  * and preference stores, the composition's mirror record), so the viewport shell
  * above it re-rendering — once per painted frame of a drag — has nothing to tell it.
  */
-export const TransportBar = memo(function TransportBar(): JSX.Element {
+export interface TransportBarProps {
+  /**
+   * Timecode and the transport only. The pop-out timeline's window has no
+   * viewer, so the viewer's own controls (layout, compare, resolution,
+   * channels, overlays, zoom) would act on a canvas that is not there.
+   */
+  playbackOnly?: boolean;
+}
+
+export const TransportBar = memo(function TransportBar({ playbackOnly = false }: TransportBarProps): JSX.Element {
   const ws = useWorkspaceStore((s) => (s.activeTabId ? s.tabs[s.activeTabId] : null));
   const settings = useActiveMirrorComp()?.settings;
   const fps = settingsFps(settings);
@@ -154,10 +163,14 @@ export const TransportBar = memo(function TransportBar(): JSX.Element {
         3D Layer and the stage's own handles, 2026-10-07.)
       */}
       <div className={styles.sideLeft}>
-        <div className={cn(tool.group, !showView && tool.groupEmpty)}>
-          <ViewportDisplayControlsView model={display} level={displayLevel} overflow="host" section="layout" />
-        </div>
-        {showView && <div className={tool.divider} />}
+        {!playbackOnly && (
+          <>
+            <div className={cn(tool.group, !showView && tool.groupEmpty)}>
+              <ViewportDisplayControlsView model={display} level={displayLevel} overflow="host" section="layout" />
+            </div>
+            {showView && <div className={tool.divider} />}
+          </>
+        )}
 
         <div
           className={styles.timecode}
@@ -167,10 +180,14 @@ export const TransportBar = memo(function TransportBar(): JSX.Element {
           <span className={styles.timecodeTotal}>/ {framesToTimecode(duration, fps, startFrame)}</span>
         </div>
 
-        {showCapture && <div className={tool.divider} />}
-        <div className={cn(tool.group, !showCapture && tool.groupEmpty)}>
-          <ViewportDisplayControlsView model={display} level={displayLevel} overflow="host" section="compare" />
-        </div>
+        {!playbackOnly && (
+          <>
+            {showCapture && <div className={tool.divider} />}
+            <div className={cn(tool.group, !showCapture && tool.groupEmpty)}>
+              <ViewportDisplayControlsView model={display} level={displayLevel} overflow="host" section="compare" />
+            </div>
+          </>
+        )}
       </div>
 
       {/* The centre column: go-to-start · prev · PLAY · next · go-to-end.
@@ -230,7 +247,7 @@ export const TransportBar = memo(function TransportBar(): JSX.Element {
         </button>
       </div>
 
-      <div className={styles.sideRight}>
+      {playbackOnly ? <div className={styles.sideRight} /> : <div className={styles.sideRight}>
         {/* Guides: the motion-path toggle, while a layer with a path is
             selected. It carries its own hairline. */}
         <ViewportTools />
@@ -263,7 +280,7 @@ export const TransportBar = memo(function TransportBar(): JSX.Element {
             )}
           </div>
         )}
-      </div>
+      </div>}
     </div>
   );
 });

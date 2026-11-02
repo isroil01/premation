@@ -390,6 +390,11 @@ class Forward final : public JobControl {
 
 }  // namespace
 
+std::chrono::milliseconds lane_idle(WorkerLane lane) {
+  const std::chrono::milliseconds idle = idle_from_env();
+  return lane == WorkerLane::batch ? std::min(idle, kBatchLaneIdle) : idle;
+}
+
 std::optional<std::string> run_in_worker(const std::string& work, const std::string& inputJson, JobControl& control, const WorkerCall& call) {
   const std::string exe = child_executable();
   if (exe.empty()) {
@@ -407,15 +412,15 @@ std::optional<std::string> run_in_worker(const std::string& work, const std::str
   // process holding its own copy of the models while both are warm). They die
   // with the engine (the destructor kills them, and the OS job object kills
   // them when the engine crashes).
-  const auto options = [&exe] {
+  const auto options = [&exe](WorkerLane lane) {
     JobWorker::Options o;
     o.exe = exe;
-    o.idle = idle_from_env();
+    o.idle = lane_idle(lane);
     o.plugins = [] { return child_detail::current_plugins(); };
     return o;
   };
-  static JobWorker interactive(options());
-  static JobWorker batch(options());
+  static JobWorker interactive(options(WorkerLane::interactive));
+  static JobWorker batch(options(WorkerLane::batch));
   JobWorker& worker = call.lane == WorkerLane::batch ? batch : interactive;
   return worker.run(work, inputJson, control, call);
 }

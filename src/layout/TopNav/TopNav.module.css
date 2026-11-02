@@ -120,11 +120,14 @@
    Left and right take what they need; the centre gets the rest and centres
    its chips inside it, so the comp name sits under the window's middle
    regardless of how many tool groups survived the width collapse. */
+/* The tools never shrink: squeezed below their own width they spilled under
+   the tool options beside them, glyphs and hint text drawn over each other
+   (owner, 2026-10-27). Width is managed by demoting whole groups to the
+   overflow menu (toolbarCollapse.ts); the options strip takes what is left. */
 .left {
   display: flex;
   align-items: center;
-  flex: 0 1 auto;
-  min-width: 0;
+  flex: 0 0 auto;
   gap: var(--space-2);
 }
 
@@ -135,6 +138,13 @@
   flex: 1 1 0;
   min-width: 0;
   gap: var(--space-2);
+}
+
+/* Windows / Linux: the title bar holds the project and comp, so the centre is
+   empty — and an empty flex: 1 cluster still took half the free row from the
+   tool options, cutting their hint short at mid-window. */
+.center:empty {
+  display: none;
 }
 
 .right {

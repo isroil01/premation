@@ -109,22 +109,46 @@ function installEnginePixelReceiver(): boolean {
   return true;
 }
 
-// ── premation://connections (electron/deepLink.ts) ──────────────────────────
+// ── premation:// links the page acts on (electron/deepLink.ts) ──────────────
 //
-// Held here, not just forwarded: a COLD start sends it at `did-finish-load`,
+// Held here, not just forwarded: a COLD start sends one at `did-finish-load`,
 // while the page is still behind AppRouter's boot splash (the stored token's
 // round trip) and nothing has subscribed yet. Listening from the preload means
 // it cannot arrive too early; the first subscriber gets it. One flag, because
 // the link carries no data — it only names a destination.
-const connectionsHandlers = new Set<() => void>();
-let connectionsPending = false;
-ipcRenderer.on('deepLink:connections', () => {
-  if (connectionsHandlers.size === 0) {
-    connectionsPending = true;
-    return;
-  }
-  for (const handler of connectionsHandlers) handler();
-});
+function heldLink(channel: string): (handler: () => void) => () => void {
+  const handlers = new Set<() => void>();
+  let pending = false;
+  ipcRenderer.on(channel, () => {
+    if (handlers.size === 0) {
+      pending = true;
+      return;
+    }
+    for (const handler of handlers) handler();
+  });
+  return (handler) => {
+    handlers.add(handler);
+    if (pending) {
+      pending = false;
+      // After the subscribing effect has returned, not inside it — and to
+      // whoever is subscribed THEN: a StrictMode remount has swapped the
+      // handler by the time this runs.
+      queueMicrotask(() => {
+        if (handlers.size === 0) {
+          pending = true;
+          return;
+        }
+        for (const subscribed of handlers) subscribed();
+      });
+    }
+    return () => {
+      handlers.delete(handler);
+    };
+  };
+}
+
+const onOpenConnections = heldLink('deepLink:connections');
+const onCheckoutReturn = heldLink('deepLink:billing');
 
 const bridge = {
   platform: process.platform,
@@ -336,6 +360,10 @@ const bridge = {
     openLogs: () => ipcRenderer.invoke('diag:openLogs'),
     /** Help ▸ Copy Diagnostics Report: the machine, GPU and log tails onto the clipboard (main confirms with a message box). */
     copyReport: () => ipcRenderer.invoke('diag:copyReport'),
+    /** Help ▸ Report a Problem: build, OS, GPU, engine state and a path-scrubbed engine.log tail. */
+    problemDiagnostics: () => ipcRenderer.invoke('report:diagnostics'),
+    /** Help ▸ Report a Problem: PNG bytes of one rectangle of this window (the viewer). */
+    captureViewport: (rect: { x: number; y: number; width: number; height: number }) => ipcRenderer.invoke('report:captureViewport', rect),
   },
 
   index: {
@@ -429,6 +457,13 @@ const bridge = {
 
   popout: {
     spawnWindow: (panelId: string) => ipcRenderer.invoke('popout:spawnWindow', panelId),
+    close: (panelId: string) => ipcRenderer.invoke('popout:close', panelId),
+    list: () => ipcRenderer.invoke('popout:list'),
+    onClosed: (handler: (panelId: string) => void) => {
+      const listener = (_event: unknown, panelId: string): void => handler(panelId);
+      ipcRenderer.on('popout:closed', listener);
+      return () => ipcRenderer.removeListener('popout:closed', listener);
+    },
   },
 
   window: {
@@ -442,6 +477,7 @@ const bridge = {
   app: {
     quit: () => ipcRenderer.invoke('app:quit'),
     version: () => ipcRenderer.invoke('app:version'),
+    takeRendererGone: () => ipcRenderer.invoke('app:takeRendererGone'),
   },
 
   /**
@@ -569,29 +605,12 @@ const bridge = {
   /**
    * premation:// links the page acts on (other than `oauth`). Main has already
    * restored and focused the window; the page picks the screen — see
-   * src/hooks/useConnectionsDeepLink.ts. A link that arrived before anything
-   * subscribed is delivered to the first subscriber, once.
+   * src/hooks/useConnectionsDeepLink.ts and useCheckoutReturn.ts. A link that
+   * arrived before anything subscribed is delivered to the first subscriber, once.
    */
   deepLink: {
-    onOpenConnections: (handler: () => void) => {
-      connectionsHandlers.add(handler);
-      if (connectionsPending) {
-        connectionsPending = false;
-        // After the subscribing effect has returned, not inside it — and to
-        // whoever is subscribed THEN: a StrictMode remount has swapped the
-        // handler by the time this runs.
-        queueMicrotask(() => {
-          if (connectionsHandlers.size === 0) {
-            connectionsPending = true;
-            return;
-          }
-          for (const subscribed of connectionsHandlers) subscribed();
-        });
-      }
-      return () => {
-        connectionsHandlers.delete(handler);
-      };
-    },
+    onOpenConnections,
+    onCheckoutReturn,
   },
 
   onMenuCommand: (handler: (commandId: string) => void) => {

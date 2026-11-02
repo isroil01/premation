@@ -44,8 +44,10 @@ class EventBuilder {
   [[nodiscard]] std::vector<api::Event> build(const ChangeSet& changes, const PCtx& c);
 
  private:
-  void layer_properties(const PCtx& c, const std::string& layer, std::vector<api::Event>& events);
-  void layer_keyframes(const PCtx& c, const std::string& layer, std::vector<api::KeyframeSet>& out);
+  /// Both read the layer's catalog, built ONCE per layer by `build` (a catalog
+  /// of a 40-effect layer costs milliseconds; two per edit showed as lag).
+  void layer_properties(const PCtx& c, const std::string& layer, const Catalog& cat, std::vector<api::Event>& events);
+  void layer_keyframes(const PCtx& c, const std::string& layer, const Catalog& cat, std::vector<api::KeyframeSet>& out);
 
   struct PropCache {
     std::map<std::string, api::PropertyInfo> infos;

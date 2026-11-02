@@ -462,6 +462,33 @@ export interface PlanDto {
    * an older server does not send it, and a missing field reads as purchasable.
    */
   purchasable?: boolean;
+  /**
+   * Days of free trial a new subscription starts with (the server's
+   * PRO_TRIAL_DAYS, matching the Lemon Squeezy variants). Absent = no trial.
+   */
+  trialDays?: number;
+}
+
+/**
+ * The paid plan on sale, as the paywalls quote it: monthly price and trial
+ * days, 0 for an account whose trial is not open. Null when no paid plan can be
+ * bought.
+ */
+export function paidOffer(
+  plans: readonly Pick<PlanDto, 'priceCents' | 'priceLabel' | 'purchasable' | 'trialDays'>[],
+  trialOpen: boolean,
+): { priceLabel: string; trialDays: number } | null {
+  const plan = plans.find((p) => p.priceCents > 0 && planPurchasable(p));
+  return plan ? { priceLabel: plan.priceLabel, trialDays: trialOpen ? (plan.trialDays ?? 0) : 0 } : null;
+}
+
+/**
+ * Whether this account's next subscription starts with a free trial. Unknown
+ * reads as no: a paywall that says less is never wrong, one that promises a
+ * trial checkout will not give is.
+ */
+export function trialOpenTo(summary: Pick<BillingSummary, 'trialAvailable' | 'hasSubscription'> | null): boolean {
+  return summary ? (summary.trialAvailable ?? !summary.hasSubscription) : false;
 }
 
 /** A plan can be bought unless the server says it cannot (missing = old server = yes). */
@@ -542,6 +569,11 @@ export interface BillingSummary {
   currentPeriodEnd: string | null;
   /** Whether there is a subscription to manage — gates the portal button. */
   hasSubscription: boolean;
+  /**
+   * A new subscription would start with the free trial: one per account. Older
+   * servers do not send it; read it through `trialOpenTo`.
+   */
+  trialAvailable?: boolean;
   /** True when Lemon has accepted a cancel-at-period-end. Access may still be live. */
   subscriptionCancelled?: boolean;
   memberSince: string;
@@ -1124,8 +1156,13 @@ export const api = {
       tags: ['billing', 'account'],
       force: opts?.force,
     }),
+  /**
+   * `client=desktop`: the page opens in the system browser, so the server sends
+   * it back through the premation:// link rather than to the web app. In the
+   * query, like the OAuth start URL, so an older server just ignores it.
+   */
   startCheckout: (plan: string, interval: 'month' | 'year' = 'month') =>
-    request<BillingChangeResult>('/billing/checkout', {
+    request<BillingChangeResult>(`/billing/checkout${window.motionEditor?.oauth ? '?client=desktop' : ''}`, {
       method: 'POST',
       body: JSON.stringify(interval === 'year' ? { plan, interval } : { plan }),
     }).then(tap(['billing', 'account'])),

@@ -357,3 +357,28 @@ describe('a big author_scene', () => {
     console.info(`author_scene ${JSON.stringify(big).length} B, ${layers.length} layers: ${ms} ms`);
   });
 });
+
+// ── expression-driven values ─────────────────────────────────────────
+
+describe('evaluate_at / inspect_layers report post-expression values', () => {
+  it('opacity and rotation driven by expressions read as the frame draws them', async () => {
+    await built(script({
+      beats: [{ name: 'One', purpose: '', startSec: 0, endSec: 12, layers: [{ id: 'a', kind: 'shape', name: 'Driven', shape: 'rect', props: { x: 960, y: 540, width: 200, height: 200, fill: '$ink' } }] }],
+    }));
+    const id = named('Driven');
+    expect(textOf(await call('set_expression', { nodeId: id, prop: 'rotation', expression: '45' }))).not.toMatch(/error/i);
+    expect(textOf(await call('set_expression', { nodeId: id, prop: 'opacity', expression: '0' }))).not.toMatch(/error/i);
+    await settleEdits();
+    expect(await value(id, 'transform/rotation')).toBeCloseTo(45, 3);
+    expect(await value(id, 'transform/opacity')).toBeCloseTo(0, 3);
+
+    const ev = textOf(await call('evaluate_at', { nodeId: id, t: 1 }));
+    expect(ev).toMatch(/rotation\W+45(?!\d)/);
+    expect(ev).toMatch(/opacity\W+0(?!\d)/);
+    expect(ev).toMatch(/come from an expression/);
+
+    const insp = textOf(await call('inspect_layers', { nodeIds: [id], t: 1 }));
+    expect(insp).toMatch(/opacity 0% \(from expression\)/);
+    expect(insp).toMatch(/rotation 45° \(from expression\)/);
+  });
+});

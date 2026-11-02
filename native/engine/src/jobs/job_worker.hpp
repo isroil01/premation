@@ -40,9 +40,9 @@
 //   lanes      run_in_worker keeps TWO workers (WorkerCall::lane): `interactive`
 //              answers hovers, proposals and edits; `batch` runs walks. A walk of
 //              minutes never queues a hover behind it. The cost: a second
-//              process with its own copy of every model it loads (SlimSAM ~150 MB
-//              RAM, SAM 2 tiny ~400 MB, ViTMatte ~120 MB) while both are warm;
-//              the batch lane idles out after `idle` like the other.
+//              process with its own copy of every model it loads (a worker
+//              holding SAM 2 on DirectML is 2-3 GB of RAM) while both are warm,
+//              so the batch lane idles out first (lane_idle).
 //   idle       after `idle` without a call the worker's stdin is closed, so a
 //              model is not held in RAM forever.
 //   plugins    the worker starts with the engine's plugin set of that moment
@@ -69,6 +69,13 @@ namespace premation::jobs {
 
 /// Which of the engine's two workers a call runs on (run_in_worker).
 enum class WorkerLane { interactive, batch };
+
+/// The batch lane's longest idle: enough for the next Follow of a selection to find its model warm.
+inline constexpr std::chrono::milliseconds kBatchLaneIdle{std::chrono::seconds(30)};
+
+/// How long a lane's worker outlives its last call: three minutes
+/// (PREMATION_JOB_WORKER_IDLE_MS overrides), at most kBatchLaneIdle on the batch lane.
+[[nodiscard]] std::chrono::milliseconds lane_idle(WorkerLane lane);
 
 /// One call's terms.
 struct WorkerCall {

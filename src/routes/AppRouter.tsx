@@ -27,6 +27,7 @@ import { useAutoUpdate } from '@hooks/useAutoUpdate';
 import { applyPasteboardColor } from '@core/theme/pasteboard';
 import { applyAccentColor } from '@core/theme/accent';
 import { useOAuthDeepLink } from '@hooks/useOAuthDeepLink';
+import { useCheckoutReturn } from '@hooks/useCheckoutReturn';
 import { useConnectionsDeepLink } from '@hooks/useConnectionsDeepLink';
 import { useMcpFrontDesk } from '@hooks/useMcpFrontDesk';
 
@@ -55,16 +56,20 @@ const WelcomePage = lazy(() =>
   import('../pages/WelcomePage').then(m => ({ default: m.WelcomePage })),
 );
 
-function AppLayout(): JSX.Element {
-  const location = useLocation();
-  const isEditor = location.pathname.startsWith('/editor') || location.pathname.startsWith('/popout');
-
+/**
+ * What the app window serves and a pop-out window must not: main sends deep
+ * links and Claude's calls to the app window only, and a second update
+ * watcher would announce every update twice.
+ */
+function MainWindowServices(): null {
   // Desktop: catch the OAuth one-time code the system browser hands back through
   // the premation:// deep link and route it to /oauth. No-op on the web.
   useOAuthDeepLink();
   // Desktop: premation://connections (a web page's "connect your assistant")
   // shows Dashboard ▸ Connections, or Settings ▸ AI Engine over the editor.
   useConnectionsDeepLink();
+  // Desktop: premation://billing, a checkout in the browser coming back.
+  useCheckoutReturn();
 
   // Mounted beside NotificationHost, and app-wide rather than editor-only: an
   // update that finished downloading while the user sat on the dashboard is
@@ -73,6 +78,13 @@ function AppLayout(): JSX.Element {
   // Claude for Premation: reachable on every page, the home screen included
   // (docs/MCP_PLAN.md §13). Renders nothing; it serves Claude's calls.
   useMcpFrontDesk();
+  return null;
+}
+
+function AppLayout(): JSX.Element {
+  const location = useLocation();
+  const isPopout = location.pathname.startsWith('/popout');
+  const isEditor = location.pathname.startsWith('/editor') || isPopout;
 
   useEffect(() => {
     if (isEditor) {
@@ -89,6 +101,7 @@ function AppLayout(): JSX.Element {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', overflow: 'hidden' }}>
+      {!isPopout && <MainWindowServices />}
       <TitleBar />
       <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
         <Suspense fallback={<BootSplash />}>
@@ -165,9 +178,9 @@ function AppLayout(): JSX.Element {
       <ContextMenuHost />
       <NotificationHost />
       {/* A double-clicked `.pplugin` shows its install dialog over whatever is open. */}
-      <PluginPackageOpener />
+      {!isPopout && <PluginPackageOpener />}
       {/* "Fix video export": the ffmpeg repair dialog + its startup notice. */}
-      <FfmpegRepairHost />
+      {!isPopout && <FfmpegRepairHost />}
     </div>
   );
 }

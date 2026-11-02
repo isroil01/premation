@@ -19,6 +19,12 @@ export type DeepLinkRoute =
    * (src/hooks/useConnectionsDeepLink.ts).
    */
   | { kind: 'connections' }
+  /**
+   * `premation://billing`: a checkout in the system browser came back. It says
+   * only "look again": the server decides whether anything was bought, so a
+   * page that opens this link proves nothing (src/stores/checkoutStore.ts).
+   */
+  | { kind: 'billing' }
   /** Any other premation:// link: bring the app forward, nothing more. */
   | { kind: 'focus' };
 
@@ -43,9 +49,9 @@ export function routeDeepLink(url: string | undefined): DeepLinkRoute | null {
   // `premation://connections`, or `premation://connections/` — browsers and the
   // Windows shell both add the slash. A longer path is not this route; it falls
   // through to the plain focus like any other link we do not know.
-  if (parsed.host.toLowerCase() === 'connections' && (parsed.pathname === '' || parsed.pathname === '/')) {
-    return { kind: 'connections' };
-  }
+  const bare = parsed.pathname === '' || parsed.pathname === '/';
+  if (parsed.host.toLowerCase() === 'connections' && bare) return { kind: 'connections' };
+  if (parsed.host.toLowerCase() === 'billing' && bare) return { kind: 'billing' };
 
   return { kind: 'focus' };
 }

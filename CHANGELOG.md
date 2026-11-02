@@ -5,6 +5,25 @@ would want to know; the engine-level detail is in `ROADMAP.md`.
 
 ## Unreleased
 
+- **Checkout opens in your browser.** Subscribing and managing your payment
+  method now open in your web browser, with your saved cards and wallets, instead
+  of replacing the editor with no way back. Premation stays open while you pay,
+  brings itself forward when you finish, and tells you as soon as your plan is
+  active, wherever you are in the app. If the browser does not open you can copy
+  the link instead.
+- **Report a Problem.** Help ▸ Report a Problem… (or the command palette)
+  sends the team a screenshot of the viewer, what happened and safe
+  diagnostics — build, OS, GPU, engine status and the last engine log lines
+  with file paths removed. Nothing from your project goes unless you tick
+  *Include project details*, and the dialog shows exactly what is sent. You
+  get a report number, and a confirmation by email if you leave an address.
+
+- **Premation Cloud.** Settings ▸ Billing and the Library and plugin paywalls
+  now offer a free trial when one is on sale, with the price after it at the
+  billing period you picked. During a trial the plan shows the first payment
+  date, and cancelling says plainly that nothing is charged. Plans compare the
+  Library too, and the cancel dialog no longer mentions API keys.
+
 - **Icons.** A new chrome icon set drawn in After Effects' manner: 1 px
   strokes on a 16 px grid, square caps, drawn at exactly 16 px whatever the
   box around them, so every line is a whole pixel. Tools, layer kinds,

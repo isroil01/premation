@@ -57,6 +57,8 @@ std::optional<AepTextDocument> read_text_document(Bytes btdk) {
 
   AepTextDocument out;
   out.text = normalize_newlines(*raw);
+  // AE ends every text document with a paragraph return; kept, it adds an empty last line.
+  if (!out.text.empty() && out.text.back() == '\n') out.text.pop_back();
   const std::vector<std::string> fonts = font_table(root);
   const CosValue* style = cos_get(doc, {"6", "0", std::size_t{0}, "0", "0", "6"});
   const CosValue* paragraph = cos_get(doc, {"5", "0", std::size_t{0}, "0", "0", "5"});

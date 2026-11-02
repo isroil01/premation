@@ -61,7 +61,7 @@ import { Icon } from '@components/Icon';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { cn } from '@utils/cn';
 import { panelDef, availablePanelDefs } from '@layout/EditorLayout/panelDefs';
-import { popoutHash } from '@core/layout/popoutPath';
+import { popOutPanel } from '@layout/EditorLayout/popoutWindows';
 import { t } from '@core/i18n';
 import styles from './DockPanel.module.css';
 
@@ -118,13 +118,7 @@ export function closedPanelDefsForSide(
 }
 
 function spawnPopout(panelId: string): void {
-  useLayoutStore.getState().popoutPanel(panelId);
-  if (window.motionEditor?.popout?.spawnWindow) {
-    window.motionEditor.popout.spawnWindow(panelId);
-  } else {
-    const url = `${window.location.origin}${window.location.pathname}${popoutHash(panelId)}`;
-    window.open(url, `popout-${panelId}`, 'width=900,height=650,resizable=yes');
-  }
+  popOutPanel(panelId);
 }
 
 /** Undock Frame: every panel of a group in a window of its own. */

@@ -764,6 +764,10 @@ export interface MotionEditorApi {
     openLogs?(): Promise<boolean>;
     /** Help ▸ Copy Diagnostics Report: machine, GPU and log tails onto the clipboard; main confirms. */
     copyReport?(): Promise<boolean>;
+    /** Help ▸ Report a Problem: the safe diagnostics object (see electron/ipc/problemReport.ts). */
+    problemDiagnostics?(): Promise<Record<string, unknown>>;
+    /** Help ▸ Report a Problem: PNG bytes of a rectangle of this window, or null. */
+    captureViewport?(rect: { x: number; y: number; width: number; height: number }): Promise<Uint8Array | null>;
   };
   /**
    * Local project index (SQLite in the main process). Every method mirrors the
@@ -904,12 +908,20 @@ export interface MotionEditorApi {
   };
   popout?: {
     spawnWindow?(panelId: string): void;
+    /** Close the panel's window (the editor re-docked it). */
+    close?(panelId: string): Promise<void>;
+    /** The panels whose windows are open now. */
+    list?(): Promise<string[]>;
+    /** A panel's window closed (by the user or by `close`). Main window only. */
+    onClosed?(handler: (panelId: string) => void): () => void;
     sendStateUpdate?(data: unknown): void;
     onStateSync?(handler: (data: unknown) => void): () => void;
   };
   app?: {
     quit?(): Promise<void>;
     version?(): Promise<string>;
+    /** Why the previous page died (`oom`, `crashed`…), once; null when it did not. */
+    takeRendererGone?(): Promise<string | null>;
   };
   /**
    * Provider sign-in for the desktop app. `openExternal` opens the backend OAuth
@@ -928,6 +940,8 @@ export interface MotionEditorApi {
   deepLink?: {
     /** `premation://connections`. Returns an unsubscribe fn. */
     onOpenConnections(handler: () => void): () => void;
+    /** `premation://billing`: a checkout in the browser came back. Returns an unsubscribe fn. */
+    onCheckoutReturn(handler: () => void): () => void;
   };
   /**
    * Auto-update, as the renderer sees it.

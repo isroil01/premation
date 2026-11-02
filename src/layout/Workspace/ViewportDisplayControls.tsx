@@ -88,6 +88,7 @@ import { isDisplayShed, type DisplayGroup } from './transportOverflow';
 import styles from './ViewportDisplayControls.module.css';
 import tool from './viewportToolButton.module.css';
 import { t } from '@core/i18n';
+import { popOutPanel } from '@layout/EditorLayout/popoutWindows';
 
 // The ladder lives with the transport bar's, in `transportOverflow.ts` — it is
 // the first rungs of that one now. Re-exported so importers keep reading
@@ -121,12 +122,7 @@ export function popOutViewport(): void {
   // Through the desktop's pop-out channel, as panels pop out: a `window.open`
   // child is not a window main knows, so the engine had nowhere to send its
   // frames and the pop-out sat on "Waiting for the first frame".
-  if (window.motionEditor?.popout?.spawnWindow) {
-    window.motionEditor.popout.spawnWindow('viewport');
-    return;
-  }
-  const url = `${window.location.origin}${window.location.pathname}#/popout/viewport`;
-  window.open(url, 'popout-viewport', 'width=1280,height=720,resizable=yes');
+  popOutPanel('viewport');
 }
 
 /** The Resolution trigger's text: Auto, or the fixed resolution's name. */

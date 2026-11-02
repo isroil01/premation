@@ -55,6 +55,10 @@ namespace premation::doc {
 [[nodiscard]] Json migrate_effect(const Json& raw);
 /// `readNodeEffects(node)` (migrated).
 [[nodiscard]] std::vector<Json> read_node_effects(const Node& n);
+/// One effect of `n` by id, migrated like read_node_effects would — without
+/// copying the rest of the stack (a property read on a 40-effect layer did
+/// that 400 times per edit). Undefined when the node has no such effect.
+[[nodiscard]] Json read_node_effect(const Node& n, std::string_view id);
 [[nodiscard]] std::vector<Json> get_node_effects(const Document& d, std::string_view nodeId);
 [[nodiscard]] const Json* find_by_id(const std::vector<Json>& list, std::string_view id);
 void write_node_effects(Document& d, std::string_view nodeId, std::vector<Json> effects);

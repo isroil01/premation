@@ -7,6 +7,7 @@
 // (C2's quad compositor, the wall clock).
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <memory>
@@ -135,6 +136,12 @@ class FrameBuilder {
   /// The folder relative media paths resolve against — the project's (its
   /// bundle, or the folder of its file); '' = none. Set before every build.
   virtual void set_media_base(std::string_view /*dir*/) {}
+  /// The flag `build` watches between layers: non-zero = an edit is waiting
+  /// for the build lock, and the build throws BuildCancelled at its next
+  /// layer. Set once by the session (its edits-waiting counter); null = never.
+  /// Only `build` watches it — a still or a thumbnail runs on the core thread,
+  /// where no edit can be waiting.
+  virtual void set_cancel_flag(const std::atomic<std::uint32_t>* /*flag*/) noexcept {}
 
   /// getThumbnail: a still of `comp` at `time`, contain-fitted into a
   /// width × height surface over a transparent void, for FrameSink::render_still.

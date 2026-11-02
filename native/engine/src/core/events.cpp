@@ -1,14 +1,17 @@
 #include "events.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <iterator>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <set>
 #include <type_traits>
 #include <variant>
 
 #include "fail.hpp"
+#include "log.hpp"
 #include "readmodel.hpp"
 #include "scene.hpp"
 #include "variant_util.hpp"
@@ -290,6 +293,8 @@ std::vector<api::Event> EventBuilder::build(const ChangeSet& changes, const PCtx
     const Node* n = d.node(id);
     if (n != nullptr && n->parent) headerIds.push_back(id);
   }
+  using Clk = std::chrono::steady_clock;
+  const auto tInfo0 = Clk::now();
   if (!headerIds.empty()) {
     api::LayersChangedEvent e;
     for (const auto& id : headerIds) e.layers.push_back(layer_info(d, id));
@@ -298,10 +303,30 @@ std::vector<api::Event> EventBuilder::build(const ChangeSet& changes, const PCtx
   for (const auto& comp : orderComps) {
     if (is_comp_item(d, comp)) events.push_back(make_event(api::LayerOrderChangedEvent{comp, layer_ids_of_comp(d, comp)}));
   }
+  const auto tInfo1 = Clk::now();
   std::vector<api::KeyframeSet> keyframeSetsOut;
+  double propsMs = 0;
+  double keysMs = 0;
   for (const auto& id : headerIds) {
-    layer_properties(c, id, events);
-    layer_keyframes(c, id, keyframeSetsOut);
+    const auto a = Clk::now();
+    std::optional<Catalog> cat;
+    try {
+      cat = catalog_for(c.d, id);
+    } catch (const EngineFail&) {
+      continue;  // no catalog for this layer (as before: nothing reported for it)
+    }
+    layer_properties(c, id, *cat, events);
+    const auto b = Clk::now();
+    layer_keyframes(c, id, *cat, keyframeSetsOut);
+    propsMs += std::chrono::duration<double, std::milli>(b - a).count();
+    keysMs += std::chrono::duration<double, std::milli>(Clk::now() - b).count();
+  }
+  if (log::enabled(log::Level::debug) && !headerIds.empty()) {
+    PREMATION_LOG(debug, "event_layers")
+        .kv("layers", static_cast<std::uint64_t>(headerIds.size()))
+        .kv("infoMs", std::chrono::duration<double, std::milli>(tInfo1 - tInfo0).count())
+        .kv("propsMs", propsMs)
+        .kv("keysMs", keysMs);
   }
   if (!keyframeSetsOut.empty()) events.push_back(make_event(api::KeyframesChangedEvent{std::move(keyframeSetsOut)}));
 
@@ -343,13 +368,7 @@ std::vector<api::Event> EventBuilder::build(const ChangeSet& changes, const PCtx
   return events;
 }
 
-void EventBuilder::layer_properties(const PCtx& c, const std::string& layer, std::vector<api::Event>& events) {
-  Catalog cat;
-  try {
-    cat = catalog_for(c.d, layer);
-  } catch (const EngineFail&) {
-    return;
-  }
+void EventBuilder::layer_properties(const PCtx& c, const std::string& layer, const Catalog& cat, std::vector<api::Event>& events) {
   const bool known = props_.contains(layer);
   PropCache cache = known ? props_[layer] : PropCache{};
   std::vector<api::PropertyInfo> changedInfos;
@@ -403,14 +422,8 @@ void EventBuilder::layer_properties(const PCtx& c, const std::string& layer, std
   if (!changedInfos.empty()) events.push_back(make_event(api::PropertiesChangedEvent{layer, std::move(changedInfos)}));
 }
 
-void EventBuilder::layer_keyframes(const PCtx& c, const std::string& layer, std::vector<api::KeyframeSet>& out) {
-  std::vector<api::KeyframeSet> sets;
-  try {
-    const Catalog cat = catalog_for(c.d, layer);
-    sets = keyframe_sets(c, layer, cat);
-  } catch (const EngineFail&) {
-    return;
-  }
+void EventBuilder::layer_keyframes(const PCtx& c, const std::string& layer, const Catalog& cat, std::vector<api::KeyframeSet>& out) {
+  std::vector<api::KeyframeSet> sets = keyframe_sets(c, layer, cat);
   auto& cache = keys_[layer];
   std::set<std::string> live;
   for (auto& s : sets) {

@@ -235,6 +235,15 @@
   gap: var(--space-2);
 }
 
+/* The Source Text keyframe switch while the text is animated: the panel's
+   "on" tint (Button's tertiary variant reads its colours from these). */
+.keyOn {
+  --btn-bg: var(--color-primary-subtle);
+  --btn-bg-hover: var(--color-primary-subtle);
+  --btn-border: var(--color-primary);
+  --btn-fg: var(--color-text-primary);
+}
+
 .contentTextarea {
   width: 100%;
   box-sizing: border-box;
@@ -796,7 +805,7 @@
 }
 
 .seg.seg button[role="radio"][data-checked] {
-  background: var(--color-hover);
+  background: var(--color-surface-3);
   color: var(--color-text-primary);
   font-weight: var(--font-weight-semibold);
   border-color: var(--color-border);
@@ -853,8 +862,8 @@
 /* ── Quick typography presets: bordered verbs ── */
 .presetGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(68px, 1fr));
-  gap: 6px;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: var(--space-1);
   width: 100%;
   max-height: 120px;
   overflow-y: auto;
@@ -868,10 +877,10 @@
   border-radius: var(--radius-sm);
   background: var(--color-surface-0);
   border: 1px solid var(--color-border);
-  color: var(--color-text-primary);
+  color: var(--color-text-secondary);
   font-family: var(--panel-font-family);
   font-size: var(--panel-font-size);
-  font-weight: var(--panel-weight-button);
+  font-weight: var(--panel-weight-label);
   text-align: center;
   cursor: pointer;
   white-space: nowrap;
@@ -885,6 +894,7 @@
 .presetChip:hover {
   background: var(--color-hover);
   border-color: var(--color-border-strong);
+  color: var(--color-text-primary);
 }
 
 .presetChip:focus-visible {

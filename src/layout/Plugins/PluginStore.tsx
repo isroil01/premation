@@ -31,6 +31,8 @@ import { canInstallFromStore, compareVersions, hostPlatformKeys, runsHere } from
 import type { InstalledState, StoreSort } from '@hooks/usePluginStore';
 import { useStoreBrowse } from '@hooks/usePluginStore';
 import { useCachedQuery } from '@hooks/useCachedQuery';
+import { useCloudOffer, useCloudTrialDays } from '@hooks/useCloudOffer';
+import { useProSalesOpen } from '@hooks/useProSalesOpen';
 import { useEntitlementStore } from '@stores/entitlementStore';
 import { PluginIcon } from './PluginIcon';
 import { PluginListingEditor } from './PluginListingEditor';
@@ -146,6 +148,9 @@ function PublisherLine({ plugin }: { plugin: StorePluginSummary }): JSX.Element 
 /** Why Premation Cloud, on a Cloud plugin's page — shown to anyone who does not have it yet. */
 function CloudPitch({ plugin }: { plugin: StorePluginSummary }): JSX.Element {
   const openBilling = useOpenBilling();
+  const salesOpen = useProSalesOpen();
+  const offerLine = useCloudOffer();
+  const trialDays = useCloudTrialDays();
   return (
     <div className={styles.pitch}>
       <Icon name="sparkles" size="md" className={styles.pitchIcon} />
@@ -154,13 +159,16 @@ function CloudPitch({ plugin }: { plugin: StorePluginSummary }): JSX.Element {
         <span>
           {t(
             'plugins.store.cloudPitch',
-            'Premation Cloud includes every Premation plugin, unlimited cloud projects and 90 days of version history. Plugins run on your computer; you keep your projects if you stop.',
+            'Premation Cloud includes every Premation plugin, the full Library, unlimited cloud projects and 90 days of version history. Plugins run on your computer; you keep your projects if you stop.',
           )}
         </span>
+        {openBilling && salesOpen && offerLine ? <span>{offerLine}</span> : null}
       </div>
       {openBilling ? (
         <Button size="sm" variant="primary" onClick={openBilling}>
-          {t('plugins.store.seePlans', 'See plans')}
+          {salesOpen && trialDays > 0
+            ? t('plugins.store.startTrial', 'Try it free')
+            : t('plugins.store.seePlans', 'See plans')}
         </Button>
       ) : null}
     </div>

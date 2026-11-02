@@ -157,6 +157,25 @@ function syncDirtyFromMirror(): void {
 }
 
 /**
+ * The page stores that are VIEWS of the engine's document. The editor window
+ * installs them with its session; a pop-out window (a second mirror of the
+ * same engine) installs them alone — without them its Project panel had no
+ * items, its compositions were the page's placeholder, and Effect Controls
+ * had no property trees to draw.
+ */
+export function installEngineMirrorViews(track: (dispose: () => void) => void): void {
+  // F2: guides / swatches / materials are views of the engine's document; a
+  // user edit to them is an undoable engine command (engineDocumentStores.ts).
+  track(bindEngineDocumentStores({ mirror: documentMirror(), send: (label, cmd) => edit(label, cmd) }));
+  // F2: the assets store's items half follows the engine's ItemInfo (session
+  // fields stay the page's); the project store's compositions follow CompInfo.
+  track(bindEngineItems(documentMirror()));
+  track(bindEngineComps(documentMirror()));
+  // The selection's property trees stay loaded: the edits that act on it compose from them.
+  track(retainSelectionTrees());
+}
+
+/**
  * Install the engine-owned session. Resolves once the first document is in
  * place (the engine's live one, a restored session, or a fresh `newProject`;
  * on a cloud route ProjectLoader opens the project right after).
@@ -194,15 +213,7 @@ export async function installEngineOwnedSession(track: (dispose: () => void) => 
   // The unsaved indicator follows the engine.
   track(documentMirror().subscribe(['status', 'doc'], syncDirtyFromMirror));
 
-  // F2: guides / swatches / materials are views of the engine's document; a
-  // user edit to them is an undoable engine command (engineDocumentStores.ts).
-  track(bindEngineDocumentStores({ mirror: documentMirror(), send: (label, cmd) => edit(label, cmd) }));
-  // F2: the assets store's items half follows the engine's ItemInfo (session
-  // fields stay the page's); the project store's compositions follow CompInfo.
-  track(bindEngineItems(documentMirror()));
-  track(bindEngineComps(documentMirror()));
-  // The selection's property trees stay loaded: the edits that act on it compose from them.
-  track(retainSelectionTrees());
+  installEngineMirrorViews(track);
   // Session blob:/data: footage is not a path the engine process can open.
   // Write it to the cache and relink as the mirror learns about the item, so
   // the viewport and jobs both see a file. A relink updates the mirror, which

@@ -8,6 +8,8 @@ export interface PlanIntentPlan {
   interval?: string;
   /** False when the server has closed new subscriptions to this plan. Missing = purchasable. */
   purchasable?: boolean;
+  /** Free-trial days a new subscription starts with. Missing or 0 = none. */
+  trialDays?: number;
 }
 
 export type PlanIntent =
@@ -46,6 +48,12 @@ export function planIntent(
     return { kind: 'unavailable', label: t('billing.intent.paused', 'Paused for new subscriptions') };
   }
   if (!opts.hasSubscription) {
+    if (target.trialDays && target.trialDays > 0) {
+      return {
+        kind: 'subscribe',
+        label: t('billing.intent.startTrial', 'Start {days}-day free trial', { days: target.trialDays }),
+      };
+    }
     return {
       kind: 'subscribe',
       label: yearly
@@ -100,7 +108,7 @@ export function confirmPlanChange(
         title: t('billing.cancel.title', 'Cancel subscription?'),
         message: t(
           'billing.cancel.plain',
-          "You'll keep paid access until {date}, then the account moves to Free. API keys stop working after that date.",
+          "You'll keep paid access until {date}, then the account moves to Free. Your projects are never deleted.",
           { date: until },
         ),
         confirmLabel: t('billing.cancel.confirm', 'Cancel subscription'),
@@ -148,12 +156,28 @@ export type CancelDialogCopy =
  * What the cancel dialog says, from the server's refund verdict. The window,
  * the amount and the eligibility are all the server's; this only picks the
  * sentence — so the dialog can never promise a refund the server will refuse.
+ *
+ * A free trial comes first: nothing has been paid, so "not refunded" and a
+ * refund button would both be wrong whatever the verdict says.
  */
 export function cancelDialogCopy(
   refund: RefundState | undefined,
   periodEnd: string | null,
+  opts: { trial?: boolean } = {},
 ): CancelDialogCopy {
   const date = periodEnd ? new Date(periodEnd).toLocaleDateString() : t('billing.cancel.periodEndFallback', 'the end of the current period');
+  if (opts.trial) {
+    return {
+      mode: 'confirm',
+      title: t('billing.cancel.trialTitle', 'Cancel free trial?'),
+      message: t(
+        'billing.cancel.trial',
+        "You won't be charged. You keep Premation Cloud until {date}, then the account moves to Free. Your projects are never deleted.",
+        { date },
+      ),
+      confirmLabel: t('billing.cancel.trialConfirm', 'Cancel trial'),
+    };
+  }
   const title = t('billing.cancel.title', 'Cancel subscription?');
   if (refund?.eligible) {
     const amount = refund.amountLabel ?? '';
@@ -191,7 +215,7 @@ export function cancelDialogCopy(
     default:
       message = t(
         'billing.cancel.plain',
-        "You'll keep paid access until {date}, then the account moves to Free. API keys stop working after that date.",
+        "You'll keep paid access until {date}, then the account moves to Free. Your projects are never deleted.",
         { date },
       );
   }

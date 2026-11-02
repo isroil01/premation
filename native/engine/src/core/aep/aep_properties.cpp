@@ -210,8 +210,9 @@ std::optional<AepShape> read_shape(const Chunk* shap, const PropertyContext& ctx
     double x, y;
   };
   std::vector<P> points;
-  const double sx = ctx.layerWidth != 0 ? ctx.layerWidth : 1;
-  const double sy = ctx.layerHeight != 0 ? ctx.layerHeight : 1;
+  // A layer with no source (text, shape) stores its box in layer pixels, not as a fraction of a size.
+  const double sx = ctx.hasSource && ctx.layerWidth != 0 ? ctx.layerWidth : 1;
+  const double sy = ctx.hasSource && ctx.layerHeight != 0 ? ctx.layerHeight : 1;
   for (std::uint32_t i = 0; i < meta->count; ++i) {
     const std::size_t at = std::size_t{i} * 8;
     if (!r.has(at, 8)) break;

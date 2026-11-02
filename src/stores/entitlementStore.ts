@@ -26,7 +26,7 @@
  */
 
 import { create } from 'zustand';
-import { api, isAuthenticated, paidSalesOpen, type CloudAccess } from '@core/api/client';
+import { api, isAuthenticated, paidOffer, paidSalesOpen, trialOpenTo, type CloudAccess } from '@core/api/client';
 import { onProjectLimit, onWriteDenied } from '@core/api/transport';
 import { billingEnabled } from '@core/config/edition';
 
@@ -43,6 +43,12 @@ interface EntitlementState {
    * When false, nothing may offer "Subscribe"/"Upgrade": checkout would refuse.
    */
   salesOpen: boolean | null;
+  /**
+   * The paid plan's monthly price and free-trial days, from the same catalog
+   * load, for the paywalls' one line of terms. Null until loaded or when no paid
+   * plan is on sale; `trialDays` 0 = the server advertises no trial.
+   */
+  offer: { priceLabel: string; trialDays: number } | null;
   /**
    * The server's sentence when the OPEN project is past the Free plan's cloud
    * allowance (403 `project_limit`), else null. Per project, not per account:
@@ -102,6 +108,7 @@ export const useEntitlementStore = create<EntitlementState & EntitlementActions>
   message: '',
   loading: false,
   salesOpen: null,
+  offer: null,
   projectLimit: null,
   refresh: async (opts) => {
     // No backend, no entitlement to fetch. Leaving `access` null is correct: the
@@ -149,7 +156,9 @@ export const useEntitlementStore = create<EntitlementState & EntitlementActions>
   refreshSales: async () => {
     try {
       if (!billingEnabled() || !isAuthenticated()) return;
-      set({ salesOpen: paidSalesOpen(await api.listPlans()) });
+      // The catalog says what is on sale; only the account says if its trial is left.
+      const [plans, billing] = await Promise.all([api.listPlans(), api.getBilling().catch(() => null)]);
+      set({ salesOpen: paidSalesOpen(plans), offer: paidOffer(plans, trialOpenTo(billing)) });
     } catch {
       // Keep the last answer: a failed catalog fetch proves nothing about sales.
     }
@@ -164,7 +173,7 @@ export const useEntitlementStore = create<EntitlementState & EntitlementActions>
 
   clearProjectLimit: () => set({ projectLimit: null }),
 
-  reset: () => set({ access: null, message: '', loading: false, salesOpen: null, projectLimit: null }),
+  reset: () => set({ access: null, message: '', loading: false, salesOpen: null, offer: null, projectLimit: null }),
 }));
 
 /**

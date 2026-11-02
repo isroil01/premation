@@ -37,13 +37,14 @@
   color: var(--color-text-primary);
   overflow: hidden;
   flex: none;
-  border: 1px solid var(--color-border-strong);
-  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard);
+  /* The same edge as the Sort button and the view toggle beside it. */
+  border: 1px solid var(--color-border);
+  transition: border-color var(--motion-duration-fast) var(--motion-ease-standard);
   box-sizing: border-box;
 }
 
 .assetImportSplit:hover {
-  background: var(--color-surface-3);
+  border-color: var(--color-border-strong);
 }
 
 .assetImportMain {
@@ -66,11 +67,11 @@
 }
 
 .assetImportMain:hover {
-  background: rgba(255, 255, 255, 0.14);
+  background: var(--color-hover);
 }
 
 .assetImportMain:active {
-  background: rgba(255, 255, 255, 0.22);
+  background: var(--color-surface-3);
 }
 
 .assetImportMain:focus-visible {
@@ -81,7 +82,7 @@
 .assetImportDivider {
   width: 1px;
   height: 100%;
-  background: var(--color-border-strong);
+  background: var(--color-border);
   flex: none;
 }
 
@@ -101,11 +102,11 @@
 }
 
 .assetImportMore:hover {
-  background: rgba(255, 255, 255, 0.14);
+  background: var(--color-hover);
 }
 
 .assetImportMore:active {
-  background: rgba(255, 255, 255, 0.22);
+  background: var(--color-surface-3);
 }
 
 .assetImportMore:focus-visible {
@@ -2192,7 +2193,7 @@
   width: 24px;
   height: 24px;
   padding: 0;
-  border: 1px solid var(--color-border-subtle);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: var(--color-surface-2);
   color: var(--color-text-secondary);
@@ -2203,9 +2204,37 @@
 }
 
 .assetToolbarBtn:hover:not(:disabled) {
-  background: var(--color-surface-3);
+  background: var(--color-hover);
   color: var(--color-text-primary);
-  border-color: var(--color-border);
+  border-color: var(--color-border-strong);
+}
+
+/* The list / grid toggle: the Sort button's edge and height, not Segmented's
+   bevelled well (it sat 2px lower and darker than its neighbours). */
+.assetViewSeg.assetViewSeg {
+  height: 24px;
+  padding: 1px;
+  gap: 1px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-0);
+  box-shadow: none;
+  box-sizing: border-box;
+}
+
+.assetViewSeg.assetViewSeg button[role="radio"] {
+  height: 100%;
+  width: 22px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  box-shadow: none;
+}
+
+.assetViewSeg.assetViewSeg button[role="radio"][data-checked] {
+  background: var(--color-surface-3);
+  border: none;
+  box-shadow: none;
 }
 
 .assetToolbarBtn:focus-visible {

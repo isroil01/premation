@@ -203,6 +203,13 @@
   font-weight: var(--font-weight-semibold);
 }
 
+.calloutActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
 .errorAlert {
   display: flex;
   align-items: center;

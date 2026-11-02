@@ -264,14 +264,22 @@ export function TrackMotionSection({ nodeId }: { nodeId: string }): JSX.Element 
           </>
         ) : (
           <>
-            <p className={styles.cardHint}>
-              {picking
-                ? pickIntent === 'object'
-                  ? t('inspector.trackMotion.hintPickObject', 'Draw a box around the object (or click it) and it becomes a mask path — cut from this exact frame. Esc to cancel.')
-                  : t('inspector.trackMotion.hintPickTrack', 'Click the thing to follow — or drag a box around it. It locks onto the best trackable detail there, then tracks the whole clip both ways from the playhead. Esc to cancel. Spinning objects (wheels, fans): pick the hub — details on the rim rotate away mid-track.')
-                : t('inspector.trackMotion.hintIdle', 'Point at anything in the shot, or draw a box around it. The feature, both window sizes and the direction are measured from the footage.')}
-            </p>
-            <Button size="sm" variant={picking && pickIntent === 'track' ? 'secondary' : 'primary'} onClick={onArmPick} fullWidth>
+            {/* One short line while a pick is armed (the viewer is waiting on a
+                click); idle, the button's tooltip says how picking works. */}
+            {picking && (
+              <p className={styles.cardHint}>
+                {pickIntent === 'object'
+                  ? t('inspector.trackMotion.hintPickObjectShort', 'Box or click the object in the viewer · Esc to cancel')
+                  : t('inspector.trackMotion.hintPickTrackShort', 'Click or box what to follow · spinning objects: pick the hub · Esc to cancel')}
+              </p>
+            )}
+            <Button
+              size="sm"
+              variant={picking && pickIntent === 'track' ? 'secondary' : 'primary'}
+              title={t('inspector.trackMotion.hintIdle', 'Point at anything in the shot, or draw a box around it. The feature, both window sizes and the direction are measured from the footage.')}
+              onClick={onArmPick}
+              fullWidth
+            >
               {picking && pickIntent === 'track' ? t('inspector.trackMotion.cancelPick', 'Cancel pick (Esc)') : t('inspector.trackMotion.pickTarget', 'Pick target in viewport')}
             </Button>
             <Button
@@ -393,7 +401,7 @@ export function TrackMotionSection({ nodeId }: { nodeId: string }): JSX.Element 
                 Deliberate still needs SAYING, or the short squiggle reads as
                 a track that quit after a second. */}
             <p className={styles.cardHint}>
-              {t('inspector.trackMotion.pathHint', 'The viewport shows the path near the playhead — scrub to review it. Applying writes every frame.')}
+              {t('inspector.trackMotion.pathHintShort', 'Path shown near the playhead — scrub to review.')}
             </p>
           </div>
         )}

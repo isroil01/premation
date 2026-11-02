@@ -15,6 +15,7 @@
 
 import { secondsToFlicks, type Thumbnail } from '@motion/engine-api';
 import { engine } from '@core/engine/engineInstance';
+import { engineFailure } from './engineFailure';
 
 /** The engine's largest still. */
 export const ENGINE_STILL_MAX = 4096;
@@ -74,6 +75,6 @@ export async function engineDocumentStill(document: unknown, seconds: number, ma
     time: secondsToFlicks(Math.max(0, seconds)),
     maxSize: clampSize(maxSize),
   }));
-  if (!res.ok) throw new Error(res.error.message);
+  if (!res.ok) throw engineFailure(res.error);
   return toBlob(res.value);
 }

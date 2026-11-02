@@ -21,7 +21,7 @@ import { DashboardConnections } from './DashboardConnections';
 import { newProjectDocument } from '@core/project/newProjectDocument';
 import { NativePluginsPage } from '@layout/Plugins/NativePluginsPage';
 import { RegistryPluginsNotice } from '@layout/Plugins/RegistryPluginsNotice';
-import { BILLING_QUERY_KEY, BillingSection, fetchBillingPage } from '@layout/Settings/BillingSection';
+import { BILLING_QUERY_KEY, BillingSection, checkoutReturnState, fetchBillingPage } from '@layout/Settings/BillingSection';
 import { SESSIONS_QUERY_KEY } from '@layout/Settings/AccountSection';
 import { billingEnabled } from '@core/config/edition';
 import { t } from '@core/i18n';
@@ -53,6 +53,7 @@ import { projectLimitDetail } from '@core/api/transport';
 import { usePagedList } from '@hooks/usePagedList';
 import { prefetchQuery, useCachedQuery } from '@hooks/useCachedQuery';
 import { useProSalesOpen } from '@hooks/useProSalesOpen';
+import { useCloudOffer } from '@hooks/useCloudOffer';
 import { clearRecovery } from '@core/persistence/recovery';
 import { DashboardPreferencePage, normalizePreferencePage, preferencePages, type PreferencePage } from './DashboardCustomizeTab';
 import { DashboardTemplates } from './DashboardTemplates';
@@ -425,6 +426,8 @@ export function DashboardPage(): JSX.Element {
   // "set up AI" prompt lands the user on the right page, not just this one.
   const [searchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState<TabType>(() => {
+    // Back from a web checkout: only the Plan page reads what the address says.
+    if (checkoutReturnState(searchParams)) return 'billing';
     const tab = searchParams.get('tab');
     return isTab(tab) ? tab : 'home';
   });
@@ -559,6 +562,7 @@ export function DashboardPage(): JSX.Element {
   const refreshOverview = overviewQuery.reload;
   // Pro sales can be closed server-side; the sidebar then stops saying "View plans".
   const salesOpen = useProSalesOpen();
+  const offerLine = useCloudOffer();
   /** The cloud project cap in force (null = none, incl. the beta and the launch grace). */
   const projectCap =
     account && account.access.reason !== 'beta' ? (account.access.limits?.cloudProjects ?? null) : null;
@@ -2610,6 +2614,7 @@ export function DashboardPage(): JSX.Element {
                 {salesOpen
                   ? t('dashboard.setup.limitUpgrade', 'You are using all {cap} cloud projects on the Free plan. Move one to the Trash to make room, or upgrade for unlimited projects.', { cap: projectCap })
                   : t('dashboard.setup.limit', 'You are using all {cap} cloud projects on the Free plan. Move one to the Trash to make room.', { cap: projectCap })}
+                {salesOpen && offerLine ? ` ${offerLine}` : null}
               </span>
               {salesOpen && (
                 <Button
@@ -2623,6 +2628,34 @@ export function DashboardPage(): JSX.Element {
                   {t('dashboard.account.viewPlans', 'View plans')}
                 </Button>
               )}
+            </div>
+          )}
+          {/*
+            Within two projects of the cap, and only while Cloud is on sale:
+            someone starting their fourth cloud project is clearly building on
+            the cloud, which is when the unlimited plan is worth one sentence.
+          */}
+          {projectCap !== null && account && salesOpen && projectCap > 2 &&
+            account.projectCount >= projectCap - 2 && account.projectCount < projectCap && (
+            <div className={styles.setupLimitNote} role="status">
+              <Icon name="info" size="sm" />
+              <span>
+                {t('dashboard.setup.nearLimit', '{used} of {cap} free cloud projects used. Premation Cloud has no limit.', {
+                  used: account.projectCount,
+                  cap: projectCap,
+                })}
+                {offerLine ? ` ${offerLine}` : null}
+              </span>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  setSetupModalOpen(false);
+                  openTab('billing');
+                }}
+              >
+                {t('dashboard.account.viewPlans', 'View plans')}
+              </Button>
             </div>
           )}
 

@@ -269,7 +269,14 @@ std::optional<Node> create_node(Ctx& c, const PlannedLayer& layer, const Planned
 
   Component* t = comp_of(node, "Transform");
   if (t == nullptr) return node;
-  for (const auto& [key, value] : layer.staticProps) t->props.set(key, Json::number(value));
+  for (const auto& [key, value] : layer.staticProps) {
+    t->props.set(key, Json::number(value));
+    // A layer reads a prop from whichever component holds it last (a text layer's Text keeps its own
+    // `opacity`): a copy left at the factory default there would win over the imported value.
+    for (Component& other : node.components) {
+      if (&other != t && other.props.at(key).is_finite_number()) other.props.set(key, Json::number(value));
+    }
+  }
 
   // Text belongs to the Text component, not the transform.
   if (layer.text) {
@@ -284,12 +291,14 @@ std::optional<Node> create_node(Ctx& c, const PlannedLayer& layer, const Planned
       // AE tracking is thousandths of an em; letter spacing here is pixels.
       if (doc.tracking) text->props.set("letterSpacing", Json::number((*doc.tracking / 1000) * doc.fontSize.value_or(32)));
       if (doc.fillColor) text->props.set("fill", Json::string(hex_of01(*doc.fillColor)));
+      // AE point text hangs off its origin (alignment edge, first baseline); the anchor is relative to it.
+      text->props.set("textAnchor", Json::string("alignment"));
     }
   }
 
-  // The layer's box is the SOURCE's size (AE scales footage with the transform).
+  // The layer's box is the SOURCE's size (AE scales footage with the transform). Text sizes to its content.
   const bool compSource = layer.source && layer.source->comp;
-  if (!compSource) {
+  if (!compSource && *kind != api::LayerKind::text) {
     const double w = footage != nullptr && footage->width != 0 ? footage->width : comp.width;
     const double h = footage != nullptr && footage->height != 0 ? footage->height : comp.height;
     if (w != 0) t->props.set("width", Json::number(w));

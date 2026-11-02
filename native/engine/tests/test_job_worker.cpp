@@ -261,3 +261,9 @@ TEST_CASE("job worker: idle, the worker is shut down; the next call starts it ag
   CHECK(served(w.run("count", "{}", c)) == 1);
   CHECK(w.starts() == 2);
 }
+
+TEST_CASE("job worker: the batch lane lets go of its models first", "[job_worker]") {
+  CHECK(jobs::lane_idle(jobs::WorkerLane::interactive) == std::chrono::minutes(3));
+  CHECK(jobs::lane_idle(jobs::WorkerLane::batch) == jobs::kBatchLaneIdle);
+  CHECK(jobs::kBatchLaneIdle < jobs::lane_idle(jobs::WorkerLane::interactive));
+}

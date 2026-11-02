@@ -512,8 +512,11 @@ std::optional<PropertyMeta> resolve_effect_param(std::string_view path, const No
     const Json& type = registry().layerStyles.at("effectType").at(*styleKey);
     def = type.is_string() ? registry().effect(type.str()) : nullptr;
   } else if (n != nullptr) {
-    const std::vector<Json> effects = read_node_effects(*n);
-    if (const Json* fx = find_by_id(effects, effectId)) def = registry().effect(fx->at("type").str());
+    // One effect, in place: this runs once per parameter of every effect while
+    // a layer's catalog is built, and copying the whole stack here made that
+    // O(effects^2) — 40 effects on a layer cost 100+ ms per edit.
+    const Json fx = read_node_effect(*n, effectId);
+    if (!fx.is_undefined()) def = registry().effect(fx.at("type").str());
   }
   if (rawKey && *rawKey == kEffectOpacityKey) {
     std::optional<std::string> owner;

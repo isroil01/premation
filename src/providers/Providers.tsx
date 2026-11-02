@@ -64,7 +64,7 @@ import { getThemeManager, getProjectManager, getLoadingManager, getSettingsManag
 import { bootEngine, engine, shutdownEngine } from '@core/engine/engineInstance';
 import { engineOwnsDocumentNow, setEngineOwnsDocument } from '@core/engine/engineOwnership';
 import { processEngineOwnsDocument } from '@core/engine/process/processEngine';
-import { installEngineOwnedSession } from './engineOwnedSession';
+import { installEngineMirrorViews, installEngineOwnedSession } from './engineOwnedSession';
 import { installAutomationDevApi } from '@core/automation/devApi';
 import { LoadingScreen } from '@components/LoadingScreen';
 import { dockGroupUnderPointer } from '@components/DockPanel';
@@ -3097,6 +3097,9 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
           } catch (err) {
             console.error('[boot] the engine-owned session failed to start', err);
           }
+        } else if (!cancelled && mirrorsEngine) {
+          // A pop-out: the same document views, none of the session (the editor window owns that).
+          installEngineMirrorViews(track);
         }
         useBootStageStore.getState().finish('project');
       } finally {

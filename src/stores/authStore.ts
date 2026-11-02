@@ -18,6 +18,7 @@ import {
 import { useAssetStore } from './assetStore';
 import { noteSignedIn, resetProductEvents } from '@core/analytics/productEvents';
 import { useAiProviderStore } from './aiProviderStore';
+import { useCheckoutStore } from './checkoutStore';
 import { useEntitlementStore } from './entitlementStore';
 import { t } from '@core/i18n';
 
@@ -180,6 +181,8 @@ export const useAuthStore = create<AuthState & AuthActions>((set) => ({
     void api.logout().catch(() => undefined);
     resetProductEvents();
     void clearSession();
+    // A checkout left open in the browser was the account leaving, not the next one's.
+    useCheckoutStore.getState().dismiss();
     // Everything cached was fetched under a session that is now gone — leaving
     // it would show the previous account's projects to the next person to sign
     // in on this machine.

@@ -755,9 +755,13 @@ function TextSettingsBodyInner({ nodeId, nodeIds, variant = 'character' }: TextS
   // Source Text: the content box and its keyframe switch (a bordered verb
   // while off, the accent while the text is animated).
   const sourceKeyButton = hasTarget && (
+            // A square panel control, not the dashboard's pill: the accent tint
+            // marks it on (animated), like every other toggle in the panel.
             <Button
               size="xs"
-              variant={sourceAnimated ? 'primary' : 'secondary'}
+              variant="tertiary"
+              className={sourceAnimated ? styles.keyOn : undefined}
+              aria-pressed={sourceAnimated}
               icon={<Icon name="keyframe" size="sm" />}
               title={sourceAnimated ? t('inspector.character.removeSourceKeys', 'Remove Source Text keyframes') : t('inspector.character.keyframeSource', 'Keyframe Source Text across timeline')}
               onClick={toggleSourceStopwatch}
@@ -1095,8 +1099,9 @@ function TextSettingsBodyInner({ nodeId, nodeIds, variant = 'character' }: TextS
             value={currentDirection}
             onChange={handleDirectionChange}
             options={[
-              { value: 'ltr', label: t('inspector.character.ltr', 'Left to Right') },
-              { value: 'rtl', label: t('inspector.character.rtl', 'Right to Left') },
+              // Short marks in the strip; the full names stay the accessible names.
+              { value: 'ltr', label: t('inspector.character.ltrShort', 'LTR'), ariaLabel: t('inspector.character.ltr', 'Left to Right') },
+              { value: 'rtl', label: t('inspector.character.rtlShort', 'RTL'), ariaLabel: t('inspector.character.rtl', 'Right to Left') },
               // Each paragraph follows its first strong character (UAX #9 P2/P3).
               { value: 'auto', label: t('inspector.character.auto', 'Auto') },
             ]}
@@ -1130,8 +1135,8 @@ function TextSettingsBodyInner({ nodeId, nodeIds, variant = 'character' }: TextS
               else setFallbackTextAnchor(v);
             }}
             options={[
-              { value: 'alignment', label: t('inspector.character.anchorAlignment', 'Anchor at alignment') },
-              { value: 'center', label: t('inspector.character.anchorCentre', 'Anchor at centre') },
+              { value: 'alignment', label: t('inspector.character.anchorAlignmentShort', 'Anchor: edge'), ariaLabel: t('inspector.character.anchorAlignment', 'Anchor at alignment') },
+              { value: 'center', label: t('inspector.character.anchorCentreShort', 'Anchor: centre'), ariaLabel: t('inspector.character.anchorCentre', 'Anchor at centre') },
             ]}
           />
         </div>
@@ -1754,7 +1759,7 @@ function TextSettingsBodyInner({ nodeId, nodeIds, variant = 'character' }: TextS
               {contentCard}
               {(fillRows || strokeRows || openType) && (
                 <div className={styles.sectionCard}>
-                  <div className={styles.sectionHeader}>{t('inspector.character.gradientStrokeOpenType', 'Gradient, stroke stack and OpenType')}</div>
+                  <div className={styles.sectionHeader}>{t('inspector.character.fillStrokeOpenType', 'Fill, stroke & OpenType')}</div>
                   {fillRows}
                   {strokeRows}
                   {openType}

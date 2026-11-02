@@ -1,0 +1,25 @@
+/* A pop-out window is the panel and nothing else: it fills the window under the title bar. */
+
+.fill {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--color-panel);
+}
+
+.panel {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--color-panel);
+  color: var(--color-text-primary);
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: auto;
+}

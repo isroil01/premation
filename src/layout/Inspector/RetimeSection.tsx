@@ -178,7 +178,7 @@ export function RetimeSection({ nodeId }: { nodeId: string }): JSX.Element | nul
 
       {mode === 'normal' && (
         <p className={styles.hint}>
-          {t('inspector.retime.normalHint', 'Plays as shot. Speed % for ramps and velocity edits; Frames to choose exactly which source frame shows when.')}
+          {t('inspector.retime.normalHintShort', 'Plays as shot.')}
         </p>
       )}
 

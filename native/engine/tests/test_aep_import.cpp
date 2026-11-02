@@ -368,3 +368,86 @@ TEST_CASE("aep: a camera's Zoom, depth of field, rotation and depth plan 1:1", "
   CHECK_FALSE(get("anchorX").has_value());
   CHECK_FALSE(get("rotationY").has_value());
 }
+
+namespace {
+
+const PlannedEffect* planned_effect(const PlannedLayer& l, std::string_view type) {
+  for (const PlannedEffect& e : l.effects) {
+    if (e.type == type) return &e;
+  }
+  return nullptr;
+}
+
+std::optional<premation::js::Json> planned_param(const PlannedEffect* e, std::string_view key) {
+  if (e == nullptr) return std::nullopt;
+  for (const auto& [k, v] : e->params) {
+    if (k == key) return v;
+  }
+  return std::nullopt;
+}
+
+}  // namespace
+
+TEST_CASE("aep: effect parameters AE stores in its own units mean the same here", "[aep][effects]") {
+  // Drop Shadow: Opacity 0–255, Direction clockwise from up. Fast Box Blur: a 1-based popup.
+  // Ramp: Start/End Color and the direction between Start/End of Ramp. Glow: a 0–255 threshold.
+  const auto param = [](std::uint32_t index, std::string label, std::uint32_t controlType, std::vector<double> value) {
+    b::EffectParamSpec p;
+    p.index = index;
+    p.label = std::move(label);
+    p.controlType = controlType;
+    p.color = controlType == 5;
+    p.value = std::move(value);
+    return p;
+  };
+  std::vector<b::Buf> parade;
+  b::append(parade, b::effect("ADBE Drop Shadow", "Drop Shadow", {param(2, "Opacity", 2, {255}), param(3, "Direction", 3, {180})}));
+  b::append(parade, b::effect("ADBE Box Blur2", "Fast Box Blur", {param(1, "Blur Radius", 2, {137}), param(3, "Blur Dimensions", 7, {3})}));
+  b::append(parade, b::effect("ADBE Ramp", "Gradient Ramp",
+                              {param(1, "Start of Ramp", 6, {0.5, 1}), param(2, "Start Color", 5, {255, 255, 0, 0}),
+                               param(3, "End of Ramp", 6, {0.5, 0}), param(4, "End Color", 5, {255, 0, 0, 255})}));
+  b::append(parade, b::effect("ADBE Glo2", "Glow", {param(2, "Glow Threshold", 2, {153})}));
+  b::LayerOptions solid;
+  solid.id = 1;
+  solid.displayName = "Fx";
+  b::append(solid.properties, b::group("ADBE Effect Parade", parade));
+  b::CompItemOptions c = comp_main();
+  c.layers = {b::layer(solid)};
+  const AepImportPlan plan = plan_aep_import(read_file(b::aep_file({b::comp_item(c)})));
+  REQUIRE(plan.comps.size() == 1);
+  const PlannedLayer& l = plan.comps[0].layers.at(0);
+
+  const PlannedEffect* shadow = planned_effect(l, "drop-shadow");
+  CHECK(planned_param(shadow, "opacity")->num() == Catch::Approx(100));
+  CHECK(planned_param(shadow, "angle")->num() == Catch::Approx(90));  // straight down, as AE's 180°
+  CHECK(planned_param(planned_effect(l, "fast-box-blur"), "dimensions")->num() == 2);  // Vertical
+  const PlannedEffect* ramp = planned_effect(l, "gradient-ramp");
+  CHECK(planned_param(ramp, "colorA")->str() == "#ff0000");
+  CHECK(planned_param(ramp, "colorB")->str() == "#0000ff");
+  CHECK(planned_param(ramp, "angle")->num() == Catch::Approx(-90));  // bottom → top
+  CHECK(planned_param(planned_effect(l, "vr-glow"), "threshold")->num() == Catch::Approx(60));
+}
+
+TEST_CASE("aep: a track matte whose video AE switched off still comes across as the matte", "[aep]") {
+  b::LayerOptions source;
+  source.id = 1;
+  source.displayName = "Matte";
+  source.enabled = false;  // AE turns a track matte's eye off
+  b::LayerOptions fill;
+  fill.id = 2;
+  fill.displayName = "Fill";
+  fill.trackMatte = 2;  // alpha inverted
+  fill.matteLayerId = 1;
+  b::LayerOptions other;
+  other.id = 3;
+  other.displayName = "Hidden";
+  other.enabled = false;
+  b::CompItemOptions c = comp_main();
+  c.layers = {b::layer(source), b::layer(fill), b::layer(other)};
+  const AepImportPlan plan = plan_aep_import(read_file(b::aep_file({b::comp_item(c)})));
+  const auto& layers = plan.comps.at(0).layers;
+  REQUIRE(layers.size() == 3);
+  CHECK(layers[0].flags.enabled);  // this editor only builds a matte source whose eye is on
+  CHECK(layers[1].matte->inverted);
+  CHECK_FALSE(layers[2].flags.enabled);  // a hidden layer that is no matte stays hidden
+}

@@ -1,3 +1,4 @@
+import { assertDecodableSize } from './imageLimits';
 /**
  * Layered Photoshop PSD import — RGB 8-bit, RLE or raw, one layer → one image.
  *
@@ -189,6 +190,7 @@ export function decodePsd(buf: ArrayBuffer): PsdDocument {
             return full;
           })());
         }
+        assertDecodableSize('PSD', lw, lh);
         const rgba = new Uint8ClampedArray(lw * lh * 4);
         const R = planes.get(0);
         const G = planes.get(1);
@@ -230,6 +232,7 @@ export function decodePsd(buf: ArrayBuffer): PsdDocument {
       throw new Error('PSD: flat RLE merged image without layers is not supported — save with layers');
     }
     if (planes.length >= 3) {
+      assertDecodableSize('PSD', width, height);
       const rgba = new Uint8ClampedArray(expected * 4);
       for (let i = 0; i < expected; i++) {
         rgba[i * 4] = planes[0]![i]!;

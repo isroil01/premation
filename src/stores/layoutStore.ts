@@ -1028,7 +1028,13 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
     dockPanel: (panelId, toRegion) =>
       set((s) => {
         const panel = s.panels[panelId];
-        if (!panel) return;
+        if (!panel) {
+          // The viewport / timeline: back in their fixed places.
+          if (!s.externalPanels.includes(panelId)) return;
+          s.externalPanels = s.externalPanels.filter((id) => id !== panelId);
+          getEventBus().emit('LayoutChanged', undefined);
+          return;
+        }
         const targetRegion = toRegion ?? panel.homeRegion ?? 'leftSidebar';
         panel.placement = 'docked';
         s.externalPanels = s.externalPanels.filter((id) => id !== panelId);
@@ -1060,13 +1066,29 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
     // No `monitorId` parameter: nothing enumerates monitors, so every caller
     // passed undefined and the field could only ever be set by hand-editing an
     // imported workspace. Multi-monitor targeting is not a feature here.
+    // The viewport, timeline and presentation are not registered panels, but
+    // they pop out too — `externalPanels` is the record of every window that
+    // is out, and the editor keeps the real windows in step with it
+    // (layout/EditorLayout/popoutWindows.ts). A docked panel LEAVES its dock:
+    // one live copy, not one in the dock and another in the window.
     popoutPanel: (panelId) =>
       set((s) => {
+        if (s.externalPanels.includes(panelId)) return;
+        s.externalPanels.push(panelId);
         const panel = s.panels[panelId];
-        if (!panel) return;
-        panel.placement = 'external';
-        if (!s.externalPanels.includes(panelId)) {
-          s.externalPanels.push(panelId);
+        if (panel) {
+          panel.placement = 'external';
+          const side = sideOfRegion(panel.region);
+          if (s.panelOrder[panel.region]) {
+            s.panelOrder[panel.region] = s.panelOrder[panel.region].filter((id) => id !== panelId);
+          }
+          if (s.activePanelByRegion[panel.region] === panelId) {
+            s.activePanelByRegion[panel.region] = s.panelOrder[panel.region]?.[0];
+          }
+          if (side) {
+            if (s.activePanelByRegion[side] === panelId) delete s.activePanelByRegion[side];
+            syncSide(s, side);
+          }
         }
         getEventBus().emit('LayoutChanged', undefined);
       }),
