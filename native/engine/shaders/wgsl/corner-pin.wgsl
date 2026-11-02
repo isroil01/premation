@@ -132,10 +132,40 @@ fn encodeOut(c : vec3<f32>, a : f32) -> vec4<f32> {
   let lwh = obj.p2.yz;
   let pp = (fieldQ(uv) - obj.fxBox.xy) / max(obj.fxBox.zw, vec2<f32>(0.000001, 0.000001)) * lwh;
   if (pp.x < 0.0 || pp.y < 0.0 || pp.x > lwh.x || pp.y > lwh.y) { return textureSampleLevel(tex, smp, uv, 0.0); }
+  let uv0 = pinUv(pp);
+  if (uv0.z < 0.5) { return vec4<f32>(0.0, 0.0, 0.0, 0.0); }
+  // The homography's footprint of one output pixel (finite differences: no
+  // derivatives in non-uniform flow). Layer px per output px, on each axis.
+  let ux = pinUv(pp + vec2<f32>(1.0, 0.0)).xy - uv0.xy;
+  let uy = pinUv(pp + vec2<f32>(0.0, 1.0)).xy - uv0.xy;
+  // The quad's edges anti-aliased by their distance in OUTPUT px (was a hard cut).
+  let gu = max(length(vec2<f32>(ux.x, uy.x)), 1e-6);
+  let gv = max(length(vec2<f32>(ux.y, uy.y)), 1e-6);
+  let du = min(uv0.x, 1.0 - uv0.x) / gu;
+  let dv = min(uv0.y, 1.0 - uv0.y) / gv;
+  let cover = clamp(du + 0.5, 0.0, 1.0) * clamp(dv + 0.5, 0.0, 1.0);
+  if (cover <= 0.0) { return vec4<f32>(0.0, 0.0, 0.0, 0.0); }
+  let at = clamp(uv0.xy, vec2<f32>(0.0), vec2<f32>(1.0));
+  // Shrunk past 1.5 : 1 (the buffer has no mips): four samples across the footprint.
+  let foot = max(length(ux * lwh), length(uy * lwh));
+  var c = samplePx(at * lwh, lwh);
+  if (foot > 1.5) {
+    let a1 = clamp(uv0.xy + (ux + uy) * 0.25, vec2<f32>(0.0), vec2<f32>(1.0));
+    let a2 = clamp(uv0.xy + (ux - uy) * 0.25, vec2<f32>(0.0), vec2<f32>(1.0));
+    let a3 = clamp(uv0.xy - (ux - uy) * 0.25, vec2<f32>(0.0), vec2<f32>(1.0));
+    let a4 = clamp(uv0.xy - (ux + uy) * 0.25, vec2<f32>(0.0), vec2<f32>(1.0));
+    c = (samplePx(a1 * lwh, lwh) + samplePx(a2 * lwh, lwh) + samplePx(a3 * lwh, lwh) + samplePx(a4 * lwh, lwh)) * 0.25;
+  }
+  return c * cover;
+}
+
+// The pin's homography at layer px `pp`: (u, v, valid). Up to one output px
+// past the quad stays valid, for the edge's anti-aliasing above.
+fn pinUv(pp : vec2<f32>) -> vec3<f32> {
   let den = obj.p1.z * pp.x + obj.p1.w * pp.y + obj.p2.x;
-  if (abs(den) < 0.000000001) { return vec4<f32>(0.0, 0.0, 0.0, 0.0); }
+  if (abs(den) < 0.000000001) { return vec3<f32>(0.0, 0.0, 0.0); }
   let u = (obj.p0.x * pp.x + obj.p0.y * pp.y + obj.p0.z) / den;
   let v = (obj.p0.w * pp.x + obj.p1.x * pp.y + obj.p1.y) / den;
-  if (u < 0.0 || u > 1.0 || v < 0.0 || v > 1.0) { return vec4<f32>(0.0, 0.0, 0.0, 0.0); }
-  return samplePx(vec2<f32>(u * lwh.x, v * lwh.y), lwh);
+  if (u < -0.5 || u > 1.5 || v < -0.5 || v > 1.5) { return vec3<f32>(u, v, 0.0); }
+  return vec3<f32>(u, v, 1.0);
 }

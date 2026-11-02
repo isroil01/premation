@@ -78,7 +78,9 @@ std::string stamp(const std::string& file) {
   if (ec) return {};
   const std::uintmax_t size = fs::file_size(p, ec);
   if (ec) return {};
-  return std::to_string(t.time_since_epoch().count()) + ":" + std::to_string(size);
+  // In nanoseconds: libc++'s file_clock counts in a 128-bit integer, which has no to_string.
+  const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t.time_since_epoch()).count();
+  return std::to_string(static_cast<long long>(ns)) + ":" + std::to_string(size);
 }
 
 }  // namespace

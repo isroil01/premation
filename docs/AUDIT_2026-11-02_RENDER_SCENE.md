@@ -38,7 +38,7 @@ frames look worse than AE is a short list of specific wrong choices, most of the
   colour (or expose AE's gamma/linear choice); float matte target.
 
 ### 3. Effects on 2D layers run in screen space AFTER the transform — major (parity)
-- **Fixed 2026-11-03 for scale:** Renderable.fxScale (the layer's world scale) × the view's px per comp px drives every px radius / width / offset of the 2D chain (and fx_bounds' reaches); a 10 px blur on a 25 % layer is 2.5 comp px at any viewer zoom. Not done: rotation (a directional effect keeps its comp axis on a rotated 2D layer).
+- **Fixed 2026-11-03 for scale:** Renderable.fxScale (the layer's world scale) × the view's px per comp px drives every px radius / width / offset of the 2D chain (and fx_bounds' reaches); a 10 px blur on a 25 % layer is 2.5 comp px at any viewer zoom. Directional Blur also turns with a rotated layer. Not done: other direction-bearing effects keep their comp axis.
 - `composition_pass.cpp:2068-2094`: the layer is drawn through its transform into a viewport-sized
   `kLayerTarget`, then the chain runs; `effect_chain.cpp:606` uses `kx = 1` on the 2D route, while
   the 3D route (`threed.cpp:1493-1514`) runs the chain in layer space. The code comment near
@@ -154,7 +154,7 @@ frames look worse than AE is a short list of specific wrong choices, most of the
   comparison sampler; RGBA transmission map; always pack `RenderShade3D` when any light exists.
 
 ### 14. Blur / vector / text quality — major to minor
-- **Partly fixed 2026-11-03:** Fast Box Blur is a true box × Iterations; Repeat Edge Pixels on footage; adjustment layers honour their blend mode; Luminescent Premul keeps colour past alpha; Alpha Add sums coverage; hardware Multiply keeps the backdrop; shutter up to 720°. Not done: blur pyramid above σ≈12, Bézier path operators, float text/shape rasters, Corner Pin LOD, distance-ramp mask feather, parent/expression motion blur, scrub latency.
+- **Partly fixed 2026-11-03:** Fast Box Blur is a true box × Iterations; Repeat Edge Pixels on footage; adjustment layers honour their blend mode; Luminescent Premul keeps colour past alpha; Alpha Add sums coverage; hardware Multiply keeps the backdrop; shutter up to 720°. Gaussian Blur past σ 16 texels runs on a half / quarter pyramid level; Corner Pin anti-aliases its edges and supersamples where it shrinks; mask feather already has AE's Linear (distance) falloff beside Smooth. Not done: Bézier path operators, float text/shape rasters, parent/expression motion blur, scrub latency.
 - `blur.wgsl:160-162`: above σ ≈ 12 taps are spaced > 1 texel with bilinear filling, no pyramid;
   `fast-box-blur` is the same Gaussian, not a box; no Repeat Edge Pixels on gaussian-blur/blur.
 - `scene/path_ops.cpp:188-216`: Trim/Offset/Round Corners/Merge flatten Béziers to 2.5 px

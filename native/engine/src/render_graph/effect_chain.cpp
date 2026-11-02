@@ -1217,6 +1217,43 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
         src = texOf(dest);
         srcName = dest;
       };
+      // A wide Gaussian (σ past 16 texels) on a pyramid level: past σ ≈ 12 the full-size taps
+      // skip texels (blur.wgsl's spacing), so it is blurred at half (quarter, past 48) resolution
+      // at σ / level, where the taps are dense again, and scaled back up.
+      const double sigmaTex = std::max(dims != 2 ? radiusPx * kx : 0.0, dims != 1 ? radiusPx * ky : 0.0);
+      const int level = box ? 1 : sigmaTex > 48 ? 4 : sigmaTex > 16 ? 2 : 1;
+      if (level > 1) {
+        const std::string_view l1 = level == 2 ? "plugin-half1" : "plugin-quarter1";
+        const std::string_view l2 = level == 2 ? "plugin-half2" : "plugin-quarter2";
+        RenderTarget* t1 = ctx.target(l1);
+        RenderTarget* t2 = ctx.target(l2);
+        if (t1 != nullptr && t2 != nullptr && curName != l1 && curName != l2) {
+          const std::uint32_t lw = t1->width;
+          const std::uint32_t lh = t1->height;
+          const double k = 1.0 / level;
+          Commands down;
+          emit_textured(ctx, down, mvp, Color::white(), 1, Blend::none, src, ctx.linear_clamp(), targetUv, kIdentityColor, true);
+          ctx.draw_into_sized(l1, down, true, lw, lh);
+          TexRef low = texOf(l1);
+          std::string_view lowName = l1;
+          const auto lowPass = [&](double dirX, double dirY, double radius) {
+            const std::string_view dest = lowName == l1 ? l2 : l1;
+            const Commands c = one(Mat::BLUR_MATERIAL, pack_blur(ctx.packer(), mvp, targetUv, dirX, dirY, radius, 1, clampBox), low);
+            ctx.draw_into_sized(dest, c, true, lw, lh);
+            low = texOf(dest);
+            lowName = dest;
+          };
+          if (dims != 2) lowPass(1.0 / lw, 0, radiusPx * kx * k);
+          if (dims != 1) lowPass(0, 1.0 / lh, radiusPx * ky * k);
+          const std::string_view dest = srcName == f1 ? f0 : f1;
+          Commands up;
+          emit_textured(ctx, up, mvp, Color::white(), 1, Blend::none, low, ctx.linear_clamp(), targetUv, kIdentityColor, true);
+          ctx.draw_into(dest, up, true);
+          curTex = texOf(dest);
+          curName = dest;
+          continue;
+        }
+      }
       for (int i = 0; i < iterations; ++i) {
         if (dims != 2) pass(1.0 / pw, 0, radiusPx * kx);
         if (dims != 1) pass(0, 1.0 / ph, radiusPx * ky);
@@ -1672,6 +1709,19 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
       std::vector<Vec4> rows;
       for (const auto& row : t->second.rows) {
         rows.push_back({term_value(fx, row[0]), term_value(fx, row[1]), term_value(fx, row[2]), term_value(fx, row[3])});
+      }
+      // Directional Blur's direction is the layer's (AE: layer space): on a rotated 2D layer it turns
+      // with it — the angle of the model matrix's x axis. (The 3D route's buffer is layer space already.)
+      if (type == "directional-blur" && space == nullptr && selfR != nullptr && selfR->model_matrix.size() >= 2 && !rows.empty()) {
+        const double a = std::atan2(selfR->model_matrix[1], selfR->model_matrix[0]);
+        if (std::isfinite(a) && a != 0) {
+          const double c = std::cos(a);
+          const double sn = std::sin(a);
+          const double dx = rows[0][0];
+          const double dy = rows[0][1];
+          rows[0][0] = dx * c - dy * sn;
+          rows[0][1] = dx * sn + dy * c;
+        }
       }
       Packer pk = ctx.packer();
       pk.mat3(mvp).rect(targetUv);

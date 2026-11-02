@@ -421,7 +421,9 @@ std::string file_stamp(const std::string& file) {
   if (ec) return {};
   const std::uintmax_t size = std::filesystem::file_size(p, ec);
   if (ec) return {};
-  return file + "\n" + std::to_string(size) + "\n" + std::to_string(t.time_since_epoch().count());
+  // In nanoseconds: libc++'s file_clock counts in a 128-bit integer, which has no to_string.
+  const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t.time_since_epoch()).count();
+  return file + "\n" + std::to_string(size) + "\n" + std::to_string(static_cast<long long>(ns));
 }
 
 /// The SlimSAM pair for these files, loaded once per process and reused while the files are

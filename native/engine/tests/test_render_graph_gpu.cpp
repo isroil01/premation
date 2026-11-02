@@ -1685,3 +1685,87 @@ TEST_CASE("3D: a 50 % card drawn before a farther opaque card does not hide it",
   // In the order where the red card is in front, both show.
   CHECK(((a[0] > 60 && a[2] > 60) || (b[0] > 60 && b[2] > 60)));
 }
+
+TEST_CASE("2D effects: a wide blur on the pyramid matches a narrow one scaled; a directional blur turns with its layer", "[fx][layer-space]") {
+  std::string err;
+  auto renderer = SceneRenderer::create({}, err);
+  if (!renderer) return;
+  // A white 64 px square at the centre of a 256 x 128 view, `rotDeg` about its centre, with one effect.
+  const auto draw = [&](double rotDeg, api::RenderEffect fx) {
+    auto f = solid_scene(1, 1, 1);
+    f.view.css_width = 256;
+    f.view.css_height = 128;
+    f.view.camera_center_x = 128;
+    f.view.camera_center_y = 64;
+    f.scene.width = 256;
+    f.scene.height = 128;
+    auto& r = f.scene.renderables[0];
+    const double s = 64;
+    const double a = rotDeg * std::numbers::pi / 180;
+    const double c = std::cos(a);
+    const double sn = std::sin(a);
+    // The unit quad scaled, rotated about its centre, the centre at (128, 64).
+    r.model_matrix = {s * c, s * sn, 0, -s * sn, s * c, 0, 128 - (s / 2) * c + (s / 2) * sn, 64 - (s / 2) * sn - (s / 2) * c, 1};
+    r.bounds = {128 - s / 2, 64 - s / 2, s, s};
+    r.effects.push_back(std::move(fx));
+    Frame fr;
+    FrameStats st;
+    REQUIRE(renderer->render(f, &fr, st, err));
+    INFO(st.gpuError);
+    CHECK(st.gpuError.empty());
+    return fr;
+  };
+  const auto at = [](const Frame& f, std::uint32_t x, std::uint32_t y) { return static_cast<int>(f.rgba.at((std::size_t{y} * f.width + x) * 4 + 1)); };
+  // The 20 %..80 % rise along the middle row from the left.
+  const auto rise = [&](const Frame& f) {
+    int peak = 0;
+    for (std::uint32_t x = 0; x < f.width; ++x) peak = std::max(peak, at(f, x, 64));
+    int a20 = -1;
+    int a80 = -1;
+    for (std::uint32_t x = 0; x < f.width; ++x) {
+      if (a20 < 0 && at(f, x, 64) > peak / 5) a20 = static_cast<int>(x);
+      if (a80 < 0 && at(f, x, 64) > peak * 4 / 5) a80 = static_cast<int>(x);
+    }
+    return a80 - a20;
+  };
+  const auto gauss = [](double radius) {
+    api::RenderEffect e;
+    e.type = "gaussian-blur";
+    e.params.push_back(num_param("radiusPx", radius));
+    return e;
+  };
+  // σ 6 on the full-size taps, σ 24 on the half-size level: four times the rise, within a texel or two.
+  const int narrow = rise(draw(0, gauss(6)));
+  const int wide = rise(draw(0, gauss(24)));
+  REQUIRE(narrow >= 6);
+  CHECK(std::abs(wide - 4 * narrow) <= 6);
+
+  // Directional Blur at 0° smears along x: the left edge of the middle row ramps, the top edge
+  // of the middle column stays hard. On the layer turned 90°, the other way round.
+  api::RenderEffect dir;
+  dir.type = "directional-blur";
+  for (const auto& [k, v] : std::initializer_list<std::pair<const char*, double>>{{"dx", 1}, {"dy", 0}, {"length", 20}, {"steps", 20}, {"lw", 64}, {"lh", 64}}) {
+    dir.params.push_back(num_param(k, v));
+  }
+  const auto columnEdge = [&](const Frame& f) {
+    // Texels between 20 % and 80 % down the middle column's top edge (32 .. 64).
+    int n = 0;
+    for (std::uint32_t y = 20; y < 64; ++y) {
+      const int v = at(f, 128, y);
+      if (v > 51 && v < 204) ++n;
+    }
+    return n;
+  };
+  const auto rowEdge = [&](const Frame& f) {
+    int n = 0;
+    for (std::uint32_t x = 84; x < 128; ++x) {
+      const int v = at(f, x, 64);
+      if (v > 51 && v < 204) ++n;
+    }
+    return n;
+  };
+  const Frame flat = draw(0, dir);
+  const Frame turned = draw(90, dir);
+  CHECK(rowEdge(flat) > columnEdge(flat));
+  CHECK(columnEdge(turned) > rowEdge(turned));
+}
