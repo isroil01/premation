@@ -61,7 +61,7 @@ rediscovered in git history and believed a second time.
 
 | Registry | Count | Source of truth |
 |---|---|---|
-| Effects | 337 | `src/core/effects/effects.ts` → `EffectType` |
+| Effects | 339 | `src/core/effects/effects.ts` → `EffectType` |
 | Blend modes | 38 | `src/core/effects/blendMode.ts` → `LayerBlendMode` |
 | Layer styles | 10 | `layerStyles.ts` → `LAYER_STYLE_LABEL` + `BACKDROP_STYLES` |
 | Path operators | 9 | `src/core/scene/pathOps.ts` → `PathOpType` (less `none`) |
@@ -1059,8 +1059,8 @@ output.
 
 ### Tier 2 — ceilings on visual density
 
-**Effect breadth: 337 effects vs AE's 400+.** The raw count misleads in both
-directions — nobody uses 400, and the 337 effects present are properly
+**Effect breadth: 339 effects vs AE's 400+.** The raw count misleads in both
+directions — nobody uses 400, and the 339 effects present are properly
 parameterised (Levels, Curves, Channel Mixer, Keylight with
 despill/choke/softness). What matters is the missing *classes*, not the delta:
 no 3D Stroke, no Form/Plexus, no Element 3D. The dense, expensive-looking AE
@@ -1073,7 +1073,7 @@ written against this document inherited. And the missing *classes* named "no
 volumetric light rays (Shine)" and "no optical-flare system worth the name":
 `light-rays`, `lens-flare`, `light-sweep` and `beam` all ship, each with a
 registry def, a Canvas2D reference, a Generate entry, and (as of 2026-08-14) a
-GPU shader. The count is now phrased as "337 effects" rather than as a bare
+GPU shader. The count is now phrased as "339 effects" rather than as a bare
 figure specifically so that `docPropagatedCounts.test.ts` can check it.
 
 **Variable-width mask feather LANDED** (2026-08-20). `MaskPoint` gained an
@@ -2290,7 +2290,7 @@ needing a 39-entry allow-list is one that gets silenced the first time it fires.
 The cost of the narrowness is that an oblique phrasing still escapes, and §4's
 did — "Effect breadth: 73 vs AE's 400+" puts no noun after the number. That was
 rewritten into the checkable form rather than the regex being widened to chase
-it. Prose stating a count should say "337 effects".
+it. Prose stating a count should say "339 effects".
 
 Ledger table ROWS in this section are exempt, structurally rather than by a list
 of phrases: quoting a superseded number is what a corrections ledger is for, and
@@ -2964,7 +2964,7 @@ Quality (4/6/8 octaves).
 
 ### Built 2026-09-07 — effects round seven, and a miscount inside the counter
 
-Eighteen effects, taking `EffectType` from 183 to 201 (Deep Glow and Energy Beam, 2026-09-08, make it **203**; Plexus, 2026-09-09, **204**; Stroke and Scribble, 2026-09-15, **206**; Refine Soft / Hard Matte, 2026-10-06, **208**; Advanced Spill Suppressor, Key Cleaner, Remove Grain and Reshape, 2026-10-07, **212**; Ink Bleed, Paper and Ink Splatter, 2026-10-09, **215**; program E's sixty — the After Effects built-ins Premation lacked and the looks AE users reach for most, docs/PROGRAM_PERFORMANCE.md — 2026-10-10, **275**; three more by 1.0.2, 334; Matte Stroke and Selective Color (AI), 2026-10-28, **337 effects**). Fifteen ship
+Eighteen effects, taking `EffectType` from 183 to 201 (Deep Glow and Energy Beam, 2026-09-08, make it **203**; Plexus, 2026-09-09, **204**; Stroke and Scribble, 2026-09-15, **206**; Refine Soft / Hard Matte, 2026-10-06, **208**; Advanced Spill Suppressor, Key Cleaner, Remove Grain and Reshape, 2026-10-07, **212**; Ink Bleed, Paper and Ink Splatter, 2026-10-09, **215**; program E's sixty — the After Effects built-ins Premation lacked and the looks AE users reach for most, docs/PROGRAM_PERFORMANCE.md — 2026-10-10, **275**; three more by 1.0.2, 334; Matte Stroke and Selective Color (AI), 2026-10-28, 337; Object Matte, 338; Image Fill — a project image over the layer, the Background Image subject style — 2026-11-02, **339 effects**). Fifteen ship
 as a GPU shader in both dialects plus a retained Canvas2D kernel, which is the
 shape every port since round six has held; three ship as per-channel transfer
 tables and no shader at all.

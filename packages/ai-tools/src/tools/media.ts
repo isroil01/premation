@@ -164,7 +164,8 @@ export const applySubjectStyleDef: AiToolDef = {
   description:
     'Style a subject with the Subjects panel\'s presets — ordinary effects reading that subject alone (editable in ' +
     'Effect Controls afterwards): outlines (sticker, comic, dashes), glows (neon, halo), background treatments ' +
-    '(spotlight, portrait blur, "background_blur"), looks (colour splash, duotone, warm subject) — or ' +
+    '(spotlight, portrait blur, "background_blur", "bgImage": a project image behind the subject — give `image`, ' +
+    'an image item id from list_assets, and `fit`), looks (colour splash, duotone, warm subject) — or ' +
     '"remove_background" / "keep_background" (the subject\'s Object Matte effect on / off: the layer is cut to the ' +
     'subject, or shown whole). Call list_capabilities { area: "media" } for the preset list with descriptions.',
   inputSchema: {
@@ -175,9 +176,11 @@ export const applySubjectStyleDef: AiToolDef = {
       layerId: { type: 'string' },
       style: {
         type: 'string',
-        enum: ['sticker', 'neon', 'spotlight', 'splash', 'duotone', 'comic', 'halo', 'dashes', 'portrait', 'warm', 'background_blur', 'remove_background', 'keep_background'],
+        enum: ['sticker', 'neon', 'spotlight', 'splash', 'duotone', 'comic', 'halo', 'dashes', 'portrait', 'warm', 'bgImage', 'background_blur', 'remove_background', 'keep_background'],
       },
       subject: { type: 'string', description: 'Subject id (default: the active one; presets read that subject alone).' },
+      image: { type: 'string', description: 'bgImage: the project image (item id from list_assets) put behind the subject.' },
+      fit: { type: 'string', enum: ['fill', 'fit', 'stretch'], default: 'fill', description: 'bgImage: fill the layer (cropped), fit inside it, or stretch to it.' },
     },
   },
 };

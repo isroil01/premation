@@ -66,6 +66,14 @@ struct DeepFxTexture {
 /// A map layer id `<layer>#subject` (or `<layer>#subject~<id>+<id>`): that layer's subject matte
 /// (object_matte_key) drawn through its placement, not its rendered pixels (Behind Subject's Set Matte, map_layer).
 inline constexpr std::string_view kSubjectMapSuffix = "#subject";
+/// Image Fill: the param the snapshot resolves its project item into (the file on disk, absent
+/// when none is chosen or the item is missing), the document's own params never holding a path.
+inline constexpr std::string_view kImageFillFile = "__file";
+/// That file, or "".
+[[nodiscard]] std::string image_fill_file(const Json& e);
+/// The texture key the file is fed under: one texture however many effects read it, and a
+/// relinked item is a new key.
+[[nodiscard]] std::string image_fill_key(std::string_view file);
 /// The textures the layer's deep effects read this frame (frame_build.cpp).
 [[nodiscard]] std::vector<DeepFxTexture> deep_effect_textures(const RLayer& l);
 /// Program X: a deep effect whose pixels move with the layer clock (`time`).

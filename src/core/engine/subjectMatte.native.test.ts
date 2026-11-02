@@ -19,6 +19,8 @@ import path from 'node:path';
 import { PNG } from 'pngjs';
 import type { Command, PropertyTree } from '@motion/engine-api';
 import { activeCompRootId } from '@core/scene/activeComp';
+import { applySubjectStyle, defaultParams, presetById } from '@layout/Workspace/subjectStyles';
+import '@layout/Workspace/placeBehindSubjectCommand';
 import { runToolTurn } from '@core/ai/aiTurn';
 import { engineIdle } from '@core/engine/engineInstance';
 import { documentMirror } from '@stores/documentMirror';
@@ -65,6 +67,8 @@ suite('a subject is a selection other effects and layers read', () => {
   let h: Harness;
   let video = '';
   let matteDir = '';
+  /** The Background Image tests' picture (a project image item). */
+  let backdrop = '';
   beforeAll(async () => {
     h = await setupAppEngine({ gpu: true });
     const comp = activeCompRootId() as string;
@@ -162,6 +166,116 @@ suite('a subject is a selection other effects and layers read', () => {
     expect(await errors()).toEqual([]);
     await h.run({ type: 'deleteLayers', layers: [card] } as Command);
   }, 180_000);
+
+  describe('Background Image (Image Fill applied to the background)', () => {
+    let image = '';
+    const isGreen = (c: [number, number, number]): boolean => c[1] > 170 && c[0] < 90 && c[2] < 90;
+    /** Solid green but for a red band at x < 30% of the picture: where the crop falls. */
+    function picture(name: string, width: number, height: number, band: boolean): string {
+      const png = new PNG({ width, height });
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const i = (y * width + x) * 4;
+          const red = band && x < width * 0.3;
+          png.data[i] = red ? 230 : 30; png.data[i + 1] = red ? 30 : 200; png.data[i + 2] = 40; png.data[i + 3] = 255;
+        }
+      }
+      const f = path.join(matteDir, name);
+      fs.writeFileSync(f, PNG.sync.write(png));
+      return f;
+    }
+    async function importImage(file: string): Promise<string> {
+      const items = (await h.run({ type: 'importFiles', files: [{ path: file, asSequence: false, createComposition: false }] } as Command)) as unknown as { items: string[] };
+      return items.items[0]!;
+    }
+    async function addFill(id: string, item: string, fit: string): Promise<void> {
+      await h.run({ type: 'addEffect', layers: [video], effect: 'image-fill', id,
+        params: [{ path: 'image', value: { kind: 'string', value: item } }, { path: 'fit', value: { kind: 'choice', value: fit } }] } as Command);
+      await h.run({ type: 'setProperty', prop: { layer: video, path: `effects/${id}/compositing/subject` }, value: { kind: 'string', value: 'background' } } as Command);
+    }
+    const remove = (id: string) => h.run({ type: 'removePropertyGroups', groups: [{ layer: video, path: `effects/${id}` }] } as Command);
+
+    beforeAll(async () => {
+      image = await importImage(picture('wide_green.png', 640, 320, true));
+      backdrop = image;
+    }, 60_000);
+
+    it('replaces the picture outside the subject and leaves the subject', async () => {
+      await addFill('fx_img', image, 'Fill Frame');
+      const f = await frame();
+      expect(isOrange(px(f, 60))).toBe(true);
+      expect(isGreen(px(f, 260))).toBe(true);
+      expect(await errors()).toEqual([]);
+      await remove('fx_img');
+    }, 120_000);
+
+    it('Fill Frame crops a wider picture; Stretch shows all of it', async () => {
+      await addFill('fx_fit', image, 'Fill Frame');
+      await h.run({ type: 'setProperty', prop: { layer: video, path: 'effects/fx_fit/compositing/subject' }, value: { kind: 'string', value: '' } } as Command);
+      // The footage layer is 640 × 360, twice the comp: the comp shows the middle half of its box
+      // (comp x = (u - 0.25) × 640). A 2:1 picture on that 16:9 box loses 5.6% a side to the crop, so
+      // its band (to 30% of the picture) ends at u = 0.275 (x = 16); stretched, at u = 0.3 (x = 32).
+      let f = await frame();
+      expect(px(f, 8)[0]).toBeGreaterThan(170);
+      expect(isGreen(px(f, 24))).toBe(true);
+      await h.run({ type: 'setProperty', prop: { layer: video, path: 'effects/fx_fit/fit' }, value: { kind: 'choice', value: 'Stretch' } } as Command);
+      f = await frame();
+      expect(px(f, 24)[0]).toBeGreaterThan(170);
+      expect(isGreen(px(f, 48))).toBe(true);
+      await remove('fx_fit');
+    }, 120_000);
+
+    it('Fit Inside leaves the layer showing where the picture does not reach', async () => {
+      const tall = await importImage(picture('tall_green.png', 90, 180, false));
+      await addFill('fx_in', tall, 'Fit Inside');
+      await h.run({ type: 'setProperty', prop: { layer: video, path: 'effects/fx_in/compositing/subject' }, value: { kind: 'string', value: '' } } as Command);
+      const f = await frame();
+      expect(isGreen(px(f, 160))).toBe(true);
+      expect(isOrange(px(f, 40))).toBe(true);
+      expect(isOrange(px(f, 280))).toBe(true);
+      await remove('fx_in');
+    }, 120_000);
+
+    it('follows the subject: each frame reads its own matte', async () => {
+      const right = matteFrame(matteDir, 'bg_right.png', (x) => x >= W / 2);
+      await h.run({ type: 'setLayerMatte', layer: video, frames: [{ time: sec(1.5), src: right }], merge: true, cut: false } as Command);
+      await addFill('fx_track', image, 'Fill Frame');
+      let f = await frame(0.2);
+      expect(isOrange(px(f, 60))).toBe(true);
+      expect(isGreen(px(f, 260))).toBe(true);
+      f = await frame(1.6);
+      expect(isGreen(px(f, 60))).toBe(true);
+      expect(isOrange(px(f, 260))).toBe(true);
+      await remove('fx_track');
+    }, 180_000);
+
+    it('a missing image never blanks the frame: the footage shows, and the layer says so', async () => {
+      await addFill('fx_gone', 'no_such_item', 'Fill Frame');
+      const f = await frame();
+      expect(isOrange(px(f, 60))).toBe(true);
+      expect(isOrange(px(f, 260))).toBe(true);
+      expect((await errors()).join(' ')).toMatch(/Image Fill.*missing/);
+      await remove('fx_gone');
+    }, 120_000);
+
+    it('applied from the style shelf it is one undo step', async () => {
+      const preset = presetById('bgImage')!;
+      expect(await applySubjectStyle(video, null, preset, { ...defaultParams(preset), image })).toBe(true);
+      expect(await effectIds('image-fill')).toHaveLength(1);
+      expect(isGreen(px(await frame(), 260))).toBe(true);
+      await h.run({ type: 'undo' } as Command);
+      await settleEdits();
+      expect(await effectIds('image-fill')).toHaveLength(0);
+      expect(isOrange(px(await frame(), 260))).toBe(true);
+    }, 180_000);
+
+    it('an image a layer effect uses cannot be removed from under it', async () => {
+      await addFill('fx_used', image, 'Fill Frame');
+      const r = await h.client.execute({ type: 'removeItems', items: [image] } as Command);
+      expect(r.ok).toBe(false);
+      await remove('fx_used');
+    }, 60_000);
+  });
 
   it('merge replaces one frame and keeps the others', async () => {
     const right = matteFrame(matteDir, 'subject_right.png', (x) => x >= W / 2);
@@ -285,4 +399,17 @@ suite('a subject is a selection other effects and layers read', () => {
     expect((await subjectsOf()).map((s) => s.id)).toEqual(['s1', 's2']);
     expect(await errors()).toEqual([]);
   }, 240_000);
+  it('the Assistant’s apply_subject_style puts a project image behind a subject, one undo step', async () => {
+    const subject = (await subjectsOf())[0]!.id;
+    const bad = await runToolTurn('AI: backdrop', [{ name: 'apply_subject_style', args: { layerId: video, style: 'bgImage', subject } }]);
+    expect(bad.results[0]!.ok).toBe(false);
+    expect(bad.results[0]!.content).toMatch(/bgImage needs `image`/);
+    const good = await runToolTurn('AI: backdrop', [{ name: 'apply_subject_style', args: { layerId: video, style: 'bgImage', subject, image: backdrop, fit: 'stretch' } }]);
+    expect(good.results[0]!.content).toMatch(/Applied "Background Image"/);
+    await settleEdits();
+    expect(await effectIds('image-fill')).toHaveLength(1);
+    await h.run({ type: 'undo' } as Command);
+    await settleEdits();
+    expect(await effectIds('image-fill')).toHaveLength(0);
+  }, 120_000);
 });

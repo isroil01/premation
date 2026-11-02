@@ -13,6 +13,7 @@
 #include "bundle_io.hpp"
 #include "fail.hpp"
 #include "fxstate.hpp"
+#include "handlers_native.hpp"
 #include "jobs/job_inputs.hpp"
 #include "native_contrib.hpp"
 #include "native_effects.hpp"
@@ -275,8 +276,30 @@ CollectOutcome collect_files(CollectRequest req, CollectIo& io) {
       for (const Json& comp : node.at("components").arr()) {
         if (!comp.at("props").at("effects").is_array()) continue;
         for (const Json& e : comp.at("props").at("effects").arr()) {
-          const NativeEffect* ne = NativeEffects::find(e.at("type").is_string() ? e.at("type").str() : std::string());
-          if (ne == nullptr || ne->files.empty()) continue;
+          const std::string type = e.at("type").is_string() ? e.at("type").str() : std::string();
+          const NativeEffect* ne = NativeEffects::find(type);
+          if (ne == nullptr) {
+            // A builtin's FILE param (Image Fill's picture): the item's file alone, unless a layer's collection already took it.
+            for (const std::string& key : builtin_file_params(type)) {
+              const Json fxParams = params_of(e);
+              const std::string id = fxParams.at(key).is_string() ? fxParams.at(key).str() : std::string();
+              Json* rec = record_of(id);
+              if (rec == nullptr || fileItems.contains(id) || itemHash.contains(id) || !truthy_string(rec->at("path")) || travels_as_is(rec->at("path").str())) continue;
+              const std::string ref = rec->at("path").str();
+              const Collector::Read r = c.collect(ref, id, name_of(rec, ref));
+              if (!r.ok) {
+                c.report(id, name_of(rec, ref) + ": " + r.why);
+                continue;
+              }
+              fileItems.insert(id);
+              rec->set("path", Json::string(std::string(kBlobScheme) + r.hash));
+              Json col = Json::object();
+              col.set("name", Json::string(base_name(ref)));
+              rec->set("collected", std::move(col));
+            }
+            continue;
+          }
+          if (ne->files.empty()) continue;
           const Json params = params_of(e);
           for (const auto& [key, types] : ne->files) {
             const std::string id = params.at(key).is_string() ? params.at(key).str() : std::string();

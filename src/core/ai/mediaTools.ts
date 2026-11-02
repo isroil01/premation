@@ -470,16 +470,17 @@ const followSubject: AiTool['handler'] = async (input, ctx) => {
 const BACKGROUND_STYLES = new Set(['background_blur', 'remove_background', 'keep_background']);
 
 const applySubjectStyle: AiTool['handler'] = async (input, ctx) => {
-  const a = input as { layerId: string; style: string; subject?: string };
+  const a = input as { layerId: string; style: string; subject?: string; image?: string; fit?: 'fill' | 'fit' | 'stretch' };
   const layer = await footageLayer(ctx, a.layerId);
   if ('error' in layer) return fail(layer.error);
+  // The layer's subjects and effects are read from its tree: loaded, whether or not the editor shows the layer.
+  await documentMirror().loadTree(layer.id);
   const subjects = layerSubjects(layer.id);
   if (subjects.length === 0) return fail(`'${layer.id}' has no subject yet: select_subject first (then follow_subject on video).`);
   const subject = a.subject ?? activeSubjectId(layer.id);
   if (!subjects.some((s) => s.id === subject)) return fail(`No subject '${subject}' on '${layer.id}'. Subjects: ${subjects.map((s) => s.id).join(', ')}.`);
   const style = String(a.style ?? '');
   if (style === 'remove_background' || style === 'keep_background') {
-    await documentMirror().loadTree(layer.id);
     const card = objectMatteCard(layer.id);
     if (!card) return fail(`'${layer.id}' has no Object Matte effect yet (select_subject makes one).`);
     const remove = style === 'remove_background';
@@ -493,7 +494,12 @@ const applySubjectStyle: AiTool['handler'] = async (input, ctx) => {
   const id = style === 'background_blur' ? 'portrait' : style;
   const info = port.styles().find((s) => s.id === id);
   if (!info) return fail(`Unknown style '${style}'. Styles: ${[...port.styles().map((s) => s.id), ...BACKGROUND_STYLES].join(', ')}.`);
-  const cmds = port.styleCommands(layer.id, subjects.length > 1 ? subject : null, id);
+  if (id === 'bgImage') {
+    const item = a.image ? documentMirror().items.get(a.image) : undefined;
+    if (!a.image) return fail('bgImage needs `image`: an image item id from list_assets.');
+    if (item?.kind !== 'footage' || item.mediaType !== 'image') return fail(`'${a.image}' is not an image in the project (list_assets lists them).`);
+  }
+  const cmds = port.styleCommands(layer.id, subjects.length > 1 ? subject : null, id, { ...(a.image ? { image: a.image } : {}), ...(a.fit ? { fit: a.fit } : {}) });
   if (cmds.length === 0) return fail(`Style '${style}' produced no effects.`);
   await ctx.engine.apply(cmds);
   const effects = cmds.filter((c) => c.type === 'addEffect').map((c) => (c as { id?: string }).id).filter(Boolean);

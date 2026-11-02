@@ -83,6 +83,7 @@ export const EFFECT_CATEGORY: Record<EffectType, string> = {
   'add-grain': 'Stylize',
   median: 'Stylize',
   fill: 'Generate',
+  'image-fill': 'Generate',
   stroke: 'Generate',
   beam: 'Generate',
   'four-color-gradient': 'Generate',

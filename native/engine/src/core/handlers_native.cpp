@@ -93,11 +93,32 @@ NativeActionRequest::File native_file_of(const Document& d, std::string_view key
   return f;
 }
 
+std::vector<std::string> builtin_file_params(std::string_view type) {
+  std::vector<std::string> out;
+  if (const EffectDef* def = registry().effect(type); def != nullptr) {
+    for (const EffectParamDef& p : def->params) {
+      if (p.type == "file") out.push_back(p.key);
+    }
+  }
+  return out;
+}
+
 bool native_effects_use_item(const Node& node, std::string_view item) {
   if (item.empty()) return false;
   for (const Json& e : read_node_effects(node)) {
-    const NativeEffect* ne = NativeEffects::find(e.at("type").is_string() ? e.at("type").str() : std::string());
-    if (ne == nullptr || ne->files.empty()) continue;
+    const std::string type = e.at("type").is_string() ? e.at("type").str() : std::string();
+    const NativeEffect* ne = NativeEffects::find(type);
+    if (ne == nullptr) {  // a builtin's FILE param (Image Fill's picture) holds a project item the same way
+      const std::vector<std::string> keys = builtin_file_params(type);
+      if (!keys.empty()) {
+        const Json params = params_of(e);
+        for (const std::string& key : keys) {
+          if (params.at(key).is_string() && params.at(key).str() == item) return true;
+        }
+      }
+      continue;
+    }
+    if (ne->files.empty()) continue;
     const Json params = params_of(e);
     for (const auto& [key, types] : ne->files) {
       if (params.at(key).is_string() && params.at(key).str() == item) return true;

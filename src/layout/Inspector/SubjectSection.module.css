@@ -525,7 +525,30 @@
   cursor: pointer;
 }
 
-.tileApply:hover {
+.tileApply:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.tileImage {
+  display: flex;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.tileSelect {
+  flex: 1 1 0;
+  min-width: 0;
+  height: calc(var(--control-height-row) - 4px);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-0);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: var(--panel-font-size-help);
+}
+
+.tileApply:hover:not(:disabled) {
   background: var(--color-hover);
 }
 

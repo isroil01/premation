@@ -1829,6 +1829,15 @@ std::vector<DeepFxTexture> deep_effect_textures(const RLayer& l) {
       // Any effect applied to the Subject / Background reads the layer's Object Matte frame as its scope.
       addSubject(effect_subject_ids(e));
     }
+    if (t == "image-fill") {
+      // The picture, as a still: frame_build requests it as media, so it decodes and colour-manages as a layer's would.
+      if (std::string file = image_fill_file(e); !file.empty()) {
+        DeepFxTexture d;
+        d.key = image_fill_key(file);
+        d.src = std::move(file);
+        out.push_back(std::move(d));
+      }
+    }
     if (!spatial_x_handles(t)) continue;
     const Json params = doc::params_of(e);
     const Params P{params};

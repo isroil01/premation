@@ -6,7 +6,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { SUBJECT_STYLES, defaultParams, lighten, DRAW_ON_SECONDS } from './subjectStylePresets';
+import { SUBJECT_STYLES, IMAGE_FITS, defaultParams, lighten, DRAW_ON_SECONDS } from './subjectStylePresets';
 import { subjectStyleCommands } from './subjectStyles';
 
 interface CatalogParam { key: string }
@@ -32,6 +32,23 @@ describe('subject style presets', () => {
         for (const p of part.params) expect(keys!.has(p.path)).toBe(true);
         for (const k of part.keys ?? []) expect(keys!.has(k.path)).toBe(true);
       }
+    }
+  });
+
+  it('Background Image names its project image and fit, behind the subject', () => {
+    const bgImage = SUBJECT_STYLES.find((p) => p.id === 'bgImage')!;
+    expect(bgImage.image).toBe(true);
+    const [part] = bgImage.parts({ ...defaultParams(bgImage), image: 'item_1', fit: 'fit' }, ctx);
+    expect(part!.effect).toBe('image-fill');
+    expect(part!.scope).toBe('background');
+    expect(part!.params.find((p) => p.path === 'image')?.value).toEqual({ kind: 'string', value: 'item_1' });
+    expect(part!.params.find((p) => p.path === 'fit')?.value).toEqual({ kind: 'choice', value: 'Fit Inside' });
+    // The fit's stored choice is the catalogue's label, whichever the fit.
+    const fit = catalog.find((e) => e.type === 'image-fill')!.params!.find((p) => p.key === 'fit') as unknown as { options: Array<{ label: string }> };
+    for (const f of IMAGE_FITS) {
+      const [q] = bgImage.parts({ ...defaultParams(bgImage), fit: f.id }, ctx);
+      const choice = q!.params.find((p) => p.path === 'fit')?.value as { value: string };
+      expect(fit.options.map((o) => o.label)).toContain(choice.value);
     }
   });
 
