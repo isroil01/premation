@@ -249,6 +249,16 @@ bool has_paint_strokes(const RLayer& l) {
 
 bool stroke_renders(const Json& s) { return s.is_object() && s.at("width").is_number() && s.at("width").num() > 0; }
 
+/// mask.ts `maskIsActive`: a path with a mode shapes the layer; mode-None paths
+/// (a subject's outline, the path Path Stroke / Scribble follow) never do. With
+/// none active the painter fills the layer box white — no mask at all, but a
+/// layer-sized raster (and its texture) per outline key: a walked subject made
+/// one 36 MB raster plus a 48 MB texture per frame (2160×3840, 2026-11-02).
+bool mask_shapes_layer(const RLayer& l) {
+  if (!l.mask.is_object() || !l.mask.at("paths").is_array()) return false;
+  return std::ranges::any_of(l.mask.at("paths").arr(), [](const Json& p) { return !(p.at("mode").is_string() && p.at("mode").str() == "none"); });
+}
+
 bool has_ordered_paint(const RLayer& l) {
   // vectorDraw.ts layerHasOrderedPaint: any paint that composites above or blends.
   const auto flagged = [](const Json& o) {
@@ -365,7 +375,7 @@ bool Flattener::needs_isolation(const RLayer& l) {
   if (l.motionSamples.size() > 1) return true;
   if (l.quad3d) return true;  // a 3D comp card draws from a flat offscreen
   if (l.blend != "normal") return true;
-  if (l.mask.is_object() && !l.mask.at("paths").arr().empty()) return true;
+  if (mask_shapes_layer(l)) return true;
   if (l.paint.is_object() && !l.paint.at("strokes").arr().empty()) return true;
   if (l.matte && l.matteSourceId) return true;
   if (l.isMatteSource) return true;
@@ -650,7 +660,7 @@ void Flattener::feed(const RLayer& l, double parentScale) {
     r.layerId = l.id;
     textures_.push_back(std::move(r));
   }
-  if (l.mask.is_object() && !l.mask.at("paths").arr().empty()) {
+  if (mask_shapes_layer(l)) {
     TextureRequest r;
     r.key = "mask:" + l.id;
     r.kind = TexKind::mask;
@@ -869,7 +879,7 @@ api::Renderable Flattener::layer_to_renderable(const RLayer& l, const Mat3& pare
     r.uv_rect = u;
   }
   if (kind == api::RenderableKind::text) r.texture_key = "text:" + l.id;
-  if (!baked && l.mask.is_object() && !l.mask.at("paths").arr().empty()) r.mask_texture_key = "mask:" + l.id;
+  if (!baked && mask_shapes_layer(l)) r.mask_texture_key = "mask:" + l.id;
   if (!baked && !l.gpuEffects && textured && has_lut_effect(l)) r.lut_texture_key = "lut:" + l.id;
   if (l.matte && l.matteSourceId) {
     api::RenderMatte m;
@@ -989,7 +999,7 @@ api::Renderable Flattener::precomp_to_renderable(const RLayer& l, const Mat3& pa
   // Accepts Lights on a 3D card: the per-quad gain as the tint.
   r.color = l.lighting ? to_color({(*l.lighting)[0], (*l.lighting)[1], (*l.lighting)[2], 1}) : to_color({1, 1, 1, 1});
   r.texture_key = "precomp:" + l.id;
-  if (l.mask.is_object() && !l.mask.at("paths").arr().empty()) {
+  if (mask_shapes_layer(l)) {
     r.mask_texture_key = "mask:" + l.id;  // fed with the layer (feed)
   }
   if (l.matte && l.matteSourceId) {
@@ -1059,7 +1069,7 @@ api::Renderable Flattener::particles_to_renderable(const RLayer& l, const Mat3& 
   if (l.glass) r.glass = to_renderable_glass(*l.glass);
   r.color = to_color({1, 1, 1, 1});
   r.texture_key = "particles:" + l.id;
-  if (l.mask.is_object() && !l.mask.at("paths").arr().empty()) r.mask_texture_key = "mask:" + l.id;
+  if (mask_shapes_layer(l)) r.mask_texture_key = "mask:" + l.id;
   if (l.matte && l.matteSourceId) {
     api::RenderMatte m;
     m.mode = l.matte->luma ? api::RenderMatteMode::luma : api::RenderMatteMode::alpha;
@@ -1105,7 +1115,7 @@ std::optional<api::Renderable> Flattener::adjustment_to_renderable(const RLayer&
   // is mixed against the untouched one by opacity × mask coverage.
   r.opacity = parentOpacity * l.opacity;
   r.blend = api::RenderBlendMode::normal;
-  if (l.mask.is_object() && !l.mask.at("paths").arr().empty()) r.mask_texture_key = "mask:" + l.id;  // fed by feed()
+  if (mask_shapes_layer(l)) r.mask_texture_key = "mask:" + l.id;  // fed by feed()
   api::RenderAdjustment adj;
   if (!cm.identity) {
     api::RenderColorMatrix wm;
