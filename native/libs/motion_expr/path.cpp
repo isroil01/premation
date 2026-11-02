@@ -302,10 +302,14 @@ std::optional<PathSample> path_sample_of(const Value& v) {
   const Value u = unwrap_prop(v);
   if (!is_path_object(u)) return std::nullopt;
   const Obj& o = *u.o;
+  auto points = pairs_of(o.elems[0]);
+  auto in = pairs_of(o.elems[1]);
+  auto out = pairs_of(o.elems[2]);
+  if (!points || !in || !out) return std::nullopt;  // is_path_object checked these; said again for the reader
   PathSample s;
-  s.points = *pairs_of(o.elems[0]);
-  s.in_tangents = *pairs_of(o.elems[1]);
-  s.out_tangents = *pairs_of(o.elems[2]);
+  s.points = std::move(*points);
+  s.in_tangents = std::move(*in);
+  s.out_tangents = std::move(*out);
   s.closed = o.elems[3].b;
   return s;
 }
