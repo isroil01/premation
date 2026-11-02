@@ -90,7 +90,7 @@ thread_local std::vector<char> t_altstack;  // NOLINT(cppcoreguidelines-avoid-no
 
 constexpr int kSignals[] = {SIGSEGV, SIGBUS, SIGFPE, SIGILL};  // NOLINT(cppcoreguidelines-avoid-c-arrays, modernize-avoid-c-arrays)
 struct sigaction g_previous[4];  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables, cppcoreguidelines-avoid-c-arrays, modernize-avoid-c-arrays)
-std::once_flag g_installed;      // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
+std::mutex g_installMu;          // NOLINT(cppcoreguidelines-avoid-non-const-global-variables): install() writes g_previous
 
 void on_fault(int sig, siginfo_t* /*info*/, void* /*uctx*/) {
   if (t_jump != nullptr) {
@@ -111,6 +111,21 @@ void install() {
   sa.sa_flags = SA_SIGINFO | SA_ONSTACK | SA_NODEFER;
   sigemptyset(&sa.sa_mask);
   for (std::size_t i = 0; i < 4; ++i) sigaction(kSignals[i], &sa, &g_previous[i]);  // NOLINT(cppcoreguidelines-pro-bounds-constant-array-index)
+}
+
+bool ours_installed() {
+  struct sigaction cur {};
+  return sigaction(SIGSEGV, nullptr, &cur) == 0 && (cur.sa_flags & SA_SIGINFO) != 0 && cur.sa_sigaction == &on_fault;
+}
+
+/// Install the handler — again when someone replaced it since (a crash reporter, a
+/// test framework restoring its own between cases): a once-per-process install
+/// left a later guarded call unguarded, and its fault took the process down.
+/// One sigaction read per guarded call; the previous handlers chain as before.
+void ensure_installed() {
+  if (ours_installed()) return;
+  const std::lock_guard<std::mutex> lock(g_installMu);
+  if (!ours_installed()) install();
 }
 
 /// A stack overflow faults ON the exhausted stack; the handler runs on this one.
@@ -138,7 +153,7 @@ FaultKind kind_of(int sig) {
 }  // namespace
 
 Fault guarded_call(GuardedFn fn, void* ctx) {
-  std::call_once(g_installed, install);
+  ensure_installed();
   ensure_altstack();
   sigjmp_buf buf;
   sigjmp_buf* const previous = t_jump;
