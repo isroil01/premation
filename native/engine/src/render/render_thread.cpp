@@ -364,15 +364,9 @@ void RenderThread::manage_ram_budget(bool force) {
           .kv("physicalMB", static_cast<double>(mem.physicalBytes) / (1024.0 * 1024.0));
     }
   }
-  // Never push the machine into its page file: keep a reserve free for the
-  // system and the other applications (AE's "RAM reserved for other
-  // applications"). The tier may hold what it holds plus what is free beyond it.
-  std::uint64_t budget = ramBudgetTarget_;
-  if (mem.physicalBytes > 0 && mem.availableBytes > 0) {
-    const std::uint64_t reserve = std::max<std::uint64_t>(std::uint64_t{1536} << 20U, mem.physicalBytes / 10);
-    const std::uint64_t room = mem.availableBytes > reserve ? mem.availableBytes - reserve : 0;
-    budget = std::min<std::uint64_t>(budget, ram_.bytes() + room);
-  }
+  // Never push the machine into its page file: grow into free memory above the
+  // reserve, give back what the machine is short of (ram_cache.hpp ram_budget_now).
+  const std::uint64_t budget = ram_budget_now(ramBudgetTarget_, ram_.bytes(), mem.physicalBytes, mem.availableBytes);
   if (budget != ram_.budget()) {
     std::vector<RamFrame> evicted;
     ram_.set_budget(static_cast<std::size_t>(budget), evicted);

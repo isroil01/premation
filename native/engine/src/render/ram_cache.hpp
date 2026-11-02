@@ -132,6 +132,28 @@ struct RamCacheStats {
   return want > 64 * kGiB ? 64 * kGiB : want;
 }
 
+/// The tier's limit now, holding `held` bytes, on a machine with `physicalBytes`
+/// installed and `availableBytes` free: `target`, but never pushing the machine
+/// into its page file — a reserve stays free for the system and the other
+/// applications (AE's "RAM reserved for other applications"). Free memory above
+/// the reserve is room to grow; free memory below it is given back, so a model
+/// worker loading next to a full cache pages out cached frames, not the editor.
+/// A shortfall under 256 MiB is ignored: the limit does not chase every reading.
+/// Unknown memory (0) leaves `target`.
+[[nodiscard]] inline std::uint64_t ram_budget_now(std::uint64_t target, std::uint64_t held, std::uint64_t physicalBytes,
+                                                  std::uint64_t availableBytes) noexcept {
+  if (physicalBytes == 0 || availableBytes == 0) return target;
+  constexpr std::uint64_t kMiB = std::uint64_t{1} << 20U;
+  const std::uint64_t reserve = physicalBytes / 10 > 1536 * kMiB ? physicalBytes / 10 : 1536 * kMiB;
+  std::uint64_t limit = held;
+  if (availableBytes >= reserve) {
+    limit = held + (availableBytes - reserve);
+  } else if (const std::uint64_t shortfall = reserve - availableBytes; shortfall >= 256 * kMiB) {
+    limit = held > shortfall ? held - shortfall : 0;
+  }
+  return limit < target ? limit : target;
+}
+
 class RamFrameCache {
  public:
   explicit RamFrameCache(std::size_t budgetBytes = 0) : budget_(budgetBytes) {}

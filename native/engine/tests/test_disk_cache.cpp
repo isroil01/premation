@@ -603,6 +603,29 @@ TEST_CASE("ram cache: the default size follows the machine", "[ram_cache]") {
   CHECK(auto_ram_budget(512 * kGiB) == 64 * kGiB);  // capped
 }
 
+TEST_CASE("ram cache: the limit grows into free memory and gives back a shortfall", "[ram_cache]") {
+  constexpr std::uint64_t kMiB = std::uint64_t{1} << 20U;
+  constexpr std::uint64_t kGiB = std::uint64_t{1} << 30U;
+  using premation::render::ram_budget_now;
+  // 32 GiB installed: the reserve is a tenth.
+  const std::uint64_t phys = 32 * kGiB;
+  const std::uint64_t reserve = phys / 10;
+  CHECK(ram_budget_now(16 * kGiB, 0, 0, 0) == 16 * kGiB);                               // memory unknown: the target
+  CHECK(ram_budget_now(16 * kGiB, 2 * kGiB, phys, 20 * kGiB) == 16 * kGiB);             // plenty free: the target
+  CHECK(ram_budget_now(16 * kGiB, 2 * kGiB, phys, reserve + kGiB) == 3 * kGiB);         // grows by what is free above the reserve
+  CHECK(ram_budget_now(16 * kGiB, 8 * kGiB, phys, reserve) == 8 * kGiB);                // at the reserve: holds
+  CHECK(ram_budget_now(16 * kGiB, 8 * kGiB, phys, reserve - 100 * kMiB) == 8 * kGiB);   // a small dip: no churn
+  CHECK(ram_budget_now(16 * kGiB, 8 * kGiB, phys, reserve - 2 * kGiB) == 6 * kGiB);     // 2 GiB short: gives 2 GiB back
+  CHECK(ram_budget_now(16 * kGiB, kGiB, phys, 512 * kMiB) == 0);                        // shorter than it holds: empties
+  // The shrunk limit evicts the frames (protected ones too: the machine comes first), handed back for the disk tier.
+  RamFrameCache ram(4 * kFrameBytes);
+  std::vector<RamFrame> evicted;
+  for (std::int64_t f = 0; f < 4; ++f) REQUIRE(ram.store(static_cast<std::uint64_t>(f + 1), ram_frame(1, f), ProtectedRange{}, evicted));
+  ram.set_budget(static_cast<std::size_t>(ram_budget_now(4 * kFrameBytes, ram.bytes(), phys, reserve - kGiB)), evicted);
+  CHECK(ram.bytes() == 0);
+  CHECK(evicted.size() == 4);
+}
+
 TEST_CASE("ram cache: the frame an open view shows is pinned — another view's fill never evicts it", "[ram_cache][pins]") {
   // Room for 3 frames. View A shows frame 5 of scope 1 (key 105); view B fills
   // scope 2's range 0–9. Without the pin, B's third frame would take A's.
