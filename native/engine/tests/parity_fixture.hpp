@@ -10,7 +10,7 @@
 // The fixtures were recorded from the TypeScript engine and are frozen data
 // now. PARITY_REBLESS=1 replays every session and writes the C++ responses
 // and revision steps into the fixture instead of comparing (requests, probes
-// and the hashed/full choice per record are kept) — see parity_rebless.hpp.
+// and the hashed/full choice per record are kept; an answer that became an error is stored in full) — see parity_rebless.hpp.
 #pragma once
 
 #include <catch2/catch_test_macros.hpp>
@@ -493,6 +493,9 @@ Report replay(const SessionData& s, const std::string& portsDir, SessionData* bl
     if (bless != nullptr) {
       Record& out = bless->records[index];
       out.step = static_cast<std::uint32_t>(step);
+      // A hashed record is a large SUCCESS; an answer that is now an error is
+      // stored in full (errors are small), or the compare could never pass.
+      if (out.hashed && cxErr) out.hashed = false;
       if (out.hashed) {
         out.length = static_cast<std::uint32_t>(mine.size());
         out.hash = hash64(mine);
