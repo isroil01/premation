@@ -23,7 +23,11 @@ bool blend_state(Blend mode, wgpu::BlendState& out) {
   switch (mode) {
     case Blend::none: return false;
     case Blend::add: out.color = {wgpu::BlendOperation::Add, wgpu::BlendFactor::One, wgpu::BlendFactor::One}; return true;
-    case Blend::multiply: out.color = {wgpu::BlendOperation::Add, wgpu::BlendFactor::Dst, wgpu::BlendFactor::Zero}; return true;
+    // Premultiplied multiply over an opaque backdrop: s·d + d·(1 − αs). {Dst, Zero} dropped the second
+    // term, so every texel where the source is transparent wrote black.
+    case Blend::multiply:
+      out.color = {wgpu::BlendOperation::Add, wgpu::BlendFactor::Dst, wgpu::BlendFactor::OneMinusSrcAlpha};
+      return true;
     case Blend::screen: out.color = {wgpu::BlendOperation::Add, wgpu::BlendFactor::One, wgpu::BlendFactor::OneMinusSrc}; return true;
     case Blend::subtract:
       out.color = {wgpu::BlendOperation::ReverseSubtract, wgpu::BlendFactor::One, wgpu::BlendFactor::One};

@@ -24,6 +24,34 @@ type EngineFrameConsumer = (frame: VideoFrame, meta: unknown, release: () => voi
 let engineFrameConsumer: EngineFrameConsumer | null = null;
 let engineReceiverInstalled = false;
 
+/**
+ * Preview resolution: a reduced frame fills only the slot's top-left
+ * `contentWidth` × `contentHeight` (FrameReady). The page gets a VideoFrame of
+ * that part alone (`visibleRect`: no copy), so its blit and its sizing see
+ * the frame's own pixels. `close` closes both frames.
+ */
+function contentOf(frame: VideoFrame, meta: unknown): { frame: VideoFrame; close: () => void } {
+  const m = meta as { contentWidth?: number; contentHeight?: number } | null;
+  const w = m?.contentWidth ?? 0;
+  const h = m?.contentHeight ?? 0;
+  if (!(w > 0 && h > 0) || (w >= frame.codedWidth && h >= frame.codedHeight)) return { frame, close: () => frame.close() };
+  try {
+    const part = new VideoFrame(frame, { visibleRect: { x: 0, y: 0, width: Math.min(w, frame.codedWidth), height: Math.min(h, frame.codedHeight) } });
+    return {
+      frame: part,
+      close: () => {
+        try {
+          part.close();
+        } finally {
+          frame.close();
+        }
+      },
+    };
+  } catch {
+    return { frame, close: () => frame.close() };
+  }
+}
+
 function installEngineFrameReceiver(): boolean {
   if (engineReceiverInstalled) return true;
   if (!sharedTexture || typeof sharedTexture.setSharedTextureReceiver !== 'function') return false;
@@ -34,9 +62,9 @@ function installEngineFrameReceiver(): boolean {
       imported.release();
       return;
     }
-    let frame: VideoFrame;
+    let shown: { frame: VideoFrame; close: () => void };
     try {
-      frame = imported.getVideoFrame();
+      shown = contentOf(imported.getVideoFrame(), meta);
     } catch {
       imported.release();
       return;
@@ -46,13 +74,13 @@ function installEngineFrameReceiver(): boolean {
       if (released) return;
       released = true;
       try {
-        frame.close();
+        shown.close();
       } finally {
         imported.release();
       }
     };
     try {
-      consumer(frame, meta, release);
+      consumer(shown.frame, meta, release);
     } catch {
       release();
     }
@@ -70,21 +98,24 @@ let enginePixelsInstalled = false;
 function installEnginePixelReceiver(): boolean {
   if (enginePixelsInstalled) return true;
   if (typeof VideoFrame !== 'function') return false;
-  ipcRenderer.on('engine:pixels', (_event: unknown, meta: { generation: number; slot: number; width: number; height: number; renderDoneUs: number }, pixels: Uint8Array) => {
+  ipcRenderer.on('engine:pixels', (_event: unknown, meta: { generation: number; slot: number; width: number; height: number; renderDoneUs: number; contentWidth?: number; contentHeight?: number }, pixels: Uint8Array) => {
     const free = (): void => ipcRenderer.send('engine:pixelsRelease', meta.generation, meta.slot);
     const consumer = engineFrameConsumer;
     if (!consumer) {
       free();
       return;
     }
-    let frame: VideoFrame;
+    let shown: { frame: VideoFrame; close: () => void };
     try {
-      frame = new VideoFrame(pixels, {
-        format: 'RGBA',
-        codedWidth: meta.width,
-        codedHeight: meta.height,
-        timestamp: Math.max(0, Math.trunc(meta.renderDoneUs)),
-      });
+      shown = contentOf(
+        new VideoFrame(pixels, {
+          format: 'RGBA',
+          codedWidth: meta.width,
+          codedHeight: meta.height,
+          timestamp: Math.max(0, Math.trunc(meta.renderDoneUs)),
+        }),
+        meta,
+      );
     } catch {
       free();
       return;
@@ -94,13 +125,13 @@ function installEnginePixelReceiver(): boolean {
       if (released) return;
       released = true;
       try {
-        frame.close();
+        shown.close();
       } finally {
         free();
       }
     };
     try {
-      consumer(frame, meta, release);
+      consumer(shown.frame, meta, release);
     } catch {
       release();
     }
@@ -391,6 +422,13 @@ const bridge = {
     /** Paths of the files copied in the OS file manager (Edit ▸ Paste of footage). */
     readClipboardFiles: () => ipcRenderer.invoke('clipboard:readFiles'),
     listDir: (dir: string) => ipcRenderer.invoke('fs:listDir', dir),
+    /** The Media Browser's on-screen folders, watched; a change arrives through `onDirsChanged`. */
+    watchDirs: (dirs: string[]) => ipcRenderer.invoke('fs:watchDirs', dirs),
+    onDirsChanged: (handler: (dirs: string[]) => void) => {
+      const listener = (_event: unknown, dirs: string[]): void => handler(dirs);
+      ipcRenderer.on('fs:dirsChanged', listener);
+      return () => ipcRenderer.removeListener('fs:dirsChanged', listener);
+    },
     /** Edit ▸ Edit Original: the file in the OS default app for its type (electron/ipc/footageFiles.ts). */
     openFile: (filePath: string) => ipcRenderer.invoke('shell:openFile', filePath),
   },

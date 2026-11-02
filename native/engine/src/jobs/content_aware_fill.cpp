@@ -676,6 +676,7 @@ int inpaint_multiscale(std::span<std::uint8_t> rgba, int width, int height, std:
     else pm.init_from(prevX, prevY, prevW, prevH);
     const int em = li == pyr.size() - 1 ? 3 : 2;
     for (int e = 0; e < em; ++e) {
+      if (opts.cancelled && opts.cancelled()) return 0;
       pm.iterate(li == pyr.size() - 1 ? opts.coarseIterations : opts.fineIterations);
       pm.vote();
     }
@@ -859,12 +860,20 @@ SequenceStats fill_sequence(std::vector<SequenceFrame>& frames, int width, int h
       original[i].assign(px, 0);  // a painted plate is taken as it is
     }
   }
+  MultiscaleOptions synthesis = opts.synthesis;
+  if (opts.cancelled) synthesis.cancelled = opts.cancelled;
+  const auto stopped = [&] { return opts.cancelled && opts.cancelled(); };
+  // Forward and backward (n − 1 steps each), then the residual pass (n): 3n − 2 steps in all.
+  std::size_t steps = 0;
+  const auto step = [&] {
+    if (opts.progress) opts.progress(std::min(1.0, static_cast<double>(++steps) / static_cast<double>(std::max<std::size_t>(1, 3 * n - 2))));
+  };
   auto has_hole = [&](std::size_t i) { return any_set(frames[i].hole); };
   auto residual = [&](std::size_t i) {
     SequenceFrame& f = frames[i];
-    if (!has_hole(i)) return;
+    if (!has_hole(i) || stopped()) return;
     if (opts.mode == FillMode::object) {
-      const int k = inpaint_multiscale(f.rgba, width, height, f.hole, opts.synthesis);
+      const int k = inpaint_multiscale(f.rgba, width, height, f.hole, synthesis);
       st.synthesized += k;
       if (k == 0) st.blended += edge_blend_fill(f.rgba, width, height, f.hole);
     } else {
@@ -880,30 +889,34 @@ SequenceStats fill_sequence(std::vector<SequenceFrame>& frames, int width, int h
     for (std::size_t i = 0; i < n; ++i) anyComplete = anyComplete || !has_hole(i);
     if (!anyComplete) residual(0);
     // Forward, then backward: a complete frame carries its fill to the next.
-    for (std::size_t i = 1; i < n; ++i) {
+    for (std::size_t i = 1; i < n && !stopped(); ++i) {
       if (has_hole(i) && !has_hole(i - 1)) {
         st.propagated += warp_into_hole(frames[i - 1].rgba, frames[i].rgba, width, height, frames[i].hole);
       }
+      step();
     }
-    for (std::size_t i = n - 1; i-- > 0;) {
+    for (std::size_t i = n - 1; i-- > 0 && !stopped();) {
       if (has_hole(i) && !has_hole(i + 1)) {
         st.propagated += warp_into_hole(frames[i + 1].rgba, frames[i].rgba, width, height, frames[i].hole);
       }
+      step();
     }
     // What flow could not reach (the picture's edge, new areas): fill it and
     // let the next frame inherit it.
-    for (std::size_t i = 0; i < n; ++i) {
-      if (!has_hole(i)) continue;
-      if (i > 0 && !has_hole(i - 1)) {
-        st.propagated += warp_into_hole(frames[i - 1].rgba, frames[i].rgba, width, height, frames[i].hole);
+    for (std::size_t i = 0; i < n && !stopped(); ++i) {
+      if (has_hole(i)) {
+        if (i > 0 && !has_hole(i - 1)) {
+          st.propagated += warp_into_hole(frames[i - 1].rgba, frames[i].rgba, width, height, frames[i].hole);
+        }
+        residual(i);
       }
-      residual(i);
+      step();
     }
   }
 
   const double strength = lighting_strength(opts.lighting);
   if (strength > 0 && opts.mode != FillMode::edgeBlend) {
-    for (std::size_t i = 0; i < n; ++i) {
+    for (std::size_t i = 0; i < n && !stopped(); ++i) {
       if (frames[i].anchor || original[i].empty() || !any_set(original[i])) continue;
       correct_lighting(frames[i].rgba, width, height, original[i], strength);
     }

@@ -208,6 +208,8 @@ struct FallbackKey {
 
 [[nodiscard]] bool is_animated(const Document& d, std::string_view layer, const PropBinding& b);
 [[nodiscard]] std::vector<KeyAt> read_keys(const Document& d, std::string_view layer, const PropBinding& b);
+/// `read_keys(...).size()` without building the keys' values (a Follow's mask track holds a path per frame).
+[[nodiscard]] std::size_t key_count(const Document& d, std::string_view layer, const PropBinding& b);
 [[nodiscard]] std::string mask_key_id(std::string_view layer, const Json& maskKey, std::string_view maskId);
 
 /// Stored seconds → API flicks (comp time), and back.

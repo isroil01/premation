@@ -1242,7 +1242,7 @@ Json capture_project_storage(const Json& store) {
 void apply_motion_blur_patch(Document& d, const api::MotionBlurPatch& p) {
   MotionBlur& mb = d.motion_blur_mut();
   if (p.enabled) mb.enabled = *p.enabled;
-  if (p.shutter_angle) mb.shutterAngle = std::max(0.0, std::min(360.0, *p.shutter_angle));
+  if (p.shutter_angle) mb.shutterAngle = std::max(0.0, std::min(720.0, *p.shutter_angle));  // AE allows 0..720
   if (p.shutter_phase) mb.shutterPhase = std::max(-360.0, std::min(360.0, *p.shutter_phase));
   if (p.samples_per_frame) mb.samples = std::max(2.0, std::min(32.0, static_cast<double>(*p.samples_per_frame)));
   if (p.adaptive_sample_limit) {
@@ -1378,7 +1378,7 @@ RestoreResult restore_document(Document& d, EditorView& v, const Json& input, co
     const Json& s = doc.at("motionBlur");
     if (s.is_object()) {
       if (s.at("enabled").is_bool()) mb.enabled = s.at("enabled").b();
-      if (s.at("shutterAngle").is_number()) mb.shutterAngle = std::max(0.0, std::min(360.0, s.at("shutterAngle").num()));
+      if (s.at("shutterAngle").is_number()) mb.shutterAngle = std::max(0.0, std::min(720.0, s.at("shutterAngle").num()));
       if (s.at("shutterPhase").is_number()) mb.shutterPhase = std::max(-360.0, std::min(360.0, s.at("shutterPhase").num()));
       if (s.at("samples").is_number()) mb.samples = std::max(2.0, std::min(32.0, motion::js::round(s.at("samples").num())));
       if (s.at("adaptiveSampleLimit").is_number()) {

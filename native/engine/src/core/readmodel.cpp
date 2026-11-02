@@ -791,7 +791,7 @@ api::PropertyInfo property_info(const PCtx& c, std::string_view layer, const Cat
   }
   // B4 round 5: reported only when true (unset = the default applies) — model.ts propertyInfo.
   if (is_stored_static(d, layer, b) == std::optional<bool>(true)) info.stored = true;
-  info.keyframe_count = animated ? static_cast<std::uint32_t>(read_keys(d, layer, b).size()) : 0U;
+  info.keyframe_count = animated ? static_cast<std::uint32_t>(key_count(d, layer, b)) : 0U;
   if (b.separated) {
     const std::string prefix = b.path + "/";
     for (const PropBinding& p : cat.props) {

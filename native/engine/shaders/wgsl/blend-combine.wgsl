@@ -32,7 +32,7 @@ fn bChan(mode : i32, cb : f32, cs : f32) -> f32 {
   if (mode == 11) { return cb + cs - 2.0 * cb * cs; }
   // -- M1 additions (16-26). Clamped where the formula can leave [0,1]. --
   if (mode == 16) { return clamp(cb + cs - 1.0, 0.0, 1.0); }
-  if (mode == 17) { return clamp(cb + cs, 0.0, 1.0); }
+  if (mode == 17) { return max(cb + cs, 0.0); }
   if (mode == 18) { return clamp(cb + 2.0 * cs - 1.0, 0.0, 1.0); }
   if (mode == 19) {
     if (cs <= 0.5) {
@@ -60,7 +60,7 @@ fn bChan(mode : i32, cb : f32, cs : f32) -> f32 {
     if (v < 0.5) { return 0.0; }
     return 1.0;
   }
-  if (mode == 22) { return clamp(cb - cs, 0.0, 1.0); }
+  if (mode == 22) { return max(cb - cs, 0.0); }
   if (mode == 23) { if (cs <= 0.0) { return 1.0; } return min(1.0, cb / cs); }
   if (mode == 24) { return clamp(1.0 - (1.0 - cb) / max(cs, 1e-6), 0.0, 1.0); }
   if (mode == 25) { return clamp(cb / max(1.0 - cs, 1e-6), 0.0, 1.0); }
@@ -82,11 +82,20 @@ fn bSetSat(c : vec3<f32>, s : f32) -> vec3<f32> {
   return vec3<f32>(0.0);
 }
 
+// Modes whose formula assumes channels in [0, 1] (screen-like, light and
+// dodge/burn families, HSL). The rest — Normal, Multiply, Darken, Lighten,
+// Difference, Add, Subtract, Divide, the colour picks and the utility modes —
+// stay well defined above 1, so a 16/32-bit frame keeps its overbrights.
+fn boundedMode(mode : i32) -> bool {
+  return mode == 2 || mode == 3 || (mode >= 6 && mode <= 9) || (mode >= 11 && mode <= 16) ||
+         (mode >= 18 && mode <= 21) || mode == 24 || mode == 25;
+}
+
 fn matteFactor(mode : i32, s : vec4<f32>) -> f32 {
   if (mode == 31) { return clamp(s.a, 0.0, 1.0); }
-  if (mode == 32) { return clamp(bLum(s.rgb), 0.0, 1.0); }
+  if (mode == 32) { return clamp(stencilLuma(s), 0.0, 1.0); }
   if (mode == 33) { return clamp(1.0 - s.a, 0.0, 1.0); }
-  return clamp(1.0 - bLum(s.rgb), 0.0, 1.0);
+  return clamp(1.0 - stencilLuma(s), 0.0, 1.0);
 }
 
 
@@ -177,6 +186,13 @@ fn workingToDisplay(rgb : vec3<f32>, srcSpace : vec4<f32>) -> vec3<f32> {
 }
 
 
+// Luma of a premultiplied sample as a luma matte reads it (matte-combine.wgsl
+// matteLuma): display-encoded straight colour, times coverage once.
+fn stencilLuma(s : vec4<f32>) -> f32 {
+  if (s.a <= 0.0) { return 0.0; }
+  return bLum(linearToSrgbRgb(clamp(s.rgb / s.a, vec3<f32>(0.0), vec3<f32>(1.0)))) * min(s.a, 1.0);
+}
+
 fn workingFromSample(rgb : vec3<f32>, srcLinear : f32) -> vec3<f32> {
   return select(srgbToLinearRgb(rgb), rgb, srcLinear > 0.5);
 }
@@ -186,12 +202,22 @@ fn storageToWorking(rgb : vec3<f32>) -> vec3<f32> { return rgb; }
 
 @fragment
 fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
-  let s = textureSample(tex, smp, uv);
+  // tint.a: the layer's opacity, applied here after its effects ran at full
+  // opacity (the main path does the same at composite).
+  let s = textureSample(tex, smp, uv) * obj.tint.a;
   let d = textureSample(uMaskTex, smp, uv);
   let as1 = s.a; let ad = d.a;
-  var cs = vec3<f32>(0.0); if (as1 > 0.0) { cs = storageToWorking(min(s.rgb / as1, vec3<f32>(1.0))); }
-  var cb = vec3<f32>(0.0); if (ad > 0.0) { cb = storageToWorking(min(d.rgb / ad, vec3<f32>(1.0))); }
   let mode = i32(obj.cr0.x + 0.5);
+  // The combine is drawn over the whole frame: where the layer has no coverage
+  // the backdrop passes through bit for bit (no straight-colour round trip),
+  // except for the stencils, which cut away everything outside the layer.
+  if (as1 <= 0.0 && mode != 31 && mode != 32) { return d; }
+  var cs = vec3<f32>(0.0); if (as1 > 0.0) { cs = storageToWorking(s.rgb / as1); }
+  var cb = vec3<f32>(0.0); if (ad > 0.0) { cb = storageToWorking(d.rgb / ad); }
+  if (boundedMode(mode)) {
+    cs = clamp(cs, vec3<f32>(0.0), vec3<f32>(1.0));
+    cb = clamp(cb, vec3<f32>(0.0), vec3<f32>(1.0));
+  }
   // Dispatch is by FAMILY, not by a >= threshold. The separable range is no
   // longer contiguous (1-11 and 16-26), so a bare mode >= 12 would have swept
   // every mode added after the HSL block into the non-separable branch.
@@ -219,7 +245,12 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
     // Alpha Add. Standard alpha is as + ad - as*ad, which is exactly why two
     // touching anti-aliased 50% edges composite to 75% and leave a visible seam
     // down the join. Adding instead of union-ing closes it.
+    // The colour stays the normal composite's straight colour; only the
+    // coverage adds — so the seam takes the colour of the two edges, not
+    // the 75 % of it a premultiplied colour left over a full alpha.
+    let aNormal = ao;
     ao = min(1.0, as1 + ad);
+    if (aNormal > 0.0) { co = co / aNormal * ao; }
   } else if (mode == 30) {
     // Luminescent Premul. Treats the source as ALREADY premultiplied and adds it
     // rather than lerping, so colour that exceeds its own alpha is kept instead
@@ -227,8 +258,8 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
     // Work in linear premul, then encode with the common path below.
     var sLin = s.rgb;
     var dLin = d.rgb;
-    if (as1 > 0.0) { sLin = storageToWorking(min(s.rgb / as1, vec3<f32>(1.0))) * as1; }
-    if (ad > 0.0) { dLin = storageToWorking(min(d.rgb / ad, vec3<f32>(1.0))) * ad; }
+    if (as1 > 0.0) { sLin = storageToWorking(s.rgb / as1) * as1; }
+    if (ad > 0.0) { dLin = storageToWorking(d.rgb / ad) * ad; }
     co = sLin + (1.0 - as1) * dLin;
   } else if (mode >= 31 && mode <= 34) {
     // ── Matte family (31-34): Stencil / Silhouette ──
@@ -264,7 +295,7 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
       // Shown: the source's own colour, hard and opaque — dissolve trades
       // translucency for speckle density. Straight colour in STORAGE space,
       // so no linear round-trip and no encode below.
-      co = min(s.rgb / max(as1, 1e-6), vec3<f32>(1.0));
+      co = s.rgb / max(as1, 1e-6);
       ao = 1.0;
       // Preserve Underlying Transparency composes here too: the speckle is
       // clipped to the backdrop's coverage instead of adding opacity.
@@ -296,8 +327,7 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   }
   // Encode linear premul → storage space (identity when RTs already store linear).
   if (!skipEncode && ao > 0.0001) {
-    let straight = min(co / ao, vec3<f32>(1.0));
-    co = workingToStorage(straight) * ao;
+    co = workingToStorage(co / ao) * ao;
   }
   return vec4<f32>(co, ao);
 }

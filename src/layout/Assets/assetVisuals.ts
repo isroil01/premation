@@ -182,5 +182,21 @@ export function getAssetVisualInfo(
   };
 }
 
+/** Extensions whose usual name is not the extension itself. */
+const FORMAT_NAMES: Record<string, string> = { jpg: 'JPEG', jpe: 'JPEG', tif: 'TIFF', aif: 'AIFF', m4a: 'AAC', mpg: 'MPEG', mts: 'AVCHD', m2ts: 'AVCHD' };
+
+/**
+ * The file FORMAT alone — `JPEG`, `PNG`, `MP4`, `WAV` — for the Type column and
+ * the details header, where "JPEG Image" repeats what the thumbnail already
+ * says. A name without an extension falls back to the descriptive label.
+ */
+export function formatLabel(asset: Pick<ImportedAsset, 'name'> & { type?: string; source?: string }): string {
+  const name = asset.name.toLowerCase();
+  const dot = name.lastIndexOf('.');
+  const ext = dot > 0 ? name.slice(dot + 1) : '';
+  if (!ext || ext.length > 5 || !/^[a-z0-9]+$/.test(ext)) return getAssetVisualInfo(asset).label;
+  return FORMAT_NAMES[ext] ?? ext.toUpperCase();
+}
+
 /** Standard real folder color (Warm Manila Amber) */
 export const FOLDER_COLOR = 'var(--color-amber-500)';

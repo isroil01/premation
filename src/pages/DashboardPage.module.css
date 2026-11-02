@@ -2024,8 +2024,9 @@
 }
 
 .modalBox {
+  /* The same sheet as every dialog in the app (components/Modal). */
   background: var(--color-surface-raised);
-  border: 1px solid var(--color-border-strong);
+  border: 1px solid var(--color-border-structural);
   box-shadow: var(--shadow-modal);
   border-radius: var(--radius-panel);
   width: 100%;

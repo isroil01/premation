@@ -4,11 +4,14 @@
 // Skipped when the machine has no GPU adapter.
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <initializer_list>
 #include <numbers>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -281,6 +284,20 @@ TEST_CASE("P8b: a layer that only moves by whole pixels reuses its effect chain,
     REQUIRE(other->render(file, &out, s, e));
     return out.rgba;
   };
+  // Texel for texel the frame a fresh render draws — on a GPU. A software
+  // rasteriser (CI: WARP) is not bit-stable across its texture paths here; it
+  // reports the difference instead of gating it.
+  const std::string& adapter = renderer->adapter();
+  const bool software = adapter.find("Basic Render") != std::string::npos || adapter.find("llvmpipe") != std::string::npos ||
+                        adapter.find("SwiftShader") != std::string::npos;
+  const auto same_as_fresh = [&](const Frame& got, std::string_view what) {
+    if (software) {
+      if (got.rgba != fresh()) WARN("software adapter (" << adapter << "): " << what << " differs from a fresh render");
+    } else {
+      INFO(what);
+      CHECK(got.rgba == fresh());
+    }
+  };
   // A whole-pixel move is a moved copy; a move to another sub-pixel phase runs
   // the chain there (the input is drawn at the layer's own phase — never a
   // resampled result, which softened every effected layer on a fraction).
@@ -291,17 +308,7 @@ TEST_CASE("P8b: a layer that only moves by whole pixels reuses its effect chain,
     FrameStats s;
     REQUIRE(renderer->render(file, &moved, s, err));
     CHECK(s.effects.layerChainsReused == reused);
-    // Texel for texel the frame a fresh render draws — on a GPU. A software
-    // rasteriser (CI: WARP) is not bit-stable across its texture paths here; it
-    // reports the difference instead of gating it.
-    const std::string& adapter = renderer->adapter();
-    const bool software = adapter.find("Basic Render") != std::string::npos || adapter.find("llvmpipe") != std::string::npos ||
-                          adapter.find("SwiftShader") != std::string::npos;
-    if (software) {
-      if (moved.rgba != fresh()) WARN("software adapter (" << adapter << "): a moved copy differs from a fresh render at dx " << dx);
-    } else {
-      CHECK(moved.rgba == fresh());
-    }
+    same_as_fresh(moved, "a moved copy");
   }
   // Held a frame at the new phase (kept), then moved by whole pixels: a moved copy.
   {
@@ -314,7 +321,7 @@ TEST_CASE("P8b: a layer that only moves by whole pixels reuses its effect chain,
     FrameStats s;
     REQUIRE(renderer->render(file, &moved, s, err));
     CHECK(s.effects.layerChainsReused == 1);
-    CHECK(moved.rgba == fresh());
+    same_as_fresh(moved, "after a held frame");
   }
   // Moved until the blur's reach leaves the frame: the chain's buffer holds the
   // layer where its whole reach fits, so the kept result still moves there —
@@ -325,7 +332,7 @@ TEST_CASE("P8b: a layer that only moves by whole pixels reuses its effect chain,
   FrameStats se;
   REQUIRE(renderer->render(file, &edge, se, err));
   CHECK(se.effects.layerChainsReused == 1);
-  CHECK(edge.rgba == fresh());
+  same_as_fresh(edge, "at the frame edge");
 }
 
 TEST_CASE("P8b: while playing, a layer drifting by fractions of a pixel reuses its effect chain through the fraction") {
@@ -1508,4 +1515,173 @@ TEST_CASE("a raster bigger than Dawn's upload staging buffer still lands, every 
     CHECK(px(32, y, 3) == 255);
     CHECK(std::abs(static_cast<double>(px(32, y, 1)) - want) <= 4);
   }
+}
+
+namespace {
+
+/// The solid scene's rect, white, as the layer a matte or a blend mode acts on,
+/// plus (when `matteColor` is set) a matte source over the rect's left half.
+api::RenderFrameFile matted_scene(const api::RenderMatte& matte, api::Color matteColor) {
+  auto file = solid_scene(1, 1, 1);
+  api::Renderable source;
+  source.id = "m";
+  source.kind = api::RenderableKind::rect;
+  source.model_matrix = {16, 0, 0, 0, 24, 0, 16, 12, 1};  // (16,12)-(32,36)
+  source.bounds = {16, 12, 16, 24};
+  source.opacity = 1;
+  source.color = matteColor;
+  source.matte_source = true;
+  file.scene.renderables.insert(file.scene.renderables.begin(), source);
+  file.scene.renderables.back().matte = matte;
+  return file;
+}
+
+Frame render_ok(SceneRenderer& renderer, const api::RenderFrameFile& file) {
+  std::string err;
+  Frame f;
+  FrameStats s;
+  REQUIRE(renderer.render(file, &f, s, err));
+  CHECK(s.gpuError.empty());
+  CHECK(s.diagnostics.empty());
+  return f;
+}
+
+}  // namespace
+
+TEST_CASE("luma track matte: display-encoded luma, coverage counted once, an empty inverted region passes", "[matte]") {
+  std::string err;
+  auto renderer = SceneRenderer::create({}, err);
+  if (!renderer) return;
+  // White at 50 % coverage over black is linear 0.5 → 188 on the sRGB surface.
+  constexpr int kHalf = 188;
+  const auto near = [](int v, int want) { return std::abs(v - want) <= 3; };
+
+  // sRGB mid-grey is luma 0.5 in AE (not linear 0.214, which shows as 128).
+  api::RenderMatte luma{api::RenderMatteMode::luma, false, "m"};
+  const Frame grey = render_ok(*renderer, matted_scene(luma, api::Color{0.5, 0.5, 0.5, 1}));
+  const Px pg{grey};
+  CHECK(near(pg.at(24, 24, 1), kHalf));
+  CHECK(pg.at(40, 24, 1) == 0);  // outside the matte source: nothing passes
+
+  // A 50 % white matte passes 50 % (not luma·α·α = 25 %, 137).
+  const Frame faint = render_ok(*renderer, matted_scene(luma, api::Color{1, 1, 1, 0.5}));
+  CHECK(near(Px{faint}.at(24, 24, 1), kHalf));
+
+  // Inverted: the grey passes the other half, and where the matte is empty the layer passes whole.
+  luma.inverted = true;
+  const Frame inv = render_ok(*renderer, matted_scene(luma, api::Color{0.5, 0.5, 0.5, 1}));
+  const Px pi{inv};
+  CHECK(near(pi.at(24, 24, 1), kHalf));
+  CHECK(pi.at(40, 24, 1) == 255);
+  CHECK(pi.at(2, 2, 1) == 0);  // outside the layer: the background
+
+  // The matted layer's opacity applies once, after the matte.
+  api::RenderMatte alpha{api::RenderMatteMode::alpha, false, "m"};
+  auto faded = matted_scene(alpha, api::Color{1, 1, 1, 1});
+  faded.scene.renderables.back().opacity = 0.5;
+  const Frame half = render_ok(*renderer, faded);
+  CHECK(near(Px{half}.at(24, 24, 1), kHalf));
+  CHECK(Px{half}.at(40, 24, 1) == 0);
+}
+
+TEST_CASE("blend modes: a Multiply-by-white layer leaves a 16-bit frame as it was, inside and outside the layer", "[blend]") {
+  std::string err;
+  auto renderer = SceneRenderer::create({}, err);
+  if (!renderer) return;
+  // A dark background (sRGB 0.03, linear 0.0023) that an 8-bit linear copy
+  // would round to 1/255 (sRGB 13 instead of 8) everywhere the combine draws.
+  auto base = solid_scene(0.03, 0.03, 0.03);
+  base.scene.background = api::Color{0.03, 0.03, 0.03, 1};
+  const Frame before = render_ok(*renderer, base);
+  auto multiplied = base;
+  api::Renderable white = base.scene.renderables.back();
+  white.id = "mul";
+  white.color = api::Color{1, 1, 1, 1};
+  white.advanced_blend = 1;
+  multiplied.scene.renderables.push_back(white);
+  const Frame after = render_ok(*renderer, multiplied);
+  REQUIRE(after.rgba.size() == before.rgba.size());
+  int worst = 0;
+  for (std::size_t i = 0; i < after.rgba.size(); ++i) {
+    worst = std::max(worst, std::abs(static_cast<int>(after.rgba[i]) - static_cast<int>(before.rgba[i])));
+  }
+  CHECK(worst <= 1);
+}
+
+TEST_CASE("2D effects run in layer px: a blur scales with the layer's world scale and with the viewer zoom", "[fx][layer-space]") {
+  std::string err;
+  auto renderer = SceneRenderer::create({}, err);
+  if (!renderer) return;
+  // The 20 %..80 % rise of the left edge of a blurred white square on the middle row, in viewport px.
+  const auto rise = [&](double zoom, double layerScale) {
+    auto f = solid_scene(1, 1, 1);
+    f.view.css_width = 256;
+    f.view.css_height = 128;
+    f.view.camera_center_x = 128;
+    f.view.camera_center_y = 64;
+    f.view.camera_zoom = zoom;
+    f.scene.width = 256;
+    f.scene.height = 128;
+    auto& r = f.scene.renderables[0];
+    const double s = 64 * layerScale;  // a 64 px layer at `layerScale`
+    r.model_matrix = {s, 0, 0, 0, s, 0, 128 - s / 2, 64 - s / 2, 1};
+    r.bounds = {128 - s / 2, 64 - s / 2, s, s};
+    if (layerScale != 1) r.fx_scale = layerScale;
+    api::RenderEffect blur;
+    blur.type = "gaussian-blur";
+    blur.params.push_back(num_param("radiusPx", 8));
+    r.effects.push_back(blur);
+    Frame fr;
+    FrameStats st;
+    REQUIRE(renderer->render(f, &fr, st, err));
+    INFO(st.gpuError);
+    CHECK(st.gpuError.empty());
+    const auto at = [&](std::uint32_t x) { return static_cast<int>(fr.rgba.at((std::size_t{fr.height / 2} * fr.width + x) * 4 + 1)); };
+    int peak = 0;
+    for (std::uint32_t x = 0; x < fr.width; ++x) peak = std::max(peak, at(x));
+    int a20 = -1;
+    int a80 = -1;
+    for (std::uint32_t x = 0; x < fr.width; ++x) {
+      if (a20 < 0 && at(x) > peak / 5) a20 = static_cast<int>(x);
+      if (a80 < 0 && at(x) > peak * 4 / 5) a80 = static_cast<int>(x);
+    }
+    return a80 - a20;
+  };
+  const int full = rise(1, 1);
+  REQUIRE(full >= 12);
+  // Half the viewer zoom or half the layer scale: half the blur on screen (±1 px of rounding).
+  CHECK(std::abs(rise(0.5, 1) * 2 - full) <= 2);
+  CHECK(std::abs(rise(1, 0.5) * 2 - full) <= 2);
+}
+
+TEST_CASE("3D: a 50 % card drawn before a farther opaque card does not hide it", "[3d][translucency]") {
+  std::string err;
+  auto renderer = SceneRenderer::create({}, err);
+  if (!renderer) return;
+  // A red card at 50 % listed first, an opaque blue card overlapping it listed second,
+  // at either depth order: the blue card is always seen at the overlap — directly, or
+  // through the red one — never cut out by the translucent card's depth.
+  const auto overlap = [&](double redZ, double blueZ) {
+    auto file = threed_scene();
+    auto red = rect3d("red", 8, 8, 32, 24, 1, 0, 0);
+    red.opacity = 0.5;
+    red.three_d->model[14] = redZ;
+    auto blue = rect3d("blue", 24, 16, 32, 24, 0, 0, 1);
+    blue.three_d->model[14] = blueZ;
+    file.scene.renderables.push_back(red);
+    file.scene.renderables.push_back(blue);
+    Frame f;
+    FrameStats st;
+    REQUIRE(renderer->render(file, &f, st, err));
+    INFO(st.gpuError);
+    CHECK(st.gpuError.empty());
+    const std::size_t at = (std::size_t{28} * f.width + 32) * 4;  // inside both cards
+    return std::array<int, 3>{f.rgba.at(at), f.rgba.at(at + 1), f.rgba.at(at + 2)};
+  };
+  const auto a = overlap(0.2, 0.6);
+  const auto b = overlap(0.6, 0.2);
+  CHECK(a[2] > 60);
+  CHECK(b[2] > 60);
+  // In the order where the red card is in front, both show.
+  CHECK(((a[0] > 60 && a[2] > 60) || (b[0] > 60 && b[2] > 60)));
 }

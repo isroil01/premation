@@ -65,7 +65,7 @@ import { useLayerScreenMapping } from './useLayerScreenMapping';
 import { useDisplayedCamera2D } from './useOverlayView';
 import { subjectBoundaryPath } from './subjectBoundary';
 import { offerRefineEdgeMatting } from '@layout/Settings/objectMatteJob';
-import { SubjectToolHud, TrackingChip } from './SubjectToolHud';
+import { usePublishSubjectNotice } from './SubjectToolHud';
 import { dragBrush, isClickTravel, stepBrushSize } from './brushFeel';
 import styles from './RotoBrushOverlay.module.css';
 import { t } from '@core/i18n';
@@ -458,7 +458,13 @@ function RotoBrushOverlayActive({ mode: brushMode }: { mode: BrushMode }): JSX.E
   const strokePath = (s: RotoStroke): string => pathOf(s.points);
   // Selection Brush strokes show as their footprint on the canvas, not as a line.
   const shown = brushMode === 'exact' ? strokes.filter((s) => !footprintsRef.current.has(s.id)) : strokes;
-  const hudTool = brushMode;
+  // What to tell the user goes to the status bar, not over the picture (SubjectToolHud.tsx).
+  const busy = useRotoBrushStore((s) => s.busy);
+  usePublishSubjectNotice(!nodeId
+    ? t('workspace.rotoBrush.selectLayer', 'Select one footage layer to roto.')
+    : playing
+      ? t('workspace.rotoBrush.playing', 'Stop playback to paint.')
+      : status, busy);
 
   return (
     <div
@@ -534,17 +540,6 @@ function RotoBrushOverlayActive({ mode: brushMode }: { mode: BrushMode }): JSX.E
           <circle className={styles.cursorDot} r={1} />
         </g>
       </svg>
-      {(status || !nodeId || playing) && (
-        <div className={styles.status} role="status">
-          {!nodeId
-            ? t('workspace.rotoBrush.selectLayer', 'Select one footage layer to roto.')
-            : playing
-              ? t('workspace.rotoBrush.playing', 'Stop playback to paint.')
-              : status}
-        </div>
-      )}
-      <SubjectToolHud tool={hudTool} nodeId={nodeId} />
-      <TrackingChip nodeId={nodeId} />
     </div>
   );
 }

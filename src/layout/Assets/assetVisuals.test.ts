@@ -1,4 +1,4 @@
-import { getAssetVisualInfo, FOLDER_COLOR } from './assetVisuals';
+import { formatLabel, getAssetVisualInfo, FOLDER_COLOR } from './assetVisuals';
 
 describe('assetVisuals', () => {
   it('identifies folder color correctly', () => {
@@ -126,5 +126,19 @@ describe('assetVisuals', () => {
     expect(unknown.label).toBe('PDF File');
     expect(unknown.className).toBe('assetGlyphFile');
     expect(unknown.color).toBe('var(--color-filetype-other)');
+  });
+});
+
+describe('formatLabel', () => {
+  it('names the format alone, the way the Type column shows it', () => {
+    expect(formatLabel({ name: 'giraffe.jpg' })).toBe('JPEG');
+    expect(formatLabel({ name: 'Logo.PNG' })).toBe('PNG');
+    expect(formatLabel({ name: 'shot.tif' })).toBe('TIFF');
+    expect(formatLabel({ name: 'take.mov' })).toBe('MOV');
+    expect(formatLabel({ name: 'music.m4a' })).toBe('AAC');
+  });
+
+  it('falls back to the descriptive label without a usable extension', () => {
+    expect(formatLabel({ name: 'untitled', type: 'image' })).toBe('Image');
   });
 });

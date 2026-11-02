@@ -6231,6 +6231,8 @@ struct FrameReady {
   double render_done_us = 0.0;
   std::uint32_t width = 0;
   std::uint32_t height = 0;
+  std::uint32_t content_width = 0;
+  std::uint32_t content_height = 0;
   bool operator==(const FrameReady&) const = default;
 };
 
@@ -6681,6 +6683,7 @@ struct Renderable {
   std::optional<RenderDeformedMesh> deformed_mesh;
   std::optional<RenderExtrudedMesh> extruded_mesh;
   std::optional<RenderThreeD> three_d;
+  std::optional<double> fx_scale;
   bool operator==(const Renderable&) const = default;
 };
 

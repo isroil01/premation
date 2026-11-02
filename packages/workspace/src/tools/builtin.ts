@@ -58,6 +58,7 @@ import {
 } from './pathEdit';
 import { AddVertexTool, ConvertVertexTool, DeleteVertexTool, MaskFeatherTool } from './pathTools';
 import { commands } from '../commands/WorkspaceCommands';
+import { zoomLadderStep } from '../camera/Camera';
 import * as Mat from '../math/Mat2D';
 import { layerBoxPoints, resolveAnchorSnap } from '../snap/anchorSnap';
 import type { HandleId } from '../selection/handles';
@@ -980,8 +981,9 @@ export class ZoomTool implements Tool {
   readonly cursor = 'zoom-in' as const;
 
   onClick(e: ToolPointerEvent, ctx: ToolContext): void {
-    const factor = e.modifiers.alt ? 1 / 1.6 : 1.6;
-    ctx.camera.zoomToCursor(factor, ctx.screenToViewport(e.screen));
+    // A click steps After Effects' magnification ladder (Alt: out), about the cursor.
+    const next = zoomLadderStep(ctx.camera.zoom, e.modifiers.alt ? -1 : 1);
+    ctx.camera.zoomTo(next, ctx.screenToViewport(e.screen));
     ctx.requestRender();
   }
 

@@ -132,6 +132,18 @@ std::uint64_t chain_content_key(const PassContext& ctx, const api::Renderable& r
 
 namespace {
 
+/// The region of interest in world units (the view's frame clip: the comp rect,
+/// or the part of it inside the ROI), when the frame has one.
+std::optional<Rect> roi_world(const PassContext& ctx) {
+  if (!ctx.file.view.frame_clip) return std::nullopt;
+  const Rect v = ctx.viewport.visibleWorldRect;
+  const double pw = ctx.viewport.pixelWidth;
+  const double ph = ctx.viewport.pixelHeight;
+  if (!(pw > 0) || !(ph > 0) || !(v.width > 0) || !(v.height > 0)) return std::nullopt;
+  const api::Rect& c = *ctx.file.view.frame_clip;
+  return Rect{v.x + c.x / pw * v.width, v.y + c.y / ph * v.height, c.width / pw * v.width, c.height / ph * v.height};
+}
+
 /// P8b: a 2D layer's chain run in a buffer placement of its own. The layer is
 /// drawn at its own sub-pixel phase — and, when the chain's reach would leave
 /// the buffer, moved inside it by whole pixels — under a view shifted by that
@@ -181,7 +193,9 @@ std::optional<PxBox> chain_reach(const PassContext& ctx, const api::Renderable& 
   const std::optional<PxBox> in = content_box(r, ctx.viewport.viewProjection, pw, ph);
   if (!in) return std::nullopt;
   const Rect world = ctx.viewport.visibleWorldRect;
-  const FxBoundsView view{world.width > 0 ? pw / world.width : 1, world.height > 0 ? ph / world.height : 1};
+  // Layer px to buffer texels, as run_effects_chain draws them (the layer's world scale × the view's).
+  const double layerScale = r.fx_scale.value_or(1);
+  const FxBoundsView view{layerScale * (world.width > 0 ? pw / world.width : 1), layerScale * (world.height > 0 ? ph / world.height : 1)};
   PxBox box = *in;
   PxBox all = *in;
   for (const api::RenderEffect& e : r.effects) {
@@ -325,8 +339,11 @@ class LayerFxCache {
     /// P8b: the whole result was on screen, so it may be moved (else reused in place only).
     bool movable = false;
     wgpu::TextureFormat format = wgpu::TextureFormat::RGBA16Float;  // the chain target's: a lossless copy
+    std::uint64_t bytes = 0;  // what the slot's texture holds
   };
-  LayerFxCache(std::string_view prefix, std::size_t slots) : slots_(slots) {
+  /// `slots` names, kept together under `budget` bytes (least recently used out first): nine static
+  /// glowing titles keep their chains at 1080p, and a 4K comp keeps fewer rather than thrashing.
+  LayerFxCache(std::string_view prefix, std::size_t slots, std::uint64_t budget) : slots_(slots), budget_(budget) {
     for (std::size_t i = 0; i < slots; ++i) slots_[i].name = std::string(prefix) + std::to_string(i);
   }
   [[nodiscard]] Slot* find(std::uint64_t key, std::uint32_t w, std::uint32_t h) noexcept {
@@ -337,13 +354,29 @@ class LayerFxCache {
   }
   /// The free or least recently used slot — never one this frame read or
   /// wrote (its texture may still be composited this frame); nullptr if all were.
-  Slot* claim(std::uint64_t key, std::uint32_t w, std::uint32_t h, std::uint64_t frame) noexcept {
+  Slot* claim(std::uint64_t key, std::uint32_t w, std::uint32_t h, std::uint64_t frame, std::uint64_t bytes) noexcept {
+    if (bytes > budget_) return nullptr;
     Slot* pick = nullptr;
     for (Slot& s : slots_) {
       if (s.key == 0) { pick = &s; break; }
       if (s.used != frame && (pick == nullptr || s.used < pick->used)) pick = &s;
     }
     if (pick == nullptr) return nullptr;
+    pick->key = 0;
+    pick->bytes = 0;
+    // Under the budget: the least recently used others go (never one this frame touched).
+    std::uint64_t held = 0;
+    for (const Slot& s : slots_) held += s.key != 0 ? s.bytes : 0;
+    while (held + bytes > budget_) {
+      Slot* old = nullptr;
+      for (Slot& s : slots_) {
+        if (s.key != 0 && s.used != frame && (old == nullptr || s.used < old->used)) old = &s;
+      }
+      if (old == nullptr) return nullptr;
+      held -= old->bytes;
+      forget(*old);
+    }
+    pick->bytes = bytes;
     pick->key = key;
     pick->w = w;
     pick->h = h;
@@ -352,7 +385,10 @@ class LayerFxCache {
     pick->movable = false;
     return pick;
   }
-  static void forget(Slot& s) noexcept { s.key = 0; }
+  static void forget(Slot& s) noexcept {
+    s.key = 0;
+    s.bytes = 0;
+  }
   /// Whether `layer`'s chain key is the one it had last time (a layer whose
   /// chain changes every frame — animated — is never stored: the copy into a
   /// slot would be paid every frame and never read).
@@ -367,6 +403,7 @@ class LayerFxCache {
 
  private:
   std::vector<Slot> slots_;
+  std::uint64_t budget_ = 0;
   std::unordered_map<std::string, std::uint64_t> last_;
 };
 
@@ -409,8 +446,8 @@ void mix_bytes(KeyMix& k, std::span<const std::uint8_t> b) noexcept {
 /// Render thread only.
 class PrecompCache {
  public:
-  /// The kept images' budget: ~15 precomps at 1080p in rgba16float, 3 at 4K.
-  static constexpr std::uint64_t kBudgetBytes = std::uint64_t{256} << 20U;
+  /// The kept images' budget: ~30 precomps at 1080p in rgba16float, 7 at 4K.
+  static constexpr std::uint64_t kBudgetBytes = std::uint64_t{512} << 20U;
   /// Entries idle this long go (the Device pool would collect their targets anyway).
   static constexpr std::uint64_t kMaxIdle = 120;
 
@@ -638,16 +675,18 @@ void emit_lut_textured(PassContext& ctx, Commands& cmds, const Mat3& mvp, const 
 }
 
 void emit_matte_combine(PassContext& ctx, Commands& cmds, const Mat3& mvp, Blend blend, const TexRef& tex,
-                        const SamplerRef& smp, const TexRef& matte, const ColorTransform& mode, const Rect& uv) {
-  DrawItem& it = cmds.add(Mat::MATTE_COMBINE_MATERIAL, blend, pack_textured(ctx.packer(), mvp, uv, Color::white(), 1, mode));
+                        const SamplerRef& smp, const TexRef& matte, const ColorTransform& mode, const Rect& uv,
+                        double opacity) {
+  DrawItem& it = cmds.add(Mat::MATTE_COMBINE_MATERIAL, blend, pack_textured(ctx.packer(), mvp, uv, Color::white(), opacity, mode));
   it.texture = tex;
   it.sampler = smp;
   it.mask = matte;
 }
 
 void emit_blend_combine(PassContext& ctx, Commands& cmds, const Mat3& mvp, Blend blend, const TexRef& tex,
-                        const SamplerRef& smp, const TexRef& backdrop, const ColorTransform& mode, const Rect& uv) {
-  DrawItem& it = cmds.add(Mat::BLEND_COMBINE_MATERIAL, blend, pack_textured(ctx.packer(), mvp, uv, Color::white(), 1, mode));
+                        const SamplerRef& smp, const TexRef& backdrop, const ColorTransform& mode, const Rect& uv,
+                        double opacity) {
+  DrawItem& it = cmds.add(Mat::BLEND_COMBINE_MATERIAL, blend, pack_textured(ctx.packer(), mvp, uv, Color::white(), opacity, mode));
   it.texture = tex;
   it.sampler = smp;
   it.mask = backdrop;
@@ -738,10 +777,10 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
   /// AE parity 4.2: images of 3D-run layers drawn by render_3d_group, during composite_special_3d.
   const std::unordered_map<std::string, TexRef>* predrawn_ = nullptr;
   /// P8: finished layer chains kept across frames (render thread only).
-  LayerFxCache layerFx_{"fx-layer-", 8};
+  LayerFxCache layerFx_{"fx-layer-", 48, std::uint64_t{640} << 20U};
   /// E1: finished 3D surface chains (threed.cpp resolve_surface), layer-sized
   /// buffers — a 3D comp holds more effect layers at once than a 2D one.
-  LayerFxCache surfaceFx_{"fx-surface-", 16};
+  LayerFxCache surfaceFx_{"fx-surface-", 48, std::uint64_t{256} << 20U};
   /// Whether the switch `name` is on: unset or anything but "0" (read once, at construction).
   static bool env_on(const char* name) {
 #ifdef _WIN32
@@ -1025,7 +1064,7 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
     const std::uint32_t w = ctx.viewport.pixelWidth;
     const std::uint32_t h = ctx.viewport.pixelHeight;
     const bool snapped = snap != nullptr && snap->on;
-    LayerFxCache::Slot* slot = layerFx_.claim(fxKey, w, h, ctx.dev.frame());
+    LayerFxCache::Slot* slot = layerFx_.claim(fxKey, w, h, ctx.dev.frame(), std::uint64_t{w} * h * texel_bytes(src->format));
     if (slot == nullptr) return;  // every slot is in use this frame
     slot->covered = covered;
     if (snapped) {
@@ -1078,7 +1117,8 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
   /// draw samples directly (empty = not kept this frame).
   TexRef keep_surface_fx(PassContext& ctx, const std::string& id, std::uint64_t key, const RenderTarget& result) override {
     if (key == 0 || !layerFxEnabled_ || !surfaceFx_.steady(id, key)) return {};
-    LayerFxCache::Slot* slot = surfaceFx_.claim(key, result.width, result.height, ctx.dev.frame());
+    LayerFxCache::Slot* slot = surfaceFx_.claim(key, result.width, result.height, ctx.dev.frame(),
+                                                 std::uint64_t{result.width} * result.height * texel_bytes(result.format));
     if (slot == nullptr) return {};  // every slot is in use this frame
     slot->covered.reset();
     slot->format = result.format;
@@ -1752,6 +1792,13 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
     const Rect visible = ctx.viewport.visibleWorldRect;
     const Rect targetUv{0, 0, 1, 1};  // WebGPU writes targets top-down: identity UV
     if (r0.matte_source) return;
+    // Region of interest: only what lands in it is rendered (the surface is clipped to it). A
+    // root-level layer outside it is not drawn at all — unless effects may reach in from outside.
+    // (Not a moving, deformed or 3D layer: its bounds are this instant's 2D box only.)
+    if (st.depth == 0 && r0.effects.empty() && !r0.precomp && r0.precomp_children.empty() && r0.motion_samples.size() <= 1 &&
+        !r0.deformed_mesh && !r0.three_d) {
+      if (const std::optional<Rect> roi = roi_world(ctx); roi && !rects_intersect(*roi, rect_of(r0.bounds))) return;
+    }
 
     api::Renderable folded;
     const api::Renderable* rp = &r0;
@@ -1799,12 +1846,14 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
         flush(ctx, st);
         const api::Renderable* source = matteSource;
         const BackdropScope backdropScope(backdrop_, reads_backdrop(r) ? copy_scene(ctx, st) : TexRef{});
-        const TexRef matted = layer_into_target(ctx, r, r.opacity, kLayerTarget, st);
+        // Effects run at full opacity; the opacity is applied in the combine (as the main path does at composite).
+        const TexRef matted = layer_into_target(ctx, r, 1, kLayerTarget, st);
         const TexRef matte = source != nullptr ? layer_into_target(ctx, *source, 1, kMatteTarget, st) : TexRef{};
         if (matte && matted) {
           ColorTransform mode;
           mode.m = {r.matte->mode == api::RenderMatteMode::luma ? 1.0 : 0.0, r.matte->inverted ? 1.0 : 0.0, 0, 0, 0, 0, 0, 0, 0};
-          emit_matte_combine(ctx, st.main, screen_mvp(), blend_of(r.blend), matted, ctx.linear_clamp(), matte, mode, targetUv);
+          emit_matte_combine(ctx, st.main, screen_mvp(), blend_of(r.blend), matted, ctx.linear_clamp(), matte, mode, targetUv,
+                             r.opacity);
         } else {
           ctx.diagnostics.push_back({"matte-source-unavailable", "Track matte on \"" + r.id + "\" could not be built"});
         }
@@ -1826,7 +1875,10 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
       // in After Effects. The copy also serves any effect of the chain that
       // reads the backdrop (the fx-graph's BACKDROP slot = the frame below).
       const bool scoped = r.mask_texture_key.has_value() || r.opacity < 1;
-      const TexRef before = scoped || reads_backdrop(r) ? copy_scene(ctx, st) : TexRef{};
+      // A blend mode other than Normal: the processed frame is blended over the untouched one (AE).
+      const double adjMode = r.advanced_blend.value_or(0);
+      const bool blended = adjMode > 0 || r.blend == api::RenderBlendMode::add;
+      const TexRef before = scoped || blended || reads_backdrop(r) ? copy_scene(ctx, st) : TexRef{};
       const BackdropScope backdropScope(backdrop_, before);
       Commands copy;
       const TexRef lut = r.adjustment->lut_texture_key ? ctx.texture(*r.adjustment->lut_texture_key) : TexRef{};
@@ -1844,6 +1896,23 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
         const std::array<std::string_view, 4> pool = {kLayerTarget, kBlur1, kBlur2, kBlur3};
         const ChainListScope chainList(chainList_, st);
         finalTex = run_effects_chain(ctx, r.effects, finalTex, pool, st.byId, r.id, *this).tex;
+      }
+      if (blended && before) {
+        // The chain's pool is free again; the matte target holds the blend (project precision).
+        Commands bc;
+        if (adjMode > 0) {
+          ColorTransform mode;
+          mode.m = {adjMode, 0, adjMode == 36 ? ctx.file.scene.dissolve_frame.value_or(0) : 0.0, ctx.file.scene.width,
+                    ctx.file.scene.height, 0, 0, 0, 0};
+          emit_blend_combine(ctx, bc, screen_mvp(), Blend::none, finalTex, ctx.linear_clamp(), before, mode, targetUv);
+        } else {
+          emit_textured(ctx, bc, screen_mvp(), Color::white(), 1, Blend::none, before, ctx.linear_clamp(), targetUv,
+                        kIdentityColor, true);
+          emit_textured(ctx, bc, screen_mvp(), Color::white(), 1, blend_of(r.blend), finalTex, ctx.linear_clamp(), targetUv,
+                        kIdentityColor, true);
+        }
+        ctx.draw_into(kMatteTarget, bc, true);
+        finalTex = ctx.target(kMatteTarget)->tex();
       }
       if (scoped && before) {
         // The mask raster drawn through the layer's placement into the frame's
@@ -1892,7 +1961,10 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
         // layer's. The original glass (surface "edge", no caustic / Fresnel)
         // takes the original path and shader, untouched.
         const bool liquid = r.glass && (r.glass->bump_source > 0.5 || r.glass->caustic > 0 || r.glass->fresnel > 0);
-        const TexRef layerTex = layer_into_target(ctx, r, r.opacity, liquid ? kLayerTarget : kMatteTarget, st);
+        // Plain backdrop blur: effects at full opacity, opacity applied on the two draws below. Glass keeps it
+        // in the layer's coverage (its shader reads the panel from the layer's alpha and has no opacity slot).
+        const double drawOpacity = r.glass ? r.opacity : 1;
+        const TexRef layerTex = layer_into_target(ctx, r, drawOpacity, liquid ? kLayerTarget : kMatteTarget, st);
         TexRef bump;
         double bumpSource = 0;
         if (liquid && layerTex) {
@@ -1981,10 +2053,11 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
             it.mask = layerTex;
             if (liquidMat) it.origin = bump;
           } else {
-            emit_masked_textured(ctx, st.main, fullMvp, Color::white(), 1, Blend::normal, blurred, ctx.linear_clamp(),
+            const double opacity = r.opacity / drawOpacity;
+            emit_masked_textured(ctx, st.main, fullMvp, Color::white(), opacity, Blend::normal, blurred, ctx.linear_clamp(),
                                  layerTex, targetUv, kIdentityColor, true);
-            emit_textured(ctx, st.main, fullMvp, Color::white(), 1, blend_of(r.blend), layerTex, ctx.linear_clamp(), targetUv,
-                          kIdentityColor, true);
+            emit_textured(ctx, st.main, fullMvp, Color::white(), opacity, blend_of(r.blend), layerTex, ctx.linear_clamp(),
+                          targetUv, kIdentityColor, true);
           }
         }
         return;
@@ -1997,7 +2070,8 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
       if (scene != nullptr) {
         const TexRef sceneTex = scene->tex();
         const BackdropScope backdropScope(backdrop_, reads_backdrop(r) ? copy_scene(ctx, st) : TexRef{});
-        const TexRef layerTex = layer_into_target(ctx, r, r.opacity, kLayerTarget, st);
+        // Effects run at full opacity; the combine applies it to the layer's coverage before the blend.
+        const TexRef layerTex = layer_into_target(ctx, r, 1, kLayerTarget, st);
         Commands copy;
         emit_textured(ctx, copy, screen_mvp(), Color::white(), 1, Blend::normal, sceneTex, ctx.linear_clamp(), targetUv,
                       kIdentityColor, true);
@@ -2016,7 +2090,8 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
                     0,
                     0};
           Commands combine;
-          emit_blend_combine(ctx, combine, screen_mvp(), Blend::none, layerTex, ctx.linear_clamp(), backdrop, mode, targetUv);
+          emit_blend_combine(ctx, combine, screen_mvp(), Blend::none, layerTex, ctx.linear_clamp(), backdrop, mode, targetUv,
+                             r.opacity);
           ctx.draw_into(st.out, combine, false);
         }
         return;

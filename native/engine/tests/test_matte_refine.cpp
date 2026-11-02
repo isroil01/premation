@@ -175,6 +175,27 @@ TEST_CASE("edge snap keeps a striped subject whole and grades a blurred edge", "
   // Past the blur: ground.
   for (int x = 66; x <= 72; ++x) CHECK(s[static_cast<std::size_t>(1 * W + x)] < 0.1f);
 }
+TEST_CASE("edge snap keeps a part thinner than its band solid (a head, an ear, a leg)", "[jobs][matte][subject]") {
+  // A 12 px wide orange strip (a giraffe's ear) on pale sky, radius 9: every pixel of it is in the
+  // band and no ray reaches sure subject. The model is only 70 % sure across it — that is its
+  // confidence, not the coverage: the strip must not come out see-through.
+  constexpr int W = 80;
+  constexpr int H = 40;
+  std::vector<std::uint8_t> rgba(static_cast<std::size_t>(W * H) * 4, 255);
+  std::vector<float> coarse(static_cast<std::size_t>(W * H), 0.0f);
+  for (int y = 0; y < H; ++y)
+    for (int x = 0; x < W; ++x) {
+      const std::size_t i = static_cast<std::size_t>(y * W + x);
+      const bool ear = x >= 34 && x < 46;
+      rgba[i * 4 + 0] = ear ? 160 : 180;
+      rgba[i * 4 + 1] = ear ? 80 : 197;
+      rgba[i * 4 + 2] = ear ? 40 : 205;
+      coarse[i] = ear ? 0.7f : 0.02f;
+    }
+  const std::vector<float> s = mt::snap_edge(coarse, rgba, W, H, 9);
+  for (int x = 36; x <= 43; ++x) CHECK(s[static_cast<std::size_t>(20 * W + x)] > 0.9f);
+  for (int x : {20, 60}) CHECK(s[static_cast<std::size_t>(20 * W + x)] < 0.1f);
+}
 TEST_CASE("edge snap at 1080p: the time it adds to a selection", "[.bench][matte]") {
   // A person-sized ellipse on a noisy ground, its coarse edge 5 px out — how long one snap takes.
   constexpr int W = 1920;

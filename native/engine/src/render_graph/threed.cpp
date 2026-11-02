@@ -119,7 +119,12 @@ struct FogBlock {
 };
 
 /// packShade3D: the 240-float tail.
-void pack_shade(Packer& p, const Shade* s, const FogBlock* fog) {
+/// alphaParams.z of the shade block (the 3D shaders' alpha pass): 0 every texel,
+/// 1 only fully covered texels (the opaque pass, which writes depth), 2 only the
+/// partly covered rest (the translucent pass, drawn after it without depth writes).
+constexpr std::size_t kAlphaPassAt = kShadeFloatsBase - 56 - 20 - 8 - 4 + 4 + 6;
+
+void pack_shade(Packer& p, const Shade* s, const FogBlock* fog, float alphaPass = 0) {
   std::array<float, kShadeFloats> out{};
   if (s != nullptr) {
     std::size_t o = 0;
@@ -263,6 +268,7 @@ void pack_shade(Packer& p, const Shade* s, const FogBlock* fog) {
     out.at(at + 9) = f32(fog->eye[1]);
     out.at(at + 10) = f32(fog->eye[2]);
   }
+  out.at(kAlphaPassAt) = alphaPass;
   for (std::size_t i = 0; i < kShadeFloats; i += 4) p.vec4(out.at(i), out.at(i + 1), out.at(i + 2), out.at(i + 3));
 }
 
@@ -300,9 +306,9 @@ Mat4 view_projection3d_forward(const ViewportState& vp, const api::RenderCamera3
 }
 
 void pack_textured3d(Packer& p, const Mat4& mvp, const Rect& uv, const Color& tint, double opacity, const ColorTransform& ct,
-                     const Shade* shade, bool sampleLinear, const FogBlock* fog) {
+                     const Shade* shade, bool sampleLinear, const FogBlock* fog, float alphaPass = 0) {
   p.mat4(mvp).rect(uv).color(tint, opacity).color_rows(ct).src_space(sampleLinear);
-  pack_shade(p, shade, fog);
+  pack_shade(p, shade, fog, alphaPass);
 }
 
 /// effectSpreadPx (CompositionPass.ts): how far a chain reaches outside the layer, comp px.
@@ -1647,6 +1653,7 @@ void render_3d_group(PassContext& ctx, std::span<const api::Renderable* const> g
     double opacity = 1;
     std::optional<Blend> blend;
     std::uint8_t depthWrite = DrawItem::kDepthWriteMaterial;
+    float alphaPass = 0;  ///< kAlphaPassAt: which texels a planar surface draws
   };
   const auto draw_body = [&](const api::Renderable& r, Commands& out, const DrawOpts& o) {
     const std::vector<double>& model = o.model != nullptr ? *o.model : r.three_d->model;
@@ -1819,7 +1826,8 @@ void render_3d_group(PassContext& ctx, std::span<const api::Renderable* const> g
       fxShade.model = fxModel;
       const Color tint = lit_color(r, Color::white(), shaded);
       Packer p = ctx.packer();
-      pack_textured3d(p, fxMvp, targetUv, tint, opacity, kIdentityColor, shaded || shadowOnly ? &fxShade : nullptr, true, fogp);
+      pack_textured3d(p, fxMvp, targetUv, tint, opacity, kIdentityColor, shaded || shadowOnly ? &fxShade : nullptr, true, fogp,
+                      o.alphaPass);
       DrawItem& it = out.add(Mat::TEXTURED3D_LINEAR_NO_DEPTH_WRITE_MATERIAL, blend, p.span());
       it.texture = res->tex;
       it.sampler = clamp;
@@ -1835,7 +1843,7 @@ void render_3d_group(PassContext& ctx, std::span<const api::Renderable* const> g
       if (solid && !tex) tex = ctx.texture("texture:white");
       if (mask && tex) {
         Packer p = ctx.packer();
-        pack_textured3d(p, mvp, uv, tint, opacity, ct, sp, tex.sampleLinear, fogp);
+        pack_textured3d(p, mvp, uv, tint, opacity, ct, sp, tex.sampleLinear, fogp, o.alphaPass);
         DrawItem& it = out.add(tex.sampleLinear ? Mat::MASKED_TEXTURED3D_LINEAR_MATERIAL : Mat::MASKED_TEXTURED3D_MATERIAL,
                                 blend, p.span());
         it.texture = tex;
@@ -1847,7 +1855,7 @@ void render_3d_group(PassContext& ctx, std::span<const api::Renderable* const> g
       Packer p = ctx.packer();
       const SolidShape s = solid_shape(r.sdf);
       p.mat4(mvp).color(tint, opacity).vec4(s.kind, s.radiusPx, s.width, s.height);
-      pack_shade(p, sp, fogp);
+      pack_shade(p, sp, fogp, o.alphaPass);
       DrawItem& it = out.add(Mat::SOLID3D_MATERIAL, blend, p.span());
       bind_scene(it);
     } else if (textured && r.texture_key) {
@@ -1855,7 +1863,7 @@ void render_3d_group(PassContext& ctx, std::span<const api::Renderable* const> g
       const TexRef lut = r.lut_texture_key ? ctx.texture(*r.lut_texture_key) : TexRef{};
       if (tex) {
         Packer p = ctx.packer();
-        pack_textured3d(p, mvp, uv, tint, opacity, ct, sp, tex.sampleLinear, fogp);
+        pack_textured3d(p, mvp, uv, tint, opacity, ct, sp, tex.sampleLinear, fogp, o.alphaPass);
         const Mat m = lut ? (tex.sampleLinear ? Mat::TEXTURED3D_LUT_LINEAR_MATERIAL : Mat::TEXTURED3D_LUT_MATERIAL)
                           : (tex.sampleLinear ? Mat::TEXTURED3D_LINEAR_MATERIAL : Mat::TEXTURED3D_MATERIAL);
         DrawItem& it = out.add(m, blend, p.span());
@@ -2004,6 +2012,7 @@ void render_3d_group(PassContext& ctx, std::span<const api::Renderable* const> g
 
   std::vector<api::Renderable> stripped;  // withoutDofEffects copies (only in a gathered group)
   stripped.reserve(gather ? group.size() : 0);
+  std::vector<const api::Renderable*> translucent;  // planar layers' partly covered texels, drawn after the run
   for (const api::Renderable* rp0 : group) {
     const api::Renderable* rp = rp0;
     if (gather && std::ranges::any_of(rp0->effects, [](const api::RenderEffect& e) {
@@ -2021,7 +2030,14 @@ void render_3d_group(PassContext& ctx, std::span<const api::Renderable* const> g
     const bool special = r.matte || (r.advanced_blend && *r.advanced_blend > 0) || r.preserve_transparency || r.glass ||
                          (r.backdrop_blur && *r.backdrop_blur > 0);
     if (!motionBlur && !special) {
-      draw_one(r, cmds, DrawOpts{nullptr, r.opacity, std::nullopt, DrawItem::kDepthWriteMaterial});
+      // A planar surface lays its fully covered texels now, writing depth; its partly
+      // covered ones (a faded card, an anti-aliased rim, soft alpha) wait for the
+      // translucent pass below — so every opaque texel of the run, a layer behind
+      // a 50 % card or an AA rim included, is in the depth buffer before them.
+      // (An effect-bearing layer draws its chain result without depth writes already: one pass.)
+      const bool planar = !r.extruded_mesh && r.effects.empty();
+      draw_one(r, cmds, DrawOpts{nullptr, r.opacity, std::nullopt, DrawItem::kDepthWriteMaterial, planar ? 1.0F : 0.0F});
+      if (planar) translucent.push_back(&r);
       continue;
     }
     flush();
@@ -2046,6 +2062,11 @@ void render_3d_group(PassContext& ctx, std::span<const api::Renderable* const> g
       emit_textured(ctx, lay, screen_mvp(), Color::white(), 1, blend_of(r.blend), own, clamp, targetUv, kIdentityColor, true);
       ctx.draw_into(groupOut, lay, false);
     }
+  }
+  // The translucent pass, in the run's back-to-front order, against the depth the opaque texels laid.
+  // It writes depth too (the depth of field reads a rim's own depth): what it could hide is drawn already.
+  for (const api::Renderable* tr : translucent) {
+    draw_one(*tr, cmds, DrawOpts{nullptr, tr->opacity, std::nullopt, DrawItem::kDepthWriteMaterial, 2.0F});
   }
   // E8: the ground grid, last in the frame's last 3D run — tested against the
   // run's depth (hidden behind layers, visible through the gaps), never written.

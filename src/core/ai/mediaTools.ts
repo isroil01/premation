@@ -408,6 +408,9 @@ const followSubject: AiTool['handler'] = async (input, ctx) => {
   const subject = a.subject ?? activeSubjectId(layer.id);
   if (!subjects.some((s) => s.id === subject)) return fail(`No subject '${subject}' on '${layer.id}'. Subjects: ${subjects.map((s) => s.id).join(', ')}.`);
   if (subjectLocked(layer.id, subject)) return fail(`Subject '${subject}' is frozen (locked).`);
+  if (uiKindOf(documentMirror().layer(layer.id)) !== 'video') {
+    return fail(`'${layer.id}' is a still image: its subject already holds on every frame, so there is nothing to follow.`);
+  }
   const frames = (await fetchSubjectTracks(layer.id)).find((s) => s.subject === subject)?.frames ?? [];
   if (frames.length === 0) return fail(`Subject '${subject}' has no selection on any frame yet: select_subject first.`);
   const settings = documentMirror().comp(activeCompRootId())?.settings;

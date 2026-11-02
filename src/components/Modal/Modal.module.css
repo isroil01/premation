@@ -165,17 +165,14 @@
    right with no band behind them. It started on the dashboard; the editor's
    dialogs (Export, Composition Settings, …) take it at the editor's own
    compact text size. */
+/* Dialogs sit on the app's ground — the same sheet on the dashboard and in the
+   editor (themes/dark.css); the hairline keeps the sheet's edge against the
+   panels behind the scrim. */
 .dialog {
-  background: var(--color-surface-2);
-  border-radius: var(--radius-surface);
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6);
-}
-
-/* Editor dialogs sit on the editor's ground (themes/dark.css); the hairline
-   keeps the sheet's edge now that it matches the panels behind the scrim. */
-:global(body.editor-active) .dialog {
   background: var(--color-surface-raised);
   border: 1px solid var(--color-border-structural);
+  border-radius: var(--radius-surface);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6);
 }
 
 .dialog.fullscreen {

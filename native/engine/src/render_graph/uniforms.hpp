@@ -119,10 +119,13 @@ inline std::span<const float> pack_textured(Packer p, const Mat3& mvp, const Rec
 /// packBlur.
 /// `spacingMul` (blur.wgsl blurParams.w): the tap spacing scaled up for a pass
 /// whose result is a soft halo nobody reads edges off (a glow's wide pass);
-/// 1 (or 0) = the default lattice.
+/// 1 (or 0) = the default lattice; negative = a box of half-width `radiusPx`
+/// (Fast Box Blur) instead of a Gaussian of sigma `radiusPx`.
+/// `clampBox` (uv): Repeat Edge Pixels — taps read inside the box only (its
+/// edge texels repeat outward) and nothing is drawn outside it; empty = off.
 inline std::span<const float> pack_blur(Packer p, const Mat3& mvp, const Rect& uv, double dirX, double dirY,
-                                        double radiusPx, double spacingMul = 1) {
-  return p.mat3(mvp).rect(uv).vec4(dirX, dirY, radiusPx, spacingMul).span();
+                                        double radiusPx, double spacingMul = 1, const Rect& clampBox = {0, 0, 0, 0}) {
+  return p.mat3(mvp).rect(uv).vec4(dirX, dirY, radiusPx, spacingMul).rect(clampBox).span();
 }
 
 /// packFxBlock: mvp + uvRect + N param rows + fxBox.

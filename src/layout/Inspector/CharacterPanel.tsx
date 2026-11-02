@@ -36,7 +36,7 @@ import { TooltipProvider } from '@components/Tooltip';
 import { Accordion, type AccordionItem } from '@components/Accordion';
 import { useDockPanelHeader } from '@components/DockPanel';
 import { TextFillRows, TextStrokeRows } from './TextFillRows';
-import { TextBackgroundRows } from './TextBackgroundRows';
+import { TextBackgroundRows, TextBackgroundSummary } from './TextBackgroundRows';
 import { VariableAxesSection, TextPathOptions, OpenTypeControls } from './TextOptionControls';
 import { TwirlGroup } from './appearance/TwirlGroup';
 import { t } from '@core/i18n';
@@ -1728,7 +1728,6 @@ function TextSettingsBodyInner({ nodeId, nodeIds, variant = 'character' }: TextS
               {fontRow}
               {metricRows}
               {strokeGrid}
-              {backgroundRows}
               {styleToolbar}
             </div>
           </TwirlGroup>
@@ -1746,6 +1745,21 @@ function TextSettingsBodyInner({ nodeId, nodeIds, variant = 'character' }: TextS
               {directionRows}
             </div>
           </TwirlGroup>
+          {/* Its own group (2026-11-03): inside Character it was one checkbox
+              among the metric rows and users could not find it. */}
+          {backgroundRows && primary && (
+            <>
+              <div className={styles.sep} role="presentation" />
+              <TwirlGroup
+                prefKey="text.background"
+                label={t('inspector.textBackground.background', 'Background')}
+                defaultOpen
+                trailing={<TextBackgroundSummary nodeId={primary} />}
+              >
+                <div className={styles.groupBody}>{backgroundRows}</div>
+              </TwirlGroup>
+            </>
+          )}
           <button
             type="button"
             className={styles.disclosure}
@@ -1820,6 +1834,14 @@ function TextSettingsBodyInner({ nodeId, nodeIds, variant = 'character' }: TextS
       ),
     });
   }
+  if (backgroundRows) {
+    characterGroups.push({
+      id: 'character.background',
+      title: t('inspector.textBackground.background', 'Background'),
+      defaultOpen: true,
+      content: backgroundRows,
+    });
+  }
   if (hasTarget && isText) {
     characterGroups.push({
       id: 'character.textBox',
@@ -1873,7 +1895,6 @@ function TextSettingsBodyInner({ nodeId, nodeIds, variant = 'character' }: TextS
           {metricRows}
           {strokeGrid}
           {strokeRows}
-          {backgroundRows}
           {styleToolbar}
           {openType}
           {variableAxes}

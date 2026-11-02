@@ -55,9 +55,13 @@ export async function fillSubjectGap(layer: string, subject: string): Promise<vo
       return;
     }
     if (out.status !== 'done') throw new Error(out.error?.message ?? t('core.contentAwareFill.feature', 'Content-Aware Fill'));
+    // A still is filled on one frame (it holds for the whole clip).
+    const n = out.result?.frames ?? 0;
     useUIStore.getState().finishJob(jobId, {
       status: 'done',
-      message: t('workspace.subjects.gapDone', 'Filled the gap over {n} frames', { n: out.result?.frames ?? 0 }),
+      message: n === 1
+        ? t('workspace.subjects.gapDoneOne', 'Filled the gap on 1 frame')
+        : t('workspace.subjects.gapDone', 'Filled the gap over {n} frames', { n }),
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

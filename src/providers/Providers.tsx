@@ -2971,6 +2971,26 @@ export function Providers({ children }: ProvidersProps): JSX.Element {
             },
           });
           registry.register({
+            // AE's View ▸ Zoom In / Zoom Out (. and ,): the magnification ladder
+            // (12.5, 25, 33.3, 50, 66.7, 100, 200 %…), settled on device pixels.
+            id: asCommandId('view.zoomIn'), label: 'Zoom In', icon: 'zoom-in',
+            shortcut: { key: '.' },
+            enabled: () => true,
+            execute: () => {
+              getWorkspaceController().zoomIn();
+              getWorkspaceController().requestRender();
+            },
+          });
+          registry.register({
+            id: asCommandId('view.zoomOut'), label: 'Zoom Out', icon: 'zoom-out',
+            shortcut: { key: ',' },
+            enabled: () => true,
+            execute: () => {
+              getWorkspaceController().zoomOut();
+              getWorkspaceController().requestRender();
+            },
+          });
+          registry.register({
             // The ViewportTools tooltip has advertised this chord all along —
             // it just was never bound. Motion paths draw for selected layers
             // with position keyframes; this hides/shows them globally.

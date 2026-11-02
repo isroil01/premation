@@ -47,23 +47,31 @@ bool finite_params(const api::RenderEffect& e) {
 }
 
 std::optional<FxReach> reach_of(const Fx& fx, std::string_view t, const PxBox& in, const FxBoundsView& view) {
+  // Radii, widths and offsets are layer px; the chain draws them at view.pxPerWorld (the layer's world
+  // scale × the view's px per comp px — run_effects_chain's kx / ky), so every reach is in texels at that scale.
+  const double kx = view.pxPerWorldX;
+  const double ky = view.pxPerWorldY;
   if (t == "blur" || t == "glow" || t == "drop-shadow") {
     const double radiusPx = fx.num("radiusPx");
     const double rPx = t == "glow" ? radiusPx * 1.15 : radiusPx;
     const double spreadPx = t == "blur" ? 0 : fx.num("spreadPx");
-    // The spread: sdf-dilate.wgsl lights a texel within spread + 1 of an inside
-    // texel's centre; stroke.wgsl's alpha dilation scans a disc of the spread.
-    const double dilate = spreadPx > 0 ? spreadPx + 1 + kTapSlack : 0;
-    double blur = blur_reach(rPx);
-    // The glow's wide pass at 2.2 × the radius (drawn when the pool has a third free target).
-    // The glow's wide pass blurs the narrow result again by √(wideR² − rPx²), its
-    // taps kGlowWideSpacing apart: the two reaches add (effect_chain.cpp).
-    if (t == "glow" && rPx >= 6) {
-      const double wideR = rPx * 2.2;
-      blur = std::max(blur, blur + blur_reach(std::sqrt(std::max(0.0, wideR * wideR - rPx * rPx)), kGlowWideSpacing));
-    }
+    // On one axis at scale k: the spread (sdf-dilate.wgsl lights a texel within
+    // spread + 1 of an inside texel's centre; stroke.wgsl's alpha dilation scans a
+    // disc of it), then the blur — and the glow's wide pass at 2.2 × the radius
+    // (drawn when the pool has a third free target), which blurs the narrow result
+    // again by √(wideR² − rPx²), its taps kGlowWideSpacing apart: the reaches add.
+    const auto reachAt = [&](double k) {
+      const double dilate = spreadPx > 0 ? spreadPx * ((kx + ky) * 0.5) + 1 + kTapSlack : 0;
+      const double r = rPx * k;
+      double blur = blur_reach(r);
+      if (t == "glow" && r >= 6) {
+        const double wideR = r * 2.2;
+        blur = std::max(blur, blur + blur_reach(std::sqrt(std::max(0.0, wideR * wideR - r * r)), kGlowWideSpacing));
+      }
+      return dilate + blur;
+    };
     // The dilated, blurred silhouette; blur and glow lay it with the contents.
-    const PxBox halo = grow(in, dilate + blur, dilate + blur);
+    const PxBox halo = grow(in, reachAt(kx), reachAt(ky));
     if (t != "drop-shadow") return FxReach{halo, halo};
     // The shadow is that silhouette moved by the offset (world units), sampled at
     // a fractional texel offset, under the contents.
@@ -73,9 +81,15 @@ std::optional<FxReach> reach_of(const Fx& fx, std::string_view t, const PxBox& i
   }
   if (t == "gaussian-blur" || t == "fast-box-blur") {
     // dims 1: horizontal only, 2: vertical only (blur.wgsl along one axis each).
+    // fast-box-blur: `iterations` boxes of half-width radiusPx, one after the other (blur.wgsl box mode).
     const double dims = fx.num("dims");
-    const double r = blur_reach(fx.num("radiusPx"));
-    return spread(in, dims != 2 ? r : 0, dims != 1 ? r : 0);
+    const bool box = t == "fast-box-blur";
+    const double n = std::max(1.0, fx.num("iterations", 1));
+    const auto reachAt = [&](double k) {
+      const double r = fx.num("radiusPx") * k;
+      return box ? (r > 0 ? n * (std::ceil(r) + 1) + kTapSlack : 0) : blur_reach(r);
+    };
+    return spread(in, dims != 2 ? reachAt(kx) : 0, dims != 1 ? reachAt(ky) : 0);
   }
   if (t == "deep-glow") {
     // deep-glow-blur.wgsl: 33 taps a whole `step` apart, once per axis and
@@ -94,8 +108,8 @@ std::optional<FxReach> reach_of(const Fx& fx, std::string_view t, const PxBox& i
       double sx = 0;
       double sy = 0;
       for (const DeepGlowOctave& o : deep_glow_octaves(fx.num("radiusPx"), k)) {
-        sx += 16 * deep_glow_step(o.delta * ax * maxChroma);
-        sy += 16 * deep_glow_step(o.delta * ay * maxChroma);
+        sx += 16 * deep_glow_step(o.delta * ax * maxChroma * kx);
+        sy += 16 * deep_glow_step(o.delta * ay * maxChroma * ky);
       }
       rx = std::max(rx, sx);
       ry = std::max(ry, sy);
@@ -125,15 +139,14 @@ std::optional<FxReach> reach_of(const Fx& fx, std::string_view t, const PxBox& i
   if (t == "stroke") {
     // stroke-sdf.wgsl lights a texel within width + 1 of an inside texel's centre;
     // stroke.wgsl scans a disc of the width (at most 64 texels).
-    const double w = std::max(0.0, fx.num("widthPx")) + 1 + kTapSlack;
+    const double w = std::max(0.0, fx.num("widthPx")) * ((kx + ky) * 0.5) + 1 + kTapSlack;
     return spread(in, w, w);
   }
   if (t == "inner-shadow" || t == "inner-glow" || t == "satin" || t == "bevel" || t == "cartoon") {
     // A Gaussian copy of the layer (blur.wgsl, sigmaPx), then interior-style /
     // satin / bevel / cartoon / style-fill.wgsl, which return the input texel
     // wherever the layer (or its fill-opacity silhouette) has no alpha.
-    const double b = blur_reach(fx.num("sigmaPx"));
-    return FxReach{grow(in, b, b), in};
+    return FxReach{grow(in, blur_reach(fx.num("sigmaPx") * kx), blur_reach(fx.num("sigmaPx") * ky)), in};
   }
   // Program E (effects_spatial_c.cpp): `reachPx` 0 = a per-pixel effect whose
   // result is transparent wherever its input is. A reach past the input is in

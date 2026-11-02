@@ -56,7 +56,7 @@ std::mutex& pdfium_mutex() {
 /// FPDF_InitLibrary once; called with the mutex held. False when PDFium is not
 /// beside the engine (Windows delay-loads it: calling in without the DLL would
 /// end the process, so the load is tried first).
-bool ensure_library(std::string& error) {
+bool ensure_library([[maybe_unused]] std::string& error) {  // only the Windows load can fail
   static bool initialized = false;
   if (initialized) return true;
 #if defined(_WIN32)

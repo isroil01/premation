@@ -220,6 +220,37 @@ TEST_CASE("MediaTextures: media hashes resolve to textures; preview never blocks
   CHECK_FALSE(tex.external_texture("media:99:0"));
 }
 
+TEST_CASE("MediaTextures: an exact wait that times out is skipped; await_wanted brings the frame in", "[media][gpu]") {
+  // A still (draw_still) asks in exact mode with a short wait; a slow seek misses
+  // it and the footage is skipped. await_wanted is the second chance: the frame
+  // it waited for resolves on the next draw instead of going out missing.
+  const auto g = make_gpu();
+  if (!g) SKIP("no GPU adapter");
+  MediaSystem ms(MediaConfig{});
+  std::string error;
+  const auto id = ms.open(fixture_path(fixture::Kind::prores422, "tex-422.mov"), error);
+  REQUIRE(id);
+  REQUIRE(ms.wait_ready(*id, 10s));
+  MediaTextures tex(ms, g->device, MediaTextures::Mode::exact);
+  tex.set_exact_timeout(0ms);
+  const std::int64_t frame = 9;
+  const auto first = tex.external_texture(media_hash(*id, frame));
+  const auto m = tex.take_misses();
+  if (first) {
+    // The decoder was already there (a warm cache): nothing was missed.
+    CHECK(m.skipped == 0);
+  } else {
+    CHECK(m.skipped == 1);
+    REQUIRE(m.wanted.size() == 1);
+    CHECK(m.wanted[0] == std::pair<SourceId, std::int64_t>{*id, frame});
+    REQUIRE(tex.await_wanted(m.wanted, 10s));
+    CHECK(tex.external_texture(media_hash(*id, frame)));
+    CHECK(tex.take_misses().skipped == 0);
+  }
+  // A frame that never arrives (a source that is not open) reports false, not a hang.
+  CHECK_FALSE(tex.await_wanted({{*id + 1000, 0}}, 200ms));
+}
+
 namespace {
 
 /// A synthetic CPU frame over `img`'s codes: planar 4:4:4 (8- or 16-bit words),

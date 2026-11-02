@@ -1,4 +1,4 @@
-import { baseName, flattenMediaTree, isMediaFile, mediaKindOf, sortEntries, type DirEntry } from './mediaBrowserTree';
+import { baseName, flattenMediaRoots, flattenMediaTree, isMediaFile, mediaKindOf, sortEntries, type DirEntry } from './mediaBrowserTree';
 
 const dir = (name: string, path = `/root/${name}`): DirEntry => ({ name, path, kind: 'dir' });
 const file = (name: string, path = `/root/${name}`): DirEntry => ({ name, path, kind: 'file', size: 10 });
@@ -33,5 +33,20 @@ describe('mediaBrowserTree', () => {
     expect(rows[0]!.loading).toBe(true);
     expect(rows[1]!.expanded).toBe(true);
     expect(rows[4]!.expanded).toBe(false);
+  });
+
+  it('lists several added folders side by side, each with its own contents', () => {
+    const listings = new Map<string, DirEntry[] | null>([
+      ['/root', [file('logo.png'), dir('shots')]],
+      ['/root/shots', [file('a.mp4', '/root/shots/a.mp4')]],
+      ['/renders', null],
+      ['/music', [file('song.wav', '/music/song.wav')]],
+    ]);
+    const rows = flattenMediaRoots(['/root', '/renders', '/music'], new Set(['/root', '/root/shots', '/renders']), listings, new Set());
+    expect(rows.map((r) => `${r.depth}:${r.entry.name}${r.root ? '*' : ''}`)).toEqual([
+      '0:root*', '1:shots', '2:a.mp4', '1:logo.png', '0:renders*', '0:music*',
+    ]);
+    expect(rows[4]!.unreadable).toBe(true);
+    expect(rows[5]!.expanded).toBe(false);
   });
 });

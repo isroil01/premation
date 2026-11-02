@@ -258,6 +258,9 @@ void prefix_layer_ids(std::vector<RLayer>& layers, const std::string& prefix) {
   for (RLayer& l : layers) {
     l.id = prefix + l.id;
     if (l.matteSourceId) l.matteSourceId = prefix + *l.matteSourceId;
+    // Behind Subject names the footage layer whose `<id>#subject` matte cuts this one: re-keyed with
+    // it, or a nested comp's text points at an id the host never draws and shows uncut.
+    if (l.behindSubject) l.behindSubject = prefix + *l.behindSubject;
     if (l.precompLayers) prefix_layer_ids(*l.precompLayers, prefix);
   }
 }

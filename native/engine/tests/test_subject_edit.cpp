@@ -190,6 +190,26 @@ TEST_CASE("solidify_interior makes the inside solid and leaves the edge band sof
   CHECK(all == plain);
 }
 
+TEST_CASE("solidify_interior: a doubtful inside is solid, a patch-sized dip is filled, a real hole stays", "[jobs][subject]") {
+  // A 60×60 subject the model is only 60 % sure of (a giraffe's head), with a 4×4 dip to 0.3 (a
+  // dark patch line) and a 30×30 true hole (the gap between two legs), band 3.
+  constexpr int W = 100;
+  constexpr int H = 100;
+  std::vector<float> a(W * H, 0.0f);
+  for (int y = 10; y < 90; ++y)
+    for (int x = 10; x < 90; ++x) a[static_cast<std::size_t>(y * W + x)] = 0.6f;
+  for (int y = 20; y < 24; ++y)
+    for (int x = 20; x < 24; ++x) a[static_cast<std::size_t>(y * W + x)] = 0.3f;
+  for (int y = 50; y < 80; ++y)
+    for (int x = 50; x < 80; ++x) a[static_cast<std::size_t>(y * W + x)] = 0.0f;
+  se::solidify_interior(a, W, H, 3);
+  CHECK(a[static_cast<std::size_t>(35 * W + 35)] == 1.0f);  // the doubtful inside: solid
+  CHECK(a[static_cast<std::size_t>(21 * W + 21)] == 1.0f);  // the dip: filled
+  CHECK(a[static_cast<std::size_t>(22 * W + 26)] == 1.0f);  // and no band opened around it
+  CHECK(a[static_cast<std::size_t>(65 * W + 65)] == 0.0f);  // the real hole: kept
+  CHECK(a[static_cast<std::size_t>(5 * W + 5)] == 0.0f);
+}
+
 TEST_CASE("matte_iou_logits agrees with the full-resolution IoU on the model's grid", "[jobs][subject]") {
   // Frame 1024² (scale 1, a cell = 4 px): a candidate's rectangle vs a matte covering half of it.
   std::vector<float> logits(kPlane);

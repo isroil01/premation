@@ -22,6 +22,7 @@
 #include <functional>
 #include <map>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -73,7 +74,11 @@ inline constexpr std::string_view kEffectOpacityKey = "fx.opacity";
 [[nodiscard]] std::optional<Json> read_node_mask(const Node& n);
 /// `getNodeMask`: the mask or `{paths: []}`.
 [[nodiscard]] Json get_node_mask(const Node& n);
+/// The mask shape keyframes, copied: for callers that rewrite them (set_mask_anim).
 [[nodiscard]] std::vector<Json> read_node_mask_anim(const Node& n);
+/// The mask shape keyframes in place (valid until the node is next written). A Follow stores a
+/// keyframe per frame (megabytes over a shot): readers must not copy them per edit or per frame.
+[[nodiscard]] std::span<const Json> mask_anim_view(const Node& n) noexcept;
 [[nodiscard]] const Json* mask_path_by_id(const Json& mask, std::string_view id);
 /// `writeNodeMask`: fx.mask = mask, or undefined when it has no paths.
 void write_node_mask(Document& d, std::string_view nodeId, const Json& mask);
@@ -83,7 +88,7 @@ void edit_every_mask_state(Document& d, std::string_view nodeId, const std::func
 /// `updateMaskPath(node, pathId, patch)` with no time: the static mask.
 void update_mask_path(Document& d, std::string_view nodeId, std::string_view pathId, const Json& patch);
 /// `interpolateMask(kfs, t)` (nullopt for no keyframes).
-[[nodiscard]] std::optional<Json> interpolate_mask(const std::vector<Json>& kfs, double t);
+[[nodiscard]] std::optional<Json> interpolate_mask(std::span<const Json> kfs, double t);
 
 // ── layer styles ─────────────────────────────────────────────────────────
 [[nodiscard]] std::optional<std::string> style_key_from_effect_id(std::string_view effectId);

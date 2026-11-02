@@ -27,6 +27,7 @@
 #include <future>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
 #include <optional>
 #include <map>
 #include <set>
@@ -164,6 +165,9 @@ class Session {
   /// builder (render graph) instead of C2's quad scene. Null = C2's scene.
   /// Waits for the builds in flight first (the worker reads the builder).
   void set_frame_builder(FrameBuilder* builder);
+  /// Item 7: builders for the prefetch workers (one worker each; empty = none).
+  /// Owned by the caller, outliving the session; set before the first frame.
+  void set_prefetch_builders(std::vector<FrameBuilder*> builders);
   /// Wait until every frame build handed to the build worker has been built
   /// and submitted to the sink, then take their reports (layer errors,
   /// cpuFrameMs) as tick() would. Tests: what makes a submit_frame observable
@@ -323,8 +327,6 @@ class Session {
   Clock::time_point lastActivity_{};
   /// The prefetch job out at the sink: its frame, its pre-build key, and the
   /// sink's answered count when it went (RenderCounters::prefetched moves when it is done).
-  std::optional<std::int64_t> prefetchFrame_;
-  std::uint64_t prefetchKey_ = 0;
   std::uint64_t prefetchSeenAnswered_ = 0;
   /// Prefetched frames the tiers did not keep, in a row; at kIdlePrefetchRefusals the prefetcher rests.
   int prefetchRefused_ = 0;
@@ -377,6 +379,9 @@ class Session {
     std::vector<doc::OverlaySubscription> overlays;  ///< this viewport's subscriptions
     std::uint64_t writes = 0;                        ///< docWrites_ when queued
     std::uint64_t seq = 0;                           ///< enqueue order (buildSeq_): pump_builds dedupes skipped tasks by it
+    /// A prefetch a prefetch worker could not build (it samples a layer's
+    /// pixels, which only the main builder draws): the main worker's.
+    bool mainOnly = false;
   };
   struct BuildReport {
     std::string comp;
@@ -438,7 +443,21 @@ class Session {
   void complete_job(BuildTask& t, const doc::PCtx& pc, TextQueries* text, RigQueries* rig);
   /// Take the worker's reports: cpuFrameMs, the layer errors, a rebuild for skipped tasks.
   void pump_builds();
-  std::mutex buildMu_;
+  /// Item 7: the prefetch workers. Each builds idle render-ahead frames (never a
+  /// frame a viewport shows, so their order does not matter) with a frame
+  /// builder of its own — fonts, text measurer, walk cache — and an expression
+  /// cache of its own, under a SHARED hold of the build lock: they build side by
+  /// side, while the main worker (which holds it exclusively, as the core
+  /// thread's BuildLock does) builds nothing. Plugins stay one call at a time
+  /// (plugins::finish_native_frame). A frame that samples a layer's pixels goes
+  /// back to the main worker (BuildTask::mainOnly).
+  void prefetch_worker(std::size_t index);
+  void run_prefetch_build(BuildTask t, std::size_t index);
+  /// Whether the main worker builds, or has queued, a frame a viewport will show.
+  [[nodiscard]] bool viewport_builds_active() const;
+  /// The build lock: exclusive for the core thread's BuildLock and the main
+  /// worker, shared by the prefetch workers.
+  std::shared_mutex buildMu_;
   /// Core thread only: BuildLock nesting depth, and whether the outermost one wrote.
   std::uint32_t buildLockDepth_ = 0;
   bool buildLockWrote_ = false;
@@ -465,7 +484,14 @@ class Session {
   std::uint64_t buildSeq_ = 0;
   std::map<std::uint32_t, std::uint64_t> lastFrameSeq_;
   bool buildBusy_ = false;
+  bool viewportBusy_ = false;  ///< under buildQueueMu_: the main worker builds a viewport's frame
+  int prefetchBusy_ = 0;       ///< under buildQueueMu_: prefetch workers building
   bool buildStop_ = false;
+  /// The prefetch workers' builders (engine-owned) and their expression caches.
+  std::vector<FrameBuilder*> prefetchBuilders_;
+  std::vector<std::unique_ptr<doc::ExprCache>> prefetchExprCaches_;
+  /// Core thread: prefetch jobs sent and not yet answered (their pre-build keys).
+  std::vector<std::uint64_t> prefetchOut_;
   std::unique_ptr<TextQueries> lockedText_;
   std::unique_ptr<RigQueries> lockedRig_;
   [[nodiscard]] std::optional<std::string> active_comp() const;
@@ -683,6 +709,10 @@ class Session {
   /// half of the engine's frame cost the render thread's gpuFrameMs does not
   /// see (RenderStats.cpuFrameMs). Measurement only, never an input to pixels.
   double buildMs_ = 0;
+  /// The builds' own time (buildMs_ without the decay a cache-served frame adds): render-ahead's lead.
+  double builtMs_ = 0;
+  /// The last frame a play submitted came from the tiers (no build): render-ahead may use the idle worker.
+  bool playFromCache_ = false;
   api::Revision audioRevision_ = ~api::Revision{0};  // document revision the audio program was built from
   std::string audioComp_;
   bool mediaPaced_ = false;           // the last tick was paced by the audio clock
@@ -750,8 +780,9 @@ class Session {
   /// kept in jobLog_ for the log (session_plugins.cpp).
   api::CommandResult run_plugin_command_in_journal(const api::RunPluginCommand& c, api::Origin origin, std::string& label);
 
-  /// The build worker. LAST: joined (after ~Session told it to stop) before
-  /// any member it reads goes away.
+  /// The prefetch workers (item 7) and the build worker. LAST: joined (after
+  /// ~Session told them to stop) before any member they read goes away.
+  std::vector<JoiningThread> prefetchThreads_;
   JoiningThread buildThread_;
 };
 

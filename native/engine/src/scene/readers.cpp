@@ -576,7 +576,8 @@ bool has_independent_corner_radii(const Radii& r) {
 // ── masks ─────────────────────────────────────────────────────────────────
 
 Json read_node_mask_at(const Node& n, double t) {
-  const std::vector<Json> anim = doc::read_node_mask_anim(n);
+  // In place: a tracked subject's outline has a key per frame, copied here on every frame built.
+  const std::span<const Json> anim = doc::mask_anim_view(n);
   if (!anim.empty()) {
     const auto m = doc::interpolate_mask(anim, t);
     if (m && m->at("paths").is_array() && !m->at("paths").arr().empty()) return *m;

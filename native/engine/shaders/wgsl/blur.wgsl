@@ -3,6 +3,7 @@ struct Object {
   mvp : mat3x3<f32>,
   uvRect : vec4<f32>,
   blurParams : vec4<f32>,
+  clampBox : vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> obj : Object;
 @group(0) @binding(1) var tex : texture_2d<f32>;
@@ -117,13 +118,62 @@ fn workingToStorage(rgb : vec3<f32>) -> vec3<f32> { return rgb; }
 fn storageToWorking(rgb : vec3<f32>) -> vec3<f32> { return rgb; }
 
 
+// Repeat Edge Pixels (clampBox.z > 0): a tap past the layer's box reads the
+// box's edge texel, as if the edge pixels went on outward.
+fn tap(uv : vec2<f32>) -> vec4<f32> {
+  if (obj.clampBox.z <= 0.0) {
+    return textureSampleLevel(tex, smp, uv, 0.0);
+  }
+  let halfTexel = 0.5 / vec2<f32>(textureDimensions(tex));
+  let lo = obj.clampBox.xy + halfTexel;
+  let hi = max(lo, obj.clampBox.xy + obj.clampBox.zw - halfTexel);
+  return textureSampleLevel(tex, smp, clamp(uv, lo, hi), 0.0);
+}
+
 @fragment
 fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
+  // Repeat Edge Pixels: the blur stays inside the layer's box (After Effects).
+  if (obj.clampBox.z > 0.0) {
+    let b = obj.clampBox;
+    if (uv.x < b.x || uv.y < b.y || uv.x > b.x + b.z || uv.y > b.y + b.w) {
+      return vec4<f32>(0.0);
+    }
+  }
   let r = obj.blurParams.z;
   if (r <= 0.0) {
-    return textureSample(tex, smp, uv);
+    return textureSampleLevel(tex, smp, uv, 0.0);
   }
   let dir = obj.blurParams.xy;
+
+  // Fast Box Blur: every texel within ±r at the same weight (the last one by
+  // its fraction). Two whole texels share one bilinear fetch at their midpoint.
+  if (obj.blurParams.w < 0.0) {
+    let n = min(i32(floor(r)), 2048);
+    let frac = r - f32(n);
+    var bc = tap(uv);
+    var bt = 1.0;
+    var i = 1;
+    loop {
+      if (i > n) { break; }
+      if (i + 1 <= n) {
+        let o = f32(i) + 0.5;
+        bc = bc + (tap(uv + dir * o) + tap(uv - dir * o)) * 2.0;
+        bt = bt + 4.0;
+        i = i + 2;
+      } else {
+        let o = f32(i);
+        bc = bc + tap(uv + dir * o) + tap(uv - dir * o);
+        bt = bt + 2.0;
+        i = i + 1;
+      }
+    }
+    if (frac > 0.0) {
+      let o = f32(n + 1);
+      bc = bc + (tap(uv + dir * o) + tap(uv - dir * o)) * frac;
+      bt = bt + 2.0 * frac;
+    }
+    return bc / bt;
+  }
 
   // CSS blur semantics: the radius IS the Gaussian sigma (what Canvas2D's
   // filter uses, so both backends match). Taps span ±3.5σ; when that exceeds
@@ -156,7 +206,7 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   let spacing = max(1.0, (sigma * 2.5) / 30.0) * max(obj.blurParams.w, 1.0);
   let steps = max(1, i32(ceil((sigma * 3.5) / spacing - 0.001)));
   let k = 0.5 / (sigma * sigma);
-  var c = textureSample(tex, smp, uv);
+  var c = tap(uv);
   var total = 1.0;
   if (spacing <= 1.0) {
     // One texel apart: taps i and i + 1 are one fetch between them, at the
@@ -169,14 +219,14 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
       let w2 = select(0.0, exp(-(o2 * o2) * k), i + 1 <= steps);
       let w = w1 + w2;
       let o = (o1 * w1 + o2 * w2) / w;
-      c = c + (textureSample(tex, smp, uv + dir * o) + textureSample(tex, smp, uv - dir * o)) * w;
+      c = c + (tap(uv + dir * o) + tap(uv - dir * o)) * w;
       total = total + 2.0 * w;
     }
   } else {
     for (var i = 1; i <= steps; i = i + 1) {
       let off = f32(i) * spacing;
       let w = exp(-(off * off) * k);
-      c = c + (textureSample(tex, smp, uv + dir * off) + textureSample(tex, smp, uv - dir * off)) * w;
+      c = c + (tap(uv + dir * off) + tap(uv - dir * off)) * w;
       total = total + 2.0 * w;
     }
   }

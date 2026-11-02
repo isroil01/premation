@@ -99,7 +99,7 @@ class FakeEngine extends EventEmitter implements EngineChild {
     this.fd3.write(
       frame(
         codecs.FrameChannelMessage.encode({
-          type: 'frameReady', generation, slot, viewport: 1, dropped: 0, frame: 0, time: 0, revision: 0, renderStartUs: 0, renderDoneUs: 0, width: 16, height: 16,
+          type: 'frameReady', generation, slot, viewport: 1, dropped: 0, frame: 0, time: 0, revision: 0, renderStartUs: 0, renderDoneUs: 0, width: 16, height: 16, contentWidth: 0, contentHeight: 0,
         }),
       ),
     );

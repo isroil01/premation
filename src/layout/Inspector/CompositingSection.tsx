@@ -314,7 +314,7 @@ export function CompositingSection({ nodeId }: { nodeId: string }): JSX.Element 
             <div className={styles.fieldGrid}>
               <label className={styles.fieldLabel}>
                 <span>{t('inspector.compositing.shutter', 'Shutter')}</span>
-                <ValueField value={mb.shutterAngle} min={0} max={360} precision={0} unit="°" onChange={(v) => e.send('Shutter Angle', mbCommands({ shutterAngle: v }))} {...e.scrub('Shutter Angle')} aria-label={t('inspector.compositing.shutterAngle', 'Shutter angle')} />
+                <ValueField value={mb.shutterAngle} min={0} max={720} precision={0} unit="°" onChange={(v) => e.send('Shutter Angle', mbCommands({ shutterAngle: v }))} {...e.scrub('Shutter Angle')} aria-label={t('inspector.compositing.shutterAngle', 'Shutter angle')} />
               </label>
               <label className={styles.fieldLabel}>
                 <span>{t('inspector.compositing.phase', 'Phase')}</span>

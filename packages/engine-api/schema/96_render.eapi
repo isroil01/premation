@@ -334,6 +334,11 @@ struct Renderable {
   deformedMesh?: RenderDeformedMesh = 32;
   extrudedMesh?: RenderExtrudedMesh = 33;
   threeD?: RenderThreeD = 34;
+  /// The layer's world scale (its own and its parents', geometric mean of the
+  /// two axes): effect radii, offsets and widths are layer px, so a 2D chain
+  /// runs them at this scale, as After Effects runs effects in layer space.
+  /// Absent = 1.
+  fxScale?: f64 = 35;
 }
 
 /// FrameScene.

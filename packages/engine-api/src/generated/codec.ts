@@ -16108,6 +16108,8 @@ function encS_FrameReady(w: Writer, v: T.FrameReady): void {
   w.byte(73); w.f64(v.renderDoneUs);
   w.byte(80); w.u32(v.width);
   w.byte(88); w.u32(v.height);
+  w.byte(96); w.u32(v.contentWidth);
+  w.byte(104); w.u32(v.contentHeight);
 }
 function decS_FrameReady(r: Reader, end: number, o: any): T.FrameReady {
   let h_generation = false;
@@ -16121,6 +16123,8 @@ function decS_FrameReady(r: Reader, end: number, o: any): T.FrameReady {
   let h_renderDoneUs = false;
   let h_width = false;
   let h_height = false;
+  let h_contentWidth = false;
+  let h_contentHeight = false;
   let v_generation: number | undefined;
   let v_slot: number | undefined;
   let v_viewport: number | undefined;
@@ -16132,6 +16136,8 @@ function decS_FrameReady(r: Reader, end: number, o: any): T.FrameReady {
   let v_renderDoneUs: number | undefined;
   let v_width: number | undefined;
   let v_height: number | undefined;
+  let v_contentWidth: number | undefined;
+  let v_contentHeight: number | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -16146,6 +16152,8 @@ function decS_FrameReady(r: Reader, end: number, o: any): T.FrameReady {
       case 73: v_renderDoneUs = r.f64(); h_renderDoneUs = true; break;
       case 80: v_width = r.u32(); h_width = true; break;
       case 88: v_height = r.u32(); h_height = true; break;
+      case 96: v_contentWidth = r.u32(); h_contentWidth = true; break;
+      case 104: v_contentHeight = r.u32(); h_contentHeight = true; break;
       default: r.skip(key);
     }
   }
@@ -16161,6 +16169,8 @@ function decS_FrameReady(r: Reader, end: number, o: any): T.FrameReady {
   if (!h_renderDoneUs) throw new DecodeError('FrameReady.renderDoneUs: missing', 'missingField');
   if (!h_width) throw new DecodeError('FrameReady.width: missing', 'missingField');
   if (!h_height) throw new DecodeError('FrameReady.height: missing', 'missingField');
+  if (!h_contentWidth) throw new DecodeError('FrameReady.contentWidth: missing', 'missingField');
+  if (!h_contentHeight) throw new DecodeError('FrameReady.contentHeight: missing', 'missingField');
   o.generation = v_generation;
   o.slot = v_slot;
   o.viewport = v_viewport;
@@ -16172,6 +16182,8 @@ function decS_FrameReady(r: Reader, end: number, o: any): T.FrameReady {
   o.renderDoneUs = v_renderDoneUs;
   o.width = v_width;
   o.height = v_height;
+  o.contentWidth = v_contentWidth;
+  o.contentHeight = v_contentHeight;
   return o;
 }
 function encS_OverlayLayerGeometry(w: Writer, v: T.OverlayLayerGeometry): void {
@@ -18075,6 +18087,7 @@ function encS_Renderable(w: Writer, v: T.Renderable): void {
   if (v.deformedMesh !== undefined) { w.varint(258); { const s = w.beginLd(); encS_RenderDeformedMesh(w, v.deformedMesh); w.endLd(s); } }
   if (v.extrudedMesh !== undefined) { w.varint(266); { const s = w.beginLd(); encS_RenderExtrudedMesh(w, v.extrudedMesh); w.endLd(s); } }
   if (v.threeD !== undefined) { w.varint(274); { const s = w.beginLd(); encS_RenderThreeD(w, v.threeD); w.endLd(s); } }
+  if (v.fxScale !== undefined) { w.varint(281); w.f64(v.fxScale); }
 }
 function decS_Renderable(r: Reader, end: number, o: any): T.Renderable {
   const l_modelMatrix: number[] = [];
@@ -18122,6 +18135,7 @@ function decS_Renderable(r: Reader, end: number, o: any): T.Renderable {
   let v_deformedMesh: T.RenderDeformedMesh | undefined;
   let v_extrudedMesh: T.RenderExtrudedMesh | undefined;
   let v_threeD: T.RenderThreeD | undefined;
+  let v_fxScale: number | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -18159,6 +18173,7 @@ function decS_Renderable(r: Reader, end: number, o: any): T.Renderable {
       case 258: v_deformedMesh = decS_RenderDeformedMesh(r, r.ldEnd(), {}); break;
       case 266: v_extrudedMesh = decS_RenderExtrudedMesh(r, r.ldEnd(), {}); break;
       case 274: v_threeD = decS_RenderThreeD(r, r.ldEnd(), {}); break;
+      case 281: v_fxScale = r.f64(); break;
       default: r.skip(key);
     }
   }
@@ -18208,6 +18223,7 @@ function decS_Renderable(r: Reader, end: number, o: any): T.Renderable {
   if (v_deformedMesh !== undefined) o.deformedMesh = v_deformedMesh;
   if (v_extrudedMesh !== undefined) o.extrudedMesh = v_extrudedMesh;
   if (v_threeD !== undefined) o.threeD = v_threeD;
+  if (v_fxScale !== undefined) o.fxScale = v_fxScale;
   return o;
 }
 function encS_RenderFrameScene(w: Writer, v: T.RenderFrameScene): void {

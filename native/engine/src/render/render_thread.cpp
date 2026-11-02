@@ -110,11 +110,17 @@ void RenderThread::submit(RenderJob job) {
     const std::lock_guard<std::mutex> lock(m_);
     const auto it = ports_.find(job.viewport);
     if (job.prefetch) {
-      // Idle render-ahead: one waits at a time, drawn when no viewport has a
-      // frame to draw (run). Replaced or orphaned = answered, as a drop.
-      if (prefetch_ || it == ports_.end() || !it->second->config.open) ++counters_.prefetched;
-      if (it == ports_.end() || !it->second->config.open) return;
-      prefetch_ = std::move(job);
+      // Idle render-ahead: a few wait their turn, drawn when no viewport has a
+      // frame to draw (run). Pushed out of the queue or orphaned = answered, as a drop.
+      if (it == ports_.end() || !it->second->config.open) {
+        ++counters_.prefetched;
+        return;
+      }
+      if (prefetch_.size() >= kPrefetchQueue) {
+        prefetch_.pop_front();
+        ++counters_.prefetched;
+      }
+      prefetch_.push_back(std::move(job));
       cv_.notify_all();
       return;
     }
@@ -1007,7 +1013,7 @@ void RenderThread::run(std::promise<std::string>& ready) {
   };
   // Idle render-ahead: a prefetch job draws only when nothing is on the GPU and
   // no viewport has a frame waiting (under m_).
-  const auto canPrefetch = [this] { return prefetch_.has_value() && inflight_.empty() && next_ready_locked() == nullptr; };
+  const auto canPrefetch = [this] { return !prefetch_.empty() && inflight_.empty() && next_ready_locked() == nullptr; };
   const auto workReady = [this, &anyDirty, &canWarm, &settleDue, &canPrefetch] {
     return quit_ || anyDirty() || !tasks_.empty() || next_ready_locked() != nullptr || canWarm() || settleDue() || canPrefetch();
   };
@@ -1042,10 +1048,8 @@ void RenderThread::run(std::promise<std::string>& ready) {
     if (gpu_->device_lost()) {
       abandon_all_disk();
       inflight_.clear();  // their slots are rebuilt with the device (a new generation)
-      if (prefetch_) {    // the session asks again once it is idle
-        prefetch_.reset();
-        ++counters_.prefetched;
-      }
+      counters_.prefetched += prefetch_.size();  // the session asks again once it is idle
+      prefetch_.clear();
       lock.unlock();
       const bool recovered = recover_device();
       if (!recovered && onFatal_) onFatal_("GPU device lost");
@@ -1155,8 +1159,8 @@ void RenderThread::run(std::promise<std::string>& ready) {
       // time, into the cache tiers — never a slot. A viewport's frame arriving
       // meanwhile waits for this one draw at most.
       if (canPrefetch()) {
-        RenderJob job = std::move(*prefetch_);
-        prefetch_.reset();
+        RenderJob job = std::move(prefetch_.front());
+        prefetch_.pop_front();
         lock.unlock();
         timed("prefetch", [&] { render_prefetch(job); });
         lock.lock();
@@ -1290,17 +1294,19 @@ std::future<WorkingPixels> RenderThread::read_pixels(std::uint32_t viewport, Pix
       out.answer = HookAnswer::unsupported;
       out.error = "the viewport shows C2 quads: there is no working-space frame to read";
     } else {
-      // The ring may have been rebuilt since the core clamped the region.
+      // The ring may have been rebuilt since the core clamped the region. The
+      // frame was drawn at its own size (preview resolution): read at that size.
+      const auto [fw, fh] = content_size(**last, *slots);
       PixelRegion r = region;
-      r.x = std::min(r.x, slots->width);
-      r.y = std::min(r.y, slots->height);
-      r.width = std::min(r.width, slots->width - r.x);
-      r.height = std::min(r.height, slots->height - r.y);
+      r.x = std::min(r.x, fw);
+      r.y = std::min(r.y, fh);
+      r.width = std::min(r.width, fw - r.x);
+      r.height = std::min(r.height, fh - r.y);
       std::string error;
       if (r.width == 0 || r.height == 0) {
         out.answer = HookAnswer::failed;
         out.error = "the region is outside the viewport";
-      } else if (drawer_->read_working(*(*last)->built, slots->width, slots->height, r, out, error)) {
+      } else if (drawer_->read_working(*(*last)->built, fw, fh, r, out, error)) {
         out.answer = HookAnswer::ready;
       } else {
         out = WorkingPixels{};
@@ -1342,11 +1348,12 @@ std::future<WorkingPixels> RenderThread::read_frame(std::shared_ptr<BuiltFrame> 
 }
 
 void RenderThread::rebuild(Port& port, const ViewportConfig& config, bool shared, bool copy) {
-  // The slots hold frames at the preview resolution (engine_frames build draws at dpr × it);
-  // the page scales them up to the viewer.
-  const std::uint32_t W = preview_pixels(config.width, config.resolution);
-  const std::uint32_t H = preview_pixels(config.height, config.resolution);
-  // A2: a slot-SIZE switch (preview resolution, pane size) is what the HUD reports.
+  // The slots are the viewport's full size whatever the preview resolution: a
+  // reduced frame takes their top-left corner (RenderJob::contentWidth) and the
+  // page scales that part up — a resolution switch never rebuilds the ring.
+  const std::uint32_t W = config.width;
+  const std::uint32_t H = config.height;
+  // A2: a slot-SIZE switch (a pane resize) is what the HUD reports.
   const bool sizeSwitch = port.slots && (port.slots->width != W || port.slots->height != H) && W > 0 && H > 0;
   const auto rebuildStart = SteadyClock::now();
   auto next = std::make_unique<SlotSet>();
@@ -1510,11 +1517,30 @@ void RenderThread::render_guarded(Port& port, RenderJob& job, std::uint32_t slot
     // at an integer offset — so the tiers hold one frame across pane sizes
     // and pans. A slot that takes no copies draws in slot space.
     const CompSpaceFrame* cs = job.compSpace && set.copyable ? &*job.compSpace : nullptr;
-    const FrameTarget target = cs != nullptr ? comp_target(cs->width, cs->height)
-                                             : FrameTarget{.texture = &slotTexture, .view = &set.views[slot], .width = set.width, .height = set.height};
+    // Preview resolution: a slot-space frame smaller than the slot is drawn at
+    // its own size and copied into the slot's corner, as a comp-space frame is
+    // (not with onion ghosts, which are drawn over the slot after it).
+    const auto [cw, ch] = content_size(job, set);
+    std::optional<CompSpaceFrame> corner;
+    if (cs == nullptr && set.copyable && job.onion.empty() && (cw != set.width || ch != set.height)) {
+      corner = CompSpaceFrame{};
+      corner->width = cw;
+      corner->height = ch;
+    }
+    const CompSpaceFrame* placed = cs != nullptr ? cs : corner ? &*corner : nullptr;
+    const FrameTarget target = placed != nullptr ? comp_target(placed->width, placed->height)
+                                                 : FrameTarget{.texture = &slotTexture, .view = &set.views[slot], .width = set.width, .height = set.height};
     f.frameWidth = target.width;
     f.frameHeight = target.height;
-    const Served served = serve_or_draw(job, target, set.copyable, cs == nullptr, f);
+    if (corner) {
+      f.contentWidth = cw;
+      f.contentHeight = ch;
+    } else if (cs != nullptr) {
+      // A comp-space frame lands at the preview scale too: its slot offsets are in content pixels.
+      f.contentWidth = cw;
+      f.contentHeight = ch;
+    }
+    const Served served = serve_or_draw(job, target, set.copyable, placed == nullptr, f);
     if (served.missing) {
       // No tier holds it any more (evicted, purged, a lost device): the slot
       // goes back and the session is asked for a built frame — never a blank one.
@@ -1525,8 +1551,8 @@ void RenderThread::render_guarded(Port& port, RenderJob& job, std::uint32_t slot
       return;
     }
     drawn = served.drawn;
-    if (drawn && cs != nullptr && served.source != nullptr) {
-      present_comp_space(*cs, *served.source, slotTexture, set.views[slot], set.width, set.height);
+    if (drawn && placed != nullptr && served.source != nullptr) {
+      present_comp_space(*placed, *served.source, slotTexture, set.views[slot], set.width, set.height);
     }
     if (drawn) note_view_key(port, served.key.value_or(0));
     if (drawn && !job.onion.empty() && compositor_) composite_onion(job, set.views[slot], set.width, set.height);
@@ -1592,6 +1618,9 @@ void RenderThread::render_guarded(Port& port, RenderJob& job, std::uint32_t slot
   ready.render_start_us = startUs;
   ready.width = set.width;
   ready.height = set.height;
+  // Drawn into the corner (preview resolution): the part of the slot the page scales up. 0 = all of it.
+  ready.content_width = drawn ? f.contentWidth : 0;
+  ready.content_height = drawn ? f.contentHeight : 0;
   // B4 round 2: the overlays' geometry for this frame first (the host pairs it with the FrameReady that follows).
   if (job.geometrySubscribed) {
     // A job drawn again once its footage settles announces its geometry again: keep it.
@@ -1762,6 +1791,15 @@ RenderThread::Served RenderThread::serve_or_draw(RenderJob& job, const FrameTarg
 void RenderThread::present_comp_space(const CompSpaceFrame& cs, const wgpu::Texture& source, const wgpu::Texture& slot,
                                       const wgpu::TextureView& slotView, std::uint32_t width, std::uint32_t height) {
   if (!gpu_) return;  // only reached from a render after init; nothing to present without a device
+  if (cs.present != 1 && compositor_) {
+    // A resolution tier: the comp drawn at a power of two, scaled into the slot where the view puts it.
+    wgpu::CommandEncoder enc = gpu_->device.CreateCommandEncoder();
+    compositor_->place(enc, source.CreateView(), slotView, width, height, cs.originX, cs.originY,
+                       static_cast<double>(cs.width) * cs.present, static_cast<double>(cs.height) * cs.present);
+    const wgpu::CommandBuffer cb = enc.Finish();
+    gpu_->queue.Submit(1, &cb);
+    return;
+  }
   // The part of the comp-space texture that lands inside the slot.
   const std::int64_t sx0 = std::max<std::int64_t>(0, -static_cast<std::int64_t>(cs.slotX));
   const std::int64_t sy0 = std::max<std::int64_t>(0, -static_cast<std::int64_t>(cs.slotY));
@@ -1799,6 +1837,12 @@ void RenderThread::present_comp_space(const CompSpaceFrame& cs, const wgpu::Text
   }
   const wgpu::CommandBuffer cb = enc.Finish();
   gpu_->queue.Submit(1, &cb);
+}
+
+std::pair<std::uint32_t, std::uint32_t> RenderThread::content_size(const RenderJob& job, const SlotSet& set) noexcept {
+  const std::uint32_t w = job.contentWidth > 0 ? std::min(job.contentWidth, set.width) : set.width;
+  const std::uint32_t h = job.contentHeight > 0 ? std::min(job.contentHeight, set.height) : set.height;
+  return {std::max(1U, w), std::max(1U, h)};
 }
 
 RenderThread::FrameTarget RenderThread::comp_target(std::uint32_t width, std::uint32_t height) {
@@ -1875,8 +1919,8 @@ void RenderThread::render_prefetch(RenderJob& job) {
       return;
     }
     const auto t0 = SteadyClock::now();
-    const FrameTarget target = job.compSpace ? comp_target(job.compSpace->width, job.compSpace->height)
-                                             : comp_target(port->slots->width, port->slots->height);
+    const auto [cw, ch] = content_size(job, *port->slots);
+    const FrameTarget target = job.compSpace ? comp_target(job.compSpace->width, job.compSpace->height) : comp_target(cw, ch);
     InFlight f;
     f.prefetch = true;
     f.buildMs = job.buildMs;

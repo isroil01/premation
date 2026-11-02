@@ -64,6 +64,9 @@ export interface FrameReady {
   renderDoneUs: number;
   width: number;
   height: number;
+  /** Preview resolution: the frame fills only this top-left part of the slot (the page scales it up, nearest). 0 = the whole slot. */
+  contentWidth: number;
+  contentHeight: number;
 }
 
 /** B4 — one subscribed layer's overlay geometry at the frame's time (setOverlayGeometry). Fields of kinds not subscribed are empty. Composition space is comp px, y down; `t` values are the layer's keyframe-axis seconds (what a Position key stores — the page's motion-path window and hover test compare them). One layer's geometry may arrive as SEVERAL records in a frame (the payload cap): the host merges them, CONCATENATING arrays in arrival order. */
@@ -372,6 +375,8 @@ function encS_FrameReady(w: Writer, v: FrameReady): void {
   w.byte(73); w.f64(v.renderDoneUs);
   w.byte(80); w.u32(v.width);
   w.byte(88); w.u32(v.height);
+  w.byte(96); w.u32(v.contentWidth);
+  w.byte(104); w.u32(v.contentHeight);
 }
 function decS_FrameReady(r: Reader, end: number, o: any): FrameReady {
   let h_generation = false;
@@ -385,6 +390,8 @@ function decS_FrameReady(r: Reader, end: number, o: any): FrameReady {
   let h_renderDoneUs = false;
   let h_width = false;
   let h_height = false;
+  let h_contentWidth = false;
+  let h_contentHeight = false;
   let v_generation: number | undefined;
   let v_slot: number | undefined;
   let v_viewport: number | undefined;
@@ -396,6 +403,8 @@ function decS_FrameReady(r: Reader, end: number, o: any): FrameReady {
   let v_renderDoneUs: number | undefined;
   let v_width: number | undefined;
   let v_height: number | undefined;
+  let v_contentWidth: number | undefined;
+  let v_contentHeight: number | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -410,6 +419,8 @@ function decS_FrameReady(r: Reader, end: number, o: any): FrameReady {
       case 73: v_renderDoneUs = r.f64(); h_renderDoneUs = true; break;
       case 80: v_width = r.u32(); h_width = true; break;
       case 88: v_height = r.u32(); h_height = true; break;
+      case 96: v_contentWidth = r.u32(); h_contentWidth = true; break;
+      case 104: v_contentHeight = r.u32(); h_contentHeight = true; break;
       default: r.skip(key);
     }
   }
@@ -425,6 +436,8 @@ function decS_FrameReady(r: Reader, end: number, o: any): FrameReady {
   if (!h_renderDoneUs) throw new DecodeError('FrameReady.renderDoneUs: missing', 'missingField');
   if (!h_width) throw new DecodeError('FrameReady.width: missing', 'missingField');
   if (!h_height) throw new DecodeError('FrameReady.height: missing', 'missingField');
+  if (!h_contentWidth) throw new DecodeError('FrameReady.contentWidth: missing', 'missingField');
+  if (!h_contentHeight) throw new DecodeError('FrameReady.contentHeight: missing', 'missingField');
   o.generation = v_generation;
   o.slot = v_slot;
   o.viewport = v_viewport;
@@ -436,6 +449,8 @@ function decS_FrameReady(r: Reader, end: number, o: any): FrameReady {
   o.renderDoneUs = v_renderDoneUs;
   o.width = v_width;
   o.height = v_height;
+  o.contentWidth = v_contentWidth;
+  o.contentHeight = v_contentHeight;
   return o;
 }
 function encS_OverlayLayerGeometry(w: Writer, v: OverlayLayerGeometry): void {

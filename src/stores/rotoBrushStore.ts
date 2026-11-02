@@ -91,6 +91,12 @@ interface RotoBrushStore {
   /** The one press waiting for `busy` to clear (the newest wins). */
   queued: (() => void) | null;
   status: string | null;
+  /**
+   * What the subject tools tell the user right now (the overlay's message: "Segmenting…",
+   * "Click to select…", "Select one footage layer…"), shown in the editor's status bar —
+   * never as a chip over the picture, where it hid the subject being selected.
+   */
+  notice: { text: string; busy: boolean } | null;
   engine: RotoEngine;
   refine: RotoRefine;
   /** The Object Matte tool's box prompt, if the selection started from one. */
@@ -129,6 +135,7 @@ interface RotoBrushStore {
    */
   queuePress: (press: () => void) => boolean;
   setStatus: (s: string | null) => void;
+  setNotice: (n: { text: string; busy: boolean } | null) => void;
   setBox: (box: RotoBox | null) => void;
   setMarquee: (m: 'rect' | 'lasso') => void;
   /**
@@ -208,6 +215,7 @@ export const useRotoBrushStore = create<RotoBrushStore>((set, get) => ({
   trackingProgress: 0,
   queued: null,
   status: null,
+  notice: null,
   engine: 'objectMatte',
   refine: { edgeRadius: 6, decontaminate: 50, motionBlur: false, choke: 0, reduceChatter: 30 },
   box: null,
@@ -262,6 +270,7 @@ export const useRotoBrushStore = create<RotoBrushStore>((set, get) => ({
     return false;
   },
   setStatus: (status) => set({ status }),
+  setNotice: (notice) => set((s) => (s.notice?.text === notice?.text && s.notice?.busy === notice?.busy ? s : { notice })),
   setBox: (box) => set({ box }),
   setMarquee: (marquee) => set({ marquee }),
   setLasso: (polygon, time, fps = 30) => {

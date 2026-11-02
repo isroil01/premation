@@ -811,6 +811,10 @@ export interface MotionEditorApi {
     readClipboardFiles?(): Promise<string[]>;
     /** Hidden entries removed; null if the directory cannot be read. */
     listDir?(dir: string): Promise<Array<{ name: string; path: string; kind: 'dir' | 'file'; size?: number; mtimeMs?: number }> | null>;
+    /** Watch these folders (one level each), replacing the last set; [] stops watching. */
+    watchDirs?(dirs: string[]): Promise<void>;
+    /** A watched folder's contents changed (debounced); returns the unsubscribe. */
+    onDirsChanged?(handler: (dirs: string[]) => void): () => void;
     /**
      * Edit ▸ Edit Original: open the file in the OS default application for its
      * type. A numbered-sequence pattern opens its first frame; executables are

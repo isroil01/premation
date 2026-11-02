@@ -292,7 +292,7 @@ describe('the tabs explain themselves', () => {
   it('the empty Media Browser says it browses without importing', async () => {
     useAssetsViewStore.getState().setTab('browse');
     renderPanel();
-    expect(screen.getByText(/browse its files without importing/)).toBeInTheDocument();
+    expect(screen.getByText(/browse their files without importing/)).toBeInTheDocument();
   });
 });
 

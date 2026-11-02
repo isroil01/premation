@@ -28,7 +28,7 @@ import { applyAnimationPresetEdit } from '@layout/Menu/appEdits';
 import { t } from '@core/i18n';
 import { runPlaceBehindSubject } from './placeBehindSubjectCommand';
 import { subjectBoundsInComp } from './placeBehindSubject';
-import { followSubject } from './subjectActions';
+import { followSubject, layerMoves } from './subjectActions';
 import styles from './TextBehindDialog.module.css';
 
 export function openTextBehind(layer: string): void {
@@ -93,7 +93,8 @@ export function TextBehindDialog(): JSX.Element | null {
     const mask = subjectOutlines(footage).get(id);
     return !!mask && m.keyframes(footage, `masks/${mask}/path`).length > 1;
   };
-  const unfollowed = front.filter((s) => !followedOf(s.id));
+  // A still's subject is the same on every frame: nothing to follow.
+  const unfollowed = footage && layerMoves(footage) ? front.filter((s) => !followedOf(s.id)) : [];
   const textLabel = texts.length > 0 ? texts.map((id) => m.layer(id)?.name ?? id).join(', ') : (title || t('workspace.textBehind.newText', 'YOUR TITLE'));
 
   const toggleFront = (id: string): void => {

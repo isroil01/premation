@@ -460,6 +460,11 @@ class Sampler {
 
 void finish_native_frame(const scene::BuildContext& c, std::string_view comp, double t, const scene::ViewSpec& view,
                          bool motionBlur, scene::NativeFrame& frame, PluginHost* host) {
+  // Frames are built on several threads (the session's prefetch workers); a
+  // plugin's instances are not required to be re-entrant: one frame's plugin
+  // work at a time.
+  static std::mutex oneAtATime;
+  const std::scoped_lock pluginLock(oneAtATime);
   static std::once_flag decoders;
   std::call_once(decoders, [] { set_asset_image_decoder(&engine_decode); });
   const std::int64_t tf = flicks(t);

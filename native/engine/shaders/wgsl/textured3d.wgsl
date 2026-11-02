@@ -219,19 +219,27 @@ fn shadowTerm(worldIn : vec3<f32>, n : vec3<f32>, mtx : mat4x4<f32>, axis : vec4
   let d = dot(world - origin.xyz, axis.xyz) * axis.w - bias;
   if (d <= 0.0 || d >= 1.0) { return 1.0; }
   let s = params.z;
+  // Twelve Poisson taps over 1.5 steps, each a bilinear 2×2 comparison — two
+  // gathers, as the depth is packed in r + g / 4096 (unpackShadowDepth). The
+  // nine nearest taps it replaces gave the penumbra ten hard steps.
+  var taps = array<vec2<f32>, 12>(
+    vec2<f32>(-0.326, -0.406), vec2<f32>(-0.840, -0.074), vec2<f32>(-0.696, 0.457), vec2<f32>(-0.203, 0.621),
+    vec2<f32>(0.962, -0.195), vec2<f32>(0.473, -0.480), vec2<f32>(0.519, 0.767), vec2<f32>(0.185, -0.893),
+    vec2<f32>(0.507, 0.064), vec2<f32>(0.896, 0.412), vec2<f32>(-0.322, -0.933), vec2<f32>(-0.792, -0.598));
+  let dim = vec2<f32>(textureDimensions(tex, 0));
   var lit = 0.0;
-  for (var y = -1; y <= 1; y = y + 1) {
-    for (var x = -1; x <= 1; x = x + 1) {
-      // Explicit LOD, like envFetch: the map has no mip chain, and an implicit
-      // derivative inside this nest is both meaningless and illegal in WGSL.
-      let occ = unpackShadowDepth(textureSampleLevel(tex, smp, uv + vec2<f32>(f32(x), f32(y)) * s, 0.0));
-      lit = lit + select(0.0, 1.0, d <= occ);
-    }
+  for (var i = 0; i < 12; i = i + 1) {
+    let tuv = uv + taps[i] * s * 1.5;
+    let w = fract(tuv * dim - vec2<f32>(0.5));
+    let occ = textureGather(0, tex, smp, tuv) + textureGather(1, tex, smp, tuv) * (1.0 / 4096.0);
+    // Gather order: x (u0, v1), y (u1, v1), z (u1, v0), w (u0, v0).
+    let t = select(vec4<f32>(0.0), vec4<f32>(1.0), vec4<f32>(d) <= occ);
+    lit = lit + mix(mix(t.w, t.z, w.x), mix(t.x, t.y, w.x), w.y);
   }
   // Darkness lerps the term back toward fully lit, so 100 % is a black shadow
   // and 60 % leaves 40 % of the light through — the same meaning the slider has
   // on the projected path.
-  return 1.0 - (1.0 - lit / 9.0) * params.x;
+  return 1.0 - (1.0 - lit / 12.0) * params.x;
 }
 fn shadowFactor(world : vec3<f32>, n : vec3<f32>) -> f32 {
   if (obj.shadowParams.x < 0.0005) { return 1.0; }
@@ -757,5 +765,11 @@ fn fs(@location(0) uv : vec2<f32>, @location(1) world : vec3<f32>) -> @location(
   // A transparent texel must not write depth: it would hide the 3D layers
   // behind it (AE parity 1.4). Last, after every texture sample.
   if (c.a < 0.00392156862745098) { discard; }
+  // alphaParams.z: the run's alpha pass (threed.cpp kAlphaPassAt). 1 lays only the
+  // fully covered texels (they write depth), 2 only the partly covered rest
+  // (drawn after, without depth writes), 0 every texel.
+  let alphaPass = obj.alphaParams.z;
+  if (alphaPass > 0.5 && alphaPass < 1.5 && c.a < 0.996) { discard; }
+  if (alphaPass > 1.5 && c.a >= 0.996) { discard; }
   return vec4<f32>(lit * c.a, c.a);
 }

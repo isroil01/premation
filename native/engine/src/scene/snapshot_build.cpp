@@ -307,7 +307,7 @@ Json apply_mask_path_expressions(const Document& d, const doc::ExprEnv& env, doc
 std::vector<double> motion_blur_sample_times(double t, double fps, double shutterAngle, double samples,
                                              double shutterPhase, double limit) {
   const double effective = std::min(std::max(1.0, std::floor(samples)), std::max(1.0, std::floor(limit)));
-  const double duration = (std::max(0.0, std::min(360.0, shutterAngle)) / 360) / std::max(1.0, fps);
+  const double duration = (std::max(0.0, std::min(720.0, shutterAngle)) / 360) / std::max(1.0, fps);
   if (effective <= 1 || duration <= 0) return {t};
   const double phaseOffset = ((std::max(-360.0, std::min(360.0, shutterPhase)) + 90) / 360) / std::max(1.0, fps);
   std::vector<double> out;
@@ -1469,7 +1469,7 @@ void Walk::build_node(const doc::Node& n) {  const std::string kind = n.kind();
     Json cfg = resolve_particle_config(synced, pv);
     // The comp shutter (velocity streaks) when this layer's motion-blur switch is on.
     const bool blurOn = mb_ && mb_->enabled && read_node_motion_blur(n);
-    cfg.set("shutterSec", Json::number(blurOn ? (std::max(0.0, std::min(360.0, mb_->shutterAngle)) / 360) / std::max(1.0, mb_->fps) : 0));
+    cfg.set("shutterSec", Json::number(blurOn ? (std::max(0.0, std::min(720.0, mb_->shutterAngle)) / 360) / std::max(1.0, mb_->fps) : 0));
     if (cfg.at("spriteAssetId").is_string() && !cfg.at("spriteAssetId").str().empty()) {
       if (const Json* asset = doc::find_asset(d_, cfg.at("spriteAssetId").str()); asset != nullptr && asset->at("src").is_string()) {
         cfg.set("spriteSrc", Json::string(doc::asset_media_src(*asset)));

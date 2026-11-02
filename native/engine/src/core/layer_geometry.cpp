@@ -485,7 +485,7 @@ Visible visible_of(const SpaceCtx& c, const Node& n, double seconds) {
   Visible v;
   const double kt = comp_to_keyframe_time(c.d, c.view, n.id, seconds);
   Json mask;
-  if (const std::vector<Json> anim = read_node_mask_anim(n); !anim.empty()) {
+  if (const std::span<const Json> anim = mask_anim_view(n); !anim.empty()) {
     if (auto m = interpolate_mask(anim, kt)) mask = *m;
   } else if (auto m = read_node_mask(n)) {
     mask = *m;

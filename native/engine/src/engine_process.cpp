@@ -381,6 +381,11 @@ int run_engine(const EngineOptions& options) {
   scene::EngineFramesOptions sceneOptions;
   sceneOptions.fontsManifest = os::env_var("PREMATION_FONTS_MANIFEST").value_or("");
   std::unique_ptr<FrameBuilder> frameBuilder;
+  // Item 7: the prefetch workers' builders (Session::set_prefetch_builders) —
+  // idle render-ahead built on more cores. One per four hardware threads, at
+  // most two (each holds its own fonts and memos); PREMATION_PREFETCH_WORKERS
+  // overrides (0 = none). The shipped engine only: --no-gpu suites keep one worker.
+  std::vector<std::unique_ptr<FrameBuilder>> prefetchBuilders;
   std::unique_ptr<MediaClock> mediaClock;
   if (useScene && options.noGpu) {
     frameBuilder = scene::make_frame_builder(sceneOptions);
@@ -392,6 +397,18 @@ int run_engine(const EngineOptions& options) {
     std::string audioError;
     mediaClock = scene::make_media_clock(os::env_var("PREMATION_AUDIO_DEVICE").value_or("") != "null", audioError);
     frameBuilder->bind_audio(mediaClock.get());
+    std::size_t workers = std::min<std::size_t>(2, std::thread::hardware_concurrency() / 4);
+    if (const auto v = os::env_var("PREMATION_PREFETCH_WORKERS")) {
+      try {
+        workers = std::min<std::size_t>(4, static_cast<std::size_t>(std::max(0, std::stoi(*v))));
+      } catch (const std::exception&) {
+        // not a number: the default
+      }
+    }
+    for (std::size_t i = 0; i < workers; ++i) {
+      prefetchBuilders.push_back(scene::make_frame_builder(sceneOptions));
+      prefetchBuilders.back()->bind_audio(mediaClock.get());
+    }
   }
   // convertLayer's text outlines come from the frame builder's fonts
   // (Session::handler_ctx). Without the scene (PREMATION_ENGINE_SCENE=0) the
@@ -516,6 +533,11 @@ int run_engine(const EngineOptions& options) {
 #endif
 #if defined(PREMATION_HAVE_SCENE)
   session.set_frame_builder(frameBuilder.get());
+  {
+    std::vector<FrameBuilder*> extra;
+    for (const auto& b : prefetchBuilders) extra.push_back(b.get());
+    session.set_prefetch_builders(std::move(extra));
+  }
   session.set_media_clock(mediaClock.get());
 #endif
 #if defined(PREMATION_HAVE_JOBS)

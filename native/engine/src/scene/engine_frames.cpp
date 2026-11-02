@@ -1075,11 +1075,31 @@ class ViewportDrawer final : public render::BuiltFrameDrawer {
 
   bool draw_still(BuiltFrame& frame, std::uint32_t width, std::uint32_t height, StillImage& out,
                   std::string& error) override {
-    const api::RenderFrameFile& file = prepare(frame, width, height, true);
     rg::Frame px;
     rg::FrameStats st;
     renderer_->set_playing(false);
-    if (!renderer_->render(file, &px, st, error)) return false;
+#if defined(PREMATION_HAVE_MEDIA)
+    (void)mediaTex_->take_misses();  // count this still's own
+#endif
+    // A footage frame the exact wait gave up on is SKIPPED, not drawn: the
+    // still would go out with the video missing (a black thumbnail, an AI
+    // filmstrip cell with only the titles). The viewport redraws once it is
+    // decoded (take_media_wants); a still has no next draw, so it waits here.
+    for (std::uint32_t pass = 0;; ++pass) {
+      const api::RenderFrameFile& file = prepare(frame, width, height, true);
+      st = rg::FrameStats{};
+      if (!renderer_->render(file, &px, st, error)) return false;
+#if defined(PREMATION_HAVE_MEDIA)
+      const media::MediaTextures::Misses m = mediaTex_->take_misses();
+      if (m.skipped == 0) break;
+      if (pass >= kStillDecodeRetries || !mediaTex_->await_wanted(m.wanted, kStillDecodeWait)) {
+        PREMATION_LOG(warn, "still_footage_missing").kv("frames", static_cast<std::uint64_t>(m.wanted.size()));
+        break;
+      }
+#else
+      break;
+#endif
+    }
     note_fx_skips(st);
     if (px.width == 0 || px.height == 0 || px.rgba.size() != std::size_t{px.width} * px.height * 4) {
       error = "the still read back empty";
@@ -1371,6 +1391,10 @@ class ViewportDrawer final : public render::BuiltFrameDrawer {
   bool gpuRetry_ = false;
   std::uint32_t gpuErrorStreak_ = 0;
   static constexpr std::uint32_t kGpuRetries = 2;
+  /// A still whose footage missed prepare()'s exact wait (250 ms — a seek in
+  /// long-GOP 1440p60 takes longer) waits this long per frame and draws again.
+  static constexpr std::uint32_t kStillDecodeRetries = 2;
+  static constexpr std::chrono::milliseconds kStillDecodeWait{2000};
   static constexpr std::uint32_t kGpuRetrySource = 0xFFFFFFFEU;
 #if defined(PREMATION_HAVE_MEDIA)
   std::vector<std::pair<media::SourceId, std::int64_t>> wants_;  // the last draw's stand-in footage frames

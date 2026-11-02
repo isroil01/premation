@@ -25,6 +25,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <span>
 #include <vector>
@@ -76,6 +77,9 @@ struct MultiscaleOptions {
   /// Stop building the pyramid when the short side is at most this.
   int minSide = 24;
   std::uint32_t seed = 0x9e3779b9u;
+  /// Asked between PatchMatch passes: true stops the fill (a stopped job; the
+  /// picture is left part-filled and thrown away). One full-size frame is minutes.
+  std::function<bool()> cancelled;
 };
 
 /// Multi-scale PatchMatch with voting. Fills `rgba` where the hole is set.
@@ -101,6 +105,11 @@ struct SequenceOptions {
   FillMode mode = FillMode::object;
   Lighting lighting = Lighting::off;
   MultiscaleOptions synthesis;
+  /// Asked between frames and passes (also handed to `synthesis`): true stops the window.
+  std::function<bool()> cancelled;
+  /// 0…1 of the window's work, after each frame of each pass: a window of full-size frames is
+  /// minutes, and a bar that stood still that long read as a hang.
+  std::function<void(double)> progress;
 };
 
 struct SequenceFrame {

@@ -60,7 +60,7 @@ import type { LayerScreenMapping } from './layerScreen';
 import { useDisplayedCamera2D } from './useOverlayView';
 import { autoInstallObjectMatte, offerSam2Tracking } from '@layout/Settings/objectMatteJob';
 import { insideOutline, subjectBoundaries, type SubjectBoundary } from './subjectBoundary';
-import { SubjectToolHud, TrackingChip } from './SubjectToolHud';
+import { usePublishSubjectNotice } from './SubjectToolHud';
 import styles from './ObjectMatteOverlay.module.css';
 import { t } from '@core/i18n';
 
@@ -386,6 +386,22 @@ function ObjectMatteOverlayActive({ host }: { host?: ObjectMatteHost }): JSX.Ele
     return () => window.removeEventListener('keydown', onKey);
   }, [active, clearHover]);
 
+  const message = !nodeId
+    ? t('workspace.objectMatte.selectLayer', 'Select one footage layer, then hover the subject.')
+    : playing
+      ? t('workspace.objectMatte.playing', 'Stop playback to select a subject.')
+    : status ?? (looking
+      ? t('workspace.objectMatte.looking', 'Looking…')
+      : finding && !objects
+        ? t('workspace.objectMatte.finding', 'Finding objects…')
+      : hover && !hot  // over a found object the tag by the pointer says it
+        ? (marquee === 'lasso'
+          ? t('workspace.objectMatte.clickToSelectLasso', 'Click to select · Shift-click adds · Alt-click subtracts · drag a lasso')
+          : t('workspace.objectMatte.clickToSelect', 'Click to select · Shift-click adds · Alt-click subtracts · drag for a box'))
+        : null);
+  // Told in the status bar, not over the picture (SubjectToolHud.tsx).
+  usePublishSubjectNotice(active ? message : null, busy);
+
   if (!active) return null;
 
   const rectPath = (a: Pt, b: Pt): string => {
@@ -400,19 +416,6 @@ function ObjectMatteOverlayActive({ host }: { host?: ObjectMatteHost }): JSX.Ele
   const hoverUnder = hoverLocal && depth === 0 ? subjectUnder(hoverLocal) : null;
   const hotIndex = hot && objects ? objects.indexOf(hot) : -1;
 
-  const message = !nodeId
-    ? t('workspace.objectMatte.selectLayer', 'Select one footage layer, then hover the subject.')
-    : playing
-      ? t('workspace.objectMatte.playing', 'Stop playback to select a subject.')
-    : status ?? (looking
-      ? t('workspace.objectMatte.looking', 'Looking…')
-      : finding && !objects
-        ? t('workspace.objectMatte.finding', 'Finding objects…')
-      : hover && !hot  // over a found object the tag by the pointer says it
-        ? (marquee === 'lasso'
-          ? t('workspace.objectMatte.clickToSelectLasso', 'Click to select · Shift-click adds · Alt-click subtracts · drag a lasso')
-          : t('workspace.objectMatte.clickToSelect', 'Click to select · Shift-click adds · Alt-click subtracts · drag for a box'))
-        : null);
 
   return (
     <div
@@ -567,14 +570,6 @@ function ObjectMatteOverlayActive({ host }: { host?: ObjectMatteHost }): JSX.Ele
           )}
         </div>
       )}
-      {message && (
-        <div className={styles.status} role="status">
-          {busy && <span className={styles.spinner} aria-hidden="true" />}
-          {message}
-        </div>
-      )}
-      <SubjectToolHud tool="object-matte" nodeId={nodeId} />
-      <TrackingChip nodeId={nodeId} />
     </div>
   );
 }

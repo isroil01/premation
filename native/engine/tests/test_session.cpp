@@ -8,6 +8,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <atomic>
 #include <algorithm>
 #include <chrono>
 #include <set>
@@ -1222,21 +1223,21 @@ TEST_CASE("session: motion blur and colour management are undoable document reco
   const std::size_t mark = h.messages.size();
   api::SetMotionBlur mb;
   mb.patch.enabled = false;
-  mb.patch.shutter_angle = 400;  // clamped to 360, as motionBlurStore.restore
+  mb.patch.shutter_angle = 800;  // clamped to 720, After Effects' limit
   mb.patch.samples_per_frame = 1;  // clamped to 2
   REQUIRE(is_ok(h.run(cmd(mb))));
   const auto batches = h.batches_since(mark);
   REQUIRE(batches.size() == 1);
   const auto mbe = events_of<api::MotionBlurChangedEvent>(batches[0].events);
   REQUIRE(mbe.size() == 1);
-  CHECK(mbe[0].motion_blur.shutter_angle == Approx(360));
+  CHECK(mbe[0].motion_blur.shutter_angle == Approx(720));
   CHECK(mbe[0].motion_blur.samples_per_frame == 2);
   CHECK(mbe[0].motion_blur.enabled == std::optional<bool>(false));
   // Every composition reports the record.
   CHECK_FALSE(events_of<api::CompositionChangedEvent>(batches[0].events).empty());
   api::GetComposition q;
   q.comp = comp;
-  CHECK(query<api::CompositionDetails>(h, qry(q)).comp.settings.motion_blur.shutter_angle == Approx(360));
+  CHECK(query<api::CompositionDetails>(h, qry(q)).comp.settings.motion_blur.shutter_angle == Approx(720));
 
   api::SetColorManagement cm;
   cm.patch.working_space = api::RenderWorkingSpace::aces_cg;
@@ -1248,7 +1249,7 @@ TEST_CASE("session: motion blur and colour management are undoable document reco
   CHECK(snap.color_management.working_space == api::RenderWorkingSpace::aces_cg);
   CHECK(snap.color_management.display_transform == api::RenderDisplayTransform::pq);
   CHECK(snap.color_management.bit_depth == 32);
-  CHECK(snap.motion_blur.shutter_angle == Approx(360));
+  CHECK(snap.motion_blur.shutter_angle == Approx(720));
 
   api::SetColorManagement bad;
   bad.patch.bit_depth = 8;
@@ -1678,15 +1679,26 @@ TEST_CASE("comp-space frame: the geometry follows the comp, not the pane; views 
   REQUIRE(third);
   CHECK(third->phaseX != 0);
   CHECK(third->phaseX * 256 == std::round(third->phaseX * 256));
-  // Zoom changes the scale: a different frame. Zoomed far in, the comp would
-  // cost more than twice the slot to draw: slot space.
+  // A zoom off the power-of-two ladder draws the comp at the next tier up (2 x)
+  // and the present scales it into the slot: 1.25 and 1.5 share one frame.
   ViewportConfig zoomed = v;
-  zoomed.zoom = 1.25;  // 800 x 450: under twice the slot's pixels
+  zoomed.zoom = 1.25;
   const auto z = comp_space_frame(zoomed, 640, 360);
   REQUIRE(z);
-  CHECK(z->width == 800);
-  CHECK(z->slotX == -80);
-  zoomed.zoom = 2;  // 1280 x 720: four times the slot
+  CHECK(z->width == 1280);
+  CHECK(z->zoom == 2);
+  CHECK(z->dpr == 1);
+  CHECK(z->phaseX == 0);
+  CHECK(z->present == 0.625);
+  CHECK(z->originX == -80);
+  zoomed.zoom = 1.5;
+  const auto z15 = comp_space_frame(zoomed, 640, 360);
+  REQUIRE(z15);
+  CHECK(z15->width == z->width);
+  CHECK(z15->zoom == z->zoom);
+  CHECK(z15->present == 0.75);
+  // On the ladder (2 x) it is the exact copy — and 1280 x 720 is four times the slot: slot space.
+  zoomed.zoom = 2;
   CHECK_FALSE(comp_space_frame(zoomed, 640, 360));
   // Fit (zoom <= 0): export_view's camera, the comp centred.
   ViewportConfig fit = v;
@@ -1877,5 +1889,73 @@ TEST_CASE("idle render-ahead: a stopped transport fills the range from the playh
   for (int i = 0; i < 400; ++i) h.advance(std::chrono::milliseconds(1));
   CHECK(h.sink.prefetched() - beforeRest == 3);
   CHECK_FALSE(h.session.next_deadline().has_value());
+  h.session.set_frame_builder(nullptr);
+}
+
+namespace {
+/// A builder used by one prefetch worker thread, read by the test thread.
+class AtomicCountingBuilder final : public FrameBuilder {
+ public:
+  std::shared_ptr<BuiltFrame> build(const doc::Document& /*d*/, const doc::EditorView& /*view*/, const doc::ExprEnv& /*expr*/,
+                                    doc::ExprCache& /*cache*/, std::string_view /*comp*/, api::Time /*time*/,
+                                    const ViewportConfig& /*viewport*/, bool /*playing*/,
+                                    std::vector<api::LayerError>& /*errors*/) override {
+    built.fetch_add(1, std::memory_order_relaxed);
+    return nullptr;
+  }
+  std::atomic<int> built{0};
+};
+}  // namespace
+
+TEST_CASE("idle render-ahead on prefetch workers: the range fills with frames built beside the main worker",
+          "[session][cache][prefetch]") {
+  Harness h(64);
+  CountingBuilder builder;
+  AtomicCountingBuilder extraA;
+  AtomicCountingBuilder extraB;
+  h.session.set_frame_builder(&builder);
+  h.session.set_prefetch_builders({&extraA, &extraB});
+  (void)h.hello();
+  const auto comp = make_comp(h, 30);
+  const api::LayerId layer = make_layer(h, comp);
+  api::AddKeyframes a;
+  for (int k = 0; k <= 10; ++k) {
+    api::KeyframeInsert ins;
+    ins.prop = {layer, "transform/position"};
+    ins.time = static_cast<api::Time>(k) * (kSec / 5);
+    ins.value = vec2(10.0 * k, 0);
+    ins.easing = api::Easing::linear;
+    a.keys.push_back(std::move(ins));
+  }
+  REQUIRE(is_ok(h.run(cmd(a))));
+  api::SetActiveComposition active;
+  active.comp = comp;
+  REQUIRE(is_ok(h.run(cmd(active))));
+  h.sink.contentKeyOf = [](const RenderJob& j) { return std::optional<std::uint64_t>(0x1000 + static_cast<std::uint64_t>(j.frame)); };
+  api::SetViewport v;
+  v.viewport = 1;
+  v.width = 640;
+  v.height = 360;
+  v.device_pixel_ratio = 1.0;
+  REQUIRE(is_ok(h.run(cmd(v))));
+  api::SetWorkArea wa;
+  wa.comp = comp;
+  wa.range = api::TimeRange{kSec, 2 * kSec};
+  REQUIRE(is_ok(h.run(cmd(wa))));
+  REQUIRE(is_ok(h.run(cmd(api::Seek{40 * kFrame30, api::SeekMode::exact}))));
+  h.release_all();
+  const auto framesShown = h.frames_ready().size();
+  for (int i = 0; i < 250; ++i) h.advance(std::chrono::milliseconds(1));
+  CHECK(h.sink.prefetched() == 0);
+  for (int i = 0; i < 400; ++i) h.advance(std::chrono::milliseconds(1));
+  CHECK(cached_range(h, 30, 90));
+  // The prefetch workers built frames, and no frame was presented for them.
+  CHECK(extraA.built.load() + extraB.built.load() > 0);
+  CHECK(h.frames_ready().size() == framesShown);
+  CHECK(h.session.time() == 40 * kFrame30);
+  // An edit still lands (the workers stop at their next layer), and its frame draws.
+  REQUIRE(is_ok(set_prop(h, layer, "transform/position", vec2(999, 0), 2 * kSec)));
+  CHECK(none_cached(h, 50, 70));
+  h.session.set_prefetch_builders({});
   h.session.set_frame_builder(nullptr);
 }

@@ -6,7 +6,8 @@
  * onMouseOver). App.tsx now passes the one thing it derives itself — the
  * layer count — and this owns the rest.
  *
- *   left    save state, or the assistant's current step · N layers · N selected · info readout
+ *   left    save state, or the assistant's current step, or the subject tools' message
+ *           ("Segmenting…", the walk's Stop) · N layers · N selected · info readout
  *   centre  the composition chip (name, size, fps, dirty dot)
  *   right   job tray · VU · timeline zoom · fps · timecode · video health ·
  *           project health dot (opens Cache & Memory ▸ Health) · search
@@ -38,6 +39,8 @@ import { VideoHealth } from './VideoHealth';
 import { ProjectHealthDot } from './ProjectHealthDot';
 import { JobTray } from './JobTray';
 import { AssistantWorkLine } from './AssistantWorkLine';
+import { SubjectToolNotice } from '@layout/Workspace/SubjectToolHud';
+import { useRotoBrushStore } from '@stores/rotoBrushStore';
 import styles from './EditorStatusBar.module.css';
 
 export interface EditorStatusBarProps {
@@ -52,6 +55,8 @@ function Sep(): JSX.Element {
 export function EditorStatusBar({ layerCount }: EditorStatusBarProps): JSX.Element {
   const selectionCount = useSelectionStore((s) => s.ids.length);
   const assistantOn = useClaudeStore((s) => s.desk.busy || !!s.desk.group);
+  // The subject tools speak here, off the picture they work on (SubjectToolHud.tsx).
+  const subjectNotice = useRotoBrushStore((s) => !!s.notice || s.tracking);
   const activeDirty = useProjectStore((s) => (s.activeTabId ? s.tabs[s.activeTabId]?.dirty ?? false : false));
   // The COMPOSITION's name, not the tab's title — a tab keeps the title it was
   // minted with ("Main Comp") through every rename. See `activeCompName.ts`.
@@ -68,10 +73,10 @@ export function EditorStatusBar({ layerCount }: EditorStatusBarProps): JSX.Eleme
         <>
           {/* Real state, not a hardcoded "Ready": amber while unsaved. */}
           <span className={cn(styles.stateDot, activeDirty && styles.stateDotDirty)} aria-hidden>●</span>
-          {assistantOn ? <AssistantWorkLine /> : (
+          {assistantOn ? <AssistantWorkLine /> : subjectNotice ? <SubjectToolNotice /> : (
             <span className={styles.drop4}>{activeDirty ? t('statusBar.state.unsaved', 'Unsaved changes') : t('statusBar.state.ready', 'Ready')}</span>
           )}
-          <span className={assistantOn ? undefined : styles.drop4}><Sep /></span>
+          <span className={assistantOn || subjectNotice ? undefined : styles.drop4}><Sep /></span>
           <span>
             {layerCount === 1
               ? t('statusBar.layers.one', '{n} layer', { n: layerCount })

@@ -372,7 +372,7 @@ std::optional<PathAt> DocExprEnv::path(std::string_view node, bool mask, const s
   if (n == nullptr) return std::nullopt;
   if (mask) {
     // The mask as it is at t (readers.cpp read_node_mask_at): its shape keyframes, else the static mask.
-    const std::vector<Json> anim = read_node_mask_anim(*n);
+    const std::span<const Json> anim = mask_anim_view(*n);
     std::optional<Json> m = anim.empty() ? read_node_mask(*n) : interpolate_mask(anim, t);
     if (!m || !m->at("paths").is_array()) return std::nullopt;
     const auto& paths = m->at("paths").arr();

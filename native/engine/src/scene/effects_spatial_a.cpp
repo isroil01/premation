@@ -471,10 +471,17 @@ bool warps(std::string_view t, const Params& P, double lw, double lh, Out& out) 
     return true;
   }
   if (t == "gaussian-blur" || t == "fast-box-blur") {
-    const double r = jmax(0, P.n(t == "gaussian-blur" ? "blurriness" : "blurRadius"));
+    const bool box = t == "fast-box-blur";
+    const double r = jmax(0, P.n(box ? "blurRadius" : "blurriness"));
     if (r > 0) {
       const double dimsRaw = mjs::round(P.n("dimensions"));
-      out.push_back(FxWriter(std::string(t)).num("radiusPx", r / std::numbers::sqrt3).num("dims", dimsRaw == 1 ? 1 : dimsRaw == 2 ? 2 : 0).done());
+      FxWriter w{std::string(t)};
+      // Gaussian: Blurriness is ~√3 σ (AE). Fast Box Blur: a box of half-width Blur Radius, Iterations times.
+      w.num("radiusPx", box ? r : r / std::numbers::sqrt3).num("dims", dimsRaw == 1 ? 1 : dimsRaw == 2 ? 2 : 0);
+      if (box) w.num("iterations", jmax(1, jmin(10, mjs::round(js_or(P.n("iterations"), 1)))));
+      // Repeat Edge Pixels: on by default (both effects' parameter default).
+      w.flag("repeatEdge", P.not_false("repeatEdge"));
+      out.push_back(w.done());
     }
     return true;
   }

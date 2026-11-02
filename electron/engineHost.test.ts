@@ -109,7 +109,7 @@ describe('FrameForwarder', () => {
     type: 'slots', generation, viewport: 1, width: 64, height: 32, format: 'rgba8unorm', shared, handles: [0x100, 0x104, 0x108], strides: [], offsets: [], sizes: [], modifier: 0,
   });
   const ready = (generation: number, slot: number): FrameReadyMessage => ({
-    type: 'frameReady', generation, slot, viewport: 1, dropped: 0, frame: 1, time: 0, revision: 3, renderStartUs: 0, renderDoneUs: 0, width: 64, height: 32,
+    type: 'frameReady', generation, slot, viewport: 1, dropped: 0, frame: 1, time: 0, revision: 3, renderStartUs: 0, renderDoneUs: 0, width: 64, height: 32, contentWidth: 0, contentHeight: 0,
   });
 
   function setup() {

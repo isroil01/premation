@@ -81,7 +81,7 @@ import { useAssetsViewStore, type AssetSortKey } from '@stores/assetsViewStore';
 import { documentMirror } from '@stores/documentMirror';
 import { useMirrorStructRevision } from '@hooks/useMirror';
 import { useSelectionStore } from '@stores/selectionStore';
-import { getAssetVisualInfo, FOLDER_COLOR } from '@layout/Assets/assetVisuals';
+import { formatLabel, getAssetVisualInfo, FOLDER_COLOR } from '@layout/Assets/assetVisuals';
 import { openContextMenu, type ContextMenuItem } from '@stores/contextMenuStore';
 import { isJobCancelRequested, useUIStore } from '@stores/uiStore';
 import { useLayoutStore } from '@stores/layoutStore';
@@ -106,8 +106,10 @@ import { assetDiskPath, canRevealAssets, revealAsset } from './assetReveal';
 import { canOpenOriginals, editOriginalItems, editOriginalShortcutLabel } from './editOriginal';
 import { isEditableOriginal } from './editOriginalLogic';
 import {
+  consolidateFootageEdit,
   createFolderEdit,
   createFolderTreeEdit,
+  duplicateFootageCount,
   importBrowserFilesEdit,
   importPathsEdit,
   isPhotoshopPath,
@@ -218,7 +220,6 @@ export function AssetsPanel(): JSX.Element {
     const items = ids.filter((id) => m.item(id)?.kind === 'footage');
     void setItemLabelEdit(items, labelId);
   };
-  const setTags = (assetId: string, tags: string[]): void => { void setItemTagsEdit([{ id: assetId, tags }]); };
 
   const view = useAssetsViewStore((s) => s.view);
   const setView = useAssetsViewStore((s) => s.setView);
@@ -857,6 +858,24 @@ export function AssetsPanel(): JSX.Element {
    * 'derived'` is that distinction; see `AssetSource`. Hidden rather than
    * removed, and revealable rather than hidden outright.
    */
+  // The same file imported more than once (projects saved before imports reused items) — offered as one Merge.
+  const duplicateCount = useMemo(() => {
+    void assets;
+    return duplicateFootageCount();
+  }, [assets]);
+  const consolidate = async (): Promise<void> => {
+    const removed = await consolidateFootageEdit();
+    if (removed === 0) return;
+    setSelectedAssetIds(new Set());
+    useUIStore.getState().notify({
+      level: 'success',
+      message: removed === 1
+        ? t('assets.panel.consolidatedOne', 'Merged {n} duplicate item — its layers now use the original.', { n: removed })
+        : t('assets.panel.consolidatedOther', 'Merged {n} duplicate items — their layers now use the originals.', { n: removed }),
+      durationMs: 4000,
+    });
+  };
+
   const shelfAssets = showDerived ? assets : assets.filter(isLibraryAsset);
   const derivedCount = assets.length - assets.filter(isLibraryAsset).length;
 
@@ -1256,14 +1275,14 @@ export function AssetsPanel(): JSX.Element {
 
   const renderAssetRow = (row: Extract<AssetRow, { kind: 'asset' }>): JSX.Element => {
     const { asset } = row;
-    const visual = getAssetVisualInfo(asset);
     const label = labelColorOf(asset);
     return (
       <div
         role="treeitem"
         aria-selected={selectedAssetIds.has(asset.id)}
         className={`${styles.assetRow}${selectedAssetIds.has(asset.id) ? ` ${styles.assetRowSelected}` : ''}`}
-        style={{ paddingLeft: 8 + row.depth * 16 + (flat ? 0 : 16) }}
+        // A file at the top level starts on the Name heading's edge; inside a folder it indents under the folder's name.
+        style={{ paddingLeft: 8 + row.depth * 16 + (!flat && row.depth > 0 ? 16 : 0) }}
         title={asset.tags?.length ? `${asset.name}\n${t('assets.panel.tagsAria', 'Tags: {tags}', { tags: asset.tags.join(', ') })}` : asset.name}
         data-focused={focusedAssetId === asset.id || undefined}
         onClick={(e) => selectAsset(asset.id, e, orderedAssetIds)}
@@ -1283,7 +1302,7 @@ export function AssetsPanel(): JSX.Element {
             {asset.tags.length > 2 && <span className={styles.assetRowUsed}>+{asset.tags.length - 2}</span>}
           </span>
         )}
-        <span className={styles.assetRowType}>{visual.label}</span>
+        <span className={styles.assetRowType} title={getAssetVisualInfo(asset).label}>{formatLabel(asset)}</span>
         {/* Unknown in a window that did not import the file: a dash, not "0 B". */}
         <span className={styles.assetRowSize}>{asset.size > 0 ? formatBytes(asset.size) : '—'}</span>
       </div>
@@ -1299,7 +1318,6 @@ export function AssetsPanel(): JSX.Element {
         role="row"
       >
         {row.assets.map((asset) => {
-          const visual = getAssetVisualInfo(asset);
           const label = labelColorOf(asset);
           const selected = selectedAssetIds.has(asset.id);
           return (
@@ -1319,7 +1337,7 @@ export function AssetsPanel(): JSX.Element {
               <AssetThumb asset={asset} variant="card" scrub />
               <span className={styles.assetCardName}>{asset.name}</span>
               <span className={styles.assetCardMeta}>
-                <span>{visual.label}</span>
+                <span>{formatLabel(asset)}</span>
                 <span>·</span>
                 <span>{formatBytes(asset.size)}</span>
                 {usedCount(asset.id) > 0 && <span title={usedCount(asset.id) === 1
@@ -1392,8 +1410,7 @@ export function AssetsPanel(): JSX.Element {
             open={drawerOpen}
             onToggle={() => setDrawerOpen(!drawerOpen)}
             usedBy={usedBy}
-            onSelectLayer={(id) => useSelectionStore.getState().set([id])}
-            onSetTags={setTags}
+            onSelectLayers={(ids) => useSelectionStore.getState().set(ids)}
           />
           </div>
           <div className={styles.assetSearchRow}>
@@ -1481,6 +1498,24 @@ export function AssetsPanel(): JSX.Element {
           </div>
           {filterNote && (
             <div className={styles.assetNote} role="status">{filterNote}</div>
+          )}
+          {duplicateCount > 0 && (
+            <div className={styles.assetDupNote} role="status">
+              <Icon name="copy" size="sm" />
+              <span>
+                {duplicateCount === 1
+                  ? t('assets.panel.duplicatesOne', '{n} file is in the project twice.', { n: duplicateCount })
+                  : t('assets.panel.duplicatesOther', '{n} files are in the project more than once.', { n: duplicateCount })}
+              </span>
+              <button
+                type="button"
+                className={styles.assetDupMerge}
+                title={t('assets.panel.consolidateTitle', 'Consolidate All Footage: layers use one item per file and the copies are removed (undoable)')}
+                onClick={() => { void consolidate(); }}
+              >
+                {t('assets.panel.consolidate', 'Merge')}
+              </button>
+            </div>
           )}
 
           {/* Hidden file inputs for media and folder imports */}

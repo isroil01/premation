@@ -16,6 +16,7 @@
 
 import { onLayerTransformStart } from '@core/workspace/ports';
 import { layerSubjects } from '@core/workspace/subjects';
+import { objectMatteCard } from '@core/workspace/objectMatteEffect';
 import { activeSubjectId } from '@stores/subjectStore';
 import { useUIStore } from '@stores/uiStore';
 import { t } from '@core/i18n';
@@ -30,6 +31,8 @@ export function installSubjectTransformHint(): () => void {
     if (told.has(layer)) return;
     const subjects = layerSubjects(layer);
     if (subjects.length === 0) return;
+    // Already cut to its subject (a separated copy, or Remove Background): moving it moves only the subject.
+    if (objectMatteCard(layer)?.enabled) return;
     told.add(layer);
     const subject = subjects.find((s) => s.id === activeSubjectId(layer)) ?? subjects[0]!;
     const what = kind === 'move'

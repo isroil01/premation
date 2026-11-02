@@ -126,6 +126,44 @@
   flex: 0 0 auto;
 }
 
+/* "N files are in the project more than once · Merge" — one hairline row above the list. */
+.assetDupNote {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px var(--space-2);
+  border-bottom: 1px solid var(--color-border-subtle);
+  color: var(--color-text-secondary);
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  line-height: var(--panel-line-height-help);
+  flex: 0 0 auto;
+}
+
+.assetDupNote > span {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assetDupMerge {
+  flex: 0 0 auto;
+  padding: 1px var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-accent);
+  font: inherit;
+  cursor: pointer;
+}
+
+.assetDupMerge:hover {
+  background: var(--color-hover);
+}
+
 /* OS files held over the list: the whole list is the drop target. */
 .assetListHostDrop {
   box-shadow: inset 0 0 0 2px var(--color-primary);
@@ -1659,8 +1697,9 @@
 .assetHead {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-3);
   padding: 5px 10px 5px 8px;
+  margin-bottom: var(--space-1);
   border-bottom: 1px solid var(--color-border);
   /* The panel `label` role (typography.css). */
   font-family: var(--panel-font-family);
@@ -1669,14 +1708,11 @@
   color: var(--color-text-tertiary);
   user-select: none;
   flex: 0 0 auto;
-  /* A query container, like `.assetListHost` below: the columns fold on the
-     PANEL's width, which the window's width says nothing about. */
-  container-type: inline-size;
 }
 
 .assetHeadName { flex: 1 1 auto; min-width: 0; }
 /* Same widths as the row cells below, so the headings sit over their column. */
-.assetHeadType { flex: 0 0 60px; }
+.assetHeadType { flex: 0 0 44px; }
 .assetHeadSize { flex: 0 0 70px; text-align: right; }
 
 .assetTree {
@@ -1789,7 +1825,9 @@
 }
 
 .assetRowType {
-  flex: 0 0 60px;
+  flex: 0 0 44px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--color-text-tertiary);
   white-space: nowrap;
 }
@@ -2057,6 +2095,10 @@
 
 /* ── Assets: Container Shell ───────────────────────────────────────── */
 .assetShell {
+  /* The columns fold on the PANEL's width (`@container assets` below), which the
+     window's width says nothing about — one container, so the headings and the
+     rows fold at the same width. */
+  container: assets / inline-size;
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
@@ -2680,7 +2722,7 @@
    pushed the list down under the pointer — so the second click of a
    double-click landed on a different row and the file never opened. */
 .assetTopInfo:has(> .assetDrawer > .assetDrawerHead[aria-expanded="true"]) {
-  height: 132px;
+  height: 96px;
 }
 
 .assetTopInfo .assetDrawerBody,
@@ -2698,24 +2740,74 @@
   flex: 1 1 auto;
 }
 
-/* At the top of the Project panel the picture sits left of the facts. */
-.assetTopInfo .assetDrawerBody:has(.assetDrawerThumb) {
-  display: grid;
-  grid-template-columns: 96px minmax(0, 1fr);
-  column-gap: var(--space-3);
-  align-items: start;
+/* The picture, left of the facts: a fixed tile, the image fitted inside it. */
+.assetDrawerThumb {
+  flex: 0 0 auto;
+  width: 96px;
+  height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-0);
+  color: var(--color-text-tertiary);
+  overflow: hidden;
 }
 
-.assetDrawerThumb {
-  width: 96px;
-  aspect-ratio: 16 / 9;
+.assetDrawerThumb > img {
+  width: 100%;
+  height: 100%;
   object-fit: contain;
-  background: var(--color-surface-0);
   display: block;
 }
 
-.assetTopInfo .assetDrawerBody:has(.assetDrawerThumb) > :not(.assetDrawerThumb):not(.assetDrawerGrid) {
-  grid-column: 1 / -1;
+/* Two or three short lines, no labels: what it is, its time, where it is used. */
+.assetDrawerFacts {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  /* The panel `help` role (typography.css). */
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-help);
+  line-height: var(--panel-line-height-help);
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.assetDrawerFacts > span,
+.assetDrawerUsed > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assetDrawerUnused {
+  color: var(--color-text-tertiary);
+}
+
+/* "Used by N layers": a quiet link that selects those layers. */
+.assetDrawerUsed {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-accent);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.assetDrawerUsed:hover > span { text-decoration: underline; }
+.assetDrawerUsed:focus-visible {
+  outline: 1px solid var(--color-focus-ring);
+  outline-offset: 1px;
 }
 
 /* A button: click collapses the drawer. Reset so it reads as a strip. */
@@ -2724,7 +2816,7 @@
   align-items: center;
   gap: var(--space-2);
   width: 100%;
-  padding: 4px var(--space-2) 4px var(--space-3);
+  padding: 6px var(--space-2) 4px 8px;
   border: 0;
   background: transparent;
   font: inherit;
@@ -2733,12 +2825,13 @@
   font-size: var(--panel-font-size);
   font-weight: var(--panel-weight-subgroup);
   text-align: left;
-  color: var(--color-text-tertiary);
+  color: var(--color-text-primary);
   user-select: none;
   cursor: pointer;
 }
 
-.assetDrawerHead:hover { color: var(--color-text-secondary); }
+.assetDrawerHead > svg { color: var(--color-text-tertiary); flex: 0 0 auto; }
+.assetDrawerHead:hover > svg { color: var(--color-text-secondary); }
 .assetDrawerHead:focus-visible {
   outline: 1px solid var(--color-focus-ring);
   outline-offset: -1px;
@@ -2768,7 +2861,7 @@
   box-shadow: inset 0 0 0 1px var(--color-focus-ring);
 }
 
-.assetDrawerHead > span:first-child {
+.assetDrawerHead > span:not(.assetLabelDot) {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
@@ -2777,52 +2870,16 @@
 }
 
 .assetDrawerBody {
-  overflow: auto;
-  min-height: 0;
-  padding: 0 var(--space-3) var(--space-2);
-}
-
-.assetDrawerGrid {
-  display: grid;
-  grid-template-columns: 78px minmax(0, 1fr);
-  column-gap: var(--space-2);
-  row-gap: 2px;
-  margin: 0;
-  /* The panel `label` role (typography.css). */
-  font-family: var(--panel-font-family);
-  font-size: var(--panel-font-size);
-  font-weight: var(--panel-weight-label);
-}
-
-.assetDrawerKey {
-  color: var(--color-text-tertiary);
-  white-space: nowrap;
-}
-
-.assetDrawerVal {
-  margin: 0;
-  color: var(--color-text-secondary);
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-}
-
-.assetDrawerValWrap {
-  white-space: normal;
-  word-break: break-all;
-}
-
-.assetDrawerUsage {
   display: flex;
-  flex-wrap: wrap;
-  gap: 3px;
-  margin-top: 4px;
+  align-items: flex-start;
+  gap: var(--space-3);
+  min-height: 0;
+  overflow: hidden;
+  padding: 2px var(--space-2) var(--space-2) 8px;
 }
 
 .assetDrawerEmpty {
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-1) var(--space-2) var(--space-2) 8px;
   /* The panel `help` role (typography.css). */
   font-family: var(--panel-font-family);
   font-size: var(--panel-font-size-help);
@@ -2855,8 +2912,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  direction: rtl;
-  text-align: left;
+  color: var(--color-text-tertiary);
   /* The panel `label` role (typography.css). */
   font-family: var(--panel-font-family);
   font-size: var(--panel-font-size);
@@ -2882,6 +2938,66 @@
 .mediaRowLoading {
   color: var(--color-text-muted);
   font-style: italic;
+}
+
+/* An added folder that could not be read (moved, renamed, drive unplugged). */
+.mediaRowMissing {
+  color: var(--color-warning);
+}
+
+/* A file the project already holds: placing it reuses that item. */
+.mediaRowInProject {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--color-success);
+}
+
+/* The added folders: the top level of the tree. */
+.mediaRootRow .assetRowName {
+  font-weight: 600;
+}
+
+.mediaBrowserRecent {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1px;
+  width: 100%;
+  max-width: 360px;
+  text-align: left;
+}
+
+.mediaBrowserRecentTitle {
+  padding: 0 var(--space-1) var(--space-1);
+  color: var(--color-text-tertiary);
+}
+
+.mediaBrowserRecentRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: 2px var(--space-1);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mediaBrowserRecentRow > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mediaBrowserRecentRow:hover {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
 }
 
 /* ── Layers panel: label swatch + filter bar ───────────────────────── */
@@ -3108,7 +3224,7 @@ button.avCell[data-kind='lock'][data-on] { color: var(--color-text-primary); }
    Size goes only when the panel is about as narrow as it can be dragged.
    Heading and cell fold at the same width so a heading never sits over
    nothing. Sorting by a folded column stays available from the sort menu. */
-@container (max-width: 300px) {
+@container assets (max-width: 260px) {
   .assetHeadType,
   .assetRowType,
   .assetRowTags {
@@ -3116,7 +3232,7 @@ button.avCell[data-kind='lock'][data-on] { color: var(--color-text-primary); }
   }
 }
 
-@container (max-width: 190px) {
+@container assets (max-width: 190px) {
   .assetHeadSize,
   .assetRowSize {
     display: none;

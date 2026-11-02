@@ -40,6 +40,8 @@ using doc::fail;
 
 /// The session's build worker (it holds the build lock for each whole build).
 thread_local bool tlBuildWorker = false;
+/// A prefetch worker's sampleImage: only the main builder draws a layer alone.
+struct NeedsMainBuilder {};
 
 api::EngineError err(ErrorCode code, std::string message) {
   api::EngineError e;
@@ -185,14 +187,30 @@ Session::Session(Outbox& out, FrameSink& sink, SessionOptions options)
 }
 
 Session::~Session() {
-  // Stop the build worker before any member it reads goes (buildThread_, the
+  // Stop the build workers before any member they read goes (buildThread_, the
   // last member, joins it). A task still queued is dropped with the session.
   {
     const std::lock_guard<std::mutex> lock(buildQueueMu_);
     buildStop_ = true;
   }
   buildCv_.notify_all();
+  for (JoiningThread& t : prefetchThreads_) t.join();
   buildThread_.join();
+}
+
+void Session::set_prefetch_builders(std::vector<FrameBuilder*> builders) {
+  drain_builds();
+  prefetchBuilders_ = std::move(builders);
+  prefetchExprCaches_.clear();
+  for (FrameBuilder* b : prefetchBuilders_) {
+    b->set_cancel_flag(&editsWaiting_);
+    auto cache = std::make_unique<doc::ExprCache>();
+    // sampleImage draws through the main builder: such a frame is the main worker's.
+    cache->pixelProbe = [](const doc::DocExprEnv&, std::string_view, double, bool, std::string&) -> std::shared_ptr<const doc::LayerPixels> {
+      throw NeedsMainBuilder{};
+    };
+    prefetchExprCaches_.push_back(std::move(cache));
+  }
 }
 
 void Session::set_frame_builder(FrameBuilder* builder) {
@@ -659,11 +677,12 @@ void Session::stamp_missing_key_ids(const doc::Parts& touched, doc::HCtx& x) {
   for (const auto& [id, before] : touched.nodes) {
     const doc::Node* n = doc_.node(id);
     if (n == nullptr) continue;
-    std::vector<doc::Json> anim = doc::read_node_mask_anim(*n);
-    const bool missing = std::any_of(anim.begin(), anim.end(), [](const doc::Json& k) {
+    const std::span<const doc::Json> view = doc::mask_anim_view(*n);
+    const bool missing = std::any_of(view.begin(), view.end(), [](const doc::Json& k) {
       return !(k.at("id").is_string() && !k.at("id").str().empty());
     });
     if (!missing) continue;
+    std::vector<doc::Json> anim(view.begin(), view.end());
     for (doc::Json& k : anim) {
       if (!(k.at("id").is_string() && !k.at("id").str().empty())) k.set("id", doc::Json::string(x.mint_key_id()));
     }
@@ -2010,8 +2029,7 @@ void Session::note_activity(Clock::time_point now) {
   // Whatever the prefetcher had out is stale (an edit) or in the way (a seek,
   // a play): forgotten here; its answer, if it comes, is folded into the count
   // the next prefetch starts from. It steps out from the playhead again.
-  prefetchFrame_.reset();
-  prefetchKey_ = 0;
+  prefetchOut_.clear();
   prefetchRefused_ = 0;
   prefetchResting_ = false;
   prefetchOrigin_ = -1;
@@ -2020,12 +2038,16 @@ void Session::note_activity(Clock::time_point now) {
 }
 
 bool Session::idle_prefetch_armed() const {
-  if (!options_.idlePrefetch || playing_ || phase_ != Phase::open || prefetchResting_ || gesture_) return false;
+  // While a play is served from the cache tiers the build worker idles: the
+  // prefetcher renders ahead of the playhead then (idle_prefetch). Not during a
+  // cache fill, which builds every frame itself.
+  if (!options_.idlePrefetch || phase_ != Phase::open || prefetchResting_ || gesture_) return false;
+  if (playing_ && transportState_ == api::TransportState::caching) return false;
   // No scene builder (C2's quads: the core-only tests, PREMATION_ENGINE_SCENE=0): nothing worth caching.
   if (frameBuilder_ == nullptr || !active_comp()) return false;
   const bool view = std::ranges::any_of(surfaces_, [](const auto& e) { return e.second.open && e.second.layer.empty() && !e.second.time; });
   if (!view) return false;
-  if (prefetchFrame_) return true;
+  if (!prefetchOut_.empty()) return true;
   // Stepped through the whole range from this playhead: nothing until something moves.
   const Range r = prefetch_range();
   const std::int64_t origin = std::clamp(frame_, r.first, r.last);
@@ -2037,23 +2059,28 @@ void Session::idle_prefetch(Clock::time_point now) {
   if (!deferred_.empty() || !forceBuild_.empty() || renderDirty_) return;
   if (now - lastActivity_ < kIdlePrefetchAfter) return;
   const RenderCounters counters = sink_.counters();
-  if (prefetchFrame_) {
-    if (counters.prefetched == prefetchSeenAnswered_) return;  // still drawing (or queued behind a frame)
-    // Landed. The map knows its key once a tier kept it; refused by every tier
-    // (the RAM budget full of this range, VRAM too small) a few times in a row,
+  if (prefetchOut_.empty()) prefetchSeenAnswered_ = counters.prefetched;
+  // One prefetch per worker in flight (item 7: the prefetch workers build side
+  // by side); `prefetchOut_` is what went since the sink's answered count was
+  // `prefetchSeenAnswered_` (answers to jobs a move forgot count too: clamped).
+  const std::uint64_t answered = counters.prefetched - prefetchSeenAnswered_;
+  if (!prefetchOut_.empty() && answered >= prefetchOut_.size()) {
+    // All landed. The map knows a key once a tier kept it; refused by every tier
+    // (the RAM budget full of this range, VRAM too small) a few rounds in a row,
     // the prefetcher rests until the next edit or move.
-    const bool kept = prefetchKey_ != 0 && sink_.cached_frame(prefetchKey_).has_value();
+    const bool kept = std::ranges::any_of(prefetchOut_, [this](std::uint64_t k) { return k != 0 && sink_.cached_frame(k).has_value(); });
     prefetchRefused_ = kept ? 0 : prefetchRefused_ + 1;
-    prefetchFrame_.reset();
-    prefetchKey_ = 0;
+    prefetchOut_.clear();
+    prefetchSeenAnswered_ = counters.prefetched;
     if (prefetchRefused_ >= kIdlePrefetchRefusals) {
       prefetchResting_ = true;
       return;
     }
   }
-  // Only when nothing else wants the build worker or the GPU: a frame being
+  if (prefetchOut_.size() >= 1 + prefetchBuilders_.size()) return;  // every worker has one
+  // Only when nothing else wants the main worker or the GPU: a frame being
   // built or drawn for a viewport, a cached job not yet answered, an engine job.
-  if (builds_active() || cachedSubmitted_ > cachedAnswered_) return;
+  if (viewport_builds_active() || cachedSubmitted_ > cachedAnswered_) return;
   if (runner_ && runner_->live() > 0) return;
   const std::optional<std::string> c = active_comp();
   if (!c) return;
@@ -2072,13 +2099,36 @@ void Session::idle_prefetch(Clock::time_point now) {
   if (!frameKeys_.indexed() || frameKeys_.volatile_inputs()) return;
   const Range r = prefetch_range();
   const std::int64_t origin = std::clamp(frame_, r.first, r.last);
+  const ViewportConfig port = frame_port(*view, *c);
+  const std::uint64_t scope = cache_scope(port, *c);
+  if (playing_) {
+    // Render-ahead while playing — only while the play is served from the tiers
+    // (the worker would otherwise be building the frames it shows): the first
+    // frame of the PLAY range no tier holds, far enough ahead that it is built
+    // before the playhead reaches it (a build, in frames, and two more).
+    // Forward only; the next tick looks again.
+    if (!playFromCache_) return;
+    const Range pr = play_range();
+    const std::int64_t at = std::clamp(frame_, pr.first, pr.last);
+    const double frameMs = static_cast<double>(frame_dur()) / static_cast<double>(doc::kFlicksPerSecond) * 1000.0;
+    const auto lead = static_cast<std::int64_t>(std::clamp(std::ceil(builtMs_ / std::max(1.0, frameMs)) + 2.0, 2.0, 120.0));
+    constexpr std::int64_t kPlayScan = 240;
+    for (std::int64_t f = at + lead; f <= pr.last && f < at + lead + kPlayScan; ++f) {
+      const std::uint64_t docKey = frameKeys_.key(f);
+      if (docKey == 0) continue;
+      const std::uint64_t pk = render::prebuild_key(scope, docKey);
+      if (sink_.cached_frame(pk)) continue;
+      prefetchOut_.push_back(pk);
+      submit_frame_to(*view, *c, 0, false, f);
+      return;
+    }
+    return;
+  }
   if (prefetchOrigin_ != origin) {
     prefetchOrigin_ = origin;
     prefetchAhead_ = 0;
     prefetchBehind_ = 0;
   }
-  const ViewportConfig port = frame_port(*view, *c);
-  const std::uint64_t scope = cache_scope(port, *c);
   // The next frame no tier holds: forward from the playhead to the end of the
   // range, then backward to its start (what Play needs first, then a scrub back).
   for (;;) {
@@ -2094,9 +2144,7 @@ void Session::idle_prefetch(Clock::time_point now) {
     if (docKey == 0) continue;
     const std::uint64_t pk = render::prebuild_key(scope, docKey);
     if (sink_.cached_frame(pk)) continue;  // a tier holds it (or will: a build of it is on its way)
-    prefetchFrame_ = f;
-    prefetchKey_ = pk;
-    prefetchSeenAnswered_ = counters.prefetched;
+    prefetchOut_.push_back(pk);
     submit_frame_to(*view, *c, 0, false, f);
     return;
   }
@@ -2172,6 +2220,9 @@ void canonical_cache_view(ViewportConfig& v) {
   // Where the texture lands in the slot is the present's business, not the frame's.
   v.compSpace->slotX = 0;
   v.compSpace->slotY = 0;
+  v.compSpace->present = 1;
+  v.compSpace->originX = 0;
+  v.compSpace->originY = 0;
 }
 
 bool same_cache_view(const ViewportConfig& a, const ViewportConfig& b) {
@@ -2385,7 +2436,7 @@ void Session::tick(Clock::time_point now) {
   if (!deferred_.empty()) poll_deferred(now);
   if (phase_ == Phase::open && (runner_ || !jobs_.empty())) poll_jobs(now);
   poll_live();
-  if (!playing_ && phase_ == Phase::open && options_.idlePrefetch) idle_prefetch(now);
+  if (phase_ == Phase::open && options_.idlePrefetch) idle_prefetch(now);
   if (!playing_ || phase_ != Phase::open) return;
   if (transportState_ == api::TransportState::caching) {
     fill_cache(now);
@@ -2657,6 +2708,8 @@ void Session::submit_frame_to(const ViewportConfig& surface, const std::string& 
   job.time = time;
   job.revision = revision_;
   job.clockDropped = clockDropped;
+  job.contentWidth = preview_pixels(port.width, port.resolution);
+  job.contentHeight = preview_pixels(port.height, port.resolution);
   // A prefetched frame is stored, so its footage is exact (as a fill's); it is never shown.
   job.prefetch = prefetchFrame.has_value();
   job.exactMedia = job.prefetch || (playing_ && transportState_ == api::TransportState::caching);
@@ -2691,6 +2744,8 @@ void Session::submit_frame_to(const ViewportConfig& surface, const std::string& 
       }
     }
   }
+  // Render-ahead while playing runs only while the play is served from the tiers (idle_prefetch).
+  if (playing_ && !job.prefetch) playFromCache_ = job.cachedKey.has_value();
   t.comp = c;
   t.time = time;
   t.clockTime = job.prefetch ? time : time_;
@@ -2745,6 +2800,10 @@ void Session::enqueue_build(BuildTask task) {
   {
     const std::lock_guard<std::mutex> lock(buildQueueMu_);
     if (!buildThread_.joinable()) buildThread_ = JoiningThread([this] { build_worker(); });
+    while (prefetchThreads_.size() < prefetchBuilders_.size()) {
+      const std::size_t index = prefetchThreads_.size();
+      prefetchThreads_.emplace_back([this, index] { prefetch_worker(index); });
+    }
     // Newest wins per viewport: a task still queued (not building yet) is replaced.
     // An idle prefetch (RenderJob::prefetch) never replaces a frame the viewport
     // will show; a frame for the viewport drops a queued prefetch (the user is
@@ -2780,7 +2839,12 @@ bool Session::build_pending(std::uint32_t viewport) const {
 
 bool Session::builds_active() const {
   const std::lock_guard<std::mutex> lock(buildQueueMu_);
-  return buildBusy_ || !buildQueue_.empty();
+  return buildBusy_ || prefetchBusy_ > 0 || !buildQueue_.empty();
+}
+
+bool Session::viewport_builds_active() const {
+  const std::lock_guard<std::mutex> lock(buildQueueMu_);
+  return viewportBusy_ || std::ranges::any_of(buildQueue_, [](const BuildTask& t) { return !t.job.prefetch || t.mainOnly; });
 }
 
 void Session::build_worker() {
@@ -2791,17 +2855,101 @@ void Session::build_worker() {
       std::unique_lock<std::mutex> lock(buildQueueMu_);
       buildCv_.wait(lock, [this] { return buildStop_ || !buildQueue_.empty(); });
       if (buildStop_) return;
-      task = std::move(buildQueue_.front());
-      buildQueue_.pop_front();
+      // A frame a viewport shows first; a prefetch when there is none.
+      auto it = std::ranges::find_if(buildQueue_, [](const BuildTask& t) { return !t.job.prefetch || t.mainOnly; });
+      if (it == buildQueue_.end()) it = buildQueue_.begin();
+      task = std::move(*it);
+      buildQueue_.erase(it);
       buildBusy_ = true;
+      viewportBusy_ = !task.job.prefetch;
     }
     run_build(std::move(task));
     {
       const std::lock_guard<std::mutex> lock(buildQueueMu_);
       buildBusy_ = false;
+      viewportBusy_ = false;
     }
     buildCv_.notify_all();  // drain_builds
   }
+}
+
+void Session::prefetch_worker(std::size_t index) {
+  tlBuildWorker = true;
+  const auto mine = [](const BuildTask& t) { return t.job.prefetch && !t.mainOnly; };
+  for (;;) {
+    BuildTask task;
+    {
+      std::unique_lock<std::mutex> lock(buildQueueMu_);
+      buildCv_.wait(lock, [&] { return buildStop_ || std::ranges::any_of(buildQueue_, mine); });
+      if (buildStop_) return;
+      const auto it = std::ranges::find_if(buildQueue_, mine);
+      task = std::move(*it);
+      buildQueue_.erase(it);
+      ++prefetchBusy_;
+    }
+    run_prefetch_build(std::move(task), index);
+    {
+      const std::lock_guard<std::mutex> lock(buildQueueMu_);
+      --prefetchBusy_;
+    }
+    buildCv_.notify_all();  // drain_builds
+  }
+}
+
+void Session::run_prefetch_build(BuildTask t, std::size_t index) {
+  BuildReport report;
+  report.comp = t.comp;
+  report.viewport = t.job.viewport;
+  report.seq = t.seq;
+  bool submit = false;
+  bool toMain = false;
+  if (editsWaiting_.load(std::memory_order_acquire) != 0) {
+    report.skipped = true;  // an edit is waiting: not ahead of it (run_build)
+  } else {
+    const std::shared_lock<std::shared_mutex> lock(buildMu_);
+    if (docWrites_.load(std::memory_order_acquire) != t.writes) {
+      report.skipped = true;
+    } else {
+      FrameBuilder& builder = *prefetchBuilders_.at(index);
+      doc::ExprCache& cache = *prefetchExprCaches_.at(index);
+      try {
+        const auto t0 = Clock::now();
+        builder.set_media_base(t.mediaBase);
+        const doc::DocExprEnv env(doc_, t.view, cache);
+        t.job.built = builder.build(doc_, t.view, env, cache, t.comp, t.time, t.port, t.playing, report.errors);
+        t.job.buildMs = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+        if (std::ranges::any_of(report.errors, [](const api::LayerError& e) { return e.stage == "plugin" || e.stage == "snapshot"; })) {
+          t.job.prebuildKey.reset();
+        }
+        report.ms = t.job.buildMs;
+        // Never shown: no overlay geometry, no onion ghosts (complete_job's other work).
+        if (!t.job.built) doc::build_frame_scene(doc::PCtx{doc_, t.view, env, cache}, t.comp, t.time, t.job.scene);
+        submit = true;
+      } catch (const NeedsMainBuilder&) {
+        toMain = true;
+      } catch (const BuildCancelled&) {
+        report.skipped = true;
+      } catch (const std::exception& e) {
+        PREMATION_LOG(error, "frame_build_failed").kv("error", std::string(e.what()));
+        report.errors.push_back(api::LayerError{"", "snapshot", std::string("frame build failed: ") + e.what(), std::nullopt});
+        submit = true;
+      }
+    }
+  }
+  if (toMain) {
+    t.mainOnly = true;
+    t.job.built.reset();
+    {
+      const std::lock_guard<std::mutex> lock(buildQueueMu_);
+      buildQueue_.push_front(std::move(t));
+    }
+    buildCv_.notify_all();
+    return;
+  }
+  if (submit) sink_.submit(std::move(t.job));
+  else sink_.note_dropped(t.job.viewport, 0U, t.job.clockDropped);
+  const std::lock_guard<std::mutex> lock(buildQueueMu_);
+  buildReports_.push_back(std::move(report));
 }
 
 void Session::run_build(BuildTask t) {
@@ -2818,7 +2966,7 @@ void Session::run_build(BuildTask t) {
     // skipped without the lock (the core thread queues a fresh one, below).
     report.skipped = true;
   } else {
-    const std::lock_guard<std::mutex> lock(buildMu_);
+    const std::lock_guard<std::shared_mutex> lock(buildMu_);
     // Frame-pipeline trace: how long the build waited for the lock, and a skip.
     PREMATION_LOG(debug, "ft_build").kv("rev", static_cast<std::uint64_t>(t.job.revision))
         .kv("lockMs", std::chrono::duration<double, std::milli>(Clock::now() - ftWait0).count())
@@ -2918,6 +3066,7 @@ void Session::pump_builds() {
     if (r.cached) continue;  // no build happened: nothing to average, nothing to announce
     // D5: the frame builder's CPU time per frame — an exponential moving average.
     buildMs_ = buildMs_ <= 0 ? r.ms : buildMs_ + (r.ms - buildMs_) * 0.2;
+    builtMs_ = builtMs_ <= 0 ? r.ms : builtMs_ + (r.ms - builtMs_) * 0.2;
     if (r.announce) announce_layer_errors(r.comp, std::move(r.errors));
   }
   if (rebuild) {
@@ -2931,7 +3080,7 @@ void Session::drain_builds() {
   for (;;) {
     {
       std::unique_lock<std::mutex> lock(buildQueueMu_);
-      buildCv_.wait(lock, [this] { return buildQueue_.empty() && !buildBusy_; });
+      buildCv_.wait(lock, [this] { return buildQueue_.empty() && !buildBusy_ && prefetchBusy_ == 0; });
     }
     pump_builds();  // may queue a rebuild for a skipped task: wait for that too
     if (!builds_active()) return;

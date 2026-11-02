@@ -78,11 +78,12 @@ void remint_key_ids(HCtx& x, std::string_view layer) {
     if (changed) d.set_anim(layer, std::move(snap));
   }
   if (const Node* n = d.node(layer)) {
-    std::vector<Json> anim = read_node_mask_anim(*n);
-    const bool any = std::any_of(anim.begin(), anim.end(), [](const Json& k) {
+    const std::span<const Json> view = mask_anim_view(*n);
+    const bool any = std::any_of(view.begin(), view.end(), [](const Json& k) {
       return k.at("id").is_string() && !k.at("id").str().empty();
     });
     if (any) {
+      std::vector<Json> anim(view.begin(), view.end());
       for (Json& k : anim) {
         if (k.at("id").is_string() && !k.at("id").str().empty()) k.set("id", Json::string(x.mint_key_id()));
       }

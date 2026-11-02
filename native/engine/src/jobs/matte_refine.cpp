@@ -410,11 +410,19 @@ std::vector<float> snap_edge(std::span<const float> alpha, std::span<const std::
   const auto colour = [&](std::size_t l) {
     return std::array<double, 3>{ic[l * 4] / 255.0, ic[l * 4 + 1] / 255.0, ic[l * 4 + 2] / 255.0};
   };
+  // Where the colours decide nothing (no sure subject or ground in reach: a head, an ear, a leg
+  // thinner than the band), the model's soft value is its CONFIDENCE, not coverage: kept as
+  // alpha it showed the subject half see-through. Hardened, as solidify_interior does inside.
   std::vector<float> est = pc;
+  for (std::size_t l = 0; l < est.size(); ++l) {
+    if (band[l] == 0) continue;
+    const float t = std::clamp((pc[l] - 0.2f) / 0.6f, 0.0f, 1.0f);
+    est[l] = t * t * (3.0f - 2.0f * t);
+  }
   std::vector<std::array<double, 3>> fs;
   std::vector<std::array<double, 3>> bs;
-  fs.reserve(kDirs.size());
-  bs.reserve(kDirs.size());
+  fs.reserve(kDirs.size() * 2);
+  bs.reserve(kDirs.size() * 2);
   for (int y = 0; y < bh; ++y)
     for (int x = 0; x < bw; ++x) {
       const std::size_t l = at(y * bw + x);
@@ -428,14 +436,24 @@ std::vector<float> snap_edge(std::span<const float> alpha, std::span<const std::
           if (sx < 0 || sy < 0 || sx >= bw || sy >= bh) break;
           const std::size_t sl = at(sy * bw + sx);
           if (band[sl] != 0) continue;
-          (pc[sl] >= 0.5f ? fs : bs).push_back(colour(sl));
+          const bool fg = pc[sl] >= 0.5f;
+          (fg ? fs : bs).push_back(colour(sl));
+          // A second sample half a band further on the same side: a patterned coat (patches,
+          // stripes) offers both of its colours, so a light patch is matched with a light one
+          // instead of read as a dark patch mixed with the sky.
+          const int sx2 = sx + dx * std::max(1, radius / 2);
+          const int sy2 = sy + dy * std::max(1, radius / 2);
+          if (sx2 >= 0 && sy2 >= 0 && sx2 < bw && sy2 < bh) {
+            const std::size_t s2 = at(sy2 * bw + sx2);
+            if (band[s2] == 0 && (pc[s2] >= 0.5f) == fg) (fg ? fs : bs).push_back(colour(s2));
+          }
           break;
         }
       }
       if (fs.empty() || bs.empty()) continue;
       const std::array<double, 3> I = colour(l);
       double best = std::numeric_limits<double>::infinity();
-      double bestAlpha = pc[l];
+      double bestAlpha = est[l];
       double bestContrast = 0;
       for (const auto& F : fs)
         for (const auto& B : bs) {
@@ -464,7 +482,7 @@ std::vector<float> snap_edge(std::span<const float> alpha, std::span<const std::
       // the picture's own edge wins. Between, a blend: no holes where the colours say little.
       const double trust = std::clamp((bestContrast * 255 - 20) / 40, 0.0, 1.0);
       const double tw = trust * trust * (3 - 2 * trust);
-      est[l] = static_cast<float>(pc[l] + tw * (bestAlpha - pc[l]));
+      est[l] = static_cast<float>(est[l] + tw * (bestAlpha - est[l]));
     }
   // Texture noise in the estimate smoothed, the picture's edge kept: a small joint-bilateral filter
   // (weights from distance and colour likeness) over the BAND pixels only. A colour guided filter

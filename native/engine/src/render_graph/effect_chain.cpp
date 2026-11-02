@@ -603,9 +603,17 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
   const ViewportState& vp = ctx.viewport;
   const Rect targetUv{0, 0, 1, 1};
   const Mat3 mvp = screen_mvp();
-  const double kx = space != nullptr ? space->pxToTexelX : 1;
-  const double ky = space != nullptr ? space->pxToTexelY : 1;
   const auto self = byId.find(selfId);
+  const Rect world = vp.visibleWorldRect;
+  // Screen space (the 2D route): params are layer px, the buffer is viewport px.
+  // One layer px is the layer's world scale (fx_scale: its own and its parents')
+  // in comp px, and one comp px is the view's px per comp px — so a 10 px blur
+  // on a 25 % layer is 2.5 comp px, and the same at any viewer zoom (AE runs
+  // effects in layer space). Rotation is not carried: a directional effect
+  // keeps its comp-space axis on a rotated 2D layer.
+  const double layerScale = self != byId.end() && self->second != nullptr ? self->second->fx_scale.value_or(1) : 1;
+  const double kx = space != nullptr ? space->pxToTexelX : layerScale * (world.width > 0 ? vp.pixelWidth / world.width : 1);
+  const double ky = space != nullptr ? space->pxToTexelY : layerScale * (world.height > 0 ? vp.pixelHeight / world.height : 1);
   const Rect fxBox = space != nullptr ? space->box : renderable_box(ctx, self == byId.end() ? nullptr : self->second);
   const double pw = vp.pixelWidth;
   const double ph = vp.pixelHeight;
@@ -617,8 +625,8 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
   // from then on.
   const ChainScissor scissorScope(ctx);
   std::optional<PxBox> covered = ctx.fxBounds && space == nullptr ? content : std::nullopt;
-  const Rect world = vp.visibleWorldRect;
-  const FxBoundsView boundsView{world.width > 0 ? pw / world.width : 1, world.height > 0 ? ph / world.height : 1};
+  // The reach of each entry in buffer texels, at the scale its passes draw at.
+  const FxBoundsView boundsView{kx, ky};
 
   TexRef curTex = std::move(input);
   std::string_view curName = pool[0];
@@ -1191,20 +1199,31 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
     }
 
     if (type == "gaussian-blur" || type == "fast-box-blur") {
-      TexRef src = curTex;
-      std::string_view outName;
+      // Fast Box Blur: `iterations` boxes (blur.wgsl box mode); Gaussian Blur: one Gaussian.
+      const bool box = type == "fast-box-blur";
+      const int iterations = box ? std::clamp(static_cast<int>(std::lround(fx.num("iterations", 1))), 1, 10) : 1;
+      // Repeat Edge Pixels on footage / a still: the edge texels go on outward and nothing
+      // spills past the layer's box. Other layers have transparent edges, so it changes nothing.
+      const bool picture = selfR != nullptr && (selfR->kind == api::RenderableKind::image || selfR->kind == api::RenderableKind::video) &&
+                           selfR->precomp_children.empty() && !selfR->precomp;
+      const Rect clampBox = picture && fx.flag("repeatEdge") ? fxBox : Rect{0, 0, 0, 0};
       const double dims = fx.num("dims");
-      if (dims != 2) {
-        src = blurPass(src, f1, 1.0 / pw, 0, radiusPx * kx);
-        outName = f1;
+      TexRef src = curTex;
+      std::string_view srcName = curName;
+      const auto pass = [&](double dirX, double dirY, double radius) {
+        const std::string_view dest = srcName == f1 ? f0 : f1;
+        const Commands c = one(Mat::BLUR_MATERIAL, pack_blur(ctx.packer(), mvp, targetUv, dirX, dirY, radius, box ? -1 : 1, clampBox), src);
+        ctx.draw_into(dest, c, true);
+        src = texOf(dest);
+        srcName = dest;
+      };
+      for (int i = 0; i < iterations; ++i) {
+        if (dims != 2) pass(1.0 / pw, 0, radiusPx * kx);
+        if (dims != 1) pass(0, 1.0 / ph, radiusPx * ky);
       }
-      if (dims != 1) {
-        src = blurPass(src, f0, 0, 1.0 / ph, radiusPx * ky);
-        outName = f0;
-      }
-      if (!outName.empty()) {
+      if (srcName != curName) {
         curTex = src;
-        curName = outName;
+        curName = srcName;
       }
       continue;
     }
@@ -1943,7 +1962,9 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
         const double chokeTex = fx.num("chokePx") * kx;
         const double sigmaTex = fx.num("featherPx") * kx / 2;
         const double yPerX = kx > 0 ? ky / kx : 1;
-        if (std::abs(chokeTex) >= 0.5 || sigmaTex >= 0.1) {
+        // The edge passes leave coverage in .r with alpha 1 (subject-edge.wgsl): Set Matte reads .r then.
+        const bool edged = std::abs(chokeTex) >= 0.5 || sigmaTex >= 0.1;
+        if (edged) {
           std::size_t auxAt = 0;
           const auto edgePass = [&](double mode, double dirX, double dirY, double amount, const TexRef& in) -> TexRef {
             Packer pk = ctx.packer();
@@ -1976,7 +1997,7 @@ ChainResult run_effects_chain(PassContext& ctx, const std::vector<api::RenderEff
         }
         Packer pk = ctx.packer();
         add(Mat::SET_MATTE_MATERIAL,
-            pk.mat3(mvp).rect(targetUv).vec4(fx.flag("useLuminance") ? 1 : 0, fx.flag("invert") ? 1 : 0, 0, 0).span(),
+            pk.mat3(mvp).rect(targetUv).vec4(fx.flag("useLuminance") ? 1 : 0, fx.flag("invert") ? 1 : 0, edged ? 1 : 0, 0).span(),
             ctx.linear_clamp())
             .mask = matte;
       }

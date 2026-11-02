@@ -155,11 +155,15 @@ void emit_textured(PassContext& ctx, Commands& cmds, const Mat3& mvp, const Colo
                    const LayerEdge& edge = {});
 void emit_silhouette(PassContext& ctx, Commands& cmds, const Mat3& mvp, const Color& c, double opacity, Blend blend,
                      const TexRef& tex, const SamplerRef& smp, const Rect& uv);
+/// `opacity` scales the result (the layer's opacity, applied after its effects).
 void emit_matte_combine(PassContext& ctx, Commands& cmds, const Mat3& mvp, Blend blend, const TexRef& tex,
-                        const SamplerRef& smp, const TexRef& matte, const ColorTransform& mode, const Rect& uv);
+                        const SamplerRef& smp, const TexRef& matte, const ColorTransform& mode, const Rect& uv,
+                        double opacity = 1);
 /// blend-combine.wgsl: `tex` (source) composited over `backdrop` with the W3C
-/// separable / non-separable blend `mode.m[0]` (1 multiply, 2 screen, …).
+/// separable / non-separable blend `mode.m[0]` (1 multiply, 2 screen, …);
+/// `opacity` scales the source's coverage before the blend.
 void emit_blend_combine(PassContext& ctx, Commands& cmds, const Mat3& mvp, Blend blend, const TexRef& tex,
-                        const SamplerRef& smp, const TexRef& backdrop, const ColorTransform& mode, const Rect& uv);
+                        const SamplerRef& smp, const TexRef& backdrop, const ColorTransform& mode, const Rect& uv,
+                        double opacity = 1);
 
 }  // namespace premation::rg

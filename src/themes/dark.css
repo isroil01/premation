@@ -53,7 +53,10 @@
   --color-surface-1:         var(--surface-1);  /* panels / cards / tables */
   --color-surface-2:         var(--surface-2);  /* controls / buttons / table headers */
   --color-surface-3:         var(--surface-3);  /* hover step / popovers */
-  --color-surface-raised:    var(--surface-3);  /* popovers / overlays  */
+  /* Menus, dialogs, popovers and tooltips: the app's ground with a structural
+     hairline edge, on the dashboard and in the editor alike (owner 2026-11-02 —
+     the dashboard's grey #444 sheets read as a different app). */
+  --color-surface-raised:    var(--surface-0);
   --color-panel:             var(--surface-1);
   /* The panel's own surface (2026-10-14, owner): a darker header band made the
      sidebars read darker than the rest of the editor. Hierarchy comes from
@@ -181,11 +184,11 @@
    Set on <html> so every alias above (and domain.css) resolves through it;
    `editor-active` is the body class AppRouter puts on while the editor is
    mounted, so the dashboard keeps its own steps. Regions are told apart by
-   the structural hairlines, controls keep --surface-2. */
+   the structural hairlines, controls keep --surface-2. Menus and dialogs
+   already take the ground everywhere (--color-surface-raised above). */
 [data-theme="dark"]:has(> body.editor-active),
 :root:not([data-theme]):has(> body.editor-active) {
   --surface-1:            var(--surface-0);
-  --color-surface-raised: var(--surface-0);
   --color-toolbar:        var(--surface-0);
   --color-statusbar:      var(--surface-0);
   --color-titlebar:       var(--surface-0);

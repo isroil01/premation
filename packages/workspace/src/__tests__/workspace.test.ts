@@ -1,4 +1,5 @@
 import { Workspace } from '../Workspace';
+import { zoomLadderStep, snapZoomToLadder } from '../camera/Camera';
 import { MemoryScene, MemorySelection, RecordingCommandPort } from '../adapters/memory';
 import { WorkspaceCommandType } from '../commands/WorkspaceCommands';
 import { NO_MODIFIERS, type PointerInput, type WheelInput, type KeyInput, type Modifiers } from '../input/events';
@@ -162,12 +163,26 @@ describe('Workspace camera via input', () => {
     expect(after.y).not.toBeCloseTo(before.y);
   });
 
-  it('zoomToFit frames all content', () => {
+  it('zoomToFit frames all content, its origin on a whole device pixel', () => {
     const { ws } = makeWorkspace();
     ws.zoomToFit(undefined, 0);
-    // Content spans x[0,300] y[0,100]; center should be (150,50).
-    expect(ws.getState().camera.center.x).toBeCloseTo(150);
-    expect(ws.getState().camera.center.y).toBeCloseTo(50);
+    // Content spans x[0,300] y[0,100]; the centre is (150,50) to within half a
+    // device pixel — the fit settles the comp origin onto a whole one.
+    const { center, zoom } = ws.getState().camera;
+    expect(Math.abs(center.x - 150) * zoom).toBeLessThanOrEqual(0.5);
+    expect(Math.abs(center.y - 50) * zoom).toBeLessThanOrEqual(0.5);
+    const origin = ws.camera.worldToScreen({ x: 0, y: 0 });
+    expect(origin.x).toBeCloseTo(Math.round(origin.x), 6);
+    expect(origin.y).toBeCloseTo(Math.round(origin.y), 6);
+  });
+
+  it('Zoom In / Out step the After Effects ladder', () => {
+    expect(zoomLadderStep(1, 1)).toBe(2);
+    expect(zoomLadderStep(1, -1)).toBeCloseTo(2 / 3);  // 66.7 %, as After Effects
+    expect(zoomLadderStep(0.47, 1)).toBe(0.5);
+    expect(zoomLadderStep(0.47, -1)).toBeCloseTo(1 / 3);
+    expect(snapZoomToLadder(1.01)).toBe(1);
+    expect(snapZoomToLadder(1.05)).toBe(1.05);
   });
 });
 

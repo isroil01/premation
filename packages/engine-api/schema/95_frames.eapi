@@ -56,6 +56,9 @@ struct FrameReady {
   renderDoneUs: f64 = 9;
   width: u32 = 10;
   height: u32 = 11;
+  /// Preview resolution: the frame fills only this top-left part of the slot (the page scales it up, nearest). 0 = the whole slot.
+  contentWidth: u32 = 12;
+  contentHeight: u32 = 13;
 }
 
 /// B4 — one subscribed layer's overlay geometry at the frame's time (setOverlayGeometry). Fields of kinds not subscribed are empty. Composition space is comp px, y down; `t` values are the layer's keyframe-axis seconds (what a Position key stores — the page's motion-path window and hover test compare them). One layer's geometry may arrive as SEVERAL records in a frame (the payload cap): the host merges them, CONCATENATING arrays in arrival order.

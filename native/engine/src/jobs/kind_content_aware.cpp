@@ -370,6 +370,13 @@ PreparedJob prepare_content_aware_fill(const api::ContentAwareFillJob& spec, con
     const double layerW = fl.width > 0 ? static_cast<double>(fl.width) : static_cast<double>(w);
     const double layerH = fl.height > 0 ? static_cast<double>(fl.height) : static_cast<double>(h);
     const auto px = static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
+    // A still is the same picture on every frame: ONE frame filled (the renderer shows the stored
+    // fill nearest the time, so it holds). Filling all 300 frames of a 10 s comp took many minutes.
+    const bool still = src->frame_count() <= 1;
+    const std::int64_t end = still ? first : last;
+    // Stop reaches inside the fill: one window of full-size frames runs for minutes.
+    caf::SequenceOptions fill = opts;
+    fill.cancelled = [&control] { return control.cancelled(); };
 
     std::error_code ec;
     std::filesystem::create_directories(folderText, ec);
@@ -400,13 +407,13 @@ PreparedJob prepare_content_aware_fill(const api::ContentAwareFillJob& spec, con
     // A subject fill over a still camera: the background the subject uncovers somewhere in the
     // range, as a clean plate (the fill alone carries one frame's guess through the shot).
     CleanPlate plate;
-    if (subjectHole) {
+    if (subjectHole && !still) {  // a still uncovers nothing over time
       std::vector<std::vector<std::uint8_t>> sampleRgba;
       std::vector<std::vector<std::uint8_t>> sampleHole;
       // Sampled over the subject's whole tracked span (and the range): the more of the shot, the
       // more background some frame uncovers.
       const std::int64_t p0 = std::min(first, static_cast<std::int64_t>(std::llround(subjectHole->frames.front().first * fps)));
-      const std::int64_t p1 = std::max(last, static_cast<std::int64_t>(std::llround(subjectHole->frames.back().first * fps)));
+      const std::int64_t p1 = std::max(end, static_cast<std::int64_t>(std::llround(subjectHole->frames.back().first * fps)));
       const std::int64_t span = p1 - p0 + 1;
       const std::int64_t step = std::max<std::int64_t>(1, span / kPlateSamples);
       const int g = static_cast<int>(std::lround(grow > 0 ? grow * w / layerW : std::max(w, h) * 0.01));
@@ -428,10 +435,10 @@ PreparedJob prepare_content_aware_fill(const api::ContentAwareFillJob& spec, con
     }
     std::optional<caf::SequenceFrame> carry;  // the previous window's last frame, filled
     std::int64_t carryFrame = -2;
-    const std::int64_t count = last - first + 1;
+    const std::int64_t count = end - first + 1;
     RgbaImage img;
-    for (std::int64_t w0 = first; w0 <= last; w0 += kWindow) {
-      const std::int64_t w1 = std::min(last, w0 + kWindow - 1);
+    for (std::int64_t w0 = first; w0 <= end; w0 += kWindow) {
+      const std::int64_t w1 = std::min(end, w0 + kWindow - 1);
       std::vector<caf::SequenceFrame> frames;
       std::vector<std::int64_t> index;  // comp frame per entry, -1 for the carried anchor
       std::vector<api::Time> times;
@@ -478,11 +485,19 @@ PreparedJob prepare_content_aware_fill(const api::ContentAwareFillJob& spec, con
         index.push_back(holes > 0 ? f : -1);
         times.push_back(flicks_of(t));
         compFrame.push_back(f);
-        control.progress((subjectHole ? 0.1 : 0.0) + (subjectHole ? 0.8 : 0.9) * static_cast<double>(f - first + 1) / static_cast<double>(count),
-                         "Filling frame " + std::to_string(f - first + 1) + " of " + std::to_string(count));
+        // Reading is quick; the bar moves with the fill below (fill.progress), not with the reads.
+        control.progress((subjectHole ? 0.1 : 0.0) + (subjectHole ? 0.8 : 0.9) * static_cast<double>(w0 - first) / static_cast<double>(count),
+                         "Reading frame " + std::to_string(f - first + 1) + " of " + std::to_string(count));
       }
       if (frames.empty()) continue;
-      const caf::SequenceStats st = caf::fill_sequence(frames, w, h, opts);
+      const double base = (subjectHole ? 0.1 : 0.0) + (subjectHole ? 0.8 : 0.9) * static_cast<double>(w0 - first) / static_cast<double>(count);
+      const double share = (subjectHole ? 0.8 : 0.9) * static_cast<double>(w1 - w0 + 1) / static_cast<double>(count);
+      fill.progress = [&control, base, share, w0, w1, first, count](double k) {
+        const auto done = std::min<std::int64_t>(w1 - first + 1, w0 - first + static_cast<std::int64_t>(std::llround(k * static_cast<double>(w1 - w0 + 1))));
+        control.progress(base + share * k, "Filling frame " + std::to_string(std::max<std::int64_t>(1, done)) + " of " + std::to_string(count));
+      };
+      const caf::SequenceStats st = caf::fill_sequence(frames, w, h, fill);
+      if (control.cancelled()) return nullptr;
       total.synthesized += st.synthesized;
       total.propagated += st.propagated;
       total.blended += st.blended;

@@ -258,7 +258,7 @@ TEST_CASE("session hooks: a camera-only setViewport keeps the slot ring (D5)", "
   CHECK(ring_config_changed(a, b));
   b = a;
   b.resolution = 0.5;
-  CHECK(ring_config_changed(a, b));
+  CHECK_FALSE(ring_config_changed(a, b));  // a reduced frame takes the slots' corner: no rebuild
   b = a;
   b.open = false;
   CHECK(ring_config_changed(a, b));

@@ -40,46 +40,6 @@
   filter: drop-shadow(0 0 1px var(--color-overlay-handle-halo));
 }
 
-.status {
-  position: absolute;
-  bottom: var(--space-2);
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  padding: 2px var(--space-2);
-  border: 1px solid var(--color-overlay-panel-border);
-  border-radius: var(--radius-full);
-  background: var(--color-overlay-panel-bg);
-  box-shadow: var(--color-overlay-panel-shadow);
-  color: var(--color-overlay-text);
-  font-size: var(--font-size-xs);
-  white-space: nowrap;
-  pointer-events: none;
-}
-
-.spinner {
-  width: 10px;
-  height: 10px;
-  border: 1.5px solid var(--color-overlay-text);
-  border-right-color: transparent;
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .spinner {
-    animation: none;
-  }
-}
-
 /* Every object found in the frame (Premiere's Object Mask lights them all):
    a quiet edge, so the picture stays readable; the one under the pointer
    takes the full .preview look. */

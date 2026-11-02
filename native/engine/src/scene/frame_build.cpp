@@ -11,6 +11,7 @@
 #include <functional>
 #include <limits>
 #include <numbers>
+#include <optional>
 #include <span>
 #include <utility>
 
@@ -176,6 +177,18 @@ double parent_scale(const Mat3& parent) {
   const double sy = std::hypot(static_cast<double>(parent.m[3]), static_cast<double>(parent.m[4]));
   const double s = std::max(sx, sy);
   return std::isfinite(s) && s > 0 ? s : 1;
+}
+
+/// The world scale a layer's effects run at (Renderable.fx_scale): the area
+/// scale of `model`'s linear part over the layer's own quad, its square root —
+/// the geometric mean of the two axes, parents included. Unset at 1.
+std::optional<double> fx_scale_of(const Mat3& model, const RLayer& l) {
+  const double pad = raster_padding(l);
+  const double area = (l.width + 2 * pad) * (l.height + 2 * pad);
+  if (!(area > 0)) return std::nullopt;
+  const double s = std::sqrt(std::abs(model.m[0] * model.m[4] - model.m[1] * model.m[3]) / area);
+  if (!std::isfinite(s) || s <= 0 || std::abs(s - 1) < 1e-6) return std::nullopt;
+  return s;
 }
 
 Mat3 center_model(const RLayer& l) {
@@ -841,6 +854,7 @@ api::Renderable Flattener::layer_to_renderable(const RLayer& l, const Mat3& pare
     }
   }
   r.model_matrix = mat_wire(model);
+  r.fx_scale = fx_scale_of(model, l);
   r.bounds = bounds_of(model);
   apply_corner_pin(l.cornerPin, model, r);  // resolveCornerPin (corner_pin.cpp)
   r.opacity = opacity;
@@ -969,6 +983,7 @@ api::Renderable Flattener::precomp_to_renderable(const RLayer& l, const Mat3& pa
   r.id = l.id;
   r.kind = api::RenderableKind::image;
   r.model_matrix = mat_wire(model);
+  r.fx_scale = fx_scale_of(model, l);
   r.bounds = bounds_of(model);
   if (cardModel) {  // the AABB of the four projected corners
     constexpr double kInf = std::numeric_limits<double>::infinity();
@@ -1058,6 +1073,7 @@ api::Renderable Flattener::particles_to_renderable(const RLayer& l, const Mat3& 
   r.id = l.id;
   r.kind = api::RenderableKind::image;
   r.model_matrix = mat_wire(model);
+  r.fx_scale = fx_scale_of(model, l);
   r.bounds = bounds_of(model);
   r.opacity = parentOpacity * l.opacity;
   r.blend = adv > 0 ? api::RenderBlendMode::normal
@@ -1105,6 +1121,7 @@ std::optional<api::Renderable> Flattener::adjustment_to_renderable(const RLayer&
   // whole frame below (composition_pass.cpp adjustment branch).
   const Mat3 model = mat3_mul(parent, center_model(l));
   r.model_matrix = mat_wire(model);
+  // No fx_scale: the chain runs on the frame below, at comp scale.
   // The layer's own box in world space, as every other layer's: the effect
   // chain's fxBox (renderable_box) is where box-relative effects put their
   // centre and extent — a Vignette's falloff, a generator's field. A 1 × 1
@@ -1114,7 +1131,10 @@ std::optional<api::Renderable> Flattener::adjustment_to_renderable(const RLayer&
   // AE honours an adjustment layer's opacity (and masks): the processed frame
   // is mixed against the untouched one by opacity × mask coverage.
   r.opacity = parentOpacity * l.opacity;
-  r.blend = api::RenderBlendMode::normal;
+  // Its blend mode: the processed frame is blended over the untouched one with it (composition_pass.cpp).
+  const int adv = advanced_blend_id(l.blend);
+  r.blend = adv == 0 && l.blend == "add" ? api::RenderBlendMode::add : api::RenderBlendMode::normal;
+  if (adv > 0) r.advanced_blend = adv;
   if (mask_shapes_layer(l)) r.mask_texture_key = "mask:" + l.id;  // fed by feed()
   api::RenderAdjustment adj;
   if (!cm.identity) {

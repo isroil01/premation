@@ -125,6 +125,8 @@ void solidify(std::vector<float>& alpha);
 /// solidify() for the INTERIOR only: pixels farther than `bandPx` (4-connected steps) from the
 /// matte's 0.5 crossing. The band around the edge — hair, fur, the snapped soft edge — keeps
 /// its fractional alpha, so making the inside solid no longer hardens the edge.
+/// Past the band a pixel is wholly inside (1) or outside (0); enclosed dips below 0.5 smaller
+/// than (3·bandPx)² are filled first, so they open no band inside the subject.
 void solidify_interior(std::vector<float>& alpha, int width, int height, int bandPx);
 
 /// The IoU of a frame-size matte `alpha` (read at 0.5) against one decoder candidate's 256²

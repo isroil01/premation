@@ -3,7 +3,7 @@
  * it holds.
  *
  * View mode (list / grid), the sort column, the active filters, which sub-tab
- * (the project bin or the on-disk media browser) and the browsed folder are
+ * (the project bin or the on-disk media browser) and the browsed folders are
  * all statements about the person using the panel, not about the project —
  * the same argument `preferenceStore` makes for `effectFavorites`. They live
  * in their own small store rather than in the preference store because they
@@ -35,8 +35,14 @@ export interface AssetsViewState {
   /** A `LABEL_COLORS` id, or null for any. */
   labelFilter: string | null;
   tab: AssetsTab;
-  /** The folder the Browse tab lists. Desktop only; null until picked. */
-  browseRoot: string | null;
+  /**
+   * The folders the Media Browser tab lists, per project (`browseKey`): each
+   * project shows the folders added while it was open, so one project's
+   * footage folders do not appear in another's. Desktop only.
+   */
+  browseRoots: Record<string, string[]>;
+  /** Folders added in any project, newest first — the Add Folder menu's one-click list. */
+  recentBrowseFolders: string[];
   /** The metadata drawer under the list. */
   drawerOpen: boolean;
 }
@@ -53,7 +59,9 @@ interface AssetsViewActions {
   setLabelFilter: (label: string | null) => void;
   clearFilters: () => void;
   setTab: (tab: AssetsTab) => void;
-  setBrowseRoot: (root: string | null) => void;
+  /** Add a folder to `project`'s Media Browser (no-op when it is already there). */
+  addBrowseRoot: (project: string, root: string) => void;
+  removeBrowseRoot: (project: string, root: string) => void;
   setDrawerOpen: (open: boolean) => void;
 }
 
@@ -70,9 +78,23 @@ export const DEFAULT_ASSETS_VIEW: AssetsViewState = {
   tagFilter: null,
   labelFilter: null,
   tab: 'bin',
-  browseRoot: null,
+  browseRoots: {},
+  recentBrowseFolders: [],
   drawerOpen: true,
 };
+
+/** How many folders the Add Folder menu remembers. */
+const RECENT_FOLDERS = 8;
+/** How many projects keep their Media Browser folders (oldest dropped first). */
+const MAX_PROJECTS = 200;
+
+/** The `browseRoots` key for a project: its id, or one shared key for a project not yet created. */
+export function browseKey(projectId: string | null | undefined): string {
+  return projectId || '_unsaved';
+}
+
+/** Folder paths compared the way Windows and macOS file systems do: separator- and case-insensitive. */
+const samePath = (a: string, b: string): boolean => a.replace(/\\/g, '/').toLowerCase() === b.replace(/\\/g, '/').toLowerCase();
 
 /** Which sort direction a click on `key` produces, given the current sort. */
 export function nextSort(
@@ -98,6 +120,9 @@ function load(): Partial<AssetsViewState> {
     for (const k of Object.keys(DEFAULT_ASSETS_VIEW) as Array<keyof AssetsViewState>) {
       if (k in parsed) (out as Record<string, unknown>)[k] = parsed[k];
     }
+    // The single global folder of older builds becomes a recent folder: offered in every project, shown in none.
+    const legacy = (parsed as { browseRoot?: unknown }).browseRoot;
+    if (typeof legacy === 'string' && legacy && !out.recentBrowseFolders?.length) out.recentBrowseFolders = [legacy];
     return out;
   } catch {
     return {};
@@ -106,10 +131,10 @@ function load(): Partial<AssetsViewState> {
 
 function persist(state: AssetsViewState): void {
   try {
-    const { view, sortKey, sortDir, unusedOnly, typeFilter, tagFilter, labelFilter, tab, browseRoot, drawerOpen } = state;
+    const { view, sortKey, sortDir, unusedOnly, typeFilter, tagFilter, labelFilter, tab, browseRoots, recentBrowseFolders, drawerOpen } = state;
     localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({ view, sortKey, sortDir, unusedOnly, typeFilter, tagFilter, labelFilter, tab, browseRoot, drawerOpen }),
+      JSON.stringify({ view, sortKey, sortDir, unusedOnly, typeFilter, tagFilter, labelFilter, tab, browseRoots, recentBrowseFolders, drawerOpen }),
     );
   } catch {
     /* storage full or unavailable — the session still works */
@@ -134,7 +159,26 @@ export const useAssetsViewStore = create<AssetsViewStore>((set, get) => {
     setLabelFilter: (labelFilter) => update({ labelFilter }),
     clearFilters: () => update({ unusedOnly: false, typeFilter: 'all', tagFilter: null, labelFilter: null }),
     setTab: (tab) => update({ tab }),
-    setBrowseRoot: (browseRoot) => update({ browseRoot }),
+    addBrowseRoot: (project, root) => {
+      const { browseRoots, recentBrowseFolders } = get();
+      const cur = browseRoots[project] ?? [];
+      const recent = [root, ...recentBrowseFolders.filter((r) => !samePath(r, root))].slice(0, RECENT_FOLDERS);
+      if (cur.some((r) => samePath(r, root))) {
+        update({ recentBrowseFolders: recent });
+        return;
+      }
+      // Re-inserted last, so the most recently used projects are the ones kept.
+      const { [project]: _drop, ...rest } = browseRoots;
+      const keys = Object.keys(rest);
+      const kept = keys.length >= MAX_PROJECTS ? Object.fromEntries(keys.slice(keys.length - MAX_PROJECTS + 1).map((k) => [k, rest[k]!])) : rest;
+      update({ browseRoots: { ...kept, [project]: [...cur, root] }, recentBrowseFolders: recent });
+    },
+    removeBrowseRoot: (project, root) => {
+      const { browseRoots } = get();
+      const next = (browseRoots[project] ?? []).filter((r) => !samePath(r, root));
+      const { [project]: _drop, ...rest } = browseRoots;
+      update({ browseRoots: next.length > 0 ? { ...rest, [project]: next } : rest });
+    },
     setDrawerOpen: (drawerOpen) => update({ drawerOpen }),
   };
 });

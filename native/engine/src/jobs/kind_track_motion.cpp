@@ -724,7 +724,7 @@ PreparedJob prepare_track_motion(const api::TrackMotionJob& spec, const JobDocCo
     if (!spec.exclude_masks.empty()) {
       const doc::Node* node = ctx.doc.node(spec.layer);
       const ta::DocView v(ctx.doc, walk.fl.comp);
-      const std::vector<doc::Json> anim = doc::read_node_mask_anim(*node);
+      const std::span<const doc::Json> anim = doc::mask_anim_view(*node);
       const std::optional<doc::Json> rest = doc::read_node_mask(*node);
       for (std::int64_t f = walk.frames.first; f <= walk.frames.last; ++f) {
         std::optional<doc::Json> m = doc::interpolate_mask(anim, v.key_time(spec.layer, static_cast<double>(f) / walk.fps));

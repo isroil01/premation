@@ -64,7 +64,7 @@ export type {
 
 // ── Viewport / camera / coordinates ───────────────────────────────
 export { Viewport, type ViewportState, type ViewportOptions } from './viewport/Viewport';
-export { Camera, type CameraState, type CameraOptions } from './camera/Camera';
+export { Camera, ZOOM_LADDER, zoomLadderStep, snapZoomToLadder, type CameraState, type CameraOptions } from './camera/Camera';
 export { CameraAnimator, easeInOutCubic, type Easing } from './camera/CameraAnimator';
 export { CoordinateSystem } from './coordinates/CoordinateSystem';
 

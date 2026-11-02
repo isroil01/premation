@@ -2119,7 +2119,7 @@ std::optional<FallbackKey> parse_fallback_key_id(std::string_view id) {
 }
 
 bool is_animated(const Document& d, std::string_view layer, const PropBinding& b) {
-  if (b.special == Special::maskPath) return !read_node_mask_anim(node_of(d, layer)).empty();
+  if (b.special == Special::maskPath) return !mask_anim_view(node_of(d, layer)).empty();
   if (b.dataTrack) return anim_is_data_animated(d, layer, *b.dataTrack);
   return std::any_of(b.members.begin(), b.members.end(), [&](const std::string& m) { return anim_is_animated(d, layer, m); });
 }
@@ -2232,10 +2232,25 @@ double sample_member(const Document& d, std::string_view layer, const std::strin
 
 }  // namespace
 
+std::size_t key_count(const Document& d, std::string_view layer, const PropBinding& b) {
+  if (b.special == Special::maskPath) return mask_anim_view(node_of(d, layer)).size();
+  if (b.dataTrack) {
+    const DataTrack* tr = anim_data_track(d, layer, *b.dataTrack);
+    return tr != nullptr ? tr->keys.size() : 0;
+  }
+  std::set<double> times;  // the members' keys at one time are one key (read_keys)
+  for (const auto& m : b.members) {
+    if (const auto* tr = anim_track(d, layer, m)) {
+      for (const Key& k : *tr) times.insert(k.t);
+    }
+  }
+  return times.size();
+}
+
 std::vector<KeyAt> read_keys(const Document& d, std::string_view layer, const PropBinding& b) {
   std::vector<KeyAt> out;
   if (b.special == Special::maskPath) {
-    for (const Json& k : read_node_mask_anim(node_of(d, layer))) {
+    for (const Json& k : mask_anim_view(node_of(d, layer))) {
       const Json* p = mask_path_by_id(k.at("mask"), *b.maskId);
       const Json& lab = k.at("label");
       out.push_back(base_key(k.at("t").num(), mask_key_id(layer, k, *b.maskId), p != nullptr ? v_path(mask_to_bezier(*p)) : v_none(),
@@ -2785,7 +2800,7 @@ std::optional<api::Value> value_at(const PCtx& c, std::string_view layer, const 
     // The shape DRAWN at `t`: the mask keys interpolated as the renderer reads
     // them (interpolate_mask, scene readers' read_node_mask_at), not the key at
     // or before it.
-    const std::optional<Json> m = interpolate_mask(read_node_mask_anim(node_of(d, layer)), t);
+    const std::optional<Json> m = interpolate_mask(mask_anim_view(node_of(d, layer)), t);
     const Json* p = m ? mask_path_by_id(*m, *b.maskId) : nullptr;
     return p != nullptr ? v_path(mask_to_bezier(*p)) : read_static(d, layer, b);
   }

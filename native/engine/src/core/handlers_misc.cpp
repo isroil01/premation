@@ -733,7 +733,10 @@ std::optional<api::CameraSolveData> camera_solve_of(const Document& d, const Edi
 
 ResultOf<api::SetLayerMatte> handle(const api::SetLayerMatte& c, HCtx& x) {
   Document& d = x.d;
-  const bool footage = require_layer(d, c.layer).kind() == "video";
+  // A still is footage too: without its card the matte would cut the picture for good,
+  // with no Remove Background toggle, and New Layer from Subject would find no subject.
+  const std::string kind = require_layer(d, c.layer).kind();
+  const bool footage = kind == "video" || kind == "image";
   x.label = "Object Matte";
   // Which subject (core/subjects.hpp): frames are tagged with it, other subjects' frames stay.
   const std::string sid = c.subject.value_or(std::string(kFirstSubject));

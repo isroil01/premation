@@ -259,6 +259,11 @@ Json get_node_mask(const Node& n) {
 }
 
 std::vector<Json> read_node_mask_anim(const Node& n) {
+  const std::span<const Json> a = mask_anim_view(n);
+  return {a.begin(), a.end()};
+}
+
+std::span<const Json> mask_anim_view(const Node& n) noexcept {
   const Json* a = fx_member(n, "maskAnim");
   if (a == nullptr || !a->is_array()) return {};
   return a->arr();
@@ -345,7 +350,7 @@ Json lerp_point(const Json& p, const Json& q, double f) {
 
 }  // namespace
 
-std::optional<Json> interpolate_mask(const std::vector<Json>& kfs, double t) {
+std::optional<Json> interpolate_mask(std::span<const Json> kfs, double t) {
   if (kfs.empty()) return std::nullopt;
   std::vector<const Json*> s;
   for (const Json& k : kfs) s.push_back(&k);

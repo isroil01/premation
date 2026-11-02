@@ -79,6 +79,12 @@ bool MediaTextures::settled(const std::vector<std::pair<SourceId, std::int64_t>>
   return std::ranges::all_of(wanted, [this](const auto& w) { return media_.settled(w.first, w.second); });
 }
 
+bool MediaTextures::await_wanted(const std::vector<std::pair<SourceId, std::int64_t>>& wanted, std::chrono::milliseconds timeout) {
+  bool all = true;
+  for (const auto& [src, frame] : wanted) all = media_.wait(src, frame, Lane::exact, timeout) != nullptr && all;
+  return all;
+}
+
 FramePtr MediaTextures::frame_for(SourceId src, std::int64_t frame, bool& exact) {
   exact = true;
   if (mode_ == Mode::exact) {

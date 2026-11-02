@@ -22,6 +22,35 @@ export interface CameraState {
   zoom: number;
 }
 
+/**
+ * After Effects' magnification ladder (Zoom In / Zoom Out step through it):
+ * zoom factors, 1 = 100 %. Every stop above 1 is a whole number of screen
+ * pixels per comp pixel and every stop below a whole fraction, so a stepped
+ * view resamples the frame by a clean ratio.
+ */
+export const ZOOM_LADDER: readonly number[] = [
+  1 / 64, 1 / 32, 1 / 16, 1 / 8, 1 / 4, 1 / 3, 1 / 2, 2 / 3, 1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64,
+];
+
+/** The ladder stop after `zoom` going in (`dir` 1) or out (-1); `zoom` itself when none. */
+export function zoomLadderStep(zoom: number, dir: 1 | -1): number {
+  const eps = 1e-3;
+  if (dir > 0) return ZOOM_LADDER.find((z) => z > zoom * (1 + eps)) ?? zoom;
+  for (let i = ZOOM_LADDER.length - 1; i >= 0; i--) {
+    const z = ZOOM_LADDER[i]!;
+    if (z < zoom * (1 - eps)) return z;
+  }
+  return zoom;
+}
+
+/** `zoom` on the ladder stop within `tolerance` (relative) of it, else unchanged. */
+export function snapZoomToLadder(zoom: number, tolerance = 0.015): number {
+  for (const z of ZOOM_LADDER) {
+    if (Math.abs(zoom / z - 1) <= tolerance) return z;
+  }
+  return zoom;
+}
+
 export interface CameraOptions {
   center?: Vec2;
   zoom?: number;
@@ -159,6 +188,24 @@ export class Camera {
     this.zoomLevel = this.clampZoom(zoom);
     this.centerX = worldRect.x + worldRect.width / 2;
     this.centerY = worldRect.y + worldRect.height / 2;
+  }
+
+  /**
+   * Put the comp origin on a whole DEVICE pixel (`dpr` device px per screen
+   * px), so at a ladder zoom every comp pixel lands on the same device pixels
+   * the export puts it — no half-pixel resample softening thin lines and type.
+   * Called at the END of a pan or zoom gesture: snapping inside one would make
+   * the anchored point jitter.
+   */
+  snapToDevicePixels(dpr: number): void {
+    const z = this.zoomLevel;
+    const r = Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
+    const snap = (center: number, view: number): number => {
+      const origin = Math.round((view / 2 - center * z) * r) / r;
+      return (view / 2 - origin) / z;
+    };
+    this.centerX = snap(this.centerX, this.viewW);
+    this.centerY = snap(this.centerY, this.viewH);
   }
 
   /** Reset to origin at 1:1. */

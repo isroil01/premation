@@ -396,6 +396,10 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
           return;
         }
         placeCanvas(w, h, drawnWith);
+        // Preview resolution: the reduced frame scaled up in blocks, as After Effects shows Half / Quarter.
+        const reduced = (p.meta.contentWidth ?? 0) > 0 && (p.meta.contentWidth ?? 0) < p.meta.width;
+        const rendering = reduced ? 'pixelated' : '';
+        if (canvas.style.imageRendering !== rendering) canvas.style.imageRendering = rendering;
         const now = performance.now();
         // B4 round 2: the overlays read THIS frame's geometry (the records it carried) from now on —
         // and project it through the view the frame was drawn with, not the page's live view

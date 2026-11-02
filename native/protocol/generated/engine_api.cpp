@@ -29707,6 +29707,8 @@ void encode(wire::Writer& w, const FrameReady& v) {
   w.varint(73U); w.f64(v.render_done_us);
   w.varint(80U); w.varint(v.width);
   w.varint(88U); w.varint(v.height);
+  w.varint(96U); w.varint(v.content_width);
+  w.varint(104U); w.varint(v.content_height);
 }
 
 Status decode(wire::Reader& r, FrameReady& out) {
@@ -29721,6 +29723,8 @@ Status decode(wire::Reader& r, FrameReady& out) {
   bool has_render_done_us = false;
   bool has_width = false;
   bool has_height = false;
+  bool has_content_width = false;
+  bool has_content_height = false;
   while (!r.at_end()) {
     std::uint64_t key = 0;
     if (!r.varint(key)) return Status::truncated;
@@ -29780,6 +29784,16 @@ Status decode(wire::Reader& r, FrameReady& out) {
         has_height = true;
         break;
       }
+      case 96U: {
+        if (!r.u32(out.content_width)) return Status::bad_value;
+        has_content_width = true;
+        break;
+      }
+      case 104U: {
+        if (!r.u32(out.content_height)) return Status::bad_value;
+        has_content_height = true;
+        break;
+      }
       default:
         if (!r.skip(key)) return Status::truncated;
         break;
@@ -29796,6 +29810,8 @@ Status decode(wire::Reader& r, FrameReady& out) {
   if (!has_render_done_us) return Status::missing_field;
   if (!has_width) return Status::missing_field;
   if (!has_height) return Status::missing_field;
+  if (!has_content_width) return Status::missing_field;
+  if (!has_content_height) return Status::missing_field;
   return Status::ok;
 }
 
@@ -32416,6 +32432,7 @@ void encode(wire::Writer& w, const Renderable& v) {
   if (v.deformed_mesh.has_value()) { w.varint(258U); { const std::size_t s = w.begin_ld(); encode(w, *v.deformed_mesh); w.end_ld(s); } }
   if (v.extruded_mesh.has_value()) { w.varint(266U); { const std::size_t s = w.begin_ld(); encode(w, *v.extruded_mesh); w.end_ld(s); } }
   if (v.three_d.has_value()) { w.varint(274U); { const std::size_t s = w.begin_ld(); encode(w, *v.three_d); w.end_ld(s); } }
+  if (v.fx_scale.has_value()) { w.varint(281U); w.f64(*v.fx_scale); }
 }
 
 Status decode(wire::Reader& r, Renderable& out) {
@@ -32622,6 +32639,12 @@ Status decode(wire::Reader& r, Renderable& out) {
         RenderThreeD e;
         { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
         out.three_d = std::move(e);
+        break;
+      }
+      case 281U: {
+        double e = 0.0;
+        if (!r.f64(e)) return Status::truncated;
+        out.fx_scale = std::move(e);
         break;
       }
       default:

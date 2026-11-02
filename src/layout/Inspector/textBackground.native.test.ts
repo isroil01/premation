@@ -125,4 +125,37 @@ gpuSuite('text background on the full renderer', () => {
     expect(red(await frame(0))).toBeGreaterThan(3000);
     expect(red(await frame(2))).toBe(0);
   });
+  /** Bounding box of the pixels `hit` accepts. */
+  const bbox = (p: PNG, hit: (r: number, g: number, b: number) => boolean): { l: number; t: number; r: number; b: number } => {
+    let l = p.width, t = p.height, r = -1, b = -1;
+    for (let y = 0; y < p.height; y++) {
+      for (let x = 0; x < p.width; x++) {
+        const i = (y * p.width + x) * 4;
+        if (!hit(p.data[i]!, p.data[i + 1]!, p.data[i + 2]!)) continue;
+        l = Math.min(l, x); r = Math.max(r, x); t = Math.min(t, y); b = Math.max(b, y);
+      }
+    }
+    return { l, t, r, b };
+  };
+
+  it('centres the box on the glyphs, Padding on every side', async () => {
+    // Caps without descenders: an em-height box sat low under them (2026-11-03).
+    const before = documentMirror().layerIds();
+    if (before.length > 0) await g.run({ type: 'deleteLayers', layers: [...before] } as Command);
+    const r =await runToolTurn('AI: title', [{ name: 'create_layer', args: { id: 'c', kind: 'text', name: 'C', text: 'TEXT', x: 240, y: 135 } }]);
+    expect(r.results.filter((x) => !x.ok).map((x) => x.content)).toEqual([]);
+    const m = documentMirror();
+    const layer = m.layerIds().find((c) => m.layer(c)?.name === 'C')!;
+    await g.run({ type: 'setProperty', prop: { layer, path: 'text/background' }, value: values.bool(true) });
+    await g.run({ type: 'setProperty', prop: { layer, path: 'text/backgroundColor' }, value: values.color(1, 0, 0, 1) });
+    const p = await frame(0);
+    const box = bbox(p, (r, g, b) => r > 150 && g < 60 && b < 60);
+    const ink = bbox(p, (r, g, b) => r > 200 && g > 200 && b > 200);
+    expect(ink.r).toBeGreaterThan(ink.l);
+    const top = ink.t - box.t, bottom = box.b - ink.b, left = ink.l - box.l, right = box.r - ink.r;
+    expect(Math.abs(top - bottom)).toBeLessThanOrEqual(2);
+    expect(Math.abs(left - right)).toBeLessThanOrEqual(2);
+    expect(Math.abs(top - left)).toBeLessThanOrEqual(2);
+    await g.run({ type: 'deleteLayers', layers: [layer] } as Command);
+  });
 });

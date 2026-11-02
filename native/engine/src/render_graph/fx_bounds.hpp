@@ -37,7 +37,8 @@ struct PxBox {
   double x0 = 0, y0 = 0, x1 = 0, y1 = 0;
 };
 
-/// The world → texel scale of the chain buffer (a drop shadow's offset is in world units).
+/// Buffer texels per layer px on each axis: the layer's world scale (Renderable.fx_scale)
+/// times the view's texels per comp px — what run_effects_chain draws a radius at.
 struct FxBoundsView {
   double pxPerWorldX = 1;
   double pxPerWorldY = 1;

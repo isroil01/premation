@@ -104,6 +104,10 @@ class MediaTextures final : public rg::ExternalTextureSource {
   [[nodiscard]] Misses take_misses() noexcept;
   /// Whether every frame in `wanted` is decoded now (or never will be).
   [[nodiscard]] bool settled(const std::vector<std::pair<SourceId, std::int64_t>>& wanted);
+  /// Blocks (exact lane) until every frame in `wanted` is decoded, `timeout` per
+  /// frame: a still whose exact-mode wait timed out draws again instead of
+  /// going out with the footage missing. False when one never arrived.
+  bool await_wanted(const std::vector<std::pair<SourceId, std::int64_t>>& wanted, std::chrono::milliseconds timeout);
   [[nodiscard]] FrameConverter& converter() noexcept { return converter_; }
 
  private:

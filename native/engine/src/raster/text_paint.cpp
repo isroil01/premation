@@ -1012,10 +1012,27 @@ void paint_text_in_box(Canvas2D& ctx, const Value& spec, std::vector<std::string
     };
     std::map<int, Rect> boxes;
     ctx.save();
+    // Horizontal boxes hug the glyph ink, so Padding is the visible margin on
+    // every side (an em-height box sat low under caps). Ascent/descent are the
+    // whole text's, measured with hidden glyphs too, so every line's box has
+    // one height and a typewriter does not make the box jump.
+    ctx.setTextAlign(TextAlign::left);
+    double inkAsc = 0;
+    double inkDesc = 0;
+    if (!vertical) {
+      for (const auto& it : items) {
+        if (is_js_blank(it.text)) continue;
+        (void)ctx.setFont(font_for(it.style));
+        const TextMetrics m = ctx.measureText(it.text);
+        inkAsc = std::max(inkAsc, m.actualBoundingBoxAscent);
+        inkDesc = std::max(inkDesc, m.actualBoundingBoxDescent);
+      }
+    }
     for (const auto& it : items) {
       if (is_js_blank(it.text) || (it.tr != nullptr && it.tr->opacity <= 0)) continue;
       (void)ctx.setFont(font_for(it.style));
-      const double w = ctx.measureText(it.text).width;
+      const TextMetrics m = ctx.measureText(it.text);
+      const double w = m.width;
       const double em = it.style.fontSize;
       const double x = cx + it.x;
       const double y = cy + it.y;
@@ -1025,7 +1042,7 @@ void paint_text_in_box(Canvas2D& ctx, const Value& spec, std::vector<std::string
         r = {x - em * 0.6, y - half, x + em * 0.6, y + half};
       } else {
         const double l = it.align == TextAlign::center ? x - w / 2 : it.align == TextAlign::right ? x - w : x;
-        r = {l, y - em * 0.6, l + w, y + em * 0.6};
+        r = {l - m.actualBoundingBoxLeft, y - inkAsc, l + m.actualBoundingBoxRight, y + inkDesc};
       }
       const auto [pos, fresh] = boxes.try_emplace(bg.perLine ? it.line : 0, r);
       if (!fresh) {

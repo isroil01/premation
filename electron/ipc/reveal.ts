@@ -13,16 +13,21 @@
  * up. Hidden entries (dot-files, `$RECYCLE.BIN`, `Thumbs.db`) are dropped
  * here rather than in the renderer so the list the renderer sees is the list
  * the user expects to see.
+ *
+ * `fs:watchDirs` replaces the folders this window's Media Browser has on
+ * screen; a change in one is pushed back as `fs:dirsChanged` with the folder
+ * paths (electron/dirWatch.ts), and the page re-lists just those.
  */
 
-import { app, clipboard, dialog, shell } from 'electron';
+import { app, clipboard, dialog, shell, type WebContents } from 'electron';
 import { readClipboardFilePaths } from '../clipboardFiles';
-import { existsSync } from 'node:fs';
+import { existsSync, watch as fsWatch } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { handle } from '../ipcGuard';
 import { rememberDir, rememberedDir } from '../dialogDirs';
 import { pluginImportExtensions } from '../pluginImportExtensions';
+import { DirWatcher, MAX_WATCHED_DIRS } from '../dirWatch';
 
 export interface DirEntryDto {
   name: string;
@@ -59,6 +64,37 @@ export async function listDirectory(dir: string): Promise<DirEntryDto[]> {
     // and opens folders, and a link is neither until it is resolved.
   }
   return out;
+}
+
+const dirWatchers = new Map<number, DirWatcher>();
+
+function dirWatcherFor(sender: WebContents): DirWatcher {
+  const existing = dirWatchers.get(sender.id);
+  if (existing) return existing;
+  const w = new DirWatcher({
+    watch: (dir, onEvent) => {
+      try {
+        // `persistent: false`: a watch never keeps the app alive on quit.
+        const fw = fsWatch(dir, { persistent: false }, () => onEvent());
+        fw.on('error', () => fw.close());
+        return { close: () => fw.close() };
+      } catch {
+        return null;
+      }
+    },
+    setTimeout: (fn, ms) => setTimeout(fn, ms),
+    clearTimeout: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
+    emit: (dirs) => {
+      if (!sender.isDestroyed()) sender.send('fs:dirsChanged', dirs);
+    },
+  });
+  dirWatchers.set(sender.id, w);
+  const id = sender.id;
+  sender.once('destroyed', () => {
+    dirWatchers.get(id)?.dispose();
+    dirWatchers.delete(id);
+  });
+  return w;
 }
 
 export function registerRevealIpc(): void {
@@ -102,6 +138,18 @@ export function registerRevealIpc(): void {
     if (res.canceled) return null;
     rememberDir('media', res.filePaths[0], false);
     return res.filePaths;
+  });
+
+  /** The Media Browser's on-screen folders; [] stops every watch of this window. */
+  handle('fs:watchDirs', (e, dirs: unknown) => {
+    const list = Array.isArray(dirs)
+      ? dirs.filter((d): d is string => typeof d === 'string' && d.length > 0 && d.length < 32768 && path.isAbsolute(d)).slice(0, MAX_WATCHED_DIRS)
+      : [];
+    if (list.length === 0) {
+      dirWatchers.get(e.sender.id)?.setDirs([]);
+      return;
+    }
+    dirWatcherFor(e.sender).setDirs(list);
   });
 
   /** One level of a directory, hidden entries removed. Null if unreadable. */

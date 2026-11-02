@@ -185,6 +185,10 @@ export function EnginePaneSurface({ mode, getView, framingRev, layer, surround, 
         p.release();
         return;
       }
+      // Preview resolution: the reduced frame scaled up in blocks (EngineSurface does the same).
+      const reduced = (p.meta.contentWidth ?? 0) > 0 && (p.meta.contentWidth ?? 0) < p.meta.width;
+      const rendering = reduced ? 'pixelated' : '';
+      if (canvas.style.imageRendering !== rendering) canvas.style.imageRendering = rendering;
       if (drawnWith && drawnWith !== reported) {
         reported = drawnWith;
         onDrawnViewRef.current?.(drawnWith);

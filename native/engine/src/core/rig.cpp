@@ -555,8 +555,19 @@ std::optional<double> rig_member_factor(std::string_view member) {
 api::Value read_rig_static(const Node& node, const PropBinding& b) {
   const Json& spec = spec_of(b);
   const RigRef& ref = *b.rig;
-  Json o = owner_object(node, ref);
-  if (!o.is_object()) o = Json::object();
+  // The layer's own fx is read in place: copying it (every mask key and matte frame a Follow
+  // stored) for layer/puppet and layer/skeleton cost tens of ms per edit of the layer.
+  Json held;
+  const Json* owner = &node.fx();
+  if (ref.owner != "layer") {
+    held = owner_object(node, ref);
+    owner = &held;
+  }
+  if (!owner->is_object()) {
+    held = Json::object();
+    owner = &held;
+  }
+  const Json& o = *owner;
   const double k = scale_of(spec);
   const std::string& codec = spec.at("codec").str();
   const Json& keys = spec.at("keys");

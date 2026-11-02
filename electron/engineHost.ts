@@ -142,6 +142,9 @@ export interface ForwardedFrameMeta {
   renderStartUs: number;
   renderDoneUs: number;
   sentUs: number;
+  /** Preview resolution: the part of the slot the frame fills (FrameReady.contentWidth / Height); 0 = all of it. */
+  contentWidth: number;
+  contentHeight: number;
   /** How the frame travelled: a shared texture (route C) or a pixel copy (route A). */
   route: 'shared' | 'copy';
   /** B4 round 2: the frame's overlay geometry (setOverlayGeometry), the FrameGeometry parts merged. */
@@ -559,6 +562,7 @@ export class FrameForwarder {
     return {
       viewport: f.viewport, generation: f.generation, slot: f.slot, frame: f.frame, time: f.time, revision: f.revision,
       width: f.width, height: f.height, dropped: f.dropped, renderStartUs: f.renderStartUs, renderDoneUs: f.renderDoneUs,
+      contentWidth: f.contentWidth, contentHeight: f.contentHeight,
       sentUs: (this.deps.now?.() ?? Date.now()) * 1000,
       route,
       ...(geometry ? { geometry } : {}),

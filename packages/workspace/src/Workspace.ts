@@ -24,7 +24,7 @@ import { TypedEmitter } from './events/Emitter';
 import type { WorkspaceEventMap } from './events/WorkspaceEvents';
 
 import { Viewport, type ViewportOptions } from './viewport/Viewport';
-import { Camera, type CameraOptions, type CameraState } from './camera/Camera';
+import { Camera, snapZoomToLadder, type CameraOptions, type CameraState } from './camera/Camera';
 import { CameraAnimator, type Easing } from './camera/CameraAnimator';
 import { CoordinateSystem } from './coordinates/CoordinateSystem';
 import { Grid, type GridState } from './grid/Grid';
@@ -240,9 +240,16 @@ export class Workspace implements InputSink {
     this.reconcile();
   }
 
+  /** The end of a pan / zoom gesture: the comp origin onto a whole device pixel (Camera.snapToDevicePixels). */
+  settleView(): void {
+    this.camera.snapToDevicePixels(this.viewport.devicePixelRatio);
+    this.reconcile();
+  }
+
   setZoom(zoom: number, anchorScreen?: Vec2): void {
     const anchor = anchorScreen ? this.viewport.screenToViewport(anchorScreen) : undefined;
     this.camera.zoomTo(zoom, anchor);
+    this.camera.snapToDevicePixels(this.viewport.devicePixelRatio);
     this.reconcile();
   }
 
@@ -255,6 +262,7 @@ export class Workspace implements InputSink {
       this.animator.animateTo(target, durationMs, undefined, () => this.reconcile());
     } else {
       this.camera.zoomToRect(rect, padding);
+      this.camera.snapToDevicePixels(this.viewport.devicePixelRatio);
     }
     this.reconcile();
   }
@@ -467,6 +475,8 @@ export class Workspace implements InputSink {
   }
   onPointerUp(e: PointerInput): void {
     this.tools.onPointerUp(e);
+    // A hand-tool pan (or any gesture that moved the view) ends on whole device pixels.
+    this.camera.snapToDevicePixels(this.viewport.devicePixelRatio);
     this.reconcile();
   }
   onClick(e: PointerInput): void {
@@ -495,8 +505,19 @@ export class Workspace implements InputSink {
   }
   onWheel(e: WheelInput): void {
     this.tools.onWheel(e);
+    // A wheel / pinch zoom that lands within 1.5 % of a ladder stop (100 %, 50 %, 200 %…) takes the stop.
+    const z = this.camera.zoom;
+    const stop = snapZoomToLadder(z);
+    if (stop !== z) this.camera.zoomTo(stop, this.viewport.screenToViewport(e.position));
     this.reconcile();
+    // The view settles on whole device pixels once the wheel goes quiet.
+    if (this.wheelSettle !== null) clearTimeout(this.wheelSettle);
+    this.wheelSettle = setTimeout(() => {
+      this.wheelSettle = null;
+      this.settleView();
+    }, 150);
   }
+  private wheelSettle: ReturnType<typeof setTimeout> | null = null;
   /** True when the active tool consumed the key — see `onToolKey`. */
   onKeyDown(e: KeyInput): boolean {
     // Global shortcuts first (space → temporary hand), then the active tool.

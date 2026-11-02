@@ -554,6 +554,44 @@ void solidify_interior(std::vector<float>& alpha, int width, int height, int ban
     solidify(alpha);
     return;
   }
+  // Small enclosed dips below 0.5 (a giraffe's dark patch lines, a shadow on a shirt) are the
+  // model's doubt, not holes: filled, so they draw no edge band of half-transparent pixels inside
+  // the subject. A hole bigger than a few bands (the gap between two legs) stays.
+  {
+    std::vector<std::uint8_t> seen(n, 0);
+    std::vector<std::size_t> stack;
+    const auto flood = [&](std::size_t s0, std::vector<std::size_t>* members) {
+      seen[s0] = 1;
+      stack.push_back(s0);
+      bool border = false;
+      while (!stack.empty()) {
+        const std::size_t i = stack.back();
+        stack.pop_back();
+        if (members != nullptr) members->push_back(i);
+        const int x = static_cast<int>(i % static_cast<std::size_t>(width));
+        const int y = static_cast<int>(i / static_cast<std::size_t>(width));
+        if (x == 0 || y == 0 || x + 1 == width || y + 1 == height) border = true;
+        const std::array<std::array<int, 2>, 4> nb{{{x - 1, y}, {x + 1, y}, {x, y - 1}, {x, y + 1}}};
+        for (const auto& q : nb) {
+          if (q[0] < 0 || q[1] < 0 || q[0] >= width || q[1] >= height) continue;
+          const std::size_t j = idx(q[0], q[1], width);
+          if (seen[j] != 0 || alpha[j] >= 0.5f) continue;
+          seen[j] = 1;
+          stack.push_back(j);
+        }
+      }
+      return border;
+    };
+    const std::size_t maxHole = static_cast<std::size_t>(3 * bandPx) * static_cast<std::size_t>(3 * bandPx);
+    std::vector<std::size_t> members;
+    for (std::size_t i = 0; i < n; ++i) {
+      if (seen[i] != 0 || alpha[i] >= 0.5f) continue;
+      members.clear();
+      const bool border = flood(i, &members);
+      if (border || members.size() > maxHole) continue;
+      for (const std::size_t j : members) alpha[j] = 1.0f;
+    }
+  }
   // The band: a breadth-first march of `bandPx` steps out from every pixel on the 0.5 crossing.
   std::vector<std::uint8_t> band(n, 0);
   std::vector<std::size_t> frontier;
@@ -585,10 +623,11 @@ void solidify_interior(std::vector<float>& alpha, int width, int height, int ban
     }
     frontier.swap(next);
   }
+  // Past the band every pixel is wholly on one side of the edge: inside is solid, outside empty.
+  // The model's 0.6 across a giraffe's head is its doubt, and kept as alpha it ghosted the head.
   for (std::size_t i = 0; i < n; ++i) {
     if (band[i] != 0) continue;
-    const float x = std::clamp((alpha[i] - 0.1f) / 0.8f, 0.0f, 1.0f);
-    alpha[i] = x * x * (3.0f - 2.0f * x);
+    alpha[i] = alpha[i] >= 0.5f ? 1.0f : 0.0f;
   }
 }
 

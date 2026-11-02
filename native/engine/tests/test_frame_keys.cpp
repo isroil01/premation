@@ -328,3 +328,76 @@ TEST_CASE("frame keys: the spans give every frame the key the dense per-frame ev
   REQUIRE(again.rebuild(h.session.document(), h.session.view(), comp, ""));
   for (std::int64_t f = 0; f < 600; ++f) REQUIRE(again.key(f) == index.key(f));
 }
+
+TEST_CASE("hash_json walks the value with the stringify rules", "[frame-keys]") {
+  const auto h = [](std::string_view text) { return doc::frame_keys::hash_json(*js::parse(text)); };
+  const auto with = [](js::Json o, const char* key, js::Json v) {
+    o.set(key, std::move(v));
+    return doc::frame_keys::hash_json(o);
+  };
+  // Equal values hash alike; any change of a value, key, order or type changes the hash.
+  CHECK(h(R"({"a":1,"b":[1,2,{"c":"x"}]})") == h(R"({"a":1,"b":[1,2,{"c":"x"}]})"));
+  CHECK(h(R"({"a":1})") != h(R"({"a":2})"));
+  CHECK(h(R"({"a":1})") != h(R"({"b":1})"));
+  CHECK(h(R"({"a":1,"b":2})") != h(R"({"b":2,"a":1})"));
+  CHECK(h(R"([1,2])") != h(R"([2,1])"));
+  CHECK(h(R"({"a":"1"})") != h(R"({"a":1})"));
+  CHECK(h(R"([[1],[]])") != h(R"([[],[1]])"));
+  CHECK(h(R"({"a":0})") == h(R"({"a":-0})"));
+  // What stringify drops or prints as null hashes so too.
+  const js::Json base = *js::parse(R"({"a":1})");
+  CHECK(with(base, "u", js::Json()) == h(R"({"a":1})"));
+  CHECK(with(base, "n", js::Json::number(std::nan(""))) == h(R"({"a":1,"n":null})"));
+  js::Json arr = js::Json::array();
+  arr.arr_mut().emplace_back();
+  CHECK(doc::frame_keys::hash_json(arr) == h("[null]"));
+}
+
+TEST_CASE("frame keys: a static edit re-keys only the frames its layer draws; a non-rendering edit re-keys none", "[keys]") {
+  Harness h(64);
+  (void)h.hello();
+  const api::ItemId comp = make_comp(h, 30, 10.0);
+  const api::LayerId trimmed = make_layer(h, comp);
+  const api::LayerId full = make_layer(h, comp);
+  api::SetLayerTiming timing;
+  api::LayerTimingPatch patch;
+  patch.layer = trimmed;
+  patch.in_point = at(2.0);
+  patch.out_point = at(4.0);
+  timing.items.push_back(patch);
+  REQUIRE(is_ok(h.run(cmd(timing))));
+
+  doc::FrameKeyIndex index;
+  REQUIRE(index.rebuild(h.session.document(), h.session.view(), comp, ""));
+  REQUIRE(index.indexed());
+  const std::uint64_t before0 = index.key(0);
+  const std::uint64_t before90 = index.key(90);
+  const std::uint64_t before200 = index.key(200);
+
+  // Opacity of the layer that draws from 2 s to 4 s: frames 60..119, plus the motion-blur window.
+  const doc::Document& d = h.session.document();
+  const auto node = std::make_shared<doc::Node>(*d.node(trimmed));
+  REQUIRE(is_ok(set_prop(h, trimmed, "transform/opacity", scalar(50), 0)));
+  doc::ChangeSet cs;
+  cs.before.nodes[trimmed] = node;
+  cs.after.nodes[trimmed] = std::make_shared<doc::Node>(*h.session.document().node(trimmed));
+  cs.before.anims[trimmed] = snap_anim(h.session.document(), trimmed);
+  cs.after.anims[trimmed] = snap_anim(h.session.document(), trimmed);
+  const doc::FrameKeyIndex::Delta delta = index.update(h.session.document(), h.session.view(), cs, "");
+  REQUIRE_FALSE(delta.all);
+  REQUIRE_FALSE(delta.frames.empty());
+  CHECK(delta.frames.front() >= 50);
+  CHECK(delta.frames.back() <= 130);
+  CHECK(index.key(0) == before0);
+  CHECK(index.key(200) == before200);
+  CHECK(index.key(90) != before90);
+
+  // The guides part changed (they never draw): nothing to re-render.
+  doc::ChangeSet guides;
+  guides.before.guides = std::make_shared<js::Json>(js::Json::object());
+  guides.after.guides = std::make_shared<js::Json>(js::Json::object());
+  const doc::FrameKeyIndex::Delta none = index.update(h.session.document(), h.session.view(), guides, "");
+  REQUIRE_FALSE(none.all);
+  CHECK(none.frames.empty());
+  (void)full;
+}

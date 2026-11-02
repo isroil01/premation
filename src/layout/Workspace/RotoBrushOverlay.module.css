@@ -106,25 +106,6 @@
 }
 
 /* ── Status chip ─────────────────────────────────────────────────── */
-.status {
-  position: absolute;
-  bottom: var(--space-2);
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  padding: 2px var(--space-2);
-  border: 1px solid var(--color-overlay-panel-border);
-  border-radius: var(--radius-full);
-  background: var(--color-overlay-panel-bg);
-  box-shadow: var(--color-overlay-panel-shadow);
-  color: var(--color-overlay-text);
-  font-size: var(--font-size-xs);
-  white-space: nowrap;
-  pointer-events: none;
-}
-
 /* The selected subject's boundary (subjectBoundary.ts): AE's magenta line. */
 .boundary {
   fill: none;

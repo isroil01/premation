@@ -139,9 +139,58 @@ class Mix {
   std::uint64_t h_ = 0x243f6a8885a308d3ULL;
 };
 
+/// `j` mixed into `m` by walking it, with the stringify rules Json's == uses (an undefined
+/// member dropped, an undefined element and a non-finite number as null): values that
+/// stringify alike mix alike. A layer's fx can be megabytes (a Follow stores a mask key per
+/// frame); printing it to text to hash it cost ~30 ms per edit of the layer, the walk ~1 ms.
+/// A Project-panel field of an asset record: its name, folder, label colour,
+/// notes. None of them reaches a frame, so none of them is keyed.
+inline bool asset_label_field(std::string_view k) noexcept {
+  return k == "name" || k == "folderId" || k == "folder" || k == "label" || k == "labelColor" || k == "comment" ||
+         k == "comments" || k == "notes" || k == "tags" || k == "favorite" || k == "addedAt" || k == "lastUsed" ||
+         k == "thumbnail" || k == "thumb";
+}
+
+inline void mix_json(Mix& m, const Json& j) {  // NOLINT(misc-no-recursion): bounded by the document's depth
+  switch (j.kind()) {
+    case Json::Kind::undefined:
+    case Json::Kind::null: m.u64(0x6e75U); return;
+    case Json::Kind::boolean: m.u64(j.b() ? 0x7472U : 0x6661U); return;
+    case Json::Kind::number:
+      if (!std::isfinite(j.num())) {
+        m.u64(0x6e75U);
+      } else {
+        m.u64(0x6e6dU);
+        m.f64(j.num());
+      }
+      return;
+    case Json::Kind::string:
+      m.u64(0x7374U);
+      m.str(j.str());
+      return;
+    case Json::Kind::array:
+      m.u64(0x6172U);
+      m.u64(j.arr().size());
+      for (const Json& e : j.arr()) mix_json(m, e);
+      return;
+    case Json::Kind::object: {
+      m.u64(0x6f62U);
+      std::uint64_t members = 0;
+      for (const Json::Member& e : j.obj()) {
+        if (e.value.is_undefined()) continue;
+        m.str(e.key);
+        mix_json(m, e.value);
+        ++members;
+      }
+      m.u64(members);
+      return;
+    }
+  }
+}
+
 [[nodiscard]] inline std::uint64_t hash_json(const Json& j) {
   Mix m;
-  m.str(js::stringify(j));
+  mix_json(m, j);
   return m.value();
 }
 
@@ -242,6 +291,7 @@ class FrameKeyIndex {
     indexed_ = false;
     volatile_ = false;
     global_ = false;
+    exprs_ = false;
     frames_ = 0;
     fps_ = 30;
     static_ = 0;
@@ -272,6 +322,7 @@ class FrameKeyIndex {
     compList_.push_back(comp_);
     collect(d, *root, false, false, 0, seen);
     std::ranges::sort(compList_);
+    mark_local(d);
     bytes_ = static_cast<std::size_t>(frames_) * sizeof(std::uint64_t);
     if (bytes_ > budget_) return give_up();
     total_.assign(static_cast<std::size_t>(frames_), 0);
@@ -281,6 +332,7 @@ class FrameKeyIndex {
         continue;
       }
       l.clock = clock_of(d, v, l.id);
+      if (l.local) l.node = node_hash(d, l.id);
       l.spans = spans_of(d, l);
       bytes_ += l.spans.size() * sizeof(Span);
       if (bytes_ > budget_) return give_up();
@@ -325,7 +377,14 @@ class FrameKeyIndex {
         continue;
       }
       nodeHash_.erase(id);
-      staticChanged = true;
+      // A layer whose own props only it renders: its spans carry them (its active
+      // frames only). Anything else (a parent, a layer another reads) is static.
+      // A props edit that now names a local layer makes that layer read by another: rebuild.
+      if (references_local(*node)) {
+        structural = true;
+        continue;
+      }
+      if (!layers_[layerIndex_.at(id)].local) staticChanged = true;
       rows.push_back(id);  // its clock (fx.time) may have changed
     }
     for (const auto& [id, anim] : after.anims) {
@@ -346,7 +405,8 @@ class FrameKeyIndex {
     for (const auto& [id, tl] : after.timelines) {
       if (compList_end(id)) structural = true;  // the bars are the layer clocks
     }
-    if (after.items || after.project || after.mb || after.cm || after.tx || after.guides || after.swatches || after.materials) staticChanged = true;
+    // Guides and swatches never reach a frame: not keyed (static_of skips them).
+    if (after.items || after.project || after.mb || after.cm || after.tx || after.materials) staticChanged = true;
     if (structural) {
       (void)rebuild(d, v, comp_, mediaBase);
       return all;
@@ -362,6 +422,7 @@ class FrameKeyIndex {
         continue;
       }
       l.clock = clock_of(d, v, l.id);
+      if (l.local) l.node = node_hash(d, l.id);
       const std::vector<Span> old = std::move(l.spans);
       l.spans = spans_of(d, l);
       bytes_ = bytes_ - old.size() * sizeof(Span) + l.spans.size() * sizeof(Span);
@@ -372,8 +433,13 @@ class FrameKeyIndex {
       return all;
     }
     if (staticChanged) {
-      static_ = static_of(d);
-      return all;
+      // Only when the static key moved: a renamed marker, an asset's label, a
+      // project display setting leave it as it was, and every frame with it.
+      const std::uint64_t now = static_of(d);
+      if (now != static_) {
+        static_ = now;
+        return all;
+      }
     }
     std::vector<std::int64_t> changed = frames_of(std::move(ranges));
     if (changed.size() >= static_cast<std::size_t>(frames_)) return all;
@@ -466,6 +532,11 @@ class FrameKeyIndex {
     std::uint64_t constant = 0;  ///< nested: the animation's hash
     std::vector<Span> spans;     ///< not nested: sorted by start, the first at frame 0, never empty once indexed
     Clock clock;
+    /// Its own props are read by it alone (no expressions in the comp, no other
+    /// layer naming it, no children): node_hash goes into its spans on the
+    /// frames it is active, not into static_ — an edit re-keys those frames only.
+    bool local = false;
+    std::uint64_t node = 0;  ///< local: node_hash
   };
   static constexpr std::size_t kSamples = static_cast<std::size_t>(2 * kBlurFrames + 1);
   using Samples = std::array<double, kSamples>;
@@ -553,6 +624,7 @@ class FrameKeyIndex {
       const bool own = whole || (flags & 2U) != 0 || (flags & 8U) != 0;
       if (const NodeAnim* a = d.anim(childId)) {
         for (const auto& [prop, st] : a->exprs) {
+          if (st.enabled) exprs_ = true;
           if (st.enabled && !frame_keys::expression_is_local(st.src)) global_ = true;
         }
       }
@@ -572,12 +644,62 @@ class FrameKeyIndex {
     }
   }
 
+  /// Whether `j` holds, anywhere, a string naming a layer in `ids`.
+  [[nodiscard]] static bool names_any(const Json& j, const std::unordered_set<std::string>& ids) {  // NOLINT(misc-no-recursion): bounded by the document's depth
+    if (j.is_string()) return ids.contains(j.str());
+    if (j.is_array()) return std::ranges::any_of(j.arr(), [&](const Json& e) { return names_any(e, ids); });
+    if (j.is_object()) return std::ranges::any_of(j.obj(), [&](const auto& e) { return names_any(e.value, ids); });
+    return false;
+  }
+
+  /// Every string in `j` that names a layer of `ids`, into `out`.
+  static void named_in(const Json& j, const std::unordered_set<std::string>& ids, std::unordered_set<std::string>& out) {  // NOLINT(misc-no-recursion): bounded by the document's depth
+    if (j.is_string()) {
+      if (ids.contains(j.str())) out.insert(j.str());
+    } else if (j.is_array()) {
+      for (const Json& e : j.arr()) named_in(e, ids, out);
+    } else if (j.is_object()) {
+      for (const auto& e : j.obj()) named_in(e.value, ids, out);
+    }
+  }
+
+  /// Layer.local for every layer at the comp's level, after collect.
+  void mark_local(const Document& d) {
+    if (exprs_ || global_) return;
+    std::unordered_set<std::string> ids;
+    for (const Layer& l : layers_) ids.insert(l.id);
+    std::unordered_set<std::string> read;  // named in another node's props
+    for (const Layer& l : layers_) {
+      const Node* n = d.node(l.id);
+      if (n == nullptr) continue;
+      std::unordered_set<std::string> named;
+      for (const Component& c : n->components) named_in(c.props, ids, named);
+      named.erase(l.id);
+      read.insert(named.begin(), named.end());
+    }
+    for (Layer& l : layers_) {
+      const Node* n = d.node(l.id);
+      l.local = !l.nested && n != nullptr && n->children.empty() && !read.contains(l.id);
+    }
+  }
+
+  /// A node's props name a layer that is local now (an edit made it read by another).
+  [[nodiscard]] bool references_local(const Node& n) const {
+    std::unordered_set<std::string> local;
+    for (const Layer& l : layers_) {
+      if (l.local && l.id != n.id) local.insert(l.id);
+    }
+    if (local.empty()) return false;
+    return std::ranges::any_of(n.components, [&](const Component& c) { return names_any(c.props, local); });
+  }
+
   [[nodiscard]] std::uint64_t node_hash(const Document& d, const std::string& id) {
     if (const auto it = nodeHash_.find(id); it != nodeHash_.end()) return it->second;
     frame_keys::Mix m;
     if (const Node* n = d.node(id)) {
       m.str(n->id);
-      m.str(n->name);
+      // A layer's name reaches the frame only through an expression (thisComp.layer("...")).
+      if (exprs_) m.str(n->name);
       m.str(n->parent.value_or(""));
       for (const std::string& c : n->children) m.str(c);
       m.flag(n->visible);
@@ -585,7 +707,7 @@ class FrameKeyIndex {
       for (const Component& c : n->components) {
         m.str(c.id);
         m.str(c.type);
-        m.str(js::stringify(c.props));
+        frame_keys::mix_json(m, c.props);
       }
     }
     const std::uint64_t h = m.value();
@@ -609,16 +731,16 @@ class FrameKeyIndex {
   }
   static void mix_data_key(frame_keys::Mix& m, const DataKey& k) {
     m.f64(k.t);
-    m.str(js::stringify(k.value));
+    frame_keys::mix_json(m, k.value);
     m.opt(k.easing);
     m.flag(k.bezier.has_value());
     if (k.bezier) {
       for (const double b : *k.bezier) m.f64(b);
     }
     m.flag(k.so.has_value());
-    if (k.so) m.str(js::stringify(*k.so));
+    if (k.so) frame_keys::mix_json(m, *k.so);
     m.flag(k.si.has_value());
-    if (k.si) m.str(js::stringify(*k.si));
+    if (k.si) frame_keys::mix_json(m, *k.si);
   }
 
   /// A nested layer's animation, whole.
@@ -754,11 +876,17 @@ class FrameKeyIndex {
     std::uint64_t exprs = 0;
     double reach = 0;      ///< keyframe seconds either side of a sampled clock (a comp frame, stretched)
     bool constant = true;  ///< no track picks keys per frame: the layer is one span
+    bool local = false;    ///< Layer.local: `node` is mixed on active frames
+    std::uint64_t node = 0;
+    const Clock* clockSrc = nullptr;  ///< local: whose clips decide the active frames
   };
 
   [[nodiscard]] RowPlan plan_of(const Document& d, const Layer& l) const {
     RowPlan p;
     p.clock = clock_hash(l.clock);
+    p.local = l.local;
+    p.node = l.node;
+    p.clockSrc = &l.clock;
     const NodeAnim* a = d.anim(l.id);
     if (a != nullptr) {
       p.tracks.reserve(a->tracks.size() + a->data.size());
@@ -813,6 +941,8 @@ class FrameKeyIndex {
     // comp, stretched as the layer's time is (remap_time's 100 / stretch).
     p.reach = 1.0 / fps_;
     if (l.clock.cfg && l.clock.cfg->stretch > 0) p.reach *= std::max(1.0, 100.0 / l.clock.cfg->stretch);
+    // A local layer on clips is not one value over the comp: its props key only its active frames.
+    if (l.local && !l.clock.clips.empty()) p.constant = false;
     return p;
   }
 
@@ -838,10 +968,11 @@ class FrameKeyIndex {
 
   /// The hash of one frame of a layer from its sampled times and the ranges
   /// `key_range` picked per track (a whole or key-less track ignores `ranges`).
-  [[nodiscard]] static std::uint64_t mix_frame(const RowPlan& p, const std::vector<KeyRange>& ranges) noexcept {
+  [[nodiscard]] static std::uint64_t mix_frame(const RowPlan& p, const std::vector<KeyRange>& ranges, bool active) noexcept {
     frame_keys::Mix m;
     m.u64(p.clock);
     m.u64(p.exprs);
+    if (p.local) m.u64(active ? p.node : 0x1D1EULL);
     for (std::size_t i = 0; i < p.tracks.size(); ++i) {
       const Track& t = p.tracks[i];
       m.str(*t.prop);
@@ -880,7 +1011,21 @@ class FrameKeyIndex {
       }
       ranges[i] = KeyRange{std::clamp<std::ptrdiff_t>(lo, 0, n - 1), std::clamp<std::ptrdiff_t>(hi, 0, n - 1)};
     }
-    return mix_frame(p, ranges);
+    return mix_frame(p, ranges, active_at(p, comps));
+  }
+
+  /// Whether a layer draws at any of a frame's sampled comp times (its motion
+  /// blur window): an enabled clip covers one, or it has no clips at all.
+  [[nodiscard]] static bool active_at(const RowPlan& p, const Samples& comps) noexcept {
+    if (!p.local || p.clockSrc == nullptr || p.clockSrc->clips.empty()) return true;
+    const Clock& c = *p.clockSrc;
+    for (const double t : comps) {
+      const double frame = motion::js::round(t * c.fps);
+      for (const ClipSpan& k : c.clips) {
+        if (k.enabled && frame >= k.start && frame < k.start + k.duration) return true;
+      }
+    }
+    return false;
   }
 
   /// A layer's spans over the comp's frames. The sampled clocks slide one
@@ -904,6 +1049,7 @@ class FrameKeyIndex {
     }
     std::vector<KeyRange> prev(p.tracks.size(), KeyRange{-1, -1});
     std::vector<KeyRange> cur(p.tracks.size(), KeyRange{-1, -1});
+    bool prevActive = true;
     for (std::int64_t f = 0; f < frames_; ++f) {
       for (std::size_t s = 0; s + 1 < kSamples; ++s) {
         comps[s] = comps[s + 1];
@@ -918,9 +1064,12 @@ class FrameKeyIndex {
         cur[i] = key_range(t, t.raw ? comps : clocks, p.reach);
         if (cur[i] != prev[i]) same = false;
       }
+      const bool active = active_at(p, comps);
+      if (active != prevActive) same = false;
       if (same) continue;
+      prevActive = active;
       prev.swap(cur);
-      const std::uint64_t h = mix_frame(p, prev);
+      const std::uint64_t h = mix_frame(p, prev, active);
       if (spans.empty() || spans.back().hash != h) spans.push_back(Span{f, h});
     }
     return spans;
@@ -932,7 +1081,8 @@ class FrameKeyIndex {
     m.str(comp_);
     m.flag(global_);
     for (const Layer& l : layers_) {
-      m.u64(node_hash(d, l.id));
+      if (!l.local) m.u64(node_hash(d, l.id));  // a local layer's props are in its spans
+      m.flag(l.local);
       m.flag(l.nested);
       m.flag(l.whole);
       if (l.nested) m.u64(l.constant);
@@ -949,12 +1099,15 @@ class FrameKeyIndex {
           m.f64(t->workArea->start);
           m.f64(t->workArea->duration);
         }
-        for (const TMarker& k : t->markers) {
-          m.str(k.id);
-          m.f64(k.frame);
-          m.f64(k.duration);
-          m.str(k.name);
-          m.str(k.comment);
+        // Markers reach a frame only through an expression (marker.key(n), .comment).
+        if (exprs_) {
+          for (const TMarker& k : t->markers) {
+            m.str(k.id);
+            m.f64(k.frame);
+            m.f64(k.duration);
+            m.str(k.name);
+            m.str(k.comment);
+          }
         }
         for (const Bar& b : t->bars) {
           m.str(b.id);
@@ -964,23 +1117,40 @@ class FrameKeyIndex {
           m.opt(b.clip.sourceDuration);
           m.flag(b.enabled);
           m.str(b.sourceId.value_or(""));
-          for (const TMarker& k : b.markers) {
-            m.str(k.id);
-            m.f64(k.frame);
-            m.f64(k.duration);
-            m.str(k.name);
-            m.str(k.comment);
+          if (exprs_) {
+            for (const TMarker& k : b.markers) {
+              m.str(k.id);
+              m.f64(k.frame);
+              m.f64(k.duration);
+              m.str(k.name);
+              m.str(k.comment);
+            }
           }
         }
       }
       m.u64(frame_keys::hash_json(d.transitions().at(c)));
     }
-    for (const Json& asset : d.items().assets) m.u64(frame_keys::hash_json(asset));
-    {
-      wire::Writer w;
-      api::encode(w, d.project());
-      const auto bytes = w.bytes();
-      m.str(std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()));  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast): bytes → chars
+    // An asset's file and decode settings, not how the Project panel shows it.
+    for (const Json& asset : d.items().assets) {
+      if (!asset.is_object()) {
+        m.u64(frame_keys::hash_json(asset));
+        continue;
+      }
+      for (const Json::Member& e : asset.obj()) {
+        if (e.value.is_undefined() || frame_keys::asset_label_field(e.key)) continue;
+        m.str(e.key);
+        frame_keys::mix_json(m, e.value);
+      }
+    }
+    // The project settings a frame reads: precision, working space, OCIO.
+    const api::ProjectSettings& ps = d.project();
+    m.u64(static_cast<std::uint64_t>(ps.bit_depth));
+    m.u64(static_cast<std::uint64_t>(ps.working_space));
+    m.flag(ps.linear_blending);
+    m.str(ps.ocio_config);
+    if (exprs_) {  // what an expression may read of them
+      m.u64(static_cast<std::uint64_t>(ps.expression_engine));
+      m.u64(ps.frames_start_at);
     }
     const MotionBlur& mb = d.motion_blur();
     m.flag(mb.enabled);
@@ -993,8 +1163,6 @@ class FrameKeyIndex {
     m.str(cm.displayTransform);
     m.f64(cm.bitDepth);
     m.u64(frame_keys::hash_json(d.materials()));
-    m.u64(frame_keys::hash_json(d.swatches()));
-    m.u64(frame_keys::hash_json(d.guides()));
     return m.value();
   }
 
@@ -1003,6 +1171,7 @@ class FrameKeyIndex {
   bool indexed_ = false;
   bool volatile_ = false;
   bool global_ = false;
+  bool exprs_ = false;  ///< any enabled expression: layer names may be read
   std::int64_t frames_ = 0;
   double fps_ = 30;
   std::uint64_t static_ = 0;

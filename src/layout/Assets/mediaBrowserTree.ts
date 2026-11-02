@@ -1,8 +1,9 @@
 /**
  * mediaBrowserTree — the pure rules of the Assets panel's Media Browser tab (id `browse`).
  *
- * The tab lists a folder the user picked, one level at a time, and lets any
- * media file in it be dragged straight into the composition. These helpers
+ * The tab lists the folders the user added (each project its own), one level
+ * at a time, and lets any media file in them be dragged straight into the
+ * composition. These helpers
  * decide what counts as media, how a listing is ordered, and how the lazy
  * tree flattens into rows; the IPC that reads the disk lives in
  * `electron/ipc/reveal.ts` and the React that draws it in `MediaBrowser.tsx`.
@@ -60,6 +61,40 @@ export interface MediaRow {
   expanded: boolean;
   /** True while the folder's listing is in flight. */
   loading: boolean;
+  /** One of the folders added to the Media Browser (the top level). */
+  root?: boolean;
+  /** An added folder that could not be read (moved, renamed, a drive unplugged). */
+  unreadable?: boolean;
+}
+
+/**
+ * The whole browser: each added folder as a top-level row, its contents under
+ * it once listed. A listing of `null` is a folder that could not be read.
+ */
+export function flattenMediaRoots(
+  roots: ReadonlyArray<string>,
+  expanded: ReadonlySet<string>,
+  listings: ReadonlyMap<string, ReadonlyArray<DirEntry> | null>,
+  pending: ReadonlySet<string>,
+): MediaRow[] {
+  const out: MediaRow[] = [];
+  const kids = new Map<string, ReadonlyArray<DirEntry>>();
+  for (const [dir, list] of listings) if (list) kids.set(dir, list);
+  for (const root of roots) {
+    const isOpen = expanded.has(root);
+    const listing = listings.get(root);
+    out.push({
+      entry: { name: baseName(root) || root, path: root, kind: 'dir' },
+      depth: 0,
+      expanded: isOpen,
+      loading: pending.has(root),
+      root: true,
+      ...(listing === null ? { unreadable: true } : {}),
+    });
+    if (!isOpen || !listing) continue;
+    for (const row of flattenMediaTree(listing, expanded, kids, pending)) out.push({ ...row, depth: row.depth + 1 });
+  }
+  return out;
 }
 
 /**

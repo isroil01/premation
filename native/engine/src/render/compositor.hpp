@@ -33,6 +33,13 @@ class Compositor {
   void blend_over(wgpu::CommandEncoder& encoder, const wgpu::TextureView& src, const wgpu::TextureView& target,
                   float opacity, float tintR, float tintG, float tintB, float tintStrength);
 
+  /// `src` (an RGBA8Unorm frame, already display-encoded) drawn as it is — no
+  /// encode — into the rectangle x, y, w × h (target px, fractional) of
+  /// `target` (targetWidth × targetHeight), bilinear; the rest of the target
+  /// cleared to opaque black. Comp-space frames drawn at a resolution tier.
+  void place(wgpu::CommandEncoder& encoder, const wgpu::TextureView& src, const wgpu::TextureView& target,
+             std::uint32_t targetWidth, std::uint32_t targetHeight, double x, double y, double w, double h);
+
  private:
   struct QuadSlot {
     wgpu::Buffer uniforms;
@@ -55,6 +62,9 @@ class Compositor {
   wgpu::ShaderModule onionModule_;
   wgpu::RenderPipeline onion_;
   wgpu::Buffer onionU_;
+  wgpu::ShaderModule placeModule_;
+  wgpu::RenderPipeline place_;
+  wgpu::Buffer placeU_;
   wgpu::Buffer blitU_;
   wgpu::BindGroup blitGroup_;
   wgpu::Texture rt_;

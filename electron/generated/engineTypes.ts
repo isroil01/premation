@@ -5099,6 +5099,9 @@ export interface FrameReady {
   renderDoneUs: number;
   width: number;
   height: number;
+  /** Preview resolution: the frame fills only this top-left part of the slot (the page scales it up, nearest). 0 = the whole slot. */
+  contentWidth: number;
+  contentHeight: number;
 }
 
 /** B4 — one subscribed layer's overlay geometry at the frame's time (setOverlayGeometry). Fields of kinds not subscribed are empty. Composition space is comp px, y down; `t` values are the layer's keyframe-axis seconds (what a Position key stores — the page's motion-path window and hover test compare them). One layer's geometry may arrive as SEVERAL records in a frame (the payload cap): the host merges them, CONCATENATING arrays in arrival order. */
@@ -5679,6 +5682,13 @@ export interface Renderable {
   deformedMesh?: RenderDeformedMesh;
   extrudedMesh?: RenderExtrudedMesh;
   threeD?: RenderThreeD;
+  /**
+   * The layer's world scale (its own and its parents', geometric mean of the
+   * two axes): effect radii, offsets and widths are layer px, so a 2D chain
+   * runs them at this scale, as After Effects runs effects in layer space.
+   * Absent = 1.
+   */
+  fxScale?: number;
 }
 
 /** FrameScene. */

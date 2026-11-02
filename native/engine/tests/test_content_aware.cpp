@@ -141,6 +141,51 @@ TEST_CASE("multi-scale patch match continues stripes through a hole", "[caf][ae]
   CHECK(again == rgba);
 }
 
+TEST_CASE("a stopped job stops the fill between passes, not after the window", "[caf]") {
+  // Stop pressed in the Tasks panel: the fill must notice inside its PatchMatch passes (one
+  // full-size frame is minutes), and fill_sequence must not start the next frame.
+  constexpr int kW = 64;
+  constexpr int kH = 64;
+  const auto truth = picture(kW, kH, [](int x, int y) { return std::array<std::uint8_t, 3>{static_cast<std::uint8_t>(x * 4), static_cast<std::uint8_t>(y * 4), 90}; });
+  const auto hole = box_hole(kW, kH, 24, 24, 40, 40);
+  int asked = 0;
+  caf::MultiscaleOptions ms;
+  ms.cancelled = [&asked] { return ++asked >= 1; };
+  auto rgba = truth;
+  CHECK(caf::inpaint_multiscale(rgba, kW, kH, hole, ms) == 0);
+  CHECK(asked == 1);
+
+  std::vector<caf::SequenceFrame> frames(3);
+  for (caf::SequenceFrame& f : frames) {
+    f.rgba = truth;
+    f.hole = hole;
+  }
+  caf::SequenceOptions opts;
+  opts.cancelled = [] { return true; };
+  const caf::SequenceStats st = caf::fill_sequence(frames, kW, kH, opts);
+  CHECK(st.synthesized == 0);
+  CHECK(st.propagated == 0);
+}
+
+TEST_CASE("a window of frames reports its progress as it fills, up to the end", "[caf]") {
+  // The Tasks bar stood at 31 % for minutes while one window filled: it moves per frame now.
+  constexpr int kW = 32;
+  constexpr int kH = 32;
+  const auto truth = picture(kW, kH, [](int x, int y) { return std::array<std::uint8_t, 3>{static_cast<std::uint8_t>(x * 8), static_cast<std::uint8_t>(y * 8), 60}; });
+  std::vector<caf::SequenceFrame> frames(4);
+  for (caf::SequenceFrame& f : frames) {
+    f.rgba = truth;
+    f.hole = box_hole(kW, kH, 12, 12, 20, 20);
+  }
+  std::vector<double> seen;
+  caf::SequenceOptions opts;
+  opts.progress = [&seen](double k) { seen.push_back(k); };
+  (void)caf::fill_sequence(frames, kW, kH, opts);
+  REQUIRE(seen.size() >= frames.size());
+  CHECK(std::is_sorted(seen.begin(), seen.end()));
+  CHECK(seen.back() == 1.0);
+}
+
 TEST_CASE("edge blend fills a gradient smoothly", "[caf][ae]") {
   constexpr int kW = 48;
   constexpr int kH = 32;

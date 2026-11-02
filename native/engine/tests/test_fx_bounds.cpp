@@ -107,10 +107,14 @@ TEST_CASE("fx_reach: blurs reach their last tap — 3.5 sigma plus one tap spaci
   REQUIRE(wide);
   check_box(wide->out, 100 - r40, 100 - r40, 200 + r40, 150 + r40);
 
-  // dims 1 = horizontal only, 2 = vertical only.
+  // dims 1 = horizontal only, 2 = vertical only. Fast Box Blur is a box of half-width
+  // radiusPx (its last texel by its fraction, one more), `iterations` times, plus two.
   const auto h = fx_reach(entry("fast-box-blur", {{"radiusPx", 40}, {"dims", 1}}), kIn, kView);
   REQUIRE(h);
-  check_box(h->out, 100 - r40, 100, 200 + r40, 150);
+  check_box(h->out, 100 - 43, 100, 200 + 43, 150);
+  const auto h3 = fx_reach(entry("fast-box-blur", {{"radiusPx", 10.5}, {"iterations", 3}}), kIn, kView);
+  REQUIRE(h3);
+  check_box(h3->out, 100 - 38, 100 - 38, 200 + 38, 150 + 38);
   const auto v = fx_reach(entry("gaussian-blur", {{"radiusPx", 40}, {"dims", 2}}), kIn, kView);
   REQUIRE(v);
   check_box(v->out, 100, 100 - r40, 200, 150 + r40);
@@ -148,10 +152,11 @@ TEST_CASE("fx_reach: a drop shadow reaches its offset plus its softness, on its 
   // The unmoved silhouette is drawn too.
   check_box(s->passes, 100 - 20.5, 100 - 21.5, 200 + 31.5, 150 + 21.5);
 
-  // The offset is in world units: zoom 2 doubles it.
+  // The radius and the offset are layer px: at 2 texels a px (a 200 % layer, or zoom 2) both
+  // double — the softness reaches 3.5 × 10 + 1 + 2.
   const auto zoomed = fx_reach(entry("drop-shadow", {{"radiusPx", 5}, {"offsetX", 10}}), kIn, FxBoundsView{2, 2});
   REQUIRE(zoomed);
-  CHECK(zoomed->out.x1 == Approx(200 + 20.5 + 20 + 1));
+  CHECK(zoomed->out.x1 == Approx(200 + 38 + 20 + 1));
 
   // A shadow far below: the contents stay inside, the shadow's own box is added.
   const auto far = fx_reach(entry("drop-shadow", {{"offsetY", 500}}), kIn, kView);

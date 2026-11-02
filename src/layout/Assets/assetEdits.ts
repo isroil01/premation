@@ -24,7 +24,8 @@ import { layersUsingItem } from '@core/mirror/docFacts';
 import { rateOf } from '@layout/Composition/compositionEdits';
 import type { FootageInterpretation } from '@core/source/sourceInfo';
 import type { ImportedAsset } from '@stores/assetStore';
-import { itemAsset } from '@core/mirror/itemAssets';
+import { itemAsset, itemAssetsOf } from '@core/mirror/itemAssets';
+import { bytesKey, duplicateFootage, footageByIdentity, pathKey } from './footageDedupe';
 import { useUIStore } from '@stores/uiStore';
 import { documentMirror } from '@stores/documentMirror';
 import { LABEL_COLORS } from '@core/scene/labelColor';
@@ -47,7 +48,10 @@ async function importedAssets(ids: readonly string[]): Promise<ImportedAsset[]> 
 // ── Import (by path) ──────────────────────────────────────────────────
 
 export interface ImportPathsResult {
+  /** Every file asked for as a project item, in request order — new items and ones already in the project alike. */
   imported: ImportedAsset[];
+  /** The subset of `imported` the project already held (same file): reused, not imported again. */
+  reused?: ImportedAsset[];
   /** Compositions the import made (a Photoshop file imported as a composition). */
   compositions?: string[];
   /** Paths that could not be read or decoded. */
@@ -70,10 +74,33 @@ export function importFailureReason(message: string | undefined): string {
 }
 
 /**
+ * The project items already made from `paths` (path key → item id), and the
+ * paths still to import, each file once. A file the project holds is never
+ * imported again — see `footageDedupe.ts`. A Photoshop file imported as a
+ * composition always imports: the composition is the point.
+ */
+function splitByExisting(paths: readonly string[], forceImport: (path: string) => boolean): { existing: Map<string, string>; fresh: string[] } {
+  const byPath = footageByIdentity(documentMirror().items.values());
+  const existing = new Map<string, string>();
+  const fresh: string[] = [];
+  const seen = new Set<string>();
+  for (const path of paths) {
+    const key = pathKey(path);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const id = forceImport(path) ? undefined : byPath.get(key);
+    if (id) existing.set(key, id);
+    else fresh.push(path);
+  }
+  return { existing, fresh };
+}
+
+/**
  * Import files by path into `folder` (null = project root). One entry,
  * "Import File(s)". The API's import is all-or-nothing; when a file in the set
  * fails, the rest are imported one by one inside one gesture so a single bad
- * file neither blocks the others nor splits the undo entry.
+ * file neither blocks the others nor splits the undo entry. A file already in
+ * the project is reused, not imported again (no entry when nothing is new).
  */
 export async function importPathsEdit(
   paths: readonly string[],
@@ -81,9 +108,21 @@ export async function importPathsEdit(
   opts: { psdAs?: PsdImportAs } = {},
 ): Promise<ImportPathsResult> {
   if (paths.length === 0) return { imported: [], failed: [] };
-  const label = paths.length === 1 ? 'Import File' : `Import ${plural(paths.length, 'File')}`;
   // AE's Import As for a Photoshop file: Footage (the merged image) unless asked for a Composition.
   const asComposition = (path: string): boolean => opts.psdAs === 'composition' && isPhotoshopPath(path);
+  const { existing, fresh } = splitByExisting(paths, asComposition);
+  const reused = itemAssetsOf(documentMirror(), existing.values());
+  if (fresh.length === 0) return { imported: reused, reused, failed: [] };
+  const made = await importFreshPaths(fresh, folder, asComposition);
+  return { ...made, imported: [...reused, ...made.imported], ...(reused.length ? { reused } : {}) };
+}
+
+async function importFreshPaths(
+  paths: readonly string[],
+  folder: string | null,
+  asComposition: (path: string) => boolean,
+): Promise<ImportPathsResult> {
+  const label = paths.length === 1 ? 'Import File' : `Import ${plural(paths.length, 'File')}`;
   const file = (path: string) => ({ path, asSequence: false, createComposition: asComposition(path), ...(folder ? { folder } : {}) });
   const compositionsOf = (ids: readonly string[]): string[] => ids.filter((id) => id.startsWith('comp_'));
   const all = await edit(label, { type: 'importFiles', files: paths.map(file) }, { quiet: true });
@@ -167,8 +206,26 @@ async function bytesFileOf({ file, folderId }: BrowserFileImport): Promise<Impor
  * the rest nor splits the undo entry. Files are read one at a time in the
  * fallback, so a large set is never all in memory twice.
  */
-export async function importBrowserFilesEdit(items: readonly BrowserFileImport[], label?: string): Promise<ImportPathsResult & { failedFiles: File[] }> {
-  if (items.length === 0) return { imported: [], failed: [], failedFiles: [] };
+export async function importBrowserFilesEdit(all: readonly BrowserFileImport[], label?: string): Promise<ImportPathsResult & { failedFiles: File[] }> {
+  if (all.length === 0) return { imported: [], failed: [], failedFiles: [] };
+  // A dropped file the project already holds — by its disk path, or by name and size when it has none — is reused (`footageDedupe.ts`).
+  const known = footageByIdentity(documentMirror().items.values());
+  const reusedIds: string[] = [];
+  const items = all.filter(({ file }) => {
+    const origin = diskPathOf(file);
+    const key = origin ? pathKey(origin) : bytesKey(file.name, file.size);
+    const id = key ? known.get(key) : undefined;
+    if (!id) return true;
+    if (!reusedIds.includes(id)) reusedIds.push(id);
+    return false;
+  });
+  const reused = itemAssetsOf(documentMirror(), reusedIds);
+  if (items.length === 0) return { imported: reused, reused, failed: [], failedFiles: [] };
+  const made = await importFreshFiles(items, label);
+  return { ...made, imported: [...reused, ...made.imported], ...(reused.length ? { reused } : {}) };
+}
+
+async function importFreshFiles(items: readonly BrowserFileImport[], label?: string): Promise<ImportPathsResult & { failedFiles: File[] }> {
   const name = label ?? (items.length === 1 ? 'Import File' : `Import ${plural(items.length, 'File')}`);
   const all = await edit(name, { type: 'importBytes', files: await Promise.all(items.map(bytesFileOf)) }, { quiet: true });
   if (all.ok) {
@@ -213,6 +270,35 @@ export async function importBrowserFilesEdit(items: readonly BrowserFileImport[]
     });
   }
   return { imported, failed: failedFiles.map((f) => f.name), failedFiles, reasons };
+}
+
+// ── Consolidate ───────────────────────────────────────────────────────
+
+/** How many footage items are extra copies of a file the project already holds. */
+export function duplicateFootageCount(): number {
+  return duplicateFootage(documentMirror().items.values()).reduce((n, g) => n + g.remove.length, 0);
+}
+
+/**
+ * AE's File ▸ Dependencies ▸ Consolidate All Footage: every layer that names a
+ * copy of a file takes the first item of that file instead, and the copies are
+ * removed. One entry; undo brings the copies and the layers' old sources back.
+ * Resolves to the number of items removed (0 when there was nothing to merge).
+ */
+export async function consolidateFootageEdit(): Promise<number> {
+  const groups = duplicateFootage(documentMirror().items.values());
+  if (groups.length === 0) return 0;
+  const cmds: Command[] = [];
+  const remove: string[] = [];
+  for (const g of groups) {
+    for (const copy of g.remove) {
+      for (const layer of layersUsingItem(copy)) cmds.push({ type: 'replaceLayerSource', layer, source: g.keep, keepSize: true });
+      remove.push(copy);
+    }
+  }
+  cmds.push({ type: 'removeItems', items: remove, removeUsingLayers: false });
+  const res = await edit('Consolidate All Footage', cmds);
+  return res.ok ? remove.length : 0;
 }
 
 // ── Folders ───────────────────────────────────────────────────────────

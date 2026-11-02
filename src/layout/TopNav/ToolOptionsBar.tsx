@@ -494,7 +494,9 @@ function RotoOptions({ objectMatteTool = false, brush }: { objectMatteTool?: boo
 
   return (
     <>
-      <span className={styles.optLabel}>{objectMatteTool
+      <span className={styles.optLabel} title={objectMatteTool
+        ? t('workspace.subjects.hud.matteKeys', 'Click new · Shift add · Alt cut · drag box · Tab part ⇄ whole')
+        : t('workspace.subjects.hud.brushKeys', '[ ] size · Shift [ ] hardness · Ctrl-drag resize · Alt cuts')}>{objectMatteTool
         ? t('topNav.roto.objectMatteLabel', 'Object Matte')
         : brush === 'exact'
           ? t('topNav.roto.selectionBrushLabel', 'Selection Brush')

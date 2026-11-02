@@ -198,6 +198,12 @@ export async function retrackSubject(layer: string, subject: string, time: numbe
  */
 async function walkSubject(layer: string, subject: string, range: { start: number; end: number }, keepOutside: boolean, label: string,
   origin: number = playheadSeconds()): Promise<void> {
+  // A still's subject is held on every frame by itself; walking it only stores the same matte
+  // and outline once per frame (300 copies over 10 s), which every later edit of the layer drags along.
+  if (!layerMoves(layer)) {
+    useUIStore.getState().notify({ level: 'info', message: t('workspace.subjects.stillNoFollow', 'A still image needs no tracking: the subject stays selected on every frame.'), durationMs: 3500 });
+    return;
+  }
   const fps = settingsFps(activeCompSettingsNow());
   const { start, end } = range;
   const store = useRotoBrushStore.getState();

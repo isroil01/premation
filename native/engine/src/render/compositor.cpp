@@ -149,7 +149,37 @@ struct VOut {
   onionModule_ = compile(dev, kOnionWgsl, "engine:onion");
   onion_ = make_pipeline(onionModule_, "vs_onion", "fs_onion", kSlotFormat, false, true);
   onionU_ = uniform_buffer(dev, 32);
-  return textured_ != nullptr && blit_ != nullptr && onion_ != nullptr;
+  static constexpr const char* kPlaceWgsl = R"WGSL(
+struct Place {
+  rect : vec4<f32>,  // clip space: left, top, right, bottom
+};
+@group(0) @binding(0) var<uniform> u : Place;
+@group(0) @binding(1) var src : texture_2d<f32>;
+@group(0) @binding(2) var smp : sampler;
+
+struct VOut {
+  @builtin(position) pos : vec4<f32>,
+  @location(0) uv : vec2<f32>,
+};
+
+@vertex fn vs_place(@builtin(vertex_index) vi : u32) -> VOut {
+  var c = array<vec2<f32>, 6>(vec2<f32>(0.0, 0.0), vec2<f32>(1.0, 0.0), vec2<f32>(0.0, 1.0),
+                              vec2<f32>(0.0, 1.0), vec2<f32>(1.0, 0.0), vec2<f32>(1.0, 1.0));
+  let p = c[vi];
+  var o : VOut;
+  o.pos = vec4<f32>(mix(u.rect.x, u.rect.z, p.x), mix(u.rect.w, u.rect.y, p.y), 0.0, 1.0);
+  o.uv = vec2<f32>(p.x, 1.0 - p.y);
+  return o;
+}
+
+@fragment fn fs_place(i : VOut) -> @location(0) vec4<f32> {
+  return textureSample(src, smp, i.uv);
+}
+)WGSL";
+  placeModule_ = compile(dev, kPlaceWgsl, "engine:place");
+  place_ = make_pipeline(placeModule_, "vs_place", "fs_place", kSlotFormat, false, false);
+  placeU_ = uniform_buffer(dev, 16);
+  return textured_ != nullptr && blit_ != nullptr && onion_ != nullptr && place_ != nullptr;
 }
 
 wgpu::RenderPipeline Compositor::make_pipeline(const wgpu::ShaderModule& module, const char* vs, const char* fs,
@@ -285,6 +315,30 @@ void Compositor::encode(wgpu::CommandEncoder& encoder, const FrameScene& scene, 
   wgpu::RenderPassEncoder p = encoder.BeginRenderPass(&rp);
   p.SetPipeline(blit_);
   p.SetBindGroup(0, blitGroup_);
+  p.Draw(6);
+  p.End();
+}
+
+void Compositor::place(wgpu::CommandEncoder& encoder, const wgpu::TextureView& src, const wgpu::TextureView& target,
+                       std::uint32_t targetWidth, std::uint32_t targetHeight, double x, double y, double w, double h) {
+  if (place_ == nullptr || gpu_ == nullptr || targetWidth == 0 || targetHeight == 0) return;
+  const double tw = static_cast<double>(targetWidth);
+  const double th = static_cast<double>(targetHeight);
+  const std::array<float, 4> rect = {static_cast<float>(2.0 * x / tw - 1.0), static_cast<float>(1.0 - 2.0 * y / th),
+                                     static_cast<float>(2.0 * (x + w) / tw - 1.0), static_cast<float>(1.0 - 2.0 * (y + h) / th)};
+  gpu_->queue.WriteBuffer(placeU_, 0, rect.data(), sizeof(rect));
+  const wgpu::BindGroup group = make_group(gpu_->device, place_, placeU_, src, clamp_);
+  wgpu::RenderPassColorAttachment att{};
+  att.view = target;
+  att.loadOp = wgpu::LoadOp::Clear;
+  att.storeOp = wgpu::StoreOp::Store;
+  att.clearValue = {0, 0, 0, 1};
+  wgpu::RenderPassDescriptor rp{};
+  rp.colorAttachmentCount = 1;
+  rp.colorAttachments = &att;
+  wgpu::RenderPassEncoder p = encoder.BeginRenderPass(&rp);
+  p.SetPipeline(place_);
+  p.SetBindGroup(0, group);
   p.Draw(6);
   p.End();
 }

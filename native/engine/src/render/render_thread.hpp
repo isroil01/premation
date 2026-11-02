@@ -321,7 +321,11 @@ class RenderThread final : public FrameSink {
   /// P5: a frame submitted to the GPU, announced (FrameReady) once its work is
   /// done — the render thread does not wait for it, so the next frame's CPU
   /// work (rasters, encoding) overlaps this frame's GPU work.
+  /// A job's frame size in a slot set: its preview-resolution size (RenderJob::contentWidth), at most the slot's.
+  [[nodiscard]] static std::pair<std::uint32_t, std::uint32_t> content_size(const RenderJob& job, const SlotSet& set) noexcept;
   struct InFlight {
+    std::uint32_t contentWidth = 0;  ///< drawn into the slot's corner at this size (preview resolution); 0 = the whole slot
+    std::uint32_t contentHeight = 0;
     Port* port = nullptr;
     std::uint32_t generation = 0;
     std::uint32_t slot = 0;
@@ -389,8 +393,10 @@ class RenderThread final : public FrameSink {
   /// Every viewport by id (m_ for the map; see Port for its fields).
   std::map<std::uint32_t, std::unique_ptr<Port>> ports_;
   std::uint32_t lastServed_ = 0;  // m_: the viewport rendered last (fair turns between viewports)
-  /// m_: the idle render-ahead job waiting its turn (one at a time; a newer one replaces it).
-  std::optional<RenderJob> prefetch_;
+  /// m_: the render-ahead jobs waiting their turn, oldest first (the session's
+  /// prefetch workers build several side by side); past kPrefetchQueue the oldest is answered as a drop.
+  std::deque<RenderJob> prefetch_;
+  static constexpr std::size_t kPrefetchQueue = 4;
   /// Every open viewport's slots take copies (FrameSink::slots_copyable); recomputed by rebuild.
   std::atomic<bool> slotsCopyable_{true};
   /// Query work for the render thread (render_still, read_pixels), run

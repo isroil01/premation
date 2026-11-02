@@ -9,6 +9,7 @@
 #include <string>
 
 #include "color/color_system.hpp"
+#include "effect_chain.hpp"
 #include "render_context.hpp"
 
 namespace premation::rg {
@@ -87,8 +88,18 @@ class EffectPass final : public RenderPass {
     cmds_.clear();
     if (ctx.colorSystem != nullptr && ctx.colorSystem->active()) {
       // D3: working → display/output through the OCIO program, then the viewer LUT.
-      // (Exposure is not applied on the OCIO route: the OCIO program owns the encode.)
-      ctx.colorSystem->emit_display(ctx, cmds_, src->tex(), lutTex, lutMeta);
+      // View ▸ Adjust Exposure first, in the working space (a linear gain, as the
+      // non-OCIO blit applies it): the scene scaled into a free float target.
+      TexRef scene = src->tex();
+      if (gain != 1.0) {
+        ColorTransform g;
+        g.m = {gain, 0, 0, 0, gain, 0, 0, 0, gain};
+        Commands scaled;
+        emit_textured(ctx, scaled, screen_mvp(), Color::white(), 1, Blend::none, scene, ctx.nearest_clamp(), {0, 0, 1, 1}, g, true);
+        ctx.draw_into(kBlur1, scaled, true);
+        if (RenderTarget* t = ctx.target(kBlur1)) scene = t->tex();
+      }
+      ctx.colorSystem->emit_display(ctx, cmds_, scene, lutTex, lutMeta);
     } else if (lut || channelCode != 0 || gain != 1.0) {
       // emitSceneBlit with a viewer LUT (scene-blit-lut, packSceneBlitLut) and/or a channel view.
       ColorTransform ct;
@@ -264,7 +275,9 @@ std::unique_ptr<RenderGraph> build_default_graph() {
   // passes/index.ts declarations, same names, formats, MSAA and depth.
   g->declare_target(std::string(kSceneColor), full("rgba16float", true, kMsaaSamples));
   for (const std::string_view n : {kLayerTarget, kBlur1, kBlur2, kBlur3}) g->declare_target(std::string(n), full("rgba16float"));
-  g->declare_target(std::string(kMatteTarget), full("rgba8unorm"));
+  // Float (project precision): it holds matte sources and the blend-mode
+  // backdrop, which the combine writes back over the whole frame.
+  g->declare_target(std::string(kMatteTarget), full("rgba16float"));
   g->declare_target(std::string(kFxSilhouette), full("rgba16float"));
   g->declare_target(std::string(kFxScopeMask), full("rgba8unorm"));
   g->declare_target(std::string(kFxBlendInput), full("rgba16float"));

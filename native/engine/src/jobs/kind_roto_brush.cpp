@@ -132,7 +132,7 @@ class RotoBrushResult final : public JobResult {
 /// The mask `id`'s outline at `t` (layer-centred px), from the layer's masks
 /// (keyed: interpolated). Empty when the layer has no such mask.
 std::vector<roto::Pt> mask_outline_at(const doc::Node& node, const std::string& id, double t) {
-  const std::vector<doc::Json> anim = doc::read_node_mask_anim(node);
+  const std::span<const doc::Json> anim = doc::mask_anim_view(node);
   const std::optional<doc::Json> keyed = doc::interpolate_mask(anim, t);
   const doc::Json mask = keyed ? *keyed : doc::get_node_mask(node);
   std::vector<roto::Pt> out;

@@ -155,8 +155,17 @@ fn fs(@location(0) uvIn : vec2<f32>, @location(1) local : vec2<f32>) -> @locatio
   let uvHi = max(obj.uvRect.xy, obj.uvRect.xy + obj.uvRect.zw);
   let uv = clamp(uvIn, uvLo, uvHi);
   let lodScale = select(1.0, obj.edge.w, obj.edge.w > 0.0);
-  let ddx = dpdx(uvIn) * lodScale;
-  let ddy = dpdy(uvIn) * lodScale;
+  // lodScale ½ picks one mip level finer for a supersampled raster. Only the
+  // shorter gradient (the one the anisotropic LOD follows) is halved; the
+  // longer loses the same length, so a squashed layer's filter still spans its
+  // whole footprint. Halving both aliased edges along the squashed axis.
+  let gdx = dpdx(uvIn);
+  let gdy = dpdy(uvIn);
+  let lx = max(length(gdx), 1e-12);
+  let ly = max(length(gdy), 1e-12);
+  let cut = min(lx, ly) * (1.0 - lodScale);
+  let ddx = gdx * ((lx - cut) / lx);
+  let ddy = gdy * ((ly - cut) / ly);
   let cov = select(1.0, edgeCoverage(local), obj.edge.z > 0.5);
   let c = unpremul(textureSampleGrad(tex, smp, uv, ddx, ddy)) * obj.tint;
   let v = vec4<f32>(c.rgb, 1.0);

@@ -56,7 +56,7 @@ export const DEFAULT_MOTION_BLUR_SETTINGS: MotionBlurSettings = {
 export const useMotionBlurStore = create<MotionBlurStore>((set, get) => ({
   ...DEFAULT_MOTION_BLUR_SETTINGS,
   setEnabled: (v) => { set({ enabled: v }); touched(); },
-  setShutterAngle: (v) => { set({ shutterAngle: Math.max(0, Math.min(360, v)) }); touched(); },
+  setShutterAngle: (v) => { set({ shutterAngle: Math.max(0, Math.min(720, v)) }); touched(); },  // After Effects allows 0..720
   setShutterPhase: (v) => { set({ shutterPhase: Math.max(-360, Math.min(360, v)) }); touched(); },
   setSamples: (v) => { set({ samples: Math.max(2, Math.min(32, Math.round(v))) }); touched(); },
   setAdaptiveSampleLimit: (v) => { set({ adaptiveSampleLimit: Math.max(2, Math.min(128, Math.round(v))) }); touched(); },

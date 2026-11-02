@@ -182,7 +182,7 @@ std::vector<StaticPropertyRow> paint_rows(const Document& d, const Node& n) {
 std::vector<StaticPropertyRow> mask_rows(const Node& n) {
   std::vector<StaticPropertyRow> out;
   const auto mask = read_node_mask(n);
-  const bool animated = !read_node_mask_anim(n).empty();
+  const bool animated = !mask_anim_view(n).empty();
   if (!mask && !animated) return out;
   const std::size_t count = mask ? mask->at("paths").arr().size() : 0;
   StaticPropertyRow shape;

@@ -8,7 +8,7 @@
  * zoom bar, tool bar — drives the same engine.
  */
 
-import { Workspace, Rect, commands, type CommandPort, type SceneGraphPort } from '@motion/workspace';
+import { Workspace, Rect, commands, zoomLadderStep, type CommandPort, type SceneGraphPort } from '@motion/workspace';
 import type { Tool as UITool } from '@stores/uiStore';
 import type { RenderView } from '@core/workspace/renderView';
 import { useSelectionStore } from '@stores/selectionStore';
@@ -285,12 +285,13 @@ export class WorkspaceController {
     return { x: width / 2, y: height / 2 };
   }
 
+  /** Zoom In / Zoom Out step through After Effects' ladder (12.5, 25, 33.3, 50, 100, 200 %…), then settle on device pixels. */
   zoomIn(): void {
-    this.ws.zoom(1.2, this.viewportCenterScreen());
+    this.ws.setZoom(zoomLadderStep(this.ws.camera.zoom, 1), this.viewportCenterScreen());
   }
 
   zoomOut(): void {
-    this.ws.zoom(1 / 1.2, this.viewportCenterScreen());
+    this.ws.setZoom(zoomLadderStep(this.ws.camera.zoom, -1), this.viewportCenterScreen());
   }
 
   setZoomPercent(percent: number): void {

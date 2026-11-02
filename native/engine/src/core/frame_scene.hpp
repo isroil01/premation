@@ -66,6 +66,15 @@ struct CompSpaceFrame {
   double dpr = 1;         ///< CSS px → texture px: the device pixel ratio × the preview scale (ViewSpec::dpr)
   double phaseX = 0;      ///< the comp origin inside texture pixel (0, 0), [0, 1) in texture px, quantised to 1/256
   double phaseY = 0;
+  /// A resolution TIER (item 6, docs/AUDIT_2026-11-02_RENDER_SCENE.md): a view
+  /// scale that is not a power of two draws the comp at the next power of two
+  /// above it (zoom = the tier, dpr 1, phase 0) and the present scales it into
+  /// the slot by `present` (< 1) at the fractional `originX`, `originY` (slot
+  /// px). Every zoom inside one tier, and every pan, shares the cached frame;
+  /// a ladder zoom (100 %, 50 %, 200 %…) is the exact copy above. 1 = a copy.
+  double present = 1;
+  double originX = 0;
+  double originY = 0;
   bool operator==(const CompSpaceFrame&) const = default;
 };
 
@@ -150,6 +159,13 @@ struct RenderJob {
   /// from a tier as) a comp-space texture of this geometry and copied into the
   /// slot. Absent = slot space. Set by the Session with the port's per-frame copy.
   std::optional<CompSpaceFrame> compSpace;
+  /// Preview resolution (Full / Half / Third / Quarter): the frame's own size,
+  /// the viewport's pixels at that scale. The slots stay the viewport's full
+  /// size (a resolution switch no longer rebuilds the ring); a smaller frame
+  /// lands in the slot's top-left corner and FrameReady.contentWidth / Height
+  /// tell the page which part to scale up. 0 = the slot's size.
+  std::uint32_t contentWidth = 0;
+  std::uint32_t contentHeight = 0;
   /// Idle render-ahead (Session::idle_prefetch): the frame is drawn and stored in
   /// the cache tiers (coverage recorded) but never presented — no slot, no
   /// FrameReady, the playhead stays where it is. Answered through
@@ -353,9 +369,12 @@ struct ViewportConfig {
   return physical == 0 ? 0U : static_cast<std::uint32_t>(std::max(1.0, scaled));
 }
 
+/// Whether the slots must be rebuilt. Not for a preview-resolution switch: the
+/// slots are the viewport's full size and a reduced frame takes their corner
+/// (RenderJob::contentWidth) — that rebuild was the 0.3–1.7 s stall that kept
+/// adaptive resolution off during playback.
 [[nodiscard]] inline bool ring_config_changed(const ViewportConfig& a, const ViewportConfig& b) {
-  return a.viewport != b.viewport || a.width != b.width || a.height != b.height || a.open != b.open ||
-         a.resolution != b.resolution;
+  return a.viewport != b.viewport || a.width != b.width || a.height != b.height || a.open != b.open;
 }
 
 /// The comp-space frame a composition viewport `port` draws a `compW` × `compH`
@@ -412,13 +431,33 @@ struct ViewportConfig {
     return true;
   };
   CompSpaceFrame cs;
-  if (!split(originX, cs.slotX, cs.phaseX) || !split(originY, cs.slotY, cs.phaseY)) return std::nullopt;
   const double scale = zoom * dpr;
+  constexpr double kMaxSide = 8192;  // Dawn's default maxTextureDimension2D
+  // Off the power-of-two ladder: the comp at the next tier up, scaled into the slot.
+  const double exactTier = std::exp2(std::round(std::log2(scale)));
+  if (std::abs(scale / exactTier - 1) > 1e-3) {
+    const double tier = std::exp2(std::ceil(std::log2(scale)));
+    const double tw = std::ceil(compW * tier - 1e-6);
+    const double th = std::ceil(compH * tier - 1e-6);
+    if (!(tw >= 1) || !(th >= 1) || tw > kMaxSide || th > kMaxSide) return std::nullopt;
+    // Never more than the comp at 100 % (zoomed out), nor than four slots (zoomed in).
+    if (tier > 1 && tw * th > 4.0 * slotW * slotH) return std::nullopt;
+    cs.width = static_cast<std::uint32_t>(tw);
+    cs.height = static_cast<std::uint32_t>(th);
+    cs.zoom = tier;
+    cs.dpr = 1;
+    cs.present = scale / tier;
+    cs.originX = originX;
+    cs.originY = originY;
+    cs.slotX = static_cast<std::int32_t>(std::floor(std::clamp(originX, -1e9, 1e9)));
+    cs.slotY = static_cast<std::int32_t>(std::floor(std::clamp(originY, -1e9, 1e9)));
+    return cs;
+  }
+  if (!split(originX, cs.slotX, cs.phaseX) || !split(originY, cs.slotY, cs.phaseY)) return std::nullopt;
   // The texture covers the comp rect and the partial pixels at its edges (1e-6: a
   // comp edge that lands on a pixel boundary within noise adds no empty column).
   const double w = std::ceil(cs.phaseX + compW * scale - 1e-6);
   const double h = std::ceil(cs.phaseY + compH * scale - 1e-6);
-  constexpr double kMaxSide = 8192;  // Dawn's default maxTextureDimension2D
   if (!(w >= 1) || !(h >= 1) || w > kMaxSide || h > kMaxSide) return std::nullopt;
   // Zoomed well in: the comp would cost more than twice the slot to draw. Slot space.
   if (w * h > 2.0 * slotW * slotH) return std::nullopt;

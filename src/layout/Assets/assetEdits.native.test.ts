@@ -10,8 +10,10 @@ import { buildScene, type Scene } from '@core/engine/__testHelpers__/scene';
 import { engineIdle } from '@core/engine/engineInstance';
 import { useAssetStore } from '@stores/assetStore';
 import {
+  consolidateFootageEdit,
   createFolderEdit,
   createFolderTreeEdit,
+  duplicateFootageCount,
   importBrowserFilesEdit,
   importPathsEdit,
   interpretFootageEdit,
@@ -75,6 +77,35 @@ describe('import by path', () => {
     await h.run({ type: 'undo' });
     expect((await h.doc())).toBe(before);
   });
+
+  it('a file already in the project is reused, not imported again', async () => {
+    const n = (await historyLabels()).length;
+    // The scene imported C:/media/clip.mp4; the same file, spelled the Windows way, is that item.
+    const again = await importPathsEdit(['C:\\Media\\CLIP.mp4']);
+    expect(again.imported.map((a) => a.id)).toEqual([s.footage]);
+    expect(again.reused?.map((a) => a.id)).toEqual([s.footage]);
+    expect((await historyLabels()).length).toBe(n);
+    // A mix: the known file is reused, the new one imported (one entry, named for what is new).
+    const mix = await importPathsEdit(['C:/media/clip.mp4', 'C:/media/new.png', 'C:/media/new.png']);
+    expect(mix.imported.map((a) => a.name)).toEqual(['clip.mp4', 'new.png']);
+    expect(mix.imported[0]!.id).toBe(s.footage);
+    expect(await entries('Import File')).toBe(1);
+  });
+});
+
+describe('Consolidate All Footage', () => {
+  it('points layers at the first item of a file and removes the copies, as one entry', async () => {
+    // An older project: the same file imported twice, a layer on the copy.
+    const { items: [copy] } = await h.run({ type: 'importFiles', files: [{ path: 'C:/media/clip.mp4', asSequence: false, createComposition: false }] });
+    await h.run({ type: 'replaceLayerSource', layer: s.V, source: copy!, keepSize: true });
+    await engineIdle();
+    expect(duplicateFootageCount()).toBe(1);
+    await oneEntry('Consolidate All Footage', async () => { expect(await consolidateFootageEdit()).toBe(1); });
+    expect(asset(copy!)).toBeUndefined();
+    expect(layersUsingItems([s.footage])).toBe(1);
+    expect(duplicateFootageCount()).toBe(0);
+    expect(await consolidateFootageEdit()).toBe(0);
+  });
 });
 
 describe('import browser Files (from bytes)', () => {
@@ -99,6 +130,18 @@ describe('import browser Files (from bytes)', () => {
     expect(await entries('Drop')).toBe(1);
     await h.run({ type: 'undo' });
     expect((await h.doc())).toBe(before);
+  });
+
+  it('the same path-less file dropped again is reused (same name, same size)', async () => {
+    const first = await importBrowserFilesEdit([{ file: file('giraffe.jpg', [1, 2, 3, 4], 'image/jpeg') }]);
+    await engineIdle();
+    const n = (await historyLabels()).length;
+    const again = await importBrowserFilesEdit([{ file: file('giraffe.jpg', [1, 2, 3, 4], 'image/jpeg') }]);
+    expect(again.imported.map((a) => a.id)).toEqual(first.imported.map((a) => a.id));
+    expect((await historyLabels()).length).toBe(n);
+    // A different size is a different file.
+    const other = await importBrowserFilesEdit([{ file: file('giraffe.jpg', [1, 2, 3, 4, 5], 'image/jpeg') }]);
+    expect(other.reused).toBeUndefined();
   });
 });
 

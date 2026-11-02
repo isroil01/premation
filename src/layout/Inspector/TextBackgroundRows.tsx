@@ -91,4 +91,18 @@ export function TextBackgroundRows({ nodeId }: { nodeId: string }): JSX.Element 
   );
 }
 
+/** The Background group header's dim readout: "Off", or "Whole block" / "Per line" with the box colour. */
+export function TextBackgroundSummary({ nodeId }: { nodeId: string }): JSX.Element {
+  const [on] = useComponentProp(nodeId, TEXT_COMPONENT, 'background');
+  const [mode] = useComponentProp(nodeId, TEXT_COMPONENT, 'backgroundMode');
+  if (on !== true) return <span className={styles.groupSummary}>{t('inspector.textBackground.off', 'Off')}</span>;
+  const color = colorValueHex(documentMirror().tree(nodeId)?.nodes.get('text/backgroundColor')?.value) ?? DEFAULT_BACKGROUND;
+  return (
+    <span className={styles.groupSummary}>
+      <span className={styles.backgroundChip} style={{ background: color }} aria-hidden />
+      {mode === 'line' ? t('inspector.textBackground.line', 'Per line') : t('inspector.textBackground.block', 'Whole block')}
+    </span>
+  );
+}
+
 export default TextBackgroundRows;

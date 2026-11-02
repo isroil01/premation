@@ -143,7 +143,7 @@ void KeyIndex::index_layer(const Document& d, const std::string& layer) {
   }
   // Mask shape keys: `<entry>@<maskId>` per path, and the bare entry id.
   if (const Node* n = d.node(layer)) {
-    for (const Json& k : read_node_mask_anim(*n)) {
+    for (const Json& k : mask_anim_view(*n)) {
       const Json& kid = k.at("id");
       if (!kid.is_string() || kid.str().empty()) continue;
       const double t = k.at("t").num();
@@ -200,7 +200,7 @@ std::optional<KeyLoc> KeyIndex::resolve(const Document& d, const std::string& id
     const Node* n = d.node(fb->layer);
     if (n == nullptr) return std::nullopt;
     bool hit = false;
-    for (const Json& k : read_node_mask_anim(*n)) {
+    for (const Json& k : mask_anim_view(*n)) {
       if (k.at("t").num() == fb->t) hit = true;
     }
     if (!hit) return std::nullopt;

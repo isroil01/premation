@@ -108,6 +108,17 @@
   font-weight: var(--panel-weight-label);
 }
 
+/* The Background group's colour chip, ahead of its "Whole block" readout. */
+.backgroundChip {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 4px;
+  border-radius: 2px;
+  box-shadow: inset 0 0 0 1px var(--color-border-strong, var(--color-border));
+  vertical-align: middle;
+}
+
 /* The hairline between groups. */
 .sep {
   height: 1px;

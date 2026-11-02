@@ -136,6 +136,13 @@ export interface EngineFrameMeta {
   geometryViews?: OverlayView[];
   /** How the frame travelled: a shared GPU texture (route C) or a pixel copy (route A). Absent = shared. */
   route?: 'shared' | 'copy';
+  /**
+   * Preview resolution: the frame fills only this top-left part of the slot
+   * (`width` × `height`); the preload hands the page that part alone, which it
+   * scales up with nearest filtering. 0 / absent = the whole slot.
+   */
+  contentWidth?: number;
+  contentHeight?: number;
 }
 
 /** Receives a frame; must call `release()` exactly once when done (after drawing). */
