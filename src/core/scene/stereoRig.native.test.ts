@@ -34,7 +34,7 @@ beforeEach(async () => {
     }
   }
   h = await setupAppEngine();
-});
+}, 30_000);  // a GPU engine's start (device, shader cache) passes 5 s while the whole suite runs
 afterEach(async () => { await h.dispose(); });
 
 async function cameraAt(layer: string, t = 0): Promise<CameraSamples['samples'][number]> {
