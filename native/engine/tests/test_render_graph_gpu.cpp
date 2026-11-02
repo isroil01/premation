@@ -1442,6 +1442,8 @@ TEST_CASE("stream D L5: a Displacement Map entry with only an amount renders as 
   REQUIRE(renderer->render(file, &b, sb, err));
   CHECK(sb.diagnostics.empty());
   CHECK(a.rgba == b.rgba);
+}
+
 TEST_CASE("a raster bigger than Dawn's upload staging buffer still lands, every band in its place") {
   // 2026-10-10: a stacked-repeater lattice rasterised to a 644 MB texture, inside
   // the 2D limit, but one WriteTexture stages its whole data in a buffer capped
