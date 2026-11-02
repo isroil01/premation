@@ -27,9 +27,10 @@
 import type { Command, PropertyInit, Value } from '@motion/engine-api';
 import { isLayer } from '@core/mirror/docFacts';
 import { compTime, values } from '@core/engine/propRefs';
-import { rigMatch, rigPaths } from '@core/engine/rigPaths';
+import { rigKey, rigMatch, rigPaths, rigSet, rigValues } from '@core/engine/rigPaths';
 import type { IKTarget } from '@core/rig/skeletonCommands';
 import type { Bone } from '@core/rig/skeleton';
+import type { RigPoseValues } from '@core/rig/poseMirror';
 import { planChainSwitch, type ChainMode } from '@core/rig/ikfk';
 import type { IkTargetResolved } from '@core/rig/rigDeform';
 import type { RigController } from '@core/rig/controllers';
@@ -195,6 +196,58 @@ export function keyRigAtPlayheadCommands(
   if (paths.length === 0) return [];
   const time = compTime(seconds);
   return [{ type: 'addKeyframes', keys: paths.map((path) => ({ prop: { layer: nodeId, path }, time, spatialIn: [], spatialOut: [] })) }];
+}
+
+/** How a pose is written: see `poseWriteCommands`. */
+export interface PoseWriteRule {
+  /** Is the property (or, for a mirror, its opposite) animated? It takes a key whatever else holds. */
+  animated(path: string): boolean;
+  /** A value that changes takes a key rather than a static write. */
+  keyChanges: boolean;
+  /** Rotation and the IK goal take a key even unchanged (the pose's anchor, as in "Key selected"). */
+  keyAnchors: boolean;
+}
+
+/** Below this a value has not changed (the engine's float round trip, not a pose edit). */
+const POSE_EPSILON = 1e-4;
+
+const differs = (a: number, b: number): boolean => Math.abs(a - b) > POSE_EPSILON;
+
+/**
+ * `target` written at `seconds`, as ONE action, against the pose `current` the
+ * rig holds there. Only what `current` holds is written: a bone, goal or pole
+ * the rig lacks is skipped (the batch is all-or-nothing, so one would refuse the
+ * rest). Position, scale and mode stay out of the timeline unless they are
+ * animated or actually change, so a pose edit does not spray tracks over a rig
+ * that only rotates.
+ */
+export function poseWriteCommands(
+  nodeId: string,
+  seconds: number,
+  target: RigPoseValues,
+  current: RigPoseValues,
+  rule: PoseWriteRule,
+): Command[] {
+  const out: Command[] = [];
+  const write = (path: string, value: Value, changed: boolean, anchor: boolean): void => {
+    if (rule.animated(path) || (rule.keyAnchors && anchor) || (rule.keyChanges && changed)) out.push(rigKey(nodeId, path, seconds, value));
+    else if (changed) out.push(rigSet(nodeId, path, value));
+  };
+  for (const [id, to] of target.bones) {
+    const at = current.bones.get(id);
+    if (!at) continue;
+    write(rigPaths.boneProp(id, 'rotation'), rigValues.radians(to.rotation), differs(to.rotation, at.rotation), true);
+    write(rigPaths.boneProp(id, 'position'), rigValues.vec2(to.x, to.y), differs(to.x, at.x) || differs(to.y, at.y), false);
+    write(rigPaths.boneProp(id, 'scale'), rigValues.vec2(to.scaleX * 100, to.scaleY * 100), differs(to.scaleX, at.scaleX) || differs(to.scaleY, at.scaleY), false);
+  }
+  for (const [id, to] of target.goals) {
+    const at = current.goals.get(id);
+    if (!at) continue;
+    write(rigPaths.ikProp(id, 'target'), rigValues.vec2(to.x, to.y), differs(to.x, at.x) || differs(to.y, at.y), true);
+    if (to.pole && at.pole) write(rigPaths.ikProp(id, 'pole'), rigValues.vec2(to.pole.x, to.pole.y), differs(to.pole.x, at.pole.x) || differs(to.pole.y, at.pole.y), true);
+    write(rigPaths.ikProp(id, 'mode'), rigValues.scalar(to.mode === 'fk' ? 0 : 1), to.mode !== at.mode, false);
+  }
+  return out;
 }
 
 export function pinKindCommands(nodeId: string, pinId: string, kind: string): Command[] {

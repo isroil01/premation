@@ -121,6 +121,12 @@ import { useCloudProjectStore } from '@stores/cloudProjectStore';
 import { registerDefaultEditors } from '@components/Inspector/DefaultEditors';
 import { isPopoutWindow, startWindowSync } from '@core/layout/windowSync';
 import { RIG_PRESETS, RIG_PRESET_LABELS, type RigPresetId } from '@core/rig/rigPresets';
+import type { SkeletonRig } from '@core/rig/skeletonCommands';
+import { jsonField } from '@core/mirror/layerFields';
+import { useRigPoseClipboard } from '@stores/rigPoseClipboard';
+import {
+  canMirrorRigPose, canPasteRigPose, copyRigPose, mirrorRigPose, pasteRigPose, poseCopyTarget, posePasteTarget,
+} from '@layout/Inspector/rigPoseActions';
 import { applyRigPresetEdit } from '@core/engine/rigPaths';
 import { REFUSAL_TEXT } from '@core/animation/exponentialScale';
 import { BAKE_REFUSAL_TEXT } from '@core/animation/convertExpressionToKeyframes';
@@ -1519,8 +1525,16 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       id: BuiltinCommands.Copy,
       label: 'Copy',
       shortcut: { key: 'c', meta: true },
-      enabled: () => hasCutCopyTarget(),
+      enabled: () => hasCutCopyTarget() || poseCopyTarget() !== null,
       execute: () => {
+        // Bones selected in Pose mode: the pose at the playhead.
+        const poseLayer = poseCopyTarget();
+        if (poseLayer) {
+          void copyRigPose(poseLayer, getTime());
+          return;
+        }
+        // Anything else copied replaces the pose, so Ctrl+V pastes what was copied last.
+        useRigPoseClipboard.getState().clear();
         void copyEdit().then((kind) => { if (kind && kind !== 'path') notify(t('providers.edit.copied', 'Copied'), 'info'); });
       },
     },
@@ -1532,6 +1546,11 @@ function buildBuiltinCommands(): ReadonlyArray<Command> {
       // checked async on execute — we cannot sync-probe the system clipboard.
       enabled: () => true,
       execute: () => {
+        const poseLayer = posePasteTarget();
+        if (poseLayer) {
+          void pasteRigPose(poseLayer, getTime());
+          return;
+        }
         // Keyframes: `pasteKeyframes`; layers: the `copyLayers` fragment as one `pasteLayers` (clipboardEdits).
         void pasteEdit().then((kind) => {
           if (kind === 'svg') notify(t('providers.edit.pastedSvg', 'Pasted SVG'), 'success');
@@ -1585,6 +1604,43 @@ function hasCutCopyTarget(): boolean {
  * than behind a confirm: merging two skeletons produces duplicate bone ids, and
  * a duplicate id silently couples two bones onto one animation track.
  */
+/**
+ * The pose tools on the selected layer's skeleton (the Rig panel and the canvas
+ * buttons call the same actions). Ctrl+C / Ctrl+V reach copy and paste through
+ * the Copy and Paste commands, which hand over in Pose mode; Mirror has its own chord.
+ */
+function buildRigPoseCommands(): ReadonlyArray<Command> {
+  const layer = (): string | undefined => useSelectionStore.getState().ids[0];
+  const hasBones = (): boolean => {
+    const nodeId = layer();
+    return !!nodeId && (jsonField<SkeletonRig>(documentMirror(), nodeId, 'layer/skeleton')?.bones ?? []).length > 0;
+  };
+  return [
+    {
+      id: asCommandId('rig.copyPose'),
+      label: 'Copy Pose',
+      icon: 'bone' as const,
+      enabled: hasBones,
+      execute: () => { const nodeId = layer(); if (nodeId) void copyRigPose(nodeId, getTime()); },
+    },
+    {
+      id: asCommandId('rig.pastePose'),
+      label: 'Paste Pose',
+      icon: 'bone' as const,
+      enabled: () => { const nodeId = layer(); return !!nodeId && canPasteRigPose(nodeId); },
+      execute: () => { const nodeId = layer(); if (nodeId) void pasteRigPose(nodeId, getTime()); },
+    },
+    {
+      id: asCommandId('rig.mirrorPose'),
+      label: 'Mirror Pose',
+      icon: 'bone' as const,
+      shortcut: { key: 'm', meta: true, shift: true },
+      enabled: () => { const nodeId = layer(); return !!nodeId && canMirrorRigPose(nodeId); },
+      execute: () => { const nodeId = layer(); if (nodeId) void mirrorRigPose(nodeId, getTime()); },
+    },
+  ];
+}
+
 function buildRigPresetCommands(): ReadonlyArray<Command> {
   return (Object.keys(RIG_PRESETS) as RigPresetId[]).map((id) => ({
     id: asCommandId(`rig.preset.${id}`),
@@ -1630,6 +1686,7 @@ export function buildStaticCommands(): ReadonlyArray<Command> {
     ...buildWorkspaceCommands(),
     ...buildProjectCommands(),
     ...buildRigPresetCommands(),
+    ...buildRigPoseCommands(),
     ...buildCaptionCommands(),
     ...buildChoreographyCommands(),
     ...buildBeatCommands(),

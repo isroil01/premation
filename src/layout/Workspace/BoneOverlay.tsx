@@ -33,7 +33,10 @@ import {
 } from '@core/rig/weightPaint';
 import { useRigVertexSelection, selectRigVertex } from '@stores/rigVertexStore';
 import { useRigSelectionStore } from '@stores/rigSelectionStore';
+import { RigPoseButtons } from '@layout/Inspector/RigPoseButtons';
 import { t } from '@core/i18n';
+
+const NO_BONES: readonly string[] = [];
 
 /**
  * Pointer capture is a nicety, not a precondition: it keeps a drag alive when
@@ -55,6 +58,9 @@ const BONE_KINDS: ReadonlyArray<OverlayKind> = ['rig', 'bounds', 'transform'];
 
 /** Pointer travel (screen px) below which a down→up pair still counts as a click. */
 const CLICK_SLOP_PX = 3;
+
+/** Shift (alone) on a handle extends the selection instead of grabbing it (AE). */
+const extendsSelection = (e: React.PointerEvent): boolean => e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey;
 
 /*
   ── Rig colours ─────────────────────────────────────────────────────────────
@@ -155,6 +161,8 @@ export function BoneOverlay({ host }: { host?: TrackPointHost } = {}): JSX.Eleme
   const rigSelectionNodeId = useRigSelectionStore((s) => s.nodeId);
   const rigSelectedBoneId = useRigSelectionStore((s) => s.boneId);
   const rigSelectedControllerId = useRigSelectionStore((s) => s.controllerId);
+  // Every selected bone (Shift-click, marquee); `selectedBoneId` is the primary, the LAST.
+  const selectedBoneIds = useRigSelectionStore((s) => (s.nodeId === selectedNodeId ? s.boneIds : NO_BONES));
   const activeWorkspace = useActiveWorkspace();
   const time = activeWorkspace?.time ?? 0;
   const comp = useActiveCompSize();
@@ -186,6 +194,8 @@ export function BoneOverlay({ host }: { host?: TrackPointHost } = {}): JSX.Eleme
   const pickedVertex = useRigVertexSelection(selectedNodeId ?? '');
   /** Scratch paint map during a stroke — committed as ONE undo step on release. */
   const paintScratchRef = useRef<WeightPaintMap | null>(null);
+  const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  const marqueeRef = useRef<{ x0: number; y0: number } | null>(null);
   const [drawDraft, setDrawDraft] = useState<{
     start: { x: number; y: number };
     current: { x: number; y: number };
@@ -212,6 +222,8 @@ export function BoneOverlay({ host }: { host?: TrackPointHost } = {}): JSX.Eleme
     startBoneY?: number;
     /** Set when the gesture began on a controller — drives the active state. */
     controllerId?: string;
+    /** A press on a member of a multi-selection keeps it; released as a plain click, it selects this bone alone. */
+    collapseTo?: string;
   } | null>(null);
   /** A pose / IK / pole / controller drag = one engine gesture. */
   const gesture = useGesture();
@@ -225,6 +237,13 @@ export function BoneOverlay({ host }: { host?: TrackPointHost } = {}): JSX.Eleme
   const downScreenRef = useRef<{ x: number; y: number } | null>(null);
 
   const svgRef = useRef<SVGSVGElement | null>(null);
+
+  // B4 round 5: the stored rig from the mirror (`layer/skeleton` — bones, goals,
+  // controllers, the paint map); the pose comes with the frame (the overlay
+  // geometry push): solved bones, live goals, the skinned mesh and the selected
+  // bone's weights.
+  const active = activeTool === 'bone' && !!selectedNodeId;
+  const skel = useMirrorJson<SkeletonRig>(active ? selectedNodeId : null, 'layer/skeleton');
 
   // Force re-render on workspace render ticks. `onRender` returns a disposer
   // now — see the note in WorkspaceController; this subscription used to be
@@ -241,12 +260,6 @@ export function BoneOverlay({ host }: { host?: TrackPointHost } = {}): JSX.Eleme
     };
   }, []);
 
-  // B4 round 5: the stored rig from the mirror (`layer/skeleton` — bones, goals,
-  // controllers, the paint map); the pose comes with the frame (the overlay
-  // geometry push): solved bones, live goals, the skinned mesh and the selected
-  // bone's weights.
-  const active = activeTool === 'bone' && !!selectedNodeId;
-  const skel = useMirrorJson<SkeletonRig>(active ? selectedNodeId : null, 'layer/skeleton');
   // The layer subscription and the rig focus are sent separately and cleared only on unmount:
   // clearing them between two sends let a frame land without this layer's geometry, which
   // dropped the overlay for that frame on every bone selection.
@@ -272,8 +285,15 @@ export function BoneOverlay({ host }: { host?: TrackPointHost } = {}): JSX.Eleme
       }
       if (selectedBoneId && boneRigMode === 'draw' && (e.key === 'Delete' || e.key === 'Backspace')) {
         e.preventDefault();
-        // The bone's subtree, IK goals, controllers, weights and keys — one entry.
-        void edit('Delete Bone', rigRemove(selectedNodeId, [rigPaths.bone(selectedBoneId)]));
+        // The bones' subtrees, IK goals, controllers, weights and keys — one entry.
+        // A bone under another selected bone goes with it: naming it too would address a removed group.
+        const parents = new Map((skel?.bones ?? []).map((b) => [b.id, b.parentId]));
+        const underSelected = (id: string): boolean => {
+          for (let p = parents.get(id), n = 0; p && n <= parents.size; p = parents.get(p), n += 1) if (selectedBoneIds.includes(p)) return true;
+          return false;
+        };
+        const roots = selectedBoneIds.filter((id) => !underSelected(id));
+        void edit(roots.length > 1 ? 'Delete Bones' : 'Delete Bone', rigRemove(selectedNodeId, roots.map((id) => rigPaths.bone(id))));
         setSelectedBoneId(null);
         return;
       }
@@ -289,7 +309,7 @@ export function BoneOverlay({ host }: { host?: TrackPointHost } = {}): JSX.Eleme
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [activeTool, selectedNodeId, selectedBoneId, boneRigMode, brushRadius, drawDraft]);
+  }, [activeTool, selectedNodeId, selectedBoneId, selectedBoneIds, skel, boneRigMode, brushRadius, drawDraft]);
 
   // The comp ↔ stage mapping of the frame on screen (bones and handles move
   // with the picture, not ahead of it). A hook: read before the early return.
@@ -560,7 +580,10 @@ export function BoneOverlay({ host }: { host?: TrackPointHost } = {}): JSX.Eleme
     e.stopPropagation();
     if (boneRigMode !== 'pose') return;
     suppressClickAddRef.current = true;
-    setSelectedBoneId(c.link.boneId);
+    if (extendsSelection(e)) {
+      useRigSelectionStore.getState().toggleBone(nodeId, c.link.boneId);
+      return;
+    }
     setSelectedControllerId(c.id, c.link.boneId);
     const svg = svgRef.current;
     if (!svg) return;
@@ -610,7 +633,13 @@ export function BoneOverlay({ host }: { host?: TrackPointHost } = {}): JSX.Eleme
     }
     if (boneRigMode !== 'pose') return;
     suppressClickAddRef.current = true;
-    setSelectedBoneId(boneId);
+    // Shift-click extends the selection; no drag starts from it.
+    if (extendsSelection(e)) {
+      useRigSelectionStore.getState().toggleBone(nodeId, boneId);
+      return;
+    }
+    const keepsSelection = selectedBoneIds.length > 1 && selectedBoneIds.includes(boneId);
+    if (!keepsSelection) setSelectedBoneId(boneId);
     const svg = svgRef.current;
     if (!svg) return;
     const rect = svg.getBoundingClientRect();
@@ -631,6 +660,7 @@ export function BoneOverlay({ host }: { host?: TrackPointHost } = {}): JSX.Eleme
       startLocal: screenToLocal(startScreen.x, startScreen.y),
       startBoneX: bone?.x ?? 0,
       startBoneY: bone?.y ?? 0,
+      ...(keepsSelection ? { collapseTo: boneId } : {}),
     };
     capturePointer(svg, e.pointerId);
   };
@@ -661,6 +691,10 @@ export function BoneOverlay({ host }: { host?: TrackPointHost } = {}): JSX.Eleme
     e.stopPropagation();
     if (boneRigMode !== 'pose') return;
     suppressClickAddRef.current = true;
+    if (extendsSelection(e)) {
+      useRigSelectionStore.getState().toggleBone(nodeId, boneId);
+      return;
+    }
     setSelectedBoneId(boneId);
     const svg = svgRef.current;
     if (!svg) return;
@@ -687,6 +721,17 @@ export function BoneOverlay({ host }: { host?: TrackPointHost } = {}): JSX.Eleme
 
     if (boneRigMode === 'draw') {
       beginBoneDraw(e);
+      return;
+    }
+
+    // Shift-drag on empty canvas: a marquee over the bones (adds to the selection).
+    if (boneRigMode === 'pose' && e.shiftKey && e.target === svg) {
+      const x0 = e.clientX - rect.left;
+      const y0 = e.clientY - rect.top;
+      marqueeRef.current = { x0, y0 };
+      setMarquee({ x0, y0, x1: x0, y1: y0 });
+      suppressClickAddRef.current = true;
+      capturePointer(svg, e.pointerId);
       return;
     }
 
@@ -730,6 +775,12 @@ export function BoneOverlay({ host }: { host?: TrackPointHost } = {}): JSX.Eleme
   };
 
   const onPointerMove = (e: React.PointerEvent) => {
+    const mq = marqueeRef.current;
+    if (mq && svgRef.current) {
+      const rect = svgRef.current.getBoundingClientRect();
+      setMarquee({ x0: mq.x0, y0: mq.y0, x1: e.clientX - rect.left, y1: e.clientY - rect.top });
+      return;
+    }
     if (paintMode && svgRef.current && brushCursorRef.current) {
       const rect = svgRef.current.getBoundingClientRect();
       brushCursorRef.current.setAttribute('cx', String(e.clientX - rect.left));
@@ -818,6 +869,31 @@ export function BoneOverlay({ host }: { host?: TrackPointHost } = {}): JSX.Eleme
   };
 
   const onPointerUp = (e: React.PointerEvent) => {
+    const mq = marqueeRef.current;
+    if (mq) {
+      marqueeRef.current = null;
+      setMarquee(null);
+      downScreenRef.current = null;
+      const svg = svgRef.current;
+      if (!svg) return;
+      try { svg.releasePointerCapture(e.pointerId); } catch {}
+      const rect = svg.getBoundingClientRect();
+      const x1 = e.clientX - rect.left;
+      const y1 = e.clientY - rect.top;
+      const [lx, hx] = [Math.min(mq.x0, x1), Math.max(mq.x0, x1)];
+      const [ly, hy] = [Math.min(mq.y0, y1), Math.max(mq.y0, y1)];
+      const within = (p: { x: number; y: number }): boolean => {
+        const s = localToScreen(p.x, p.y);
+        return s.x >= lx && s.x <= hx && s.y >= ly && s.y <= hy;
+      };
+      // A bone is caught by either end, as drawn (the solved pose).
+      const inside = posedBones.filter((b) => {
+        const m = worldTransforms.get(b.id);
+        return !!m && (within(boneRoot(m)) || within(boneTip(m, b.length)));
+      }).map((b) => b.id);
+      useRigSelectionStore.getState().selectBones(nodeId, [...selectedBoneIds.filter((id) => !inside.includes(id)), ...inside]);
+      return;
+    }
     if (drawDraft) {
       commitBoneDraw(drawDraft);
       setDrawDraft(null);
@@ -866,6 +942,11 @@ export function BoneOverlay({ host }: { host?: TrackPointHost } = {}): JSX.Eleme
         svg.releasePointerCapture(e.pointerId);
       } catch {}
     }
+    if (drag.collapseTo && svg) {
+      const rect = svg.getBoundingClientRect();
+      const travel = Math.hypot(e.clientX - rect.left - drag.startScreen.x, e.clientY - rect.top - drag.startScreen.y);
+      if (travel <= CLICK_SLOP_PX) setSelectedBoneId(drag.collapseTo);
+    }
     // The whole drag — static or keyed — closes as ONE entry.
     void gesture.end();
   };
@@ -902,6 +983,7 @@ export function BoneOverlay({ host }: { host?: TrackPointHost } = {}): JSX.Eleme
   };
 
   return (
+    <>
     <svg
       ref={svgRef}
       style={{
@@ -922,6 +1004,21 @@ export function BoneOverlay({ host }: { host?: TrackPointHost } = {}): JSX.Eleme
       onPointerUp={onPointerUp}
       onClick={onClickOverlay}
     >
+      {/* Shift-drag marquee: the bones inside join the selection on release. */}
+      {marquee && (
+        <rect
+          data-bone-marquee=""
+          x={Math.min(marquee.x0, marquee.x1)}
+          y={Math.min(marquee.y0, marquee.y1)}
+          width={Math.abs(marquee.x1 - marquee.x0)}
+          height={Math.abs(marquee.y1 - marquee.y0)}
+          fill={RIG.selectedFill}
+          stroke={RIG.selected}
+          strokeWidth={1}
+          pointerEvents="none"
+        />
+      )}
+
       {/* ── Skinning mesh + weight heatmap (Phase 4.1 / 4.3) ─────────────
           Drawn from the POSED vertices, so it shows the deformation the
           renderer produces. With a bone selected the fill becomes that bone's
@@ -1042,7 +1139,7 @@ export function BoneOverlay({ host }: { host?: TrackPointHost } = {}): JSX.Eleme
         const rScreen = localToScreen(rootPos.x, rootPos.y);
         const tScreen = localToScreen(tipPos.x, tipPos.y);
 
-        const isSelected = selectedBoneId === b.id;
+        const isSelected = selectedBoneIds.includes(b.id);
         const isHovered = hoveredBoneId === b.id;
         const inIkChain = !!ikTargetForBone(b.id);
 
@@ -1242,5 +1339,17 @@ export function BoneOverlay({ host }: { host?: TrackPointHost } = {}): JSX.Eleme
         );
       })}
     </svg>
+    {boneRigMode === 'pose' && bones.length > 0 && (
+      // After the svg, and its own hit target: the pose tools sit over the canvas, not in it.
+      <div
+        data-bone-pose-bar=""
+        style={{ position: 'absolute', left: '50%', bottom: 12, transform: 'translateX(-50%)', zIndex: 11, display: 'flex', gap: 4, pointerEvents: 'auto' }}
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <RigPoseButtons nodeId={nodeId} seconds={time} />
+      </div>
+    )}
+    </>
   );
 }
