@@ -129,7 +129,7 @@ function runScene(exe, batchDir, outDir, reportFile) {
   const args = ['--batch', batchDir, '--fonts', FONTS, '--profile', profile, '--out', outDir, '--report', reportFile];
   // The SDK sample bundles the engine build lays out beside it (<build>/plugins): the plugin
   // scenes (plugin-*) render their effects through them.
-  const plugins = path.join(path.dirname(exe), '..', 'plugins');
+  const plugins = path.resolve(path.dirname(exe), '..', 'plugins');
   if (existsSync(path.join(plugins, 'particles', 'premation-plugin.json'))) args.push('--plugins', plugins);
   return new Promise((resolve) => {
     const child = spawn(exe, args, { stdio: ['ignore', 'inherit', 'inherit'] });

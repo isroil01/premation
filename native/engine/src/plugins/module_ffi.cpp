@@ -1,6 +1,9 @@
 // LoadLibrary / dlopen for plugin binaries (module.hpp).
 #include "module.hpp"
 
+#include <filesystem>
+#include <system_error>
+
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -34,7 +37,11 @@ std::unique_ptr<DynamicLibrary> DynamicLibrary::open(const std::filesystem::path
   // No "missing DLL" message boxes from the loader: a broken plugin is a logged error.
   DWORD oldMode = 0;
   SetThreadErrorMode(SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX, &oldMode);
-  HMODULE h = LoadLibraryExW(path.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+  // LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR needs a fully qualified path: a relative one
+  // (a plugin folder given relative to the working directory) fails with error 87.
+  std::error_code absEc;
+  const std::filesystem::path full = std::filesystem::absolute(path, absEc);
+  HMODULE h = LoadLibraryExW((absEc ? path : full).c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
   const std::string why = h == nullptr ? last_error_text() : std::string();
   SetThreadErrorMode(oldMode, nullptr);
   if (h == nullptr) {
