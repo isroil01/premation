@@ -209,6 +209,7 @@ const PURE_READS = new Set([
   'previewLottieItem', 'previewMographItem', // core/library/{lottie,mograph}Library: a static catalog item's choreography window + previewChoreography (transport only; the mograph one starts at the tab's playhead)
   // B4 round 5 items (checked: arguments only).
   'fittedBoxFor', // core/template/mediaSlots: the box a slot's layer takes for the source size, slot rect and fit policy given (computeFit)
+  'onLayerTransformStart', // core/workspace/ports: subscribes to viewport drag starts (layer ids + kind); reads nothing
 ]);
 
 /**

@@ -150,7 +150,7 @@
 .titleSlot .topSearchInput {
   height: 26px;
   padding: 0 56px 0 32px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
 }
 
 .titleSlot .topSearchIcon {
@@ -161,7 +161,7 @@
   right: 5px;
   height: 18px;
   padding: 0 6px;
-  font-size: 10px;
+  font-size: var(--font-size-micro);
 }
 
 .titleSlot .accountButton {

@@ -114,17 +114,17 @@ function StyleTile({ preset, params, name, saved, favourite, images, onParams, o
             aria-label={favourite ? t('inspector.subject.unfavourite', 'Remove from favourites') : t('inspector.subject.favourite', 'Favourite (shown first)')}
             title={favourite ? t('inspector.subject.unfavourite', 'Remove from favourites') : t('inspector.subject.favourite', 'Favourite (shown first)')}
             onClick={onFavourite}>
-            <Icon name="star" size={12} />
+            <Icon name="star" size="sm" />
           </button>
         )}
         {onSave && (
           <button type="button" className={styles.icon} aria-label={t('inspector.subject.saveStyle', 'Save as my style')} title={t('inspector.subject.saveStyleTitle', 'Keep this preset at these settings as a style of your own')} onClick={onSave}>
-            <Icon name="plus" size={12} />
+            <Icon name="plus" size="sm" />
           </button>
         )}
         {onRemove && (
           <button type="button" className={styles.icon} aria-label={t('inspector.subject.removeSaved', 'Delete saved style')} title={t('inspector.subject.removeSaved', 'Delete saved style')} onClick={onRemove}>
-            <Icon name="trash" size={12} />
+            <Icon name="trash" size="sm" />
           </button>
         )}
       </div>

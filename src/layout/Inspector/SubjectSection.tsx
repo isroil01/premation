@@ -191,20 +191,20 @@ export function SubjectSection({ nodeId }: { nodeId: string }): JSX.Element | nu
               <button type="button" className={styles.icon} aria-label={s.hidden ? t('inspector.subject.show', 'Show') : t('inspector.subject.hide', 'Hide')}
                 title={s.hidden ? t('inspector.subject.show', 'Show') : t('inspector.subject.hide', 'Hide')}
                 onClick={() => update(s.hidden ? t('inspector.subject.showLabel', 'Show Subject') : t('inspector.subject.hideLabel', 'Hide Subject'), s.id, { hidden: !s.hidden })}>
-                <Icon name={s.hidden ? 'eye-off' : 'eye'} size={14} />
+                <Icon name={s.hidden ? 'eye-off' : 'eye'} size="sm" />
               </button>
               <button type="button" className={styles.icon} aria-label={s.locked ? t('inspector.subject.unlock', 'Unlock') : t('inspector.subject.lock', 'Lock')}
                 title={s.locked ? t('inspector.subject.unlock', 'Unlock') : t('inspector.subject.lock', 'Lock')}
                 onClick={() => update(s.locked ? t('inspector.subject.unlockLabel', 'Unlock Subject') : t('inspector.subject.lockLabel', 'Lock Subject'), s.id, { locked: !s.locked })}>
-                <Icon name={s.locked ? 'lock' : 'unlock'} size={14} />
+                <Icon name={s.locked ? 'lock' : 'unlock'} size="sm" />
               </button>
               <button type="button" className={styles.icon} aria-label={t('inspector.subject.up', 'Move up')} title={t('inspector.subject.up', 'Move up')} disabled={i === 0}
                 onClick={() => void edit(t('inspector.subject.reorder', 'Reorder Subjects'), moveSubjectCommands(nodeId, s.id, -1))}>
-                <Icon name="chevron-up" size={14} />
+                <Icon name="chevron-up" size="sm" />
               </button>
               <button type="button" className={styles.icon} aria-label={t('inspector.subject.delete', 'Delete subject')} title={t('inspector.subject.delete', 'Delete subject')}
                 onClick={() => { cancelSubjectWalk(nodeId, s.id); void edit(t('inspector.subject.deleteLabel', 'Delete Subject'), removeSubjectCommands(nodeId, s.id)); }}>
-                <Icon name="trash" size={14} />
+                <Icon name="trash" size="sm" />
               </button>
             </li>
           );
@@ -272,7 +272,7 @@ export function SubjectSection({ nodeId }: { nodeId: string }): JSX.Element | nu
                 {e.subjectScope === 'background' && <span className={styles.meta}>{t('inspector.subject.onBackground', 'background')}</span>}
                 <button type="button" className={styles.icon} aria-label={t('inspector.subject.styleRemove', 'Remove')} title={t('inspector.subject.styleRemove', 'Remove')}
                   onClick={() => void edit(t('inspector.subject.styleRemoveLabel', 'Remove Style'), { type: 'removePropertyGroups', groups: [{ layer: nodeId, path: `effects/${e.id}` }] })}>
-                  <Icon name="trash" size={14} />
+                  <Icon name="trash" size="sm" />
                 </button>
               </div>
               <SubjectStyleSpan nodeId={nodeId} effectId={e.id} name={names.get(e.id) ?? e.type} defaultSpan={defaultSpan} />

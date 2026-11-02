@@ -71,12 +71,12 @@ export function SubjectStyleSpan({ nodeId, effectId, name, defaultSpan }: {
           <button type="button" className={styles.spanTime} title={t('inspector.subject.spanGo', 'Go to this frame')} onClick={() => seekPlayhead(span.start)}>{tc(span.start)}</button>
           <button type="button" className={styles.icon} title={t('inspector.subject.spanSetFrom', 'Start at the playhead')}
             aria-label={t('inspector.subject.spanSetFrom', 'Start at the playhead')}
-            onClick={() => { const p = playheadSeconds(); write({ ...span, start: p, end: Math.max(p, span.end) }); }}><Icon name="skip-back" size={14} /></button>
+            onClick={() => { const p = playheadSeconds(); write({ ...span, start: p, end: Math.max(p, span.end) }); }}><Icon name="skip-back" size="sm" /></button>
           <span className={styles.spanLabel}>{t('inspector.subject.spanTo', 'To')}</span>
           <button type="button" className={styles.spanTime} title={t('inspector.subject.spanGo', 'Go to this frame')} onClick={() => seekPlayhead(span.end)}>{tc(span.end)}</button>
           <button type="button" className={styles.icon} title={t('inspector.subject.spanSetTo', 'End at the playhead')}
             aria-label={t('inspector.subject.spanSetTo', 'End at the playhead')}
-            onClick={() => { const p = Math.min(duration, playheadSeconds()); write({ ...span, end: p, start: Math.min(p, span.start) }); }}><Icon name="skip-forward" size={14} /></button>
+            onClick={() => { const p = Math.min(duration, playheadSeconds()); write({ ...span, end: p, start: Math.min(p, span.start) }); }}><Icon name="skip-forward" size="sm" /></button>
           <span className={styles.spanLabel}>{t('inspector.subject.spanFade', 'Fade')}</span>
           <span className={styles.spanFade}>
             <ValueField

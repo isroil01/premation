@@ -69,8 +69,8 @@ rediscovered in git history and believed a second time.
 | Light types | 5 | `src/core/scene/light.ts` → `LightType` |
 | Canvas tools | 23 | `packages/workspace/src/tools/builtin.ts` |
 | AI tools | 74 | `packages/ai-tools/src/tools/{read,write,craft,compose}.ts` |
-| Export formats | 18 | `renderSpec.ts` → `VideoFormat` + `exportManager.ts` → `ExportFormat` / `DataExportFormat` |
-| Stores | 102 | `src/stores/*.ts` |
+| Export formats | 20 | `renderSpec.ts` → `VideoFormat` + `exportManager.ts` → `ExportFormat` / `DataExportFormat` |
+| Stores | 103 | `src/stores/*.ts` |
 | Packages | 15 | `packages/*` |
 
 <!-- /FEATURE-COUNTS -->
@@ -91,7 +91,7 @@ style would have left this table wrong with every test still green.
 ```
 Electron main ── IPC ──▶ renderer (React 19 + Vite)
                           │
-                          ├── src/stores/*        102 Zustand stores
+                          ├── src/stores/*        103 Zustand stores
                           ├── src/core/*          41 subsystems (effects, scene, rig, text…)
                           └── packages/*          15 workspace packages
                                 ├── scene       scene graph + components
@@ -758,9 +758,9 @@ because the dialog previously claimed all of them kept alpha:
 ### Import / export
 Lottie **import and export**, SVG import including SMIL and CSS animation,
 image sequences, video with audio. The rendered formats are `mp4`, `webm`, `gif`,
-`mov`, `png`, `png-sequence`, `jpg-sequence`, `exr-sequence`, `wav`, `json` and
+`mov`, `png`, `png-sequence`, `jpg-sequence`, `exr-sequence`, `tiff-sequence`, `dpx-sequence`, `wav`, `json` and
 `lottie`, the `hdr10` / `hlg` delivery variants, and the interchange writers
-(`edl`, `otio`, `fcpxml`, `ale`, `mogrt`) — **18 export formats** in §1's count,
+(`edl`, `otio`, `fcpxml`, `ale`, `mogrt`) — **20 export formats** in §1's count,
 which unions `VideoFormat` with `ExportFormat` and `DataExportFormat`. Every
 rendered format is encoded by the engine (`premation-engine --export`, ffmpeg).
 
