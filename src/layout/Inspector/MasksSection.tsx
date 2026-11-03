@@ -19,6 +19,7 @@ import { PropertyRow } from '@components/PropertyRow';
 import { Dropdown } from '@components/Dropdown';
 import { cn } from '@utils/cn';
 import { useActiveWorkspace } from '@stores/projectStore';
+import { subjectOfOutline } from '@core/workspace/subjects';
 import { useUIStore } from '@stores/uiStore';
 import { documentMirror } from '@stores/documentMirror';
 import { useMirrorKeys, useMirrorLayer, useMirrorTree } from '@hooks/useMirror';
@@ -149,6 +150,9 @@ function MaskCard({
     : t('inspector.masks.lock', 'Lock Mask {n} (shown, not editable in the viewers)', { n: i + 1 });
   const falloffs = featherFalloffs();
   const blurs = maskMotionBlurs();
+  // A subject's outline (Object Matte) is edited in Properties ▸ Subject: here it is one row, its values one click away.
+  const managed = subjectOfOutline(m.name ?? '') !== null;
+  const [showValues, setShowValues] = useState(false);
 
   return (
     // Same card as an applied effect: header band, then the parameters
@@ -163,6 +167,18 @@ function MaskCard({
           onCommit={(hex) => { if (hex.toLowerCase() !== m.color.toLowerCase()) setSetting({ color: hex }); }}
         />
         <span className={styles.itemLabel}>{m.name?.trim() || defaultName}</span>
+        {managed && (
+          <button
+            type="button"
+            className={styles.blendTrigger}
+            aria-expanded={showValues}
+            title={t('inspector.masks.subjectOutlineHint', 'A subject outline: its feather, choke and invert are in the Subject section above. Show the raw mask values here.')}
+            onClick={() => setShowValues((v) => !v)}
+          >
+            {t('inspector.masks.subjectOutline', 'Subject')}
+            <Icon name={showValues ? 'chevron-up' : 'chevron-down'} size="sm" />
+          </button>
+        )}
         <Dropdown
           placement="left-start"
           trigger={
@@ -201,7 +217,7 @@ function MaskCard({
           </button>
         </div>
       </div>
-      <div className={styles.effectParamsBody}>
+      {(!managed || showValues) && <div className={styles.effectParamsBody}>
         <PropertyRow label={t('inspector.masks.name', 'Name')} compact>
           <input
             value={draft ?? m.name ?? ''}
@@ -307,7 +323,7 @@ function MaskCard({
             }))}
           />
         </PropertyRow>
-      </div>
+      </div>}
     </div>
   );
 }

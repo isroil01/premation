@@ -455,6 +455,32 @@ function PluginEffectBody({ nodeId, effect, def }: { nodeId: string; effect: Eff
   );
 }
 
+/**
+ * One effect's parameters as Effect Controls draws them, without the card
+ * header or Compositing Options — for a panel that lists the effect its own
+ * way (Properties ▸ Subject ▸ Styles) and tunes it in place.
+ */
+export function EffectParamsBody({ nodeId, effect }: { nodeId: string; effect: Effect }): JSX.Element | null {
+  const def = effectDefFor(effect.type);
+  if (!def) return null;
+  return (
+    <TooltipProvider>
+      <div className={panel.effectParamsBody}>
+        {isPluginEffectDef(def) ? (
+          <PluginEffectBody nodeId={nodeId} effect={effect} def={def} />
+        ) : splitParamGroups(def.params).map((section, si) => {
+          const rows = section.params.map((p) => (
+            <EffectParamRow key={p.key} nodeId={nodeId} effect={effect} def={def} param={p} />
+          ));
+          return section.group
+            ? <ParamGroup key={`g:${section.group}:${si}`} name={section.group} description={builtinGroupHint(def.type, section.group)}>{rows}</ParamGroup>
+            : <Fragment key={`u:${si}`}>{rows}</Fragment>;
+        })}
+      </div>
+    </TooltipProvider>
+  );
+}
+
 /** One parameter of one effect, with its expression (if any) under it. */
 function EffectParamRow(props: {
   nodeId: string;

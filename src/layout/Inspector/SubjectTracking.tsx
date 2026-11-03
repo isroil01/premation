@@ -21,6 +21,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { cn } from '@utils/cn';
 import { Button } from '@components/Button';
+import { Icon } from '@components/Icon';
 import { usePlaybackClockStore, getTime } from '@stores/playbackClockStore';
 import { useSubjectStore, type SubjectViewMode } from '@stores/subjectStore';
 import { activeCompSettingsNow } from '@hooks/useMirrorFrame';
@@ -32,6 +33,7 @@ import type { Subject } from '@core/workspace/subjects';
 import { fetchSubjectTracks, isTracked, reviewSpans, type ReviewSpan, type SubjectTrack, type TrackFrame } from '@core/workspace/subjectTracks';
 import { cancelSubjectWalk, followSubject, layerMoves, retrackSubject, subjectWalkRunning } from '@layout/Workspace/subjectActions';
 import { useUIStore } from '@stores/uiStore';
+import { SubjectGroup } from './SubjectGroup';
 import styles from './SubjectSection.module.css';
 
 function viewModes(): ReadonlyArray<{ id: Exclude<SubjectViewMode, 'off'>; label: string; hint: string }> {
@@ -135,6 +137,38 @@ function Lane({ subject, frames, duration, fps, active, onPick }: {
   );
 }
 
+/** Properties ▸ Subject ▸ Edge ▸ Show matte as: how the viewers draw the subject (click again to turn it off). */
+export function SubjectViewRow(): JSX.Element {
+  const view = useSubjectStore((s) => s.view);
+  const viewAll = useSubjectStore((s) => s.viewAll);
+  return (
+    <>
+      <div className={styles.edgeRow}>
+        <span className={styles.edgeLabel}>{t('inspector.subject.viewAs', 'Show matte as')}</span>
+        <div className={styles.viewModes} role="group" aria-label={t('inspector.subject.viewModes', 'Subject view')}>
+          {viewModes().map((m) => (
+            <button
+              key={m.id}
+              type="button"
+              className={cn(styles.viewMode, view === m.id && styles.viewModeOn)}
+              aria-pressed={view === m.id}
+              aria-label={m.label}
+              title={`${m.label} · ${m.hint}`}
+              onClick={() => useSubjectStore.getState().setView(view === m.id ? 'off' : m.id)}
+            >
+              <span className={styles.viewGlyph} data-mode={m.id} aria-hidden="true" />
+            </button>
+          ))}
+        </div>
+      </div>
+      <label className={cn(styles.check, styles.checkIndent)}>
+        <input type="checkbox" checked={viewAll} onChange={(e) => useSubjectStore.getState().setView(view, e.currentTarget.checked)} />
+        {t('inspector.subject.viewAllShort', 'Show all subjects')}
+      </label>
+    </>
+  );
+}
+
 export function SubjectTracking({ nodeId, subjects, active, rev, locked }: {
   nodeId: string;
   subjects: readonly Subject[];
@@ -143,8 +177,6 @@ export function SubjectTracking({ nodeId, subjects, active, rev, locked }: {
   locked: boolean;
 }): JSX.Element {
   const tracks = useSubjectTracks(nodeId, rev);
-  const view = useSubjectStore((s) => s.view);
-  const viewAll = useSubjectStore((s) => s.viewAll);
   const settings = activeCompSettingsNow();
   const fps = settingsFps(settings);
   const duration = Math.max(1 / fps, settingsDurationSeconds(settings));
@@ -152,110 +184,63 @@ export function SubjectTracking({ nodeId, subjects, active, rev, locked }: {
   const mine = framesOf(active.id);
   const tracked = isTracked(mine, fps);
   const spans: ReviewSpan[] = tracked ? reviewSpans(mine, fps) : [];
-  const fixes = mine.filter((f) => f.fix).length;
   const autoTrack = useSubjectStore((s) => s.autoTrack);
   // The active subject's walk while it runs (a Tasks-panel job; its progress is a few updates a second).
   const walk = useUIStore((s) => s.jobs.find((j) => j.id === `follow-${nodeId}-${active.id}` && j.status === 'running'));
+  const pct = walk ? Math.round((typeof walk.progress === 'number' ? walk.progress : 0) * 100) : 0;
   // A subject of moving footage that was never tracked: the same matte on every frame.
-  const held = !tracked && mine.length > 0 && layerMoves(nodeId) && !subjectWalkRunning(nodeId, active.id);
+  const held = !walk && !tracked && mine.length > 0 && layerMoves(nodeId) && !subjectWalkRunning(nodeId, active.id);
   const setActive = (id: string): void => useSubjectStore.getState().setActive(nodeId, id);
   const tc = (s: number): string => framesToTimecode(s, fps);
+  // Walk from a frame the user selected or fixed (else the first stored one).
+  const trackFrom = (): number | undefined => (mine.find((f) => f.fix) ?? mine[0])?.time;
+
+  const summary = walk
+    ? t('inspector.subject.trackingNow', 'Tracking… {pct}%', { pct })
+    : tracked
+      ? spans.length > 0
+        ? t('inspector.subject.trackingSumReview', '{frames} frames · {n} to review', { frames: mine.length, n: spans.length })
+        : t('inspector.subject.trackingSum', '{frames} frames', { frames: mine.length })
+      : mine.length > 0
+        ? t('inspector.subject.trackingSumHeld', 'Selected on {n} frame(s)', { n: mine.length })
+        : t('inspector.subject.trackingNone', 'not tracked yet');
 
   return (
-    <>
-      <div className={styles.block}>
-        <div className={styles.blockHead}>
-          <span className={styles.blockTitle}>{t('inspector.subject.viewTitle', 'View')}</span>
-          <label className={styles.checkInline}>
-            <input type="checkbox" checked={viewAll} onChange={(e) => useSubjectStore.getState().setView(view, e.currentTarget.checked)} />
-            {t('inspector.subject.viewAll', 'All subjects')}
-          </label>
-        </div>
-        <div className={styles.viewModes} role="group" aria-label={t('inspector.subject.viewModes', 'Subject view')}>
-          {viewModes().map((m) => (
-            <button
-              key={m.id}
-              type="button"
-              className={cn(styles.viewMode, view === m.id && styles.viewModeOn)}
-              aria-pressed={view === m.id}
-              title={m.hint}
-              onClick={() => useSubjectStore.getState().setView(view === m.id ? 'off' : m.id)}
-            >
-              <span className={styles.viewGlyph} data-mode={m.id} aria-hidden="true" />
-              {m.label}
-            </button>
-          ))}
-        </div>
+    <SubjectGroup id="tracking" title={t('inspector.subject.trackingTitle', 'Tracking')} summary={summary}>
+      <div className={styles.lanes}>
+        {subjects.map((s) => (
+          <Lane key={s.id} subject={s} frames={framesOf(s.id)} duration={duration} fps={fps} active={s.id === active.id} onPick={() => setActive(s.id)} />
+        ))}
       </div>
-
-      <div className={styles.block}>
-        <div className={styles.blockHead}>
-          <span className={styles.blockTitle}>{t('inspector.subject.trackingTitle', 'Tracking')}</span>
-          {walk ? (
-            <span className={styles.meta} role="status">
-              {t('inspector.subject.trackingNow', 'Tracking… {pct}%', { pct: Math.round((typeof walk.progress === 'number' ? walk.progress : 0) * 100) })}
-            </span>
-          ) : (
-            <span className={styles.meta}>
-              {tracked
-                ? fixes === 1
-                  ? t('inspector.subject.trackingMetaOne', '{frames} frames · 1 fix', { frames: mine.length })
-                  : t('inspector.subject.trackingMeta', '{frames} frames · {fixes} fixes', { frames: mine.length, fixes })
-                : t('inspector.subject.trackingNone', 'not tracked yet')}
-            </span>
-          )}
-          {walk && (
-            <Button size="sm" variant="ghost" onClick={() => cancelSubjectWalk(nodeId, active.id)}>
-              {t('inspector.subject.trackingStop', 'Stop')}
-            </Button>
-          )}
-        </div>
-        {walk && (
+      {walk ? (
+        <div className={styles.walkRow}>
           <div className={styles.walkBar} role="progressbar" aria-label={t('inspector.subject.trackingNowLabel', 'Tracking progress')}
-            aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round((typeof walk.progress === 'number' ? walk.progress : 0) * 100)}>
-            <span style={{ transform: `scaleX(${typeof walk.progress === 'number' ? walk.progress : 0})` }} />
+            aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}>
+            <span style={{ transform: `scaleX(${pct / 100})` }} />
           </div>
-        )}
-        <label className={styles.checkInline} title={t('inspector.subject.autoTrackHint', 'After each selection or fix on moving footage, the subject is tracked (or re-tracked between fixes) in the background.')}>
-          <input type="checkbox" checked={autoTrack} onChange={(e) => useSubjectStore.getState().setAutoTrack(e.currentTarget.checked)} />
-          {t('inspector.subject.autoTrack', 'Track automatically')}
-        </label>
-        {held && (
-          <div className={styles.heldNote} role="status">
-            {t('inspector.subject.heldNoteShort', 'Selected on {n} frame(s) only — styles stay put while the subject moves.', { n: mine.length })}
-            <button type="button" className={styles.primary} disabled={locked} onClick={() => { void followSubject(nodeId, active.id, (mine.find((f) => f.fix) ?? mine[0]!).time); }}>
-              {t('inspector.subject.trackNow', 'Track through the shot')}
-            </button>
-          </div>
-        )}
-        <div className={styles.lanes}>
-          {subjects.map((s) => (
-            <Lane key={s.id} subject={s} frames={framesOf(s.id)} duration={duration} fps={fps} active={s.id === active.id} onPick={() => setActive(s.id)} />
-          ))}
+          <Button size="sm" variant="ghost" onClick={() => cancelSubjectWalk(nodeId, active.id)}>
+            {t('inspector.subject.trackingStop', 'Stop')}
+          </Button>
         </div>
-        {tracked && (
-          <>
-            <div className={styles.reviewHead}>
-              <span className={spans.length > 0 ? styles.listTitle : styles.meta}>
-                {spans.length > 0
-                  ? t('inspector.subject.reviewCount', 'Frames to review · {n}', { n: spans.length })
-                  : t('inspector.subject.reviewNoneShort', 'Every frame confident')}
-              </span>
-            </div>
-            {spans.length > 0 && (
-              <ul className={styles.reviewList}>
-                {spans.map((s) => (
-                  <li key={s.start}>
-                    <button type="button" className={styles.reviewRow} onClick={() => seekPlayhead(s.start)}
-                      title={t('inspector.subject.reviewGo', 'Go to this frame, fix the subject there, then Re-track')}>
-                      <span className={styles.reviewSwatch} aria-hidden="true" />
-                      <span className={styles.reviewTime}>{s.end > s.start ? `${tc(s.start)} – ${tc(s.end)}` : tc(s.start)}</span>
-                      <span className={styles.meta}>{t('inspector.subject.reviewSure', '{n}% sure', { n: Math.round(s.lowest * 100) })}</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
+      ) : tracked ? (
+        <>
+          {spans.length > 0 ? (
+            <ul className={styles.reviewList} aria-label={t('inspector.subject.reviewCount', 'Frames to review · {n}', { n: spans.length })}>
+              {spans.map((s) => (
+                <li key={s.start}>
+                  <button type="button" className={styles.reviewRow} onClick={() => seekPlayhead(s.start)}
+                    title={t('inspector.subject.reviewGo', 'Go to this frame, fix the subject there, then Re-track')}>
+                    <span className={styles.reviewSwatch} aria-hidden="true" />
+                    <span className={styles.reviewTime}>{s.end > s.start ? `${tc(s.start)} – ${tc(s.end)}` : tc(s.start)}</span>
+                    <span className={styles.meta}>{t('inspector.subject.reviewSure', '{n}% sure', { n: Math.round(s.lowest * 100) })}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <span className={styles.meta}>{t('inspector.subject.reviewNoneShort', 'Every frame confident')}</span>
+          )}
+          <div className={styles.trackRow}>
             <button
               type="button"
               className={styles.secondary}
@@ -263,11 +248,41 @@ export function SubjectTracking({ nodeId, subjects, active, rev, locked }: {
               title={t('inspector.subject.retrackHint', 'Walk the subject again from the playhead, both ways, up to the fixes either side. Fix the frame first: Shift / Alt clicks or a brush.')}
               onClick={() => { void retrackSubject(nodeId, active.id, playheadSeconds()); }}
             >
+              <Icon name="refresh" size="sm" />
               {t('inspector.subject.retrack', 'Re-track from this frame')}
             </button>
-          </>
-        )}
-      </div>
-    </>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={locked}
+              title={t('inspector.subject.trackAgainHint', 'Track the whole shot again from the first fix')}
+              onClick={() => { void followSubject(nodeId, active.id, trackFrom()); }}
+            >
+              {t('inspector.subject.trackAgain', 'Track all again')}
+            </Button>
+          </div>
+        </>
+      ) : (
+        <button
+          type="button"
+          className={styles.follow}
+          disabled={locked}
+          title={t('workspace.subjects.action.followDesc', 'Carry the selection to every frame')}
+          onClick={() => { void followSubject(nodeId, active.id, trackFrom()); }}
+        >
+          <Icon name="play" size="sm" />
+          <span className={styles.actionTitle}>{t('inspector.subject.trackNow', 'Track through the shot')}</span>
+        </button>
+      )}
+      {held && (
+        <p className={styles.help} role="status">
+          {t('inspector.subject.heldNoteShorter', 'Until it is tracked, its styles stay put while the subject moves.')}
+        </p>
+      )}
+      <label className={styles.check} title={t('inspector.subject.autoTrackHint', 'After each selection or fix on moving footage, the subject is tracked (or re-tracked between fixes) in the background.')}>
+        <input type="checkbox" checked={autoTrack} onChange={(e) => useSubjectStore.getState().setAutoTrack(e.currentTarget.checked)} />
+        {t('inspector.subject.autoTrack', 'Track automatically')}
+      </label>
+    </SubjectGroup>
   );
 }

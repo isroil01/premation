@@ -121,6 +121,17 @@ export function moveSubjectCommands(nodeId: string, id: string, by: -1 | 1): Com
   return [writeList(nodeId, next)];
 }
 
+/** Move subject `id` to index `to` of the panel order (a drag in the list). */
+export function moveSubjectToCommands(nodeId: string, id: string, to: number): Command[] {
+  const list = layerSubjects(nodeId);
+  const at = list.findIndex((s) => s.id === id);
+  if (at < 0 || to < 0 || to >= list.length || to === at) return [];
+  const next = [...list];
+  const [moved] = next.splice(at, 1);
+  next.splice(to, 0, moved!);
+  return [writeList(nodeId, next)];
+}
+
 /** The layer's effects that read `id` alone (its styles: Compositing Options ▸ subjectId). */
 export function subjectEffects(nodeId: string, id: string): Effect[] {
   return mirrorEffects(documentMirror().tree(nodeId)).filter((e) => e.subjectId === id);

@@ -1,8 +1,14 @@
+/* Properties ▸ Subject (SubjectSection.tsx and its parts). One control style
+   for the whole section: flat wells, hairline edges, the accent only on the
+   one primary verb (Track through the shot) and on what is on. The subject's
+   own colour marks what belongs to it: its swatch, its lane, the scope rail. */
+
 .root,
 .empty {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+  min-width: 0;
   font-size: var(--panel-font-size);
 }
 
@@ -19,36 +25,16 @@
   line-height: 1.5;
 }
 
-.card {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-surface-2);
-}
-
-.cardText {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.cardTitle {
-  color: var(--color-text-primary);
-  font-weight: var(--panel-weight-subgroup);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.cardMeta {
+.meta {
+  flex: none;
   color: var(--color-text-tertiary);
   font-size: var(--panel-font-size-help);
+  font-weight: normal;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
+
+/* ── Buttons ─────────────────────────────────────────────────────────────── */
 
 .grid {
   display: grid;
@@ -56,15 +42,10 @@
   gap: var(--space-1);
 }
 
-/* One control style for the whole section: a flat well, a hairline edge, the
-   accent only on the one primary verb (Follow). Labels only — what each verb
-   does is its tooltip. */
 .action,
-.actionPrimary,
 .follow {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: var(--space-2);
   min-width: 0;
   height: var(--control-height-row);
@@ -81,10 +62,21 @@
     border-color var(--motion-duration-fast) var(--motion-ease-standard);
 }
 
-.actionPrimary,
+.actionWide {
+  grid-column: 1 / -1;
+}
+
+.actionIcon {
+  flex: none;
+  color: var(--color-text-tertiary);
+}
+
+/* The one primary verb: the accent well, full width, centred. */
 .follow {
+  justify-content: center;
   border-color: var(--color-primary);
   background: var(--color-primary-subtle);
+  font-weight: var(--panel-weight-button);
 }
 
 .action:hover:not(:disabled) {
@@ -92,48 +84,43 @@
   border-color: var(--color-border-strong);
 }
 
-.actionPrimary:hover:not(:disabled),
+.action:hover:not(:disabled) .actionIcon {
+  color: var(--color-text-primary);
+}
+
 .follow:hover:not(:disabled) {
   border-color: var(--color-primary-hover);
 }
 
 .action:disabled,
-.actionPrimary:disabled,
 .follow:disabled {
   opacity: 0.45;
   cursor: default;
 }
 
-.action:focus-visible,
-.actionPrimary:focus-visible,
-.follow:focus-visible,
-.primary:focus-visible,
-.secondary:focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: 1px;
-}
-
 .actionTitle {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-weight: var(--panel-weight-button);
 }
 
-.actionDesc {
-  color: var(--color-text-tertiary);
-  font-size: var(--panel-font-size-help);
+.follow .actionTitle {
+  flex: none;
 }
 
 .primary,
 .secondary {
-  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   height: var(--control-height-row);
   padding: 0 var(--space-3);
   border-radius: var(--radius-sm);
   font: inherit;
   font-weight: var(--panel-weight-button);
+  white-space: nowrap;
   cursor: pointer;
   transition:
     background-color var(--motion-duration-fast) var(--motion-ease-standard),
@@ -151,12 +138,14 @@
 }
 
 .secondary {
+  padding: 0 var(--space-2);
   border: 1px solid var(--color-border);
   background: var(--color-surface-0);
   color: var(--color-text-primary);
 }
 
-.secondary:hover:not(:disabled) {
+.secondary:hover:not(:disabled),
+.secondaryOn {
   background: var(--color-hover);
   border-color: var(--color-border-strong);
 }
@@ -165,135 +154,6 @@
 .secondary:disabled {
   opacity: 0.45;
   cursor: default;
-}
-
-.looks {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-1);
-}
-
-.looksLabel {
-  flex-basis: 100%;
-  color: var(--color-text-tertiary);
-  font-size: var(--panel-font-size-help);
-}
-
-.chip {
-  height: 24px;
-  padding: 0 var(--space-2);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-full);
-  background: transparent;
-  color: var(--color-text-secondary);
-  font: inherit;
-  font-size: var(--panel-font-size-help);
-  cursor: pointer;
-}
-
-.chip:hover {
-  border-color: var(--color-primary-hover);
-  color: var(--color-text-primary);
-}
-
-.chip:focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: 1px;
-}
-
-/* ── Subjects list ─────────────────────────────────────────────────────── */
-
-.listHead {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-}
-
-.listTitle {
-  color: var(--color-text-primary);
-  font-weight: var(--panel-weight-subgroup);
-}
-
-.list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.row,
-.rowActive {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  min-height: 28px;
-  padding: 0 var(--space-1);
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-}
-
-.row:hover {
-  background: var(--color-hover);
-}
-
-/* The active subject: a tint, no outline box. */
-.rowActive {
-  background: var(--color-primary-subtle);
-}
-
-.swatch {
-  flex: none;
-  width: 14px;
-  height: 14px;
-  padding: 0;
-  border: 1px solid var(--color-border-strong);
-  border-radius: 3px;
-  background: var(--subject-color);
-  cursor: pointer;
-}
-
-.name {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
-  padding: 4px 2px;
-  border: 0;
-  background: transparent;
-  color: var(--color-text-primary);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.nameText {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.nameInput {
-  flex: 1;
-  min-width: 0;
-  height: 22px;
-  padding: 0 var(--space-1);
-  border: 1px solid var(--color-primary);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface-1);
-  color: var(--color-text-primary);
-  font: inherit;
-}
-
-.meta {
-  flex: none;
-  color: var(--color-text-tertiary);
-  font-size: var(--panel-font-size-help);
-  white-space: nowrap;
 }
 
 .icon {
@@ -321,203 +181,114 @@
   cursor: default;
 }
 
-.swatch:focus-visible,
-.name:focus-visible,
+.action:focus-visible,
+.follow:focus-visible,
+.primary:focus-visible,
+.secondary:focus-visible,
 .icon:focus-visible,
-.preset:focus-visible {
-  outline: 2px solid var(--color-primary);
+.swatch:focus-visible,
+.name:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
   outline-offset: 1px;
 }
 
-/* ── The active subject's blocks: edge, use, styles ─────────────────────── */
-
-.block {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  padding-top: var(--space-2);
-  border-top: 1px solid var(--color-border);
-}
-
-.blockHead {
+.trackRow {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-}
-
-.blockTitle {
-  flex: 1;
   min-width: 0;
-  color: var(--color-text-primary);
-  font-weight: var(--panel-weight-subgroup);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.dot {
-  flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: 2px;
-  background: var(--subject-color);
-}
-
-.edgeRow {
-  display: grid;
-  grid-template-columns: 112px minmax(0, 1fr);
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.edgeLabel {
-  color: var(--color-text-secondary);
 }
 
 .check {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  min-width: 0;
   color: var(--color-text-secondary);
 }
 
-.styleList {
+.check input {
+  margin: 0;
+}
+
+/* A checkbox under a property row, lined up with the values. */
+.checkIndent {
+  padding-left: calc(var(--subject-label-col) + var(--space-2));
+  font-size: var(--panel-font-size-help);
+}
+
+/* ── Subjects list ─────────────────────────────────────────────────────── */
+
+.listHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.listTitle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  color: var(--color-text-secondary);
+  font-weight: var(--panel-weight-subgroup);
+}
+
+.list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-/* An applied style: a plain row (no grey slab), lit on hover like the list. */
-.styleRow {
+.row,
+.rowActive {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: 2px;
+  min-width: 0;
   min-height: 26px;
-  padding: 0 var(--space-1);
+  padding: 0 2px 0 var(--space-2);
   border-radius: var(--radius-sm);
 }
 
-.styleRow:hover {
+.row:hover {
   background: var(--color-hover);
 }
 
-.styleName {
-  flex: 1;
-  min-width: 0;
-  color: var(--color-text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+/* The active subject: a tint, no outline box. */
+.rowActive {
+  background: var(--color-primary-subtle);
 }
 
-.presets {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-1);
+.rowDragging {
+  opacity: 0.5;
 }
 
-.preset {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-  height: var(--control-height-row);
-  padding: 0 var(--space-2);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface-0);
-  color: var(--color-text-primary);
-  font: inherit;
-  text-align: left;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  cursor: pointer;
-  transition:
-    background-color var(--motion-duration-fast) var(--motion-ease-standard),
-    border-color var(--motion-duration-fast) var(--motion-ease-standard);
-}
-
-.preset:hover {
-  background: var(--color-hover);
-  border-color: var(--color-border-strong);
-}
-
-/* A small mark per shelf — outline ring, soft ring, dimmed field, colour look —
-   drawn in the text greys: blue is kept for "on", never for decoration. */
-.presetSwatch {
+.swatch {
   flex: none;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  border: 1.5px solid var(--color-text-tertiary);
+  width: 12px;
+  height: 12px;
+  margin-right: var(--space-1);
+  padding: 0;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 3px;
+  background: var(--subject-color);
+  cursor: pointer;
 }
 
-.preset[data-kind='glow'] .presetSwatch {
-  border-color: var(--color-text-secondary);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-text-secondary) 25%, transparent);
-}
-
-.preset[data-kind='background'] .presetSwatch {
-  border: 0;
-  background: var(--color-surface-3);
-  box-shadow: inset 0 0 0 4px var(--color-text-tertiary);
-}
-
-.preset[data-kind='look'] .presetSwatch {
-  border: 0;
-  background: var(--color-text-secondary);
-}
-
-/* ── Style tiles (SubjectStyleShelf.tsx): a preset with its slider and swatch ── */
-
-.shelfHead {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  min-width: 0;
-}
-
-.tile {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-  padding: 2px var(--space-1) 3px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface-0);
-}
-
-.tile:hover {
-  border-color: var(--color-border-strong);
-}
-
-.tile[data-saved] {
-  border-style: dashed;
-}
-
-.tileHead {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  min-width: 0;
-}
-
-.tileApply {
-  display: flex;
+.name {
   flex: 1;
-  align-items: center;
-  gap: var(--space-2);
   min-width: 0;
-  height: calc(var(--control-height-row) - 4px);
-  padding: 0 var(--space-1);
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: 4px 2px;
   border: 0;
-  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-primary);
   font: inherit;
@@ -525,132 +296,171 @@
   cursor: pointer;
 }
 
-.tileApply:disabled {
-  cursor: default;
-  opacity: 0.6;
+.nameText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.tileImage {
+.nameInput {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  padding: 0 var(--space-1);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-1);
+  color: var(--color-text-primary);
+  font: inherit;
+}
+
+/* Row tools show on hover or keyboard focus; a state that is ON (hidden,
+   locked) stays visible in the warning colour, so it is never missed. */
+.iconReveal {
+  opacity: 0;
+}
+
+.row:hover .iconReveal,
+.rowActive:hover .iconReveal,
+.row:focus-within .iconReveal,
+.rowActive:focus-within .iconReveal,
+.iconReveal[data-state='open'],
+.iconReveal[aria-expanded='true'] {
+  opacity: 1;
+}
+
+.iconState {
+  color: var(--color-warning);
+}
+
+/* ── The active subject's scope ─────────────────────────────────────────── */
+
+/* Everything under the list belongs to the active subject: a rail in its
+   colour runs down the left edge of the groups. */
+.scope {
+  --subject-label-col: 104px;
   display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding-left: var(--space-2);
+  border-left: 2px solid var(--subject-color);
+}
+
+.scopeHead {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  padding-bottom: var(--space-1);
+  color: var(--color-text-tertiary);
+  font-size: var(--panel-font-size-help);
+}
+
+.scopeName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-primary);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-subgroup);
+}
+
+/* ── Foldable groups (SubjectGroup.tsx) ─────────────────────────────────── */
+
+.group {
+  min-width: 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.groupHead {
+  display: flex;
+  align-items: center;
   gap: var(--space-1);
   min-width: 0;
 }
 
-.tileSelect {
-  flex: 1 1 0;
+.groupToggle {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
   min-width: 0;
-  height: calc(var(--control-height-row) - 4px);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface-0);
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: var(--color-text-primary);
   font: inherit;
-  font-size: var(--panel-font-size-help);
+  text-align: left;
+  cursor: pointer;
 }
 
-.tileApply:hover:not(:disabled) {
-  background: var(--color-hover);
-}
-
-.tileApply:focus-visible {
-  outline: 2px solid var(--color-primary);
+.groupToggle:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
   outline-offset: -2px;
 }
 
-.tileName {
+.groupTwirl {
+  flex: none;
+  color: var(--color-text-tertiary);
+}
+
+.groupToggle:hover .groupTwirl {
+  color: var(--color-text-primary);
+}
+
+.groupTitle {
+  flex: none;
+  font-weight: var(--panel-weight-subgroup);
+}
+
+/* What the group holds, readable while it is folded. */
+.groupSummary {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-/* The tile's swatch takes the chosen colour where the preset has one. */
-.tile[data-kind] .presetSwatch {
-  background: var(--tile-color, transparent);
-}
-
-.tile[data-kind='shadow'] .presetSwatch,
-.tile[data-kind='motion'] .presetSwatch {
-  border: 0;
-  background: var(--tile-color, var(--color-text-tertiary));
-  box-shadow: 2px 2px 0 color-mix(in srgb, var(--color-text-tertiary) 60%, transparent);
-}
-
-.tileStar,
-.tileStarOn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
+  text-align: right;
   color: var(--color-text-tertiary);
-  cursor: pointer;
-}
-
-.tileStar:hover,
-.tileStarOn:hover {
-  background: var(--color-hover);
-  color: var(--color-text-primary);
-}
-
-.tileStarOn {
-  color: var(--color-primary);
-}
-
-.tileStar:focus-visible,
-.tileStarOn:focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: 1px;
-}
-
-/* Before / After: a small toggle; "on" (the styles off) in the accent, as any pressed state. */
-.before,
-.beforeOn {
-  flex: none;
-  height: 20px;
-  padding: 0 var(--space-2);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-full);
-  background: var(--color-surface-0);
-  color: var(--color-text-secondary);
-  font: inherit;
   font-size: var(--panel-font-size-help);
-  cursor: pointer;
+  font-variant-numeric: tabular-nums;
 }
 
-.before:hover,
-.beforeOn:hover {
-  background: var(--color-hover);
-}
-
-.beforeOn {
-  border-color: var(--color-primary);
-  color: var(--color-primary);
-}
-
-.before:focus-visible,
-.beforeOn:focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: 1px;
-}
-/* ── View modes and tracking lanes (SubjectTracking.tsx) ───────────────────── */
-
-.checkInline {
+.groupBody {
   display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  color: var(--color-text-tertiary);
-  font-size: var(--panel-font-size-help);
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: 0 0 var(--space-3) var(--space-1);
 }
 
+/* ── Edge ──────────────────────────────────────────────────────────────── */
+
+.edgeRow {
+  display: grid;
+  grid-template-columns: var(--subject-label-col, 104px) minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 22px;
+}
+
+.edgeLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-secondary);
+}
+
+/* Show matte as: an icon strip, the panel's segmented style (raised grey for on). */
 .viewModes {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 2px;
+  min-width: 0;
   padding: 2px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
@@ -659,26 +469,19 @@
 
 .viewMode {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 3px;
+  justify-content: center;
   min-width: 0;
-  padding: var(--space-1) 2px;
+  height: 20px;
+  padding: 0;
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--color-text-secondary);
-  font: inherit;
-  font-size: var(--panel-font-size-help);
   cursor: pointer;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .viewMode:hover {
   background: var(--color-hover);
-  color: var(--color-text-primary);
 }
 
 .viewMode:focus-visible {
@@ -686,31 +489,31 @@
   outline-offset: -2px;
 }
 
-/* A segmented choice reads like the panel's other strips (the Character
-   panel's `.seg`): raised grey, not the selection blue. */
 .viewModeOn,
 .viewModeOn:hover {
   background: var(--color-surface-3);
-  color: var(--color-text-primary);
-  font-weight: var(--font-weight-semibold);
 }
 
 /* A small picture of each mode: a figure on its ground. */
 .viewGlyph {
   position: relative;
-  width: 18px;
-  height: 12px;
+  width: 16px;
+  height: 11px;
   border-radius: 2px;
   background: var(--color-surface-3);
+}
+
+.viewModeOn .viewGlyph {
+  box-shadow: 0 0 0 1px var(--color-text-tertiary);
 }
 
 .viewGlyph::after {
   content: '';
   position: absolute;
-  left: 6px;
+  left: 5px;
   top: 2px;
   width: 6px;
-  height: 8px;
+  height: 7px;
   border-radius: 3px 3px 1px 1px;
   background: var(--color-text-secondary);
 }
@@ -725,6 +528,16 @@
   box-shadow: inset 0 0 0 1px var(--color-primary);
 }
 
+/* ── Tracking (SubjectTracking.tsx) ─────────────────────────────────────── */
+
+.dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--subject-color);
+}
+
 .lanes {
   display: flex;
   flex-direction: column;
@@ -734,7 +547,7 @@
 .laneRow,
 .laneRowActive {
   display: grid;
-  grid-template-columns: minmax(56px, 30%) 1fr;
+  grid-template-columns: minmax(56px, 30%) minmax(0, 1fr);
   align-items: center;
   gap: var(--space-2);
 }
@@ -825,9 +638,26 @@
   pointer-events: none;
 }
 
-.reviewHead {
+.walkRow {
   display: flex;
   align-items: center;
+  gap: var(--space-2);
+}
+
+.walkBar {
+  flex: 1;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--color-surface-3);
+  overflow: hidden;
+}
+
+.walkBar > span {
+  display: block;
+  height: 100%;
+  background: var(--color-primary);
+  transform-origin: left center;
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .reviewList {
@@ -878,19 +708,117 @@
   min-width: 0;
   font-variant-numeric: tabular-nums;
 }
-/* ── A style's time span (SubjectStyleSpan.tsx) ───────────────────────────── */
+
+/* ── Styles: the applied list ───────────────────────────────────────────── */
+
+.emptyNote {
+  margin: 0;
+  padding: var(--space-2);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-tertiary);
+  font-size: var(--panel-font-size-help);
+}
+
+.styleList {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
 
 .styleItem {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  min-width: 0;
+  border-radius: var(--radius-sm);
 }
+
+.styleItemOpen {
+  background: var(--color-hover);
+}
+
+.styleRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  min-height: 26px;
+  padding: 0 2px;
+  border-radius: var(--radius-sm);
+}
+
+.styleRow:hover {
+  background: var(--color-hover);
+}
+
+.styleRow input {
+  margin: 0 var(--space-1) 0 0;
+}
+
+.styleTwirl {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+}
+
+.styleTwirl:hover {
+  color: var(--color-text-primary);
+}
+
+.styleName {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-primary);
+  font: inherit;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.styleTwirl:focus-visible,
+.styleName:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+
+/* An open style: its own parameters (as Effect Controls draws them), then when it shows. */
+.styleBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: 0 0 var(--space-2);
+}
+
+/* Effect Controls' rows already indent under their twirl. */
+.styleBody > .spanBox {
+  padding-left: var(--space-3);
+}
+
+/* ── A style's time span (SubjectStyleSpan.tsx) ───────────────────────────── */
 
 .spanBox {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
-  padding: 0 var(--space-1) var(--space-1) calc(var(--space-1) + 18px);
+  padding-top: var(--space-1);
 }
 
 .spanModes {
@@ -976,61 +904,293 @@
   max-width: 96px;
 }
 
-.heldNote {
+/* Before / After: a small toggle; "on" (the styles off) in the accent, as any pressed state. */
+.before,
+.beforeOn {
+  flex: none;
+  height: var(--control-height-row);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-0);
+  color: var(--color-text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.before:hover,
+.beforeOn:hover {
+  background: var(--color-hover);
+}
+
+.beforeOn {
+  border-color: var(--color-primary);
+  color: var(--color-primary-text);
+}
+
+.before:focus-visible,
+.beforeOn:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+
+/* ── Styles: the gallery (SubjectStyleShelf.tsx) ──────────────────────────── */
+
+.gallery {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
   gap: var(--space-2);
-  padding: var(--space-1) var(--space-2);
-  border-left: 2px solid var(--color-warning);
-  color: var(--color-text-secondary);
-  font-size: var(--panel-font-size-help);
-  line-height: 1.45;
-}
-/* ── Tracking in progress, press feedback, numbers ─────────────────────────── */
-
-.walkBar {
-  height: 2px;
-  border-radius: 1px;
-  background: var(--color-surface-3);
-  overflow: hidden;
-}
-
-.walkBar > span {
-  display: block;
-  height: 100%;
-  background: var(--color-primary);
-  transform-origin: left center;
-  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.linkButton {
-  flex: none;
-  padding: 0 var(--space-1);
-  border: 0;
+  min-width: 0;
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
+  background: var(--color-surface-0);
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.filter {
+  height: 20px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
   background: transparent;
-  color: var(--color-primary-text);
+  color: var(--color-text-tertiary);
   font: inherit;
   font-size: var(--panel-font-size-help);
   cursor: pointer;
 }
 
-.linkButton:hover {
-  background: var(--color-hover);
+.filter:hover {
+  color: var(--color-text-primary);
 }
 
-.linkButton:focus-visible {
+.filterOn,
+.filterOn:hover {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-3);
+  color: var(--color-text-primary);
+}
+
+.filter:focus-visible {
   outline: 2px solid var(--color-focus-ring);
   outline-offset: 1px;
+}
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.tile {
+  position: relative;
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+}
+
+.tile:hover,
+.tileTuning {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-1);
+}
+
+.tile[data-saved] {
+  border-color: var(--color-border);
+  border-style: dashed;
+}
+
+.tileApply {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  min-width: 0;
+  padding: 3px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-size: var(--panel-font-size-help);
+  text-align: left;
+  cursor: pointer;
+}
+
+.tile:hover .tileApply,
+.tileTuning .tileApply {
+  color: var(--color-text-primary);
+}
+
+.tileApply:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: -2px;
+}
+
+.tileName {
+  min-width: 0;
+  padding: 0 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The tile's tools sit over its picture, on hover (a favourite's star stays). */
+.tileTools {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  display: flex;
+  gap: 1px;
+}
+
+.tileTool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--color-black-a64);
+  color: var(--color-neutral-100);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.tile:hover .tileTool,
+.tile:focus-within .tileTool,
+.tileTuning .tileTool,
+.tileToolOn {
+  opacity: 1;
+}
+
+.tileToolOn {
+  color: var(--color-warning);
+}
+
+.tileTool:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+
+/* A picture of each preset: a figure on a ground, drawn in CSS from its kind and
+   colour (--tile-color). Not a render of the effect, a sign for it. */
+.thumb {
+  position: relative;
+  display: block;
+  height: 36px;
+  border-radius: 2px;
+  background: linear-gradient(160deg, var(--color-surface-3), var(--color-surface-1));
+  overflow: hidden;
+}
+
+.thumb i {
+  position: absolute;
+  left: 50%;
+  top: 11px;
+  width: 14px;
+  height: 28px;
+  margin-left: -7px;
+  border-radius: 7px 7px 2px 2px;
+  background: var(--color-neutral-400);
+}
+
+.thumb i::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: -8px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: inherit;
+  box-shadow: inherit;
+}
+
+.thumb[data-kind='outline'] i { box-shadow: 0 0 0 1.5px var(--tile-color); }
+.thumb[data-preset='dashes'] i { box-shadow: none; outline: 1.5px dashed var(--tile-color); outline-offset: 1px; }
+.thumb[data-preset='paper'] i { box-shadow: 0 0 0 2.5px var(--tile-color), 2px 3px 0 3px var(--color-black-a64); }
+.thumb[data-kind='glow'] i { box-shadow: 0 0 6px 2px var(--tile-color); }
+.thumb[data-kind='shadow'] i { box-shadow: 4px 3px 0 var(--color-black-a64); }
+.thumb[data-preset='longShadow'] i { box-shadow: 3px 3px 0 var(--color-black-a64), 6px 6px 0 var(--color-black-a64), 9px 9px 0 var(--color-black-a64); }
+.thumb[data-preset='spotlight'] { background: radial-gradient(circle at 50% 70%, var(--color-surface-3) 0, var(--color-black-a64) 70%); }
+.thumb[data-preset='portrait'] { background: repeating-linear-gradient(90deg, var(--color-surface-3) 0 3px, var(--color-surface-2) 3px 6px); filter: saturate(0.6); }
+.thumb[data-preset='portrait'] i { filter: none; }
+.thumb[data-preset='bgColor'] { background: var(--tile-color); }
+.thumb[data-preset='bgImage'] { background: repeating-linear-gradient(45deg, var(--color-surface-3) 0 5px, var(--color-surface-2) 5px 10px); }
+.thumb[data-kind='look'] i { background: var(--tile-color); }
+.thumb[data-preset='splash'] i { background: var(--color-warning); }
+.thumb[data-preset='rgbSplit'] i { background: var(--color-neutral-400); box-shadow: -2px 0 0 rgba(255, 0, 80, 0.8), 2px 0 0 rgba(0, 220, 255, 0.8); }
+.thumb[data-preset='echo'] i { box-shadow: -5px 0 0 color-mix(in srgb, var(--color-neutral-400) 45%, transparent), -10px 0 0 color-mix(in srgb, var(--color-neutral-400) 20%, transparent); }
+.thumb[data-preset='drawOn'] i { box-shadow: -1.5px -1.5px 0 0 var(--tile-color); }
+
+/* The settings a preset is added at (a tile's tune button). */
+.tune {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border);
+}
+
+.tuneHead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.tuneHead .thumb {
+  flex: none;
+  width: 36px;
+  height: 24px;
+}
+
+.tuneHead .thumb i {
+  top: 7px;
+  width: 8px;
+  height: 18px;
+  margin-left: -4px;
+}
+
+.tuneHead .thumb i::before {
+  left: 1px;
+  top: -5px;
+  width: 6px;
+  height: 6px;
+}
+
+.tuneHead .tileName {
+  flex: 1;
+  font-weight: var(--panel-weight-subgroup);
+}
+
+.tileSelect {
+  min-width: 0;
+  height: calc(var(--control-height-row) - 2px);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-0);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: var(--panel-font-size-help);
 }
 
 /* A press reads as a press: the control sinks a pixel (transform only, no layout). */
 .viewMode:active,
 .spanMode:active,
 .reviewRow:active,
-.linkButton:active,
-.preset:active,
+.filter:active,
+.tileApply:active,
 .action:active:not(:disabled),
 .follow:active:not(:disabled),
 .primary:active:not(:disabled),
@@ -1038,8 +1198,8 @@
   transform: translateY(1px);
 }
 
-.meta,
-.reviewTime,
-.spanTime {
-  font-variant-numeric: tabular-nums;
+@media (prefers-reduced-motion: reduce) {
+  .walkBar > span {
+    transition: none;
+  }
 }
