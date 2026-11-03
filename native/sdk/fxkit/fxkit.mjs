@@ -723,7 +723,8 @@ if (CHECK) {
 reportProblems();
 let stale = 0;
 for (const [file, text] of Object.entries(outputs)) {
-  const old = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null;
+  // Line endings do not count: git's autocrlf checks generated files out as CRLF.
+  const old = fs.existsSync(file) ? fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n') : null;
   if (old === text) continue;
   stale++;
   if (!CHECK) {
