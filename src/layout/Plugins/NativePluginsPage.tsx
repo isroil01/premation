@@ -19,6 +19,7 @@ import { useNativePlugins } from '@hooks/useNativePlugins';
 import { useInstalledPlugins } from '@hooks/usePluginStore';
 import { installFromFilePicker } from './InstallPackageDialog';
 import { NativePluginsList, OpenPluginsFolderButton } from './NativePluginsList';
+import { PluginDevModeCard } from './PluginDevMode';
 import { PluginStoreBrowser } from './PluginStore';
 import { PublishPlugins } from './PublishPlugins';
 import { StoreMessageLine } from './StoreMessageLine';
@@ -103,6 +104,7 @@ export function NativePluginsPage(): JSX.Element {
               {rescanNote ? <span className={styles.message} role="status">{rescanNote}</span> : null}
             </div>
           </section>
+          <PluginDevModeCard />
         </>
       ) : null}
 

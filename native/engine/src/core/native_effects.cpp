@@ -37,6 +37,7 @@ struct State {
   NativeEffects::ListFn list;
   NativeEffects::UiFn ui;
   NativeEffects::ListFn rescan;
+  NativeEffects::ReloadFn reload;
   NativeEffects::OverlayFn overlay;
   NativeEffects::DragFn drag;
   NativeEffects::SceneFn scene;  // SDK 1.2
@@ -133,10 +134,17 @@ void NativeEffects::set_rescan_handler(ListFn rescan) {
   s.rescan = std::move(rescan);
 }
 
+void NativeEffects::set_reload_handler(ReloadFn reload) {
+  State& s = state();
+  const std::scoped_lock lock(s.handlerMutex);
+  s.reload = std::move(reload);
+}
+
 void NativeEffects::clear_handlers() {
   set_handlers({}, {}, {});
   set_query_handlers({}, {});
   set_rescan_handler({});
+  set_reload_handler({});
   set_overlay_handlers({}, {});
   set_scene_handler({});
   set_asset_files_handler({});
@@ -184,6 +192,17 @@ std::optional<std::vector<api::PluginInfo>> NativeEffects::rescan() {
   }
   if (!fn) return std::nullopt;
   return fn();
+}
+
+std::optional<bool> NativeEffects::reload(std::string_view plugin, std::string& why) {
+  State& s = state();
+  ReloadFn fn;
+  {
+    const std::scoped_lock lock(s.handlerMutex);
+    fn = s.reload;
+  }
+  if (!fn) return std::nullopt;
+  return fn(plugin, why);
 }
 
 std::optional<std::vector<std::uint8_t>> NativeEffects::created(std::string_view type) {

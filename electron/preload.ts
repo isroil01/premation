@@ -483,6 +483,17 @@ const bridge = {
       ipcRenderer.on('plugins:packageOpened', listener);
       return () => ipcRenderer.removeListener('plugins:packageOpened', listener);
     },
+    // Developer Mode (electron/pluginDevMode.ts): dev folders, and a push per settled rebuild.
+    devSettings: () => ipcRenderer.invoke('plugins:devSettings'),
+    setDevSettings: (s: { enabled: boolean; folders: string[] }) => ipcRenderer.invoke('plugins:setDevSettings', s),
+    pickDevFolder: () => ipcRenderer.invoke('plugins:pickDevFolder'),
+    onDevChanged: (handler: (pluginId: string) => void) => {
+      const listener = (_e: unknown, id: unknown): void => {
+        if (typeof id === 'string') handler(id);
+      };
+      ipcRenderer.on('plugins:devChanged', listener);
+      return () => ipcRenderer.removeListener('plugins:devChanged', listener);
+    },
     /** Which binaries this machine loads (docs/PLUGIN_STORE.md §1): the store greys out the rest. */
     host: { platform: process.platform, arch: process.arch },
   },

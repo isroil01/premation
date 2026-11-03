@@ -45,6 +45,7 @@ import {
   type RevocationEntry,
   applyPendingAtStart,
 } from '../nativePluginStore';
+import { cleanDevSettings, devLaunchArgs, readDevSettings, writeDevSettings, type PluginDevSettings } from '../pluginDevMode';
 import {
   inspectPackageFile,
   installInspected,
@@ -159,13 +160,67 @@ export async function refreshRevocations(deps: StoreDeps): Promise<RevocationEnt
  * installs and uninstalls applied first, then `--plugin-disabled` for each
  * disabled plugin and `--revoked` for installed plugins on the kept list.
  */
-export async function pluginLaunchArgs(deps: Pick<StoreDeps, 'dir' | 'machineDir'>): Promise<string[]> {
+export async function pluginLaunchArgs(
+  deps: Pick<StoreDeps, 'dir' | 'machineDir'> & {
+    /** Developer Mode (electron/pluginDevMode.ts): where this launch's shadow copies go. */
+    devShadowRoot?: () => string;
+    /** A name unique to this launch (its shadow folder). */
+    launchId?: () => string;
+  },
+): Promise<string[]> {
   const dir = deps.dir();
   const machine = deps.machineDir?.();
   const state = await applyPendingAtStart(dir);
   const revoked = revokedInstalled(state, (await readRevocations(dir)).entries, machine ? await bundlesIn(machine) : []);
+  const dev = deps.devShadowRoot
+    ? await devLaunchArgs(await readDevSettings(dir), deps.devShadowRoot(), deps.launchId?.() ?? String(Date.now()))
+    : [];
   // The machine folder is a second `--plugins` (repeatable); the engine skips it when it does not exist.
-  return [...(machine ? ['--plugins', machine] : []), ...(await engineArgsFor(dir, state, revoked))];
+  return [...(machine ? ['--plugins', machine] : []), ...(await engineArgsFor(dir, state, revoked)), ...dev];
+}
+
+// ── Developer Mode (W2, electron/pluginDevMode.ts) ───────────────────────
+
+export interface PluginDevIpcDeps {
+  dir: () => string;
+  /** The OS folder picker; null when cancelled. */
+  pickFolder: () => Promise<string | null>;
+  /** Restart the engine so changed dev settings (its launch arguments) apply; the document is replayed. */
+  restartEngine: (reason: string) => void;
+  /** The folders to watch changed (main's DevWatcher). */
+  watch: (s: PluginDevSettings) => void;
+}
+
+/** The handler bodies, exported for the test. */
+export function pluginDevHandlers(deps: PluginDevIpcDeps): {
+  settings: () => Promise<PluginDevSettings>;
+  setSettings: (req: unknown) => Promise<PluginDevSettings | null>;
+  pickFolder: () => Promise<string | null>;
+} {
+  return {
+    settings: () => readDevSettings(deps.dir()),
+    setSettings: async (req) => {
+      const next = cleanDevSettings(req);
+      if (!next) return null;
+      const before = await readDevSettings(deps.dir());
+      await writeDevSettings(deps.dir(), next);
+      deps.watch(next);
+      const argsChanged = before.enabled !== next.enabled || (next.enabled && before.folders.join('\n') !== next.folders.join('\n'));
+      if (argsChanged) deps.restartEngine('plugin Developer Mode settings');
+      return next;
+    },
+    pickFolder: () => deps.pickFolder(),
+  };
+}
+
+export function registerPluginDevIpc(deps: PluginDevIpcDeps): void {
+  const h = pluginDevHandlers(deps);
+  /** Developer Mode on/off and its folders. */
+  handle('plugins:devSettings', () => h.settings());
+  /** Save them; the engine restarts when its plugin folders change. null = refused. */
+  handle('plugins:setDevSettings', (_e, req: unknown) => h.setSettings(req));
+  /** The folder picker for a dev folder. */
+  handle('plugins:pickDevFolder', () => h.pickFolder());
 }
 
 /**

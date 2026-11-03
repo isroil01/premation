@@ -684,6 +684,31 @@ if(MOTION_BUILD_TESTS)
   target_sources(engine_plugins_tests PRIVATE tests/test_plugin_param_ui.cpp)  # SDK 1.3: Effect Controls boxes
   target_sources(engine_plugins_tests PRIVATE tests/test_plugin_model3d.cpp)  # SDK 1.2 (S8): the model3d sample's CPU path
   add_dependencies(engine_plugins_tests model3d)
+  # W2 reloadPlugin: one test plugin built twice under one id (tests/plugins/reload_probe.cpp);
+  # the test overwrites a dev bundle's binary with the other build and reloads it.
+  foreach(_v 1 2)
+    add_library(reload_probe_v${_v} MODULE tests/plugins/reload_probe.cpp)
+    target_link_libraries(reload_probe_v${_v} PRIVATE premation::sdk motion::options)
+    target_compile_definitions(reload_probe_v${_v} PRIVATE RELOAD_PROBE_VERSION=${_v})
+    set_target_properties(reload_probe_v${_v} PROPERTIES
+      OUTPUT_NAME reload_probe
+      LIBRARY_OUTPUT_DIRECTORY $<1:${CMAKE_BINARY_DIR}/test-plugins/reload/v${_v}>
+      RUNTIME_OUTPUT_DIRECTORY $<1:${CMAKE_BINARY_DIR}/test-plugins/reload/v${_v}>
+      C_VISIBILITY_PRESET hidden
+      CXX_VISIBILITY_PRESET hidden)
+    if(WIN32)
+      set_target_properties(reload_probe_v${_v} PROPERTIES PREFIX "" SUFFIX ".dll")
+    elseif(APPLE)
+      set_target_properties(reload_probe_v${_v} PROPERTIES PREFIX "lib" SUFFIX ".dylib")
+    else()
+      set_target_properties(reload_probe_v${_v} PROPERTIES PREFIX "lib" SUFFIX ".so")
+    endif()
+    add_dependencies(engine_plugins_tests reload_probe_v${_v})
+  endforeach()
+  target_sources(engine_plugins_tests PRIVATE tests/test_plugin_reload.cpp)
+  target_compile_definitions(engine_plugins_tests PRIVATE
+    RELOAD_PROBE_V1="$<TARGET_FILE:reload_probe_v1>"
+    RELOAD_PROBE_V2="$<TARGET_FILE:reload_probe_v2>")
   # P7b: analysis jobs read plugin footage through its importer (jobs/media_input.cpp open_plugin_frames).
   target_link_libraries(engine_plugins_tests PRIVATE engine_jobs_core)
 endif()

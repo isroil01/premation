@@ -332,6 +332,11 @@ struct HostOptions {
   /// listed as disabled and NOT loaded — none of their code runs until
   /// setPluginEnabled turns them on.
   std::vector<std::string> disabled;
+  /// Developer Mode (`--plugin-shadow`): when set, each plugin binary (and the shared libraries
+  /// beside it) is copied to <shadowDir>/<plugin id>/<n>/ and loaded from there. The bundle's own
+  /// files stay unlocked, so the author's build can overwrite them, and reload() loads the new
+  /// build. Empty = load in place (the shipping default).
+  std::filesystem::path shadowDir;
   /// The registry's signed revocation list, already verified by Electron
   /// (`--revoked <file>`): plugin id → reason. A revoked plugin is listed
   /// `revoked` and never loaded; setPluginEnabled cannot turn it on.
@@ -369,6 +374,13 @@ class PluginHost {
   /// setPluginEnabled. Enabling a quarantined / failed plugin retries it and
   /// clears its disabled instances. False = no such plugin.
   bool set_enabled(std::string_view pluginId, bool enabled);
+  /// reloadPlugin (Developer Mode, W2): load the plugin's bundle again — manifest, binary (from a
+  /// fresh shadow copy when HostOptions::shadowDir is set), GLOBAL_SETUP and PARAMS_SETUP — and,
+  /// only if that succeeds, swap it in. Renders already running finish on the old module; the next
+  /// render of each instance sets the old one down and sets the new one up from the document's
+  /// flat sequence data. The old module stays mapped (pinned): code of it may still be on a stack.
+  /// A failed reload keeps the old module loaded and says why in `why`. False = not reloaded.
+  bool reload(std::string_view pluginId, std::string& why);
   [[nodiscard]] const EffectSpec* effect(std::string_view matchName) const;
 
   // ── document side (the core thread) ──

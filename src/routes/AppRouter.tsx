@@ -22,6 +22,7 @@ import { RequireAuth } from './RequireAuth';
 import { TitleBar } from '@layout/TitleBar/TitleBar';
 import { ModalHost, ContextMenuHost, NotificationHost } from '@layout/overlays';
 import { PluginPackageOpener } from '@layout/Plugins/InstallPackageDialog';
+import { PluginDevReloader } from '@layout/Plugins/PluginDevMode';
 import { UpdateDialog } from '@layout/Updates/UpdateDialog';
 import { FfmpegRepairHost } from '@layout/Export/FfmpegRepairHost';
 import { useAutoUpdate } from '@hooks/useAutoUpdate';
@@ -180,6 +181,8 @@ function AppLayout(): JSX.Element {
       <NotificationHost />
       {/* A double-clicked `.pplugin` shows its install dialog over whatever is open. */}
       {!isPopout && <PluginPackageOpener />}
+      {/* Plugin Developer Mode: each rebuilt dev plugin is reloaded in the engine. */}
+      {!isPopout && <PluginDevReloader />}
       {/* Help ▸ Check for Updates… answers here, not in an OS message box. */}
       {!isPopout && <UpdateDialog />}
       {/* "Fix video export": the ffmpeg repair dialog + its startup notice. */}

@@ -900,6 +900,13 @@ export interface MotionEditorApi {
     entitlement?(): Promise<{ plan: 'pro' | 'free' | 'unknown'; validUntil: number | null }>;
     /** Main opened a package (call `takeOpenedPackages`). Returns the unsubscribe. */
     onPackageOpened?(handler: () => void): () => void;
+    /** Plugin Developer Mode (electron/pluginDevMode.ts): on/off and the dev folders. */
+    devSettings?(): Promise<{ enabled: boolean; folders: string[] }>;
+    /** Save them (the engine restarts when its plugin folders change); null = refused. */
+    setDevSettings?(s: { enabled: boolean; folders: string[] }): Promise<{ enabled: boolean; folders: string[] } | null>;
+    pickDevFolder?(): Promise<string | null>;
+    /** A dev plugin was rebuilt (its binary or manifest changed and settled). Returns the unsubscribe. */
+    onDevChanged?(handler: (pluginId: string) => void): () => void;
     host?: { platform: string; arch: string };
   };
   /** Premium library payloads (electron/ipc/libraryCache.ts). */

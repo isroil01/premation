@@ -1202,6 +1202,51 @@ fn effect(p: vec2f) -> vec4f {
   within one 8-bit step, 2.4e-4 at 16 bpc and 8.1e-7 at 32 bpc (RTX 4060,
   2026-11-03).
 
+## Hot reload (Developer Mode)
+
+Plugins ▸ Installed ▸ **Developer Mode**: turn on *Reload plugins when they
+are rebuilt* and add your build output folder (a bundle folder or a folder of
+bundles, e.g. `build/plugins`). The editor then:
+
+1. Restarts the engine with each dev folder as one more `--plugins` and with
+   `--plugin-shadow <userData>/plugin-shadow/<launch>`. Every plugin binary,
+   and the `.dll` / `.so` / `.dylib` files beside it, loads from a copy there.
+   Your linker can therefore overwrite the original while Premation runs.
+   Windows locks a loaded DLL, so without the copy the build fails. The open
+   project is replayed across the restart.
+2. Watches the dev folders. When a bundle's binary or manifest changes and
+   the writes stop for 0.8 s, it sends the engine `reloadPlugin` for that
+   bundle's plugin id and shows a toast.
+
+`reloadPlugin` (engine API, also callable from scripts and panels) loads the
+bundle again beside the old one. The new build is swapped in only after its
+`GLOBAL_SETUP` and `PARAMS_SETUP` succeed:
+
+- Renders already running finish on the old module.
+- Each instance is set down by the old build and set up again from the
+  document's flat sequence data (`SEQUENCE_RESETUP`) on its next render.
+  Sequence data must therefore survive a rebuild, or be rebuilt from defaults.
+- The effect definitions, commands and panels follow the new manifest.
+- The RAM and disk frame caches are purged.
+- A build that does not load, or a manifest that does not parse or changed
+  its id, keeps the old module loaded. The error names the reason.
+- A quarantine from the previous build is lifted, and crashed instances get a
+  new chance.
+
+What a reload does not do:
+
+- The old module stays mapped for the life of the engine, because its code
+  may still be on a stack.
+- GPU data it set up is released when the device goes away or the engine
+  stops, not at the reload. A threaded GPU render may still be using it.
+- Shadow copies are per launch. Older launches' folders are removed at the
+  next start.
+- A plugin that finds its own files through its module path (instead of the
+  host's asset callbacks) sees the shadow folder.
+
+Developer Mode is per user, stored in `<native-plugins>/.dev.json`, never in
+a project.
+
 ## Golden tests: `premation-plugins test`
 
 ```sh

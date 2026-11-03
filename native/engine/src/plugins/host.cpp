@@ -9,6 +9,7 @@
 #include <fstream>
 #include <map>
 #include <mutex>
+#include <set>
 #include <sstream>
 #include <thread>
 
@@ -177,6 +178,9 @@ struct Plugin {
   fs::path dir;
   fs::path binary;
   std::unique_ptr<DynamicLibrary> lib;
+  /// The module's PremationPluginInfo (alive while `lib` is mapped): a failed reload binds the P7
+  /// entry points back to it.
+  const PrPluginInfo* info = nullptr;
   PluginStatus status = PluginStatus::failed;
   std::string error;
   /// SDK 1.2: the presets the bundle ships (manifest `presets`, presets/*.json).
@@ -189,6 +193,15 @@ struct Plugin {
   /// Disabled at start and never loaded: enabling it loads the bundle.
   bool deferred = false;
 };
+
+/// A plugin record replaced by a reload or a retry. Kept for the life of the process, its module
+/// pinned: effect specs, instances and GPU data may still point into it.
+void retire(std::unique_ptr<Plugin> p) {
+  static std::mutex mutex;
+  static std::vector<std::unique_ptr<Plugin>> retired;  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables): never freed on purpose
+  const std::scoped_lock lock(mutex);
+  retired.push_back(std::move(p));
+}
 
 struct Instance {
   std::shared_mutex mutex;  ///< shared: render; exclusive: (re)setup
@@ -448,7 +461,16 @@ struct PluginHost::Impl {
   }
 
   // ── discovery + loading ──
-  void load_bundle(const fs::path& dir);
+  /// Load the bundle at `dir` and list it. With `replacing` (reload): load it beside that plugin
+  /// and swap it in only once it is fully set up; otherwise the old one stays and `why` says why.
+  /// The plugin record, or nullptr (already known, or a failed reload).
+  Plugin* load_bundle(const fs::path& dir, Plugin* replacing = nullptr, std::string* why = nullptr);
+  Plugin* swap_in(std::unique_ptr<Plugin> fresh, Plugin& old, std::string* why);
+  /// Developer Mode: copy the plugin's binary and the shared libraries beside it under
+  /// options.shadowDir and return the copy to load ('' + `err` on failure). Core thread only.
+  fs::path shadow_copy(const Plugin& p, std::string& err);
+  std::uint64_t shadowGeneration = 0;
+  std::set<std::string, std::less<>> shadowCleaned;
   /// Why a bundle requiring an entitlement may not load ('' when it may, or needs none).
   [[nodiscard]] std::string entitlement_lock(const Manifest& man) const;
   bool setup_effect(Plugin& p, EffectSpec& e);
@@ -1265,6 +1287,7 @@ PluginHost::PluginHost(HostOptions options) : impl_(std::make_unique<Impl>(*this
       (void)scan();
       return plugin_infos();
     });
+    doc::NativeEffects::set_reload_handler([this](std::string_view plugin, std::string& why) { return reload(plugin, why); });
     contrib_->attach();  // P7: runPluginCommand, listPluginCommands, plugin importers
     doc::NativeEffects::set_overlay_handlers([this](const doc::NativeActionRequest& r) { return draw_overlay(r); },
                                              [this](const doc::NativeActionRequest& r, const doc::NativeOverlayDrag& d) {
@@ -1387,7 +1410,38 @@ std::string PluginHost::Impl::entitlement_lock(const Manifest& man) const {
   return entitlement_problem(e, why, man.entitlement, now);
 }
 
-void PluginHost::Impl::load_bundle(const fs::path& dir) {
+fs::path PluginHost::Impl::shadow_copy(const Plugin& p, std::string& err) {
+  std::error_code ec;
+  const fs::path root = options.shadowDir / p.manifest.id;
+  // Copies an earlier engine left behind; a copy this process still has loaded is locked and stays.
+  if (shadowCleaned.insert(p.manifest.id).second) fs::remove_all(root, ec);
+  // A folder that survived the clean-up holds a copy something still has loaded: never reuse it.
+  fs::path dst;
+  do {
+    dst = root / std::to_string(++shadowGeneration);
+  } while (fs::exists(dst, ec));
+  fs::create_directories(dst, ec);
+  if (ec) {
+    err = "cannot create the shadow folder " + dst.string() + ": " + ec.message();
+    return {};
+  }
+  const auto copy = [&](const fs::path& from) {
+    fs::copy_file(from, dst / from.filename(), fs::copy_options::overwrite_existing, ec);
+    if (ec) err = "cannot copy " + from.string() + " to the shadow folder: " + ec.message();
+    return !ec;
+  };
+  if (!copy(p.binary)) return {};
+  // The libraries the binary links against are looked up beside it: they move with it.
+  for (const auto& entry : fs::directory_iterator(p.binary.parent_path(), ec)) {
+    const fs::path& f = entry.path();
+    const std::string ext = f.extension().string();
+    if (f == p.binary || !entry.is_regular_file(ec) || (ext != ".dll" && ext != ".so" && ext != ".dylib")) continue;
+    if (!copy(f)) return {};
+  }
+  return dst / p.binary.filename();
+}
+
+Plugin* PluginHost::Impl::load_bundle(const fs::path& dir, Plugin* replacing, std::string* reloadWhy) {
   auto p = std::make_unique<Plugin>();
   p->dir = dir;
   std::string text;
@@ -1416,8 +1470,16 @@ void PluginHost::Impl::load_bundle(const fs::path& dir) {
   {
     const std::shared_lock lock(pluginsMutex);
     for (const auto& q : plugins) {
-      if (q->manifest.id == p->manifest.id) return;  // already known (rescans keep what is loaded)
+      if (q->manifest.id == p->manifest.id && q.get() != replacing) return nullptr;  // already known (rescans keep what is loaded)
     }
+  }
+  if (replacing != nullptr && !man) {
+    if (reloadWhy != nullptr) *reloadWhy = p->error;
+    return nullptr;
+  }
+  if (replacing != nullptr && p->manifest.id != replacing->manifest.id) {
+    if (reloadWhy != nullptr) *reloadWhy = "the manifest's id is now '" + p->manifest.id + "' (was '" + replacing->manifest.id + "')";
+    return nullptr;
   }
   // P7: commands, importers, output modules and panels are listed from the manifest, loaded or not.
   if (p->status != PluginStatus::failed || p->error.empty()) self.contrib().note_manifest(p->manifest.id, dir, p->manifest);
@@ -1449,7 +1511,8 @@ void PluginHost::Impl::load_bundle(const fs::path& dir) {
     p->error = why;
   } else {
     p->binary = dir / p->manifest.binary;
-    p->lib = DynamicLibrary::open(p->binary, err);
+    const fs::path loadFrom = options.shadowDir.empty() ? p->binary : shadow_copy(*p, err);
+    if (!loadFrom.empty()) p->lib = DynamicLibrary::open(loadFrom, err);
     if (!p->lib) {
       p->status = PluginStatus::failed;
       p->error = err;
@@ -1485,6 +1548,7 @@ void PluginHost::Impl::load_bundle(const fs::path& dir) {
           p->error = std::move(contribWhy);
         } else {
           p->status = PluginStatus::loaded;
+          p->info = info;
           for (const ManifestEffect& me : p->manifest.effects) {
             PrEffectMainFn main = nullptr;
             for (std::uint32_t i = 0; i < info->effect_count && info->effects != nullptr; ++i) {
@@ -1511,7 +1575,7 @@ void PluginHost::Impl::load_bundle(const fs::path& dir) {
   Plugin* raw = p.get();
   {
     const std::unique_lock lock(pluginsMutex);
-    plugins.push_back(std::move(p));
+    if (replacing == nullptr) plugins.push_back(std::move(p));  // a reload is listed by swap_in, once it is set up
     for (auto& e : raw->effects) ownerOf[e.get()] = raw;
   }
   if (raw->status == PluginStatus::loaded) {
@@ -1523,6 +1587,7 @@ void PluginHost::Impl::load_bundle(const fs::path& dir) {
       }
     }
   }
+  if (replacing != nullptr) return swap_in(std::move(p), *replacing, reloadWhy);
   if (raw->status == PluginStatus::loaded) {
     {
       const std::unique_lock lock(pluginsMutex);
@@ -1536,6 +1601,96 @@ void PluginHost::Impl::load_bundle(const fs::path& dir) {
   } else {
     PREMATION_LOG(warn, "plugin_not_loaded").kv("plugin", id).kv("status", std::string(to_string(raw->status))).kv("error", raw->error);
   }
+  return raw;
+}
+
+Plugin* PluginHost::Impl::swap_in(std::unique_ptr<Plugin> fresh, Plugin& old, std::string* why) {
+  Plugin* raw = fresh.get();
+  const std::string id = raw->manifest.id;
+  if (raw->status != PluginStatus::loaded) {
+    if (why != nullptr) *why = raw->error.empty() ? "the new build " + std::string(to_string(raw->status)) : raw->error;
+    // It may have bound its P7 entry points before failing: point them back at the old module.
+    if (old.status == PluginStatus::loaded && old.info != nullptr) (void)self.contrib().bind(id, *old.info);
+    if (raw->lib) raw->lib->pin();
+    retire(std::move(fresh));
+    PREMATION_LOG(warn, "plugin_reload_failed").kv("plugin", id).kv("error", why != nullptr ? *why : std::string());
+    return nullptr;
+  }
+  {
+    const std::unique_lock lock(pluginsMutex);
+    for (auto& e : old.effects) effects.erase(e->matchName);
+    for (auto& e : raw->effects) {
+      effects[e->matchName] = e.get();
+      raw->gpu = raw->gpu || e->has(PR_OUT_FLAG_GPU_RENDER);
+    }
+    for (auto& slot : plugins) {
+      if (slot.get() == &old) {
+        std::swap(slot, fresh);  // `fresh` now owns the old record
+        break;
+      }
+    }
+  }
+  // Renders that resolved the old specs may still be running in its code, and instances and GPU
+  // data keyed by them set down through it later: the old module is never unmapped.
+  if (old.lib) old.lib->pin();
+  {
+    const std::scoped_lock lock(failuresMutex);
+    std::erase_if(failures, [&](const auto& kv) { return kv.second.pluginId == id; });
+  }
+  self.contrib().reset(id);
+  if (options.attachToDocument) {
+    register_document(*raw);
+    doc::NativeEffects::set_available(id, true);
+  }
+  // Idle instances of the old module are set down now; one a render holds is replaced (and set
+  // down) by its next render, which sees a different spec under its key (instance_for).
+  {
+    const std::scoped_lock lock(instancesMutex);
+    for (auto it = instances.begin(); it != instances.end();) {
+      Instance& inst = *it->second;
+      if (plugin_of(inst.effect) != &old) {
+        ++it;
+        continue;
+      }
+      std::unique_lock w(inst.mutex, std::try_to_lock);
+      if (!w.owns_lock()) {
+        ++it;
+        continue;
+      }
+      setdown(inst, old);
+      w.unlock();
+      it = instances.erase(it);
+    }
+  }
+  retire(std::move(fresh));
+  PREMATION_LOG(info, "plugin_reloaded").kv("plugin", id).kv("effects", raw->effects.size());
+  return raw;
+}
+
+bool PluginHost::reload(std::string_view pluginId, std::string& why) {
+  Impl& m = *impl_;
+  Plugin* p = nullptr;
+  {
+    const std::shared_lock lock(m.pluginsMutex);
+    for (const auto& q : m.plugins) {
+      if (q->manifest.id == pluginId) p = q.get();
+    }
+  }
+  if (p == nullptr) {
+    why = "no plugin '" + std::string(pluginId) + "'";
+    return false;
+  }
+  if (p->status == PluginStatus::revoked || p->status == PluginStatus::locked) {
+    why = "plugin '" + p->manifest.id + "' is " + std::string(to_string(p->status));
+    return false;
+  }
+  if (p->userDisabled) {
+    why = "plugin '" + p->manifest.id + "' is disabled; enable it first";
+    return false;
+  }
+  // A reload is the author trying again: a quarantine from the last build does not hold the new one.
+  if (m.journal) m.journal->release(pluginId);
+  return m.load_bundle(p->dir, p, &why) != nullptr;
 }
 
 bool PluginHost::Impl::setup_effect(Plugin& p, EffectSpec& e) {

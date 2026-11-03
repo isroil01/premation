@@ -220,6 +220,10 @@ class NativeEffects {
   static void set_query_handlers(ListFn list, UiFn ui);
   /// rescanPlugins: the host rescans its folders and answers listPlugins.
   static void set_rescan_handler(ListFn rescan);
+  /// reloadPlugin (Developer Mode): true = the new build is loaded; false = `why` says why (the old
+  /// module stays). No handler = no plugin host.
+  using ReloadFn = std::function<bool(std::string_view plugin, std::string& why)>;
+  static void set_reload_handler(ReloadFn reload);
   /// SDK 1.1 viewer overlays: DRAW_OVERLAY (overlay geometry) and OVERLAY_DRAG (dragEffectOverlay).
   using OverlayFn = std::function<std::variant<std::vector<NativeOverlayItem>, NativeFailure>(const NativeActionRequest&)>;
   using DragFn = std::function<std::variant<NativeEdit, NativeFailure>(const NativeActionRequest&, const NativeOverlayDrag&)>;
@@ -251,6 +255,8 @@ class NativeEffects {
   [[nodiscard]] static std::vector<api::PluginInfo> plugins();
   /// rescanPlugins: nullopt when no plugin host is attached.
   [[nodiscard]] static std::optional<std::vector<api::PluginInfo>> rescan();
+  /// reloadPlugin: nullopt when no plugin host is attached; else whether it reloaded (`why` if not).
+  [[nodiscard]] static std::optional<bool> reload(std::string_view plugin, std::string& why);
   /// getEffectUi for a native effect instance (`action` unused). No host = a NativeFailure.
   [[nodiscard]] static std::variant<std::vector<api::EffectParamUi>, NativeFailure> params_ui(const NativeActionRequest& r);
 };

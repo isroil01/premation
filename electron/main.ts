@@ -39,9 +39,11 @@ import {
   refreshRevocations,
   registerEntitlementIpc,
   registerNativePluginIpc,
+  registerPluginDevIpc,
   registerPluginFileIpc,
   registerPluginStoreIpc,
 } from './ipc/nativePlugins';
+import { DevWatcher, readDevSettings, type PluginDevSettings } from './pluginDevMode';
 import { machinePluginDir, readEntitlement } from './nativePluginStore';
 import { registerLibraryIpc } from './ipc/libraryCache';
 import { PANEL_SCHEME, panelNavigationAllowed, readPanelFile } from './pluginPanelProtocol';
@@ -106,6 +108,8 @@ let exportSupervisor: ExportSupervisor | null = null;
  * recovery save (electron/engineUnavailable.ts).
  */
 let engineHost: EngineHost | null = null;
+/** Engine launches so far (restarts included): names each launch's plugin shadow folder. */
+let engineLaunches = 0;
 
 // ── OAuth deep link (premation://oauth?code=…) ──────────────────────────────
 //
@@ -1469,6 +1473,25 @@ app.whenReady().then(() => {
   // The Plugins page / panel's "Open plugins folder" — the same folder the
   // engine loads native SDK plugins from (nativePluginDir below).
   registerNativePluginIpc({ dir: nativePluginDirPath });
+  // Plugin Developer Mode (W2): dev folders, shadow copies, a reload per settled rebuild.
+  const devWatcher = new DevWatcher({
+    notify: (id) => {
+      for (const w of [mainWindow].filter((x): x is BrowserWindow => x !== null && !x.isDestroyed())) w.webContents.send('plugins:devChanged', id);
+    },
+  });
+  const watchDev = (s: PluginDevSettings): void => devWatcher.setFolders(s.enabled ? s.folders : []);
+  void readDevSettings(nativePluginDirPath()).then(watchDev);
+  app.on('will-quit', () => devWatcher.close());
+  registerPluginDevIpc({
+    dir: nativePluginDirPath,
+    pickFolder: async () => {
+      const opts = { properties: ['openDirectory' as const] };
+      const r = mainWindow ? await dialog.showOpenDialog(mainWindow, opts) : await dialog.showOpenDialog(opts);
+      return r.canceled ? null : (r.filePaths[0] ?? null);
+    },
+    restartEngine: (reason) => void engineHost?.restart(reason),
+    watch: watchDev,
+  });
   // The plugin store: install / uninstall / enable, verified in main (docs/PLUGIN_STORE.md §4).
   registerPluginStoreIpc({ dir: nativePluginDirPath, apiBase: apiBaseUrl, authedFetch: sendWithAuth });
   // Install from a `.pplugin` file: the picker and double-click (plan P2).
@@ -1595,7 +1618,14 @@ app.whenReady().then(() => {
     sharedTexture: sharedTexture as unknown as SharedTextureApi,
     // G1: native SDK plugins load in the engine process from this folder.
     nativePluginDir: ensureDir(nativePluginDirPath()),
-    nativePluginLaunchArgs: () => pluginLaunchArgs({ dir: nativePluginDirPath, machineDir: () => machinePluginDir(process.platform) }),
+    nativePluginLaunchArgs: () =>
+      pluginLaunchArgs({
+        dir: nativePluginDirPath,
+        machineDir: () => machinePluginDir(process.platform),
+        // Plugin Developer Mode: this launch's shadow copies (electron/pluginDevMode.ts).
+        devShadowRoot: () => path.join(app.getPath('userData'), 'plugin-shadow'),
+        launchId: () => `${process.pid}-${++engineLaunches}`,
+      }),
     nativePluginJournal: path.join(app.getPath('userData'), 'native-plugin-journal.bin'),
     // F2 / D5: where the engine-owned document's autosave writes its recovery copy.
     recoveryPath,

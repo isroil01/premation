@@ -1161,6 +1161,22 @@ struct ControlVisitor {
     if (!list) fail(ErrorCode::unsupported, "this engine was started without a plugin folder (--plugins)");
     return result_for<api::RescanPlugins>(api::PluginList{std::move(*list)});
   }
+  R operator()(const api::ReloadPlugin& c) const {
+    std::string why;
+    const std::vector<api::PluginInfo> known = doc::NativeEffects::plugins();
+    if (std::ranges::none_of(known, [&](const api::PluginInfo& p) { return p.id == c.plugin; })) {
+      fail(ErrorCode::not_found, "no installed plugin '" + c.plugin + "'");
+    }
+    const std::optional<bool> reloaded = doc::NativeEffects::reload(c.plugin, why);
+    if (!reloaded) fail(ErrorCode::unsupported, "this engine was started without a plugin folder (--plugins)");
+    if (!*reloaded) fail(ErrorCode::internal, "plugin '" + c.plugin + "' was not reloaded: " + why);
+    // Cached frames (RAM and disk) are keyed by the document, not by the plugin's code: any of them
+    // may show what the old build drew.
+    s.sink_.purge_frame_cache();
+    s.sink_.purge_disk_cache();
+    if (s.any_viewport_open()) s.request_render();
+    return result_for<api::ReloadPlugin>(api::PluginList{doc::NativeEffects::plugins()});
+  }
   R operator()(const api::RefreshFonts&) const {
     // The frame builder and the drawer follow the new list on their next frame
     // (engine_frames.cpp Fonts::follow_installed_fonts); this redraws now.

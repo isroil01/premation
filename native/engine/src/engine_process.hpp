@@ -62,6 +62,9 @@ struct EngineOptions {
   std::string pluginJournal;
   /// Plugins the user disabled (listed, not loaded) — Electron's native-plugins/state.json.
   std::vector<std::string> pluginDisabled;
+  /// Developer Mode (`--plugin-shadow DIR`): plugin binaries load from copies under DIR, so a
+  /// plugin's own build can overwrite them, and reloadPlugin swaps in the rebuilt module.
+  std::string pluginShadow;
   /// The verified revocation list as a file (`{"revoked":[{"id","reason"}]}`); empty = none.
   std::string pluginRevoked;
   /// The Premation Cloud entitlement token file (`--entitlement`); empty = none (entitled plugins are locked).

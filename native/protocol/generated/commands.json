@@ -860,6 +860,11 @@
     "type": "rescanPlugins"
   },
   {
+    "id": 875,
+    "kind": "control",
+    "type": "reloadPlugin"
+  },
+  {
     "id": 871,
     "kind": "edit",
     "type": "setPluginData"

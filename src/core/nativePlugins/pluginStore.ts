@@ -44,6 +44,28 @@ export async function rescanPlugins(client: Pick<EngineClient, 'execute'> & Part
   }
 }
 
+export type PluginReloadResult = { ok: true; plugins: PluginInfo[] } | { ok: false; message: string };
+
+/**
+ * Developer Mode (docs/PLUGIN_SDK.md "Hot reload"): the engine loads the plugin's bundle again and
+ * swaps the new build in; the effect definitions and Plugins-menu contributions follow (a rebuild
+ * may change params or commands). A failed build keeps the old one loaded: `message` says why.
+ * Never throws.
+ */
+export async function reloadPlugin(
+  client: Pick<EngineClient, 'execute'> & Partial<Pick<EngineClient, 'query'>>,
+  plugin: string,
+): Promise<PluginReloadResult> {
+  try {
+    const res = await client.execute({ type: 'reloadPlugin', plugin });
+    if (client.query) await refreshPluginEffectDefs({ query: client.query.bind(client) });
+    if (client.query) await refreshPluginContrib({ query: client.query.bind(client) });
+    return res.ok ? { ok: true, plugins: res.value.plugins } : { ok: false, message: res.error.message };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : 'The plugin was not reloaded.' };
+  }
+}
+
 /** Install a version from the store. `owner`: install your own (possibly private) plugin. Never throws. */
 export async function installFromStore(
   client: Pick<EngineClient, 'execute'>,

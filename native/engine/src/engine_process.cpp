@@ -348,6 +348,7 @@ int run_engine(const EngineOptions& options) {
       ho.searchPaths.assign(pluginFolders.begin(), pluginFolders.end());
       ho.journal = options.pluginJournal;
       ho.disabled = options.pluginDisabled;
+      ho.shadowDir = options.pluginShadow;
       if (!options.pluginRevoked.empty()) ho.revoked = plugins::read_revoked_file(options.pluginRevoked);
       ho.entitlement = options.pluginEntitlement;
       ho.onProgress = [&coreProgress] {

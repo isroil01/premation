@@ -971,6 +971,13 @@ export class EngineHost {
    * restart (never counted as a crash), the document replayed into the new
    * process from main's command log (F2) as after any restart.
    */
+  /** Restart the engine (the document is replayed): new launch arguments apply, e.g. plugin Developer Mode. */
+  restart(reason: string): boolean {
+    if (this.supervisor.state !== 'running') return false;
+    this.supervisor.restart(reason);
+    return true;
+  }
+
   restartToFreeMemory(): boolean {
     if (this.supervisor.state !== 'running') return false;
     this.supervisor.restart('free memory (Cache & Memory panel)');

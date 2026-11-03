@@ -20,6 +20,7 @@
 //                    [--plugins DIR]       native plugin bundles (repeatable; + PREMATION_PLUGIN_PATH)
 //                    [--plugin-journal F]  the plugin crash journal (quarantines a plugin that killed the engine)
 //                    [--plugin-disabled ID] a plugin the user disabled: listed, not loaded (repeatable)
+//                    [--plugin-shadow D]   Developer Mode: load plugin binaries from copies under D (reloadPlugin)
 //                    [--revoked F]         the verified revocation list: listed plugins never load
 //                    [--entitlement F]     the Premation Cloud entitlement token (plugins/entitlement.hpp)
 //                    [--version]
@@ -216,6 +217,9 @@ int run(int argc, char** argv) {
       ok = !v.empty();
     } else if (k == "--plugin-disabled") {
       o.pluginDisabled.emplace_back(v);
+      ok = !v.empty();
+    } else if (k == "--plugin-shadow") {
+      o.pluginShadow = std::string(v);
       ok = !v.empty();
     } else if (k == "--revoked") {
       o.pluginRevoked = std::string(v);

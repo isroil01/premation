@@ -4,7 +4,7 @@ Owner ask (2026-11-03): how far can the plugin system go, so authors can build
 plugins much deeper than today and use them inside the editor. Builds on
 docs/PLUGIN_PLATFORM_PLAN.md (P1–P7), docs/PROGRAM_DEEP_PLUGINS.md (SDK 1.2,
 Element 3D class, closed 2026-10-13) and docs/PLUGIN_SDK.md (SDK 1.3: custom
-UI in Effect Controls). Status: **in progress** (W1, W3, W4 built 2026-11-03, uncommitted). Everything stays
+UI in Effect Controls). Status: **in progress** (W1, W3, W4 committed 1d712106; W2 built 2026-11-03, uncommitted). Everything stays
 local on `native-core` until the owner says push.
 
 ## 0. Where we stand, and what "beyond AE" means
@@ -218,16 +218,23 @@ as 1.4 additions if they can stay appended, otherwise they wait for **2.0**
   kernel lint errors were found after the problems check and never reported;
   an integer in `expand` emitted `2F`. All 51 Atelier effects pass the fixed
   lint.
-- [ ] W2 **Hot reload.** With Developer Mode on, a rebuilt bundle in the dev
+- [x] W2 **Hot reload.** With Developer Mode on, a rebuilt bundle in the dev
   folder is reloaded without restarting the engine: instances re-run setup
   with their sequence data; a failed reload keeps the old module.
-  Found 2026-11-03: `rescanPlugins` is documented as never swapping a loaded
-  module; `set_enabled(true)` on a failed plugin already retires the record
-  (pinned library, specs kept alive) and reloads the bundle — the base to
-  build on. Still needed: drop the plugin's instances (re-setup from the
-  document's flat bytes), GPU_DEVICE_SETDOWN for the old module, load from a
-  shadow copy (Windows locks a loaded DLL, so the author's build could not
-  overwrite it), a `reloadPlugin` command, and the editor's dev-folder watch.
+  (2026-11-03, uncommitted) `PluginHost::reload` loads the bundle beside the
+  old one and swaps it in after GLOBAL/PARAMS_SETUP; instances are set down
+  and set up again by the new build; the old module stays pinned; GPU data is
+  released at device loss / shutdown (not at the reload: a threaded GPU render
+  may hold it). `--plugin-shadow` loads binaries from per-launch copies (the
+  DLL lock). Engine API `reloadPlugin` (875) purges the frame caches.
+  Electron: `pluginDevMode.ts` (settings, launch args, debounced watcher),
+  Plugins ▸ Installed ▸ Developer Mode card, `PluginDevReloader` toasts.
+  Tests: `engine_plugins_tests "[reload]"` (probe built twice under one id:
+  swap, re-setup, broken binary, bad / renamed manifest, Windows lock without
+  shadow), `pluginReload.native.test.ts` (headless engine), Electron and page
+  unit tests. Not clicked through in the running app (its main process
+  predates the change); the full `premation-engine.exe` was not relinked (the
+  running app holds it).
 - [x] W3 **Scaffold.** (2026-11-03, uncommitted) `scripts/create-premation-plugin.mjs`
   (installed in `share/premation-sdk/`): `effect`, `fx`, `command` templates
   with CMake, manifest, `tests/cases.json`, README and the CI workflow (now

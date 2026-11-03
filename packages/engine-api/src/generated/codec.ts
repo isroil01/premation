@@ -10239,6 +10239,24 @@ function decS_RescanPlugins(r: Reader, end: number, o: any): T.RescanPlugins {
   r.expectAt(end);
   return o;
 }
+function encS_ReloadPlugin(w: Writer, v: T.ReloadPlugin): void {
+  w.byte(10); w.str(v.plugin);
+}
+function decS_ReloadPlugin(r: Reader, end: number, o: any): T.ReloadPlugin {
+  let h_plugin = false;
+  let v_plugin: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_plugin = r.str(); h_plugin = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_plugin) throw new DecodeError('ReloadPlugin.plugin: missing', 'missingField');
+  o.plugin = v_plugin;
+  return o;
+}
 function encS_SetPluginData(w: Writer, v: T.SetPluginData): void {
   w.byte(10); w.str(v.layer);
   w.byte(18); w.str(v.group);
@@ -19451,6 +19469,7 @@ function encU_Command(w: Writer, v: T.Command): void {
     case 'rescanPlugins': w.varint(6978); { const s = w.beginLd(); encS_RescanPlugins(w, v); w.endLd(s); } return;
     case 'runPluginCommand': w.varint(6986); { const s = w.beginLd(); encS_RunPluginCommand(w, v); w.endLd(s); } return;
     case 'refreshFonts': w.varint(6994); { const s = w.beginLd(); encS_RefreshFonts(w, v); w.endLd(s); } return;
+    case 'reloadPlugin': w.varint(7002); { const s = w.beginLd(); encS_ReloadPlugin(w, v); w.endLd(s); } return;
     case 'liftRange': w.varint(7770); { const s = w.beginLd(); encS_LiftRange(w, v); w.endLd(s); } return;
     case 'setOverlayGeometry': w.varint(14170); { const s = w.beginLd(); encS_SetOverlayGeometry(w, v); w.endLd(s); } return;
     case 'setContentAwareFill': w.varint(14818); { const s = w.beginLd(); encS_SetContentAwareFill(w, v); w.endLd(s); } return;
@@ -19637,6 +19656,7 @@ function decU_Command(r: Reader, end: number): T.Command {
       case 6978: out = decS_RescanPlugins(r, r.ldEnd(), { type: 'rescanPlugins' }) as T.Command; break;
       case 6986: out = decS_RunPluginCommand(r, r.ldEnd(), { type: 'runPluginCommand' }) as T.Command; break;
       case 6994: out = decS_RefreshFonts(r, r.ldEnd(), { type: 'refreshFonts' }) as T.Command; break;
+      case 7002: out = decS_ReloadPlugin(r, r.ldEnd(), { type: 'reloadPlugin' }) as T.Command; break;
       case 7770: out = decS_LiftRange(r, r.ldEnd(), { type: 'liftRange' }) as T.Command; break;
       case 14170: out = decS_SetOverlayGeometry(r, r.ldEnd(), { type: 'setOverlayGeometry' }) as T.Command; break;
       case 14818: out = decS_SetContentAwareFill(r, r.ldEnd(), { type: 'setContentAwareFill' }) as T.Command; break;
@@ -19823,6 +19843,7 @@ function encU_CommandResult(w: Writer, v: T.CommandResult): void {
     case 'rescanPlugins': w.varint(6978); { const s = w.beginLd(); encS_PluginList(w, v); w.endLd(s); } return;
     case 'runPluginCommand': w.varint(6986); { const s = w.beginLd(); encS_PluginCommandResult(w, v); w.endLd(s); } return;
     case 'refreshFonts': w.varint(6994); { const s = w.beginLd(); encS_FontsRefreshed(w, v); w.endLd(s); } return;
+    case 'reloadPlugin': w.varint(7002); { const s = w.beginLd(); encS_PluginList(w, v); w.endLd(s); } return;
     case 'liftRange': w.varint(7770); { const s = w.beginLd(); encS_TimeRangeEdit(w, v); w.endLd(s); } return;
     case 'setOverlayGeometry': w.varint(14170); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'setContentAwareFill': w.varint(14818); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
@@ -20009,6 +20030,7 @@ function decU_CommandResult(r: Reader, end: number): T.CommandResult {
       case 6978: out = decS_PluginList(r, r.ldEnd(), { type: 'rescanPlugins' }) as T.CommandResult; break;
       case 6986: out = decS_PluginCommandResult(r, r.ldEnd(), { type: 'runPluginCommand' }) as T.CommandResult; break;
       case 6994: out = decS_FontsRefreshed(r, r.ldEnd(), { type: 'refreshFonts' }) as T.CommandResult; break;
+      case 7002: out = decS_PluginList(r, r.ldEnd(), { type: 'reloadPlugin' }) as T.CommandResult; break;
       case 7770: out = decS_TimeRangeEdit(r, r.ldEnd(), { type: 'liftRange' }) as T.CommandResult; break;
       case 14170: out = decS_Empty(r, r.ldEnd(), { type: 'setOverlayGeometry' }) as T.CommandResult; break;
       case 14818: out = decS_Empty(r, r.ldEnd(), { type: 'setContentAwareFill' }) as T.CommandResult; break;
@@ -20729,6 +20751,7 @@ export const codecs = {
   SetCaptions: mk<T.SetCaptions>(encS_SetCaptions, (r, e) => decS_SetCaptions(r, e, {})),
   SetPluginEnabled: mk<T.SetPluginEnabled>(encS_SetPluginEnabled, (r, e) => decS_SetPluginEnabled(r, e, {})),
   RescanPlugins: mk<T.RescanPlugins>(encS_RescanPlugins, (r, e) => decS_RescanPlugins(r, e, {})),
+  ReloadPlugin: mk<T.ReloadPlugin>(encS_ReloadPlugin, (r, e) => decS_ReloadPlugin(r, e, {})),
   SetPluginData: mk<T.SetPluginData>(encS_SetPluginData, (r, e) => decS_SetPluginData(r, e, {})),
   PluginCommandInfo: mk<T.PluginCommandInfo>(encS_PluginCommandInfo, (r, e) => decS_PluginCommandInfo(r, e, {})),
   PluginCommandList: mk<T.PluginCommandList>(encS_PluginCommandList, (r, e) => decS_PluginCommandList(r, e, {})),

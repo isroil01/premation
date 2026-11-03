@@ -3613,6 +3613,11 @@ export interface SetPluginEnabled {
 /** AE parity 2.7 — rescan the plugin folders (`--plugins`, PREMATION_PLUGIN_PATH) after an install: new bundles load and their effects become available without a restart; plugins already loaded stay loaded until the engine restarts (a loaded module cannot be swapped under live instances). Returns every plugin afterwards, like listPlugins. */
 export interface RescanPlugins {}
 
+/** Developer Mode (W2, docs/PLUGIN_SDK.md "Hot reload") — load an installed plugin's bundle again and swap the new build in once its GLOBAL_SETUP / PARAMS_SETUP succeed. Renders in flight finish on the old module; each instance is set up again from the document's sequence data on its next render; the frame caches are purged. Without the engine's `--plugin-shadow` the old binary stays locked on Windows, so a rebuild cannot replace it. `notFound`: no such plugin; `internal`: the new build failed (the message says why) and the old module stays loaded. Returns every plugin afterwards, like listPlugins. */
+export interface ReloadPlugin {
+  plugin: string;
+}
+
 /** Store plugin data in the DOCUMENT (AE sequence data / arbitrary-data params). Undoable, saved with the project. */
 export interface SetPluginData {
   layer: LayerId;
@@ -6136,6 +6141,7 @@ export type Command =
   | ({ type: 'setCaptions' } & SetCaptions)
   | ({ type: 'setPluginEnabled' } & SetPluginEnabled)
   | ({ type: 'rescanPlugins' } & RescanPlugins)
+  | ({ type: 'reloadPlugin' } & ReloadPlugin)
   | ({ type: 'setPluginData' } & SetPluginData)
   | ({ type: 'runPluginCommand' } & RunPluginCommand)
   | ({ type: 'refreshFonts' } & RefreshFonts)
@@ -6317,6 +6323,7 @@ export type CommandResult =
   | ({ type: 'setCaptions' } & LayerList)
   | ({ type: 'setPluginEnabled' } & Empty)
   | ({ type: 'rescanPlugins' } & PluginList)
+  | ({ type: 'reloadPlugin' } & PluginList)
   | ({ type: 'setPluginData' } & Empty)
   | ({ type: 'runPluginCommand' } & PluginCommandResult)
   | ({ type: 'refreshFonts' } & FontsRefreshed)
@@ -6664,6 +6671,7 @@ export interface CommandArgs {
   setCaptions: SetCaptions;
   setPluginEnabled: SetPluginEnabled;
   rescanPlugins: RescanPlugins;
+  reloadPlugin: ReloadPlugin;
   setPluginData: SetPluginData;
   runPluginCommand: RunPluginCommand;
   refreshFonts: RefreshFonts;
@@ -6845,6 +6853,7 @@ export interface CommandResults {
   setCaptions: LayerList;
   setPluginEnabled: Empty;
   rescanPlugins: PluginList;
+  reloadPlugin: PluginList;
   setPluginData: Empty;
   runPluginCommand: PluginCommandResult;
   refreshFonts: FontsRefreshed;
