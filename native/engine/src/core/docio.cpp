@@ -412,6 +412,9 @@ Json project_settings_json(const api::ProjectSettings& s) {
   o.set("bitDepth", Json::string(std::string(api::to_string(s.bit_depth))));
   o.set("workingSpace", Json::string(std::string(api::to_string(s.working_space))));
   o.set("linearBlending", Json::boolean(s.linear_blending));
+  // Files before 1.1 stored linearBlending: false and were composited linear
+  // anyway: this says the value above is the one the picture was drawn with.
+  o.set("blendingHonoured", Json::boolean(true));
   o.set("ocioConfig", Json::string(s.ocio_config));
   o.set("timeDisplay", Json::string(std::string(api::to_string(s.time_display))));
   o.set("expressionEngine", Json::string(std::string(api::to_string(s.expression_engine))));
@@ -425,7 +428,8 @@ api::ProjectSettings project_settings_of(const Json& j) {
   if (!j.is_object()) return s;
   read_enum(j.at("bitDepth"), s.bit_depth);
   read_enum(j.at("workingSpace"), s.working_space);
-  if (j.at("linearBlending").is_bool()) s.linear_blending = j.at("linearBlending").b();
+  // Without blendingHonoured the file predates gamma blending: it stays linear, as it was drawn.
+  if (j.at("linearBlending").is_bool() && truthy(j.at("blendingHonoured"))) s.linear_blending = j.at("linearBlending").b();
   if (j.at("ocioConfig").is_string()) s.ocio_config = j.at("ocioConfig").str();
   read_enum(j.at("timeDisplay"), s.time_display);
   read_enum(j.at("expressionEngine"), s.expression_engine);

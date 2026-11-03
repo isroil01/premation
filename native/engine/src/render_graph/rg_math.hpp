@@ -170,6 +170,10 @@ struct ColorPipeline {
   /// instead of workingToDisplay. False = the TS transfer functions, exactly.
   bool managed = false;
   std::array<double, 9> fromLinear709{1, 0, 0, 0, 1, 0, 0, 0, 1};
+  /// RenderView.gammaBlending: a comp's layers composite in sRGB-encoded values
+  /// (After Effects with "Blend Colors Using 1.0 Gamma" off). Everything else —
+  /// effects, 3D, the display encode — stays in the working space.
+  bool gammaBlend = false;
 };
 
 /// toWorkingColor: authored display-referred RGB → working-space values.

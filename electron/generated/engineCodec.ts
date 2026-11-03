@@ -18501,6 +18501,7 @@ function encS_RenderView(w: Writer, v: T.RenderView): void {
   if (v.colorManagement !== undefined) { w.varint(162); { const s = w.beginLd(); encS_RenderColorManagement(w, v.colorManagement); w.endLd(s); } }
   if (v.channel !== undefined) { w.varint(168); w.varint(enc_ChannelView(v.channel)); }
   if (v.exposure !== undefined) { w.varint(177); w.f64(v.exposure); }
+  if (v.gammaBlending !== undefined) { w.varint(184); w.bool(v.gammaBlending); }
 }
 function decS_RenderView(r: Reader, end: number, o: any): T.RenderView {
   let h_cssWidth = false;
@@ -18540,6 +18541,7 @@ function decS_RenderView(r: Reader, end: number, o: any): T.RenderView {
   let v_colorManagement: T.RenderColorManagement | undefined;
   let v_channel: T.ChannelView | undefined;
   let v_exposure: number | undefined;
+  let v_gammaBlending: boolean | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -18565,6 +18567,7 @@ function decS_RenderView(r: Reader, end: number, o: any): T.RenderView {
       case 162: v_colorManagement = decS_RenderColorManagement(r, r.ldEnd(), {}); break;
       case 168: v_channel = dec_ChannelView(r.varint()); break;
       case 177: v_exposure = r.f64(); break;
+      case 184: v_gammaBlending = r.bool(); break;
       default: r.skip(key);
     }
   }
@@ -18606,6 +18609,7 @@ function decS_RenderView(r: Reader, end: number, o: any): T.RenderView {
   if (v_colorManagement !== undefined) o.colorManagement = v_colorManagement;
   if (v_channel !== undefined) o.channel = v_channel;
   if (v_exposure !== undefined) o.exposure = v_exposure;
+  if (v_gammaBlending !== undefined) o.gammaBlending = v_gammaBlending;
   return o;
 }
 function encS_RenderTextureRef(w: Writer, v: T.RenderTextureRef): void {

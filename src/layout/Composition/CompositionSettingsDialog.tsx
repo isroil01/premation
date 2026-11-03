@@ -171,9 +171,15 @@ export function CompositionSettings({ close }: { close?: () => void }): JSX.Elem
   const cm = useColorManagementStore();
   const setWorkingSpace = useColorManagementStore((c) => c.setWorkingSpace);
   // File > Project Settings > Color > Working Space (AE): the project's colour-managed working space (OCIO).
-  const projectWorkingSpace = useMirrorProjectSettings()?.workingSpace ?? 'none';
+  const projectSettings = useMirrorProjectSettings();
+  const projectWorkingSpace = projectSettings?.workingSpace ?? 'none';
   const setProjectWorkingSpace = (ws: ColorWorkingSpace): void => {
     void engineEdit('Project Settings', { type: 'setProjectSettings', patch: { workingSpace: ws } });
+  };
+  // File > Project Settings > Color > Blend Colors Using 1.0 Gamma (AE): off = layers mix in display values.
+  const linearBlending = projectSettings?.linearBlending ?? false;
+  const setLinearBlending = (on: boolean): void => {
+    void engineEdit('Project Settings', { type: 'setProjectSettings', patch: { linearBlending: on } });
   };
   const setDisplayTransform = useColorManagementStore((c) => c.setDisplayTransform);
   const setBitDepth = useColorManagementStore((c) => c.setBitDepth);
@@ -1295,6 +1301,21 @@ export function CompositionSettings({ close }: { close?: () => void }): JSX.Elem
                 <option value="acescg">ACEScg</option>
                 <option value="acescct">ACEScct</option>
               </select>
+            </div>
+
+            <div className={styles.section}>
+              <div className={styles.label}>{t('composition.settings.blendColors', 'Blend colors')}</div>
+              <p className={styles.hint}>
+                {t('composition.settings.blendColorsHint', 'Gamma mixes opacity, soft edges and blend modes in display values, as After Effects does by default. Linear (Blend Colors Using 1.0 Gamma) mixes light; projects made before this setting keep it.')}
+              </p>
+              <div className={styles.row}>
+                <Button variant={!linearBlending ? 'primary' : 'secondary'} size="sm" onClick={() => setLinearBlending(false)}>
+                  {t('composition.settings.blendGamma', 'Gamma')}
+                </Button>
+                <Button variant={linearBlending ? 'primary' : 'secondary'} size="sm" onClick={() => setLinearBlending(true)}>
+                  {t('composition.settings.blendLinear', 'Linear (1.0 gamma)')}
+                </Button>
+              </div>
             </div>
 
             <div className={styles.section}>

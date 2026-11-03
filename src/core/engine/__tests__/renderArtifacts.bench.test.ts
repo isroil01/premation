@@ -259,10 +259,10 @@ describe('render artefacts', () => {
       let worst = 255;
       for (const [f, px] of frames) {
         let n = 0;
-        // The frame's outer 2 px are left out: the frame-sized background
-        // solid's bottom-right corner pixels cover ~93 % (a known, steady
-        // 3 px corner of the edge coverage), which is not a layer border.
-        for (let y = 2; y < H - 2; y++) for (let x = 2; x < W - 2; x++) {
+        // The whole frame: the frame-sized background solid's corner pixels
+        // are covered fully since solid.wgsl takes the SDF's gradient along
+        // its normal (they were ~85 %, a grey 3 px corner).
+        for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
           const m = Math.min(...rgb(px, x, y));
           worst = Math.min(worst, m);
           if (m < 250) n++;

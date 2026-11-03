@@ -157,7 +157,9 @@ void PassContext::draw_into_sized(std::string_view name, const Commands& cmds, b
     scissor = &*fxScissor;
   }
   wgpu::RenderPassEncoder pass = dev.begin_pass(att, w, h, surfaceView, surfaceFormat, scissor, false);
-  if (!cmds.empty()) dev.execute(pass, cmds, toSurface ? surfaceFormat : t->format, toSurface ? 1 : t->samples);
+  if (!cmds.empty()) {
+    dev.execute(pass, cmds, toSurface ? surfaceFormat : t->format, toSurface ? 1 : t->samples, !toSurface && gamma_target(name));
+  }
   pass.End();
 }
 

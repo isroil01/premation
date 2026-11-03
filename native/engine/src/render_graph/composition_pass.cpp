@@ -741,7 +741,7 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
                                   std::string(kBlur2),      std::string(kBlur3),       std::string(kMatteTarget),
                                   std::string(kDofTarget),  std::string(kFxHist),     std::string(kFxLut),
                                   std::string(kGeneratorTarget), std::string(kFxSilhouette), std::string(kFxScopeMask),
-                                  std::string(kFxBlendInput)};
+                                  std::string(kFxBlendInput), std::string(kGammaScratch)};
     for (const auto n : kPrecompTargets) w.emplace_back(n);
     for (const auto n : kFxAux) w.emplace_back(n);
     return w;
@@ -1180,12 +1180,107 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
     flush(ctx, st);
     RenderTarget* scene = ctx.target(st.out);
     if (scene == nullptr) return {};
+    if (ctx.gamma_target(st.out)) {  // gamma blending: the chain reads the frame decoded, in the working space
+      if (!gamma_convert(ctx, scene->tex(), kFxBackdrop, kGammaDecode)) return {};
+      return ctx.target(kFxBackdrop)->tex();
+    }
     Commands copy;
     emit_textured(ctx, copy, screen_mvp(), Color::white(), 1, Blend::none, scene->tex(), ctx.nearest_clamp(), {0, 0, 1, 1},
                   kIdentityColor, true);
     ctx.draw_into(kFxBackdrop, copy, true);
     RenderTarget* t = ctx.target(kFxBackdrop);
     return t != nullptr ? t->tex() : TexRef{};
+  }
+
+  // ── Gamma blending (ColorPipeline::gammaBlend) ──
+  // After Effects with "Blend Colors Using 1.0 Gamma" off mixes a layer into
+  // its comp in display-encoded values: 50 % opacity, an antialiased edge, a
+  // feather or a blend mode land darker in the midtones than a linear-light
+  // mix. Here a list's target holds sRGB-encoded premultiplied colour while the
+  // list composites (render_list): each draw into it runs its shader's gamma-out
+  // variant (gamma_out_wgsl), so the fixed-function blend mixes encoded values;
+  // whatever reads the target mid-list reads it decoded (copy_scene,
+  // scene_linear); the list's result is decoded once at its end. Layers,
+  // effects and 3D runs themselves stay in the working space.
+  static constexpr double kGammaCopy = 0;
+  static constexpr double kGammaEncode = 1;
+  static constexpr double kGammaDecode = 2;
+
+  /// The conversion pass: a premultiplied texture copied texel for texel, its
+  /// straight colour sRGB-encoded (kGammaEncode), decoded (kGammaDecode) or kept.
+  /// Made once per device (the dynamic material's key is a string): no allocation per conversion.
+  Mat gamma_material(PassContext& ctx) {
+    if (gammaMat_ && gammaDevice_ == &ctx.dev) return *gammaMat_;
+    static constexpr std::string_view kWgsl = R"WGSL(
+struct U { mvp : mat3x3<f32>, mode : vec4<f32> };
+@group(0) @binding(0) var<uniform> u : U;
+@group(0) @binding(1) var tex : texture_2d<f32>;
+@vertex
+fn vs(@location(0) pos : vec2<f32>) -> @builtin(position) vec4<f32> {
+  let p = u.mvp * vec3<f32>(pos, 1.0);
+  return vec4<f32>(p.xy, 0.0, p.z);
+}
+fn enc(c : f32) -> f32 { if (c <= 0.0031308) { return c * 12.92; } return 1.055 * pow(c, 1.0 / 2.4) - 0.055; }
+fn dec(c : f32) -> f32 { if (c <= 0.04045) { return c / 12.92; } return pow((c + 0.055) / 1.055, 2.4); }
+@fragment
+fn fs(@builtin(position) fc : vec4<f32>) -> @location(0) vec4<f32> {
+  let c = textureLoad(tex, vec2<i32>(fc.xy), 0);
+  if (u.mode.x < 0.5) { return c; }
+  let a = max(c.a, 1e-6);
+  let s = select(c.rgb / a, c.rgb, c.a <= 1e-6);
+  var o : vec3<f32>;
+  if (u.mode.x < 1.5) { o = vec3<f32>(enc(s.r), enc(s.g), enc(s.b)); }
+  else { o = vec3<f32>(dec(s.r), dec(s.g), dec(s.b)); }
+  return vec4<f32>(select(o * c.a, o, c.a <= 1e-6), c.a);
+}
+)WGSL";
+    static constexpr std::array<LayoutEntry, 2> kLayout{{{0, BindingType::uniform, kStageVertex | kStageFragment},
+                                                         {1, BindingType::unfilterable, kStageFragment}}};
+    gammaMat_ = ctx.dev.dynamic_material("gamma-convert", kWgsl, kLayout);
+    gammaDevice_ = &ctx.dev;
+    return *gammaMat_;
+  }
+  std::optional<Mat> gammaMat_;
+  const Device* gammaDevice_ = nullptr;
+
+  /// `from` converted (mode) over the whole of target `to` (same size; no scissor). False = not drawn.
+  bool gamma_convert(PassContext& ctx, const TexRef& from, std::string_view to, double mode) {
+    RenderTarget* t = ctx.target(to);
+    if (t == nullptr || !from || from.width != t->width || from.height != t->height) return false;
+    Commands c;
+    DrawItem& it = c.add(gamma_material(ctx), Blend::none, ctx.packer().mat3(screen_mvp()).vec4(mode, 0, 0, 0).span());
+    it.texture = from;
+    Attachment att;
+    att.target = t;
+    wgpu::RenderPassEncoder pass = ctx.dev.begin_pass(att, t->width, t->height, ctx.surfaceView, ctx.surfaceFormat, nullptr, false);
+    ctx.dev.execute(pass, c, t->format, t->samples);
+    pass.End();
+    return true;
+  }
+
+  /// Target `name` converted in place, through kGammaScratch. False = it could not be (nothing changed).
+  bool gamma_in_place(PassContext& ctx, std::string_view name, double mode) {
+    RenderTarget* t = ctx.target(name);
+    RenderTarget* s = ctx.target(kGammaScratch);
+    if (t == nullptr || s == nullptr || s->width != t->width || s->height != t->height) return false;
+    return gamma_convert(ctx, t->tex(), kGammaScratch, mode) && gamma_convert(ctx, s->tex(), name, kGammaCopy);
+  }
+
+  /// The list's frame so far as a layer reads it: the target itself, or (gamma
+  /// blending) a decoded copy in kGammaScratch — read it before anything else draws.
+  TexRef scene_linear(PassContext& ctx, ListState& st) {
+    flush(ctx, st);
+    RenderTarget* scene = ctx.target(st.out);
+    if (scene == nullptr) return {};
+    if (!ctx.gamma_target(st.out)) return scene->tex();
+    if (!gamma_convert(ctx, scene->tex(), kGammaScratch, kGammaDecode)) return scene->tex();
+    return ctx.target(kGammaScratch)->tex();
+  }
+
+  /// A blend-combine mode row with the gamma switch (blend-combine.wgsl cr0.w).
+  static ColorTransform gamma_mode(PassContext& ctx, ColorTransform mode) {
+    mode.offset[0] = ctx.color.gammaBlend ? 1.0 : 0.0;
+    return mode;
   }
 
  public:
@@ -1459,7 +1554,7 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
       ctx.scope = Scope3D{&*pre.camera3d, &pre.lights3d, pre.env_map ? &*pre.env_map : nullptr, false,
                           pre.fog ? &*pre.fog : nullptr, nullptr, &r.precomp_children};
     }
-    render_list(ctx, children, std::string(targetName), slot + 1);
+    render_list(ctx, children, std::string(targetName), slot + 1, true);
     ctx.scope = saved;
     RenderTarget* pt = ctx.target(targetName);
     if (pt == nullptr) return false;
@@ -1608,7 +1703,7 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
     }
     // The renderer's switches, precision and colour pipeline.
     k.u64((ctx.fxFields ? 1U : 0U) | (ctx.fxBounds ? 2U : 0U) | (ctx.fxLayerBuffers ? 4U : 0U) | (layerFxEnabled_ ? 8U : 0U) |
-          (ctx.colorSystem != nullptr ? 16U : 0U) | (ctx.color.managed ? 32U : 0U));
+          (ctx.colorSystem != nullptr ? 16U : 0U) | (ctx.color.managed ? 32U : 0U) | (ctx.color.gammaBlend ? 64U : 0U));
     k.u64((std::uint64_t{view.bit_depth} << 8U) | (view.float16_textures ? 1U : 0U) | (view.float32_textures ? 2U : 0U));
     k.u64((static_cast<std::uint64_t>(view.working_space) << 16U) | (static_cast<std::uint64_t>(view.display_transform) << 8U));
     k.u64((static_cast<std::uint64_t>(ctx.color.working) << 40U) | (static_cast<std::uint64_t>(ctx.color.display) << 32U) |
@@ -1729,12 +1824,25 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
     return true;
   }
 
+  /// `fresh`: `out` was just cleared (an isolated precomp's slot): nothing in it to encode.
   void render_list(PassContext& ctx, const std::vector<const api::Renderable*>& list, const std::string& out,
-                   std::size_t depth) {
+                   std::size_t depth, bool fresh = false) {
     ListState st;
     st.out = out;
     st.depth = depth;
     for (const api::Renderable* r : list) st.byId.emplace(r->id, r);
+    // Gamma blending: this list composites into `out` in encoded values (see
+    // gamma_convert) — unless an outer list already does (a precomp drawn
+    // inline into its parent). What `out` holds already (the comp background,
+    // the sky) is encoded first; the result is decoded at the end.
+    bool gamma = ctx.color.gammaBlend && !list.empty() && !ctx.gamma_target(out);
+    if (gamma) {
+      const RenderTarget* t = ctx.target(out);
+      const RenderTarget* s = ctx.target(kGammaScratch);
+      gamma = t != nullptr && s != nullptr && t->width == s->width && t->height == s->height &&
+              (fresh || gamma_in_place(ctx, out, kGammaEncode));
+      if (gamma) ctx.gammaTargets.push_back(out);
+    }
     // A contiguous run of depth-eligible 3D renderables → one depth-tested group
     // (renderList). Shadow-mapped light washes are never hoisted here: a frame
     // with a mapped light is refused until shadow maps are ported.
@@ -1769,6 +1877,10 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
         if (!group.empty()) {
           flush(ctx, st);
           ctx.groundGridRun = rootList && ctx.groundGridPending && i >= lastEligibleEnd;
+          // Gamma blending: a 3D run lights, depth-sorts and blends in the
+          // working space, over the frame decoded (and encoded again after).
+          const bool gamma3d = ctx.gamma_target(out) && gamma_in_place(ctx, out, kGammaDecode);
+          if (gamma3d) std::erase(ctx.gammaTargets, out);
           // 3D quads sample their content mipmapped (anisotropic in threed.cpp):
           // a layer at a steep angle no longer drops a thin stroke into dots.
           render_3d_group(ctx, group, out, st.byId, [this, &ctx](const std::optional<std::string>& k) {
@@ -1776,6 +1888,10 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
             return tex_for(ctx, k);
           },
                           *this);
+          if (gamma3d) {
+            if (gamma_in_place(ctx, out, kGammaEncode)) ctx.gammaTargets.push_back(out);
+            else gamma = false;  // left decoded: the rest of the list composites linear
+          }
         }
         continue;
       }
@@ -1786,6 +1902,10 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
     }
     flush(ctx, st);
     if (profiling) prof.clear_scope();
+    if (gamma) {
+      std::erase(ctx.gammaTargets, out);
+      (void)gamma_in_place(ctx, out, kGammaDecode);  // the scratch is this target's size (checked above)
+    }
   }
 
   void process(PassContext& ctx, const api::Renderable& r0, ListState& st) {
@@ -1866,9 +1986,7 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
       // AE: an adjustment layer at 0 % (or off screen with a mask) leaves the frame alone.
       if (r.opacity <= 0) return;
       flush(ctx, st);
-      RenderTarget* scene = ctx.target(st.out);
-      if (scene == nullptr) return;
-      const TexRef sceneTex = scene->tex();
+      if (ctx.target(st.out) == nullptr) return;
       // Stream D L1: the adjustment is mixed back against the UNTOUCHED frame
       // by the layer's mask coverage × opacity (as a scoped effect blends,
       // fx-effect-scope.wgsl), so a masked / faded adjustment layer behaves as
@@ -1880,6 +1998,7 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
       const bool blended = adjMode > 0 || r.blend == api::RenderBlendMode::add;
       const TexRef before = scoped || blended || reads_backdrop(r) ? copy_scene(ctx, st) : TexRef{};
       const BackdropScope backdropScope(backdrop_, before);
+      const TexRef sceneTex = scene_linear(ctx, st);
       Commands copy;
       const TexRef lut = r.adjustment->lut_texture_key ? ctx.texture(*r.adjustment->lut_texture_key) : TexRef{};
       const ColorTransform ct = color_transform(r.adjustment->color_matrix);
@@ -1904,7 +2023,8 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
           ColorTransform mode;
           mode.m = {adjMode, 0, adjMode == 36 ? ctx.file.scene.dissolve_frame.value_or(0) : 0.0, ctx.file.scene.width,
                     ctx.file.scene.height, 0, 0, 0, 0};
-          emit_blend_combine(ctx, bc, screen_mvp(), Blend::none, finalTex, ctx.linear_clamp(), before, mode, targetUv);
+          emit_blend_combine(ctx, bc, screen_mvp(), Blend::none, finalTex, ctx.linear_clamp(), before, gamma_mode(ctx, mode),
+                             targetUv);
         } else {
           emit_textured(ctx, bc, screen_mvp(), Color::white(), 1, Blend::none, before, ctx.linear_clamp(), targetUv,
                         kIdentityColor, true);
@@ -1953,7 +2073,6 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
       flush(ctx, st);
       RenderTarget* scene = ctx.target(st.out);
       if (scene != nullptr) {
-        const TexRef sceneTex = scene->tex();
         const Mat3 fullMvp = screen_mvp();
         const BackdropScope backdropScope(backdrop_, reads_backdrop(r) ? copy_scene(ctx, st) : TexRef{});
         // Stream D L4: liquid glass — a surface normal from a bump source. The
@@ -1991,7 +2110,7 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
         const std::string_view t1 = half ? kBackdropHalf1 : kBlur1;
         const std::string_view t2 = half ? kBackdropHalf2 : kBlur2;
         Commands copy;
-        emit_textured(ctx, copy, fullMvp, Color::white(), 1, Blend::normal, sceneTex, ctx.linear_clamp(), targetUv,
+        emit_textured(ctx, copy, fullMvp, Color::white(), 1, Blend::normal, scene_linear(ctx, st), ctx.linear_clamp(), targetUv,
                       kIdentityColor, true);
         if (half) ctx.draw_into_sized(t1, copy, true, bw, bh);
         else ctx.draw_into(t1, copy, true);
@@ -2068,13 +2187,12 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
       flush(ctx, st);
       RenderTarget* scene = ctx.target(st.out);
       if (scene != nullptr) {
-        const TexRef sceneTex = scene->tex();
         const BackdropScope backdropScope(backdrop_, reads_backdrop(r) ? copy_scene(ctx, st) : TexRef{});
         // Effects run at full opacity; the combine applies it to the layer's coverage before the blend.
         const TexRef layerTex = layer_into_target(ctx, r, 1, kLayerTarget, st);
         Commands copy;
-        emit_textured(ctx, copy, screen_mvp(), Color::white(), 1, Blend::normal, sceneTex, ctx.linear_clamp(), targetUv,
-                      kIdentityColor, true);
+        emit_textured(ctx, copy, screen_mvp(), Color::white(), 1, Blend::normal, scene_linear(ctx, st), ctx.linear_clamp(),
+                      targetUv, kIdentityColor, true);
         ctx.draw_into(kMatteTarget, copy, true);
         const TexRef backdrop = ctx.target(kMatteTarget)->tex();
         if (backdrop && layerTex) {
@@ -2090,8 +2208,8 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
                     0,
                     0};
           Commands combine;
-          emit_blend_combine(ctx, combine, screen_mvp(), Blend::none, layerTex, ctx.linear_clamp(), backdrop, mode, targetUv,
-                             r.opacity);
+          emit_blend_combine(ctx, combine, screen_mvp(), Blend::none, layerTex, ctx.linear_clamp(), backdrop,
+                             gamma_mode(ctx, mode), targetUv, r.opacity);
           ctx.draw_into(st.out, combine, false);
         }
         return;

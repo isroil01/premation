@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include <iterator>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -70,5 +71,13 @@ struct BuiltinShader {
 /// The WGSL of a builtin shader, joined; empty when no such name.
 [[nodiscard]] std::string builtin_wgsl(std::string_view name);
 [[nodiscard]] std::size_t builtin_shader_count() noexcept;
+
+/// Gamma blending: `wgsl` with its fragment entry `fs` wrapped so it writes
+/// sRGB-encoded premultiplied colour (straight colour encoded, alpha kept)
+/// instead of linear — drawn into a comp target that holds encoded values,
+/// the fixed-function blend then mixes in gamma, as After Effects does with
+/// "Blend Colors Using 1.0 Gamma" off. Nothing when `fs` is not a single
+/// `-> @location(0) vec4<f32>` entry the wrapper can call.
+[[nodiscard]] std::optional<std::string> gamma_out_wgsl(std::string_view wgsl);
 
 }  // namespace premation::rg

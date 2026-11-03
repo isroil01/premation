@@ -17,6 +17,7 @@
 #include <thread>
 
 #include "core/catalog_data.hpp"
+#include "core/docio.hpp"
 #include "core/frame_keys.hpp"
 #include "core/props.hpp"
 #include "core/ptree.hpp"
@@ -2235,4 +2236,42 @@ TEST_CASE("a scrub's frame does not wait for the idle render-ahead build in flig
   CHECK(ready.back().frame == 70);
   h.session.set_prefetch_builders({});
   h.session.set_frame_builder(nullptr);
+}
+
+TEST_CASE("session: blending — a new project blends in gamma, a file from before the setting stays linear", "[session][color]") {
+  Harness h;
+  (void)h.hello();
+  // After Effects' default for a new project: Blend Colors Using 1.0 Gamma off.
+  CHECK_FALSE(h.session.document().project().linear_blending);
+  // Saved and read back, either choice holds.
+  for (const bool linear : {false, true}) {
+    doc::Document d;
+    doc::EditorView v0;
+    (void)doc::restore_document(d, v0, doc::capture_document(h.session.document()), {});
+    d.project_mut().linear_blending = linear;
+    doc::Document back;
+    doc::EditorView view;
+    (void)doc::restore_document(back, view, doc::capture_document(d), {});
+    CHECK(back.project().linear_blending == linear);
+  }
+  // A file saved before gamma blending reached the renderer stored linearBlending: false
+  // and was drawn linear: without the blendingHonoured mark it keeps its look.
+  doc::Document d;
+  doc::EditorView v1;
+  (void)doc::restore_document(d, v1, doc::capture_document(h.session.document()), {});
+  d.project_mut().bit_depth = api::BitDepth::f32;  // any setting off the default writes the block
+  js::Json saved = doc::capture_document(d);
+  js::Json* ps = saved.find_mut("projectSettings");
+  REQUIRE(ps != nullptr);
+  CHECK(ps->at("linearBlending").is_bool());
+  ps->erase("blendingHonoured");
+  doc::Document old;
+  doc::EditorView view;
+  (void)doc::restore_document(old, view, saved, {});
+  CHECK(old.project().linear_blending);
+  // And one with no project settings at all (every setting at its default then).
+  saved.erase("projectSettings");
+  doc::Document bare;
+  (void)doc::restore_document(bare, view, saved, {});
+  CHECK(bare.project().linear_blending);
 }
