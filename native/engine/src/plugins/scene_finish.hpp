@@ -21,7 +21,9 @@ namespace premation::plugins {
 class PluginHost;
 
 /// `host` nullptr = no plugin host (entries are completed, nothing is checked out).
+/// `simBudgetMs` (SDK 1.4, T4): how long a simulation may catch up for this frame; 0 = until done
+/// (export). Over it, the frame is drawn without that state and `frame.simPending` is set.
 void finish_native_frame(const scene::BuildContext& c, std::string_view comp, double t, const scene::ViewSpec& view,
-                         bool motionBlur, scene::NativeFrame& frame, PluginHost* host);
+                         bool motionBlur, scene::NativeFrame& frame, PluginHost* host, double simBudgetMs = 0);
 
 }  // namespace premation::plugins

@@ -171,3 +171,83 @@ TEST_CASE("simulation: SMART_RENDER draws the frame's state (get_sim_state)", "[
   REQUIRE(pl::run_native_cpu(host, in, input, {}, out).ok);
   CHECK(alpha_at(s.x, s.y) == 0.0F);
 }
+
+TEST_CASE("simulation: a viewer budget keeps what it stepped and goes on next time (T4)", "[plugins][sim]") {
+  pl::PluginHost host(options());
+  host.scan();
+  const pl::EffectSpec* spec = host.effect(kBounce);
+  REQUIRE(spec != nullptr);
+  pl::PluginHost ref(options());
+  ref.scan();
+  const std::vector<std::uint8_t> want = sim(ref, request(*ref.effect(kBounce), 2000));
+
+  // A slow step (a stand-in for a heavy simulation) under a tiny budget: partial, then resumed.
+  int calls = 0;
+  bool done = false;
+  std::vector<std::uint8_t> got;
+  for (int attempt = 0; attempt < 10000 && !done; ++attempt) {
+    pl::SimRequest q = request(*spec, 2000);
+    bool partial = false;
+    q.budgetMs = 0.05;
+    q.partial = &partial;
+    std::string why;
+    auto st = host.sim_state(q, why);
+    ++calls;
+    if (st) {
+      done = true;
+      got = *st;
+    } else {
+      REQUIRE(partial);
+      CHECK(why.find("simulating") != std::string::npos);
+    }
+  }
+  REQUIRE(done);
+  CHECK(calls > 1);           // it did not step 2000 frames in one go
+  CHECK(got == want);         // and lands on the same state
+  CHECK(host.sim_stats().steps == 2001);  // every frame stepped once, never twice
+}
+
+TEST_CASE("simulation: states evicted from RAM are kept on disk and found by the next session (T2)", "[plugins][sim]") {
+  const fs::path dir = fs::temp_directory_path() / "premation-sim-disk-test";
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+  std::vector<std::uint8_t> s50;
+  {
+    pl::HostOptions o = options();
+    o.simDiskDir = dir;
+    pl::PluginHost host(std::move(o));
+    host.scan();
+    host.set_sim_budget(4 * sizeof(State));  // almost nothing stays in RAM
+    s50 = sim(host, request(*host.effect(kBounce), 50));
+    CHECK(host.sim_stats().diskBytes > 0);
+    const auto steps = host.sim_stats().steps;
+    (void)sim(host, request(*host.effect(kBounce), 20));  // evicted from RAM, read back from disk
+    CHECK(host.sim_stats().steps == steps);
+    CHECK(host.sim_stats().diskHits >= 1);
+  }
+  {
+    // A new session on the same folder: the kept states answer without a step.
+    pl::HostOptions o = options();
+    o.simDiskDir = dir;
+    pl::PluginHost next(std::move(o));
+    next.scan();
+    CHECK(sim(next, request(*next.effect(kBounce), 30)).size() == sizeof(State));
+    CHECK(next.sim_stats().steps == 0);
+    CHECK(next.sim_stats().diskHits >= 1);
+    // A different input history is not taken from disk: stepped from frame 0 again.
+    (void)sim(next, request(*next.effect(kBounce), 30, 100, -1, 0, 7));
+    CHECK(next.sim_stats().steps == 31);
+  }
+  {
+    // The disk budget removes the oldest files.
+    pl::HostOptions o = options();
+    o.simDiskDir = dir;
+    o.simDiskBudget = 10 * sizeof(State);
+    pl::PluginHost small(std::move(o));
+    small.scan();
+    CHECK(small.sim_stats().diskBytes == 0);  // nothing scanned until the first request
+    (void)sim(small, request(*small.effect(kBounce), 1));
+    CHECK(small.sim_stats().diskBytes <= 10 * sizeof(State));
+  }
+  fs::remove_all(dir, ec);
+}

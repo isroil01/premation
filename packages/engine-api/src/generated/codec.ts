@@ -14900,6 +14900,8 @@ function encS_RenderStats(w: Writer, v: T.RenderStats): void {
   { const a = v.layerCosts; for (let i = 0; i < a.length; i++) { w.varint(202); { const s = w.beginLd(); encS_LayerCost(w, a[i]!); w.endLd(s); } } }
   if (v.layerCostsFrameMs !== undefined) { w.varint(209); w.f64(v.layerCostsFrameMs); }
   if (v.layerCostsAgoMs !== undefined) { w.varint(217); w.f64(v.layerCostsAgoMs); }
+  if (v.simStateBytes !== undefined) { w.varint(224); w.u64(v.simStateBytes); }
+  if (v.simStateDiskBytes !== undefined) { w.varint(232); w.u64(v.simStateDiskBytes); }
 }
 function decS_RenderStats(r: Reader, end: number, o: any): T.RenderStats {
   const l_layerCosts: T.LayerCost[] = [];
@@ -14938,6 +14940,8 @@ function decS_RenderStats(r: Reader, end: number, o: any): T.RenderStats {
   let v_gpuMemoryTrimmed: number | undefined;
   let v_layerCostsFrameMs: number | undefined;
   let v_layerCostsAgoMs: number | undefined;
+  let v_simStateBytes: number | undefined;
+  let v_simStateDiskBytes: number | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -14968,6 +14972,8 @@ function decS_RenderStats(r: Reader, end: number, o: any): T.RenderStats {
       case 202: l_layerCosts.push(decS_LayerCost(r, r.ldEnd(), {})); break;
       case 209: v_layerCostsFrameMs = r.f64(); break;
       case 217: v_layerCostsAgoMs = r.f64(); break;
+      case 224: v_simStateBytes = r.u64(); break;
+      case 232: v_simStateDiskBytes = r.u64(); break;
       default: r.skip(key);
     }
   }
@@ -15008,6 +15014,8 @@ function decS_RenderStats(r: Reader, end: number, o: any): T.RenderStats {
   o.layerCosts = l_layerCosts;
   if (v_layerCostsFrameMs !== undefined) o.layerCostsFrameMs = v_layerCostsFrameMs;
   if (v_layerCostsAgoMs !== undefined) o.layerCostsAgoMs = v_layerCostsAgoMs;
+  if (v_simStateBytes !== undefined) o.simStateBytes = v_simStateBytes;
+  if (v_simStateDiskBytes !== undefined) o.simStateDiskBytes = v_simStateDiskBytes;
   return o;
 }
 function encS_LayerCost(w: Writer, v: T.LayerCost): void {

@@ -1,0 +1,9 @@
+/* Properties ▸ plugin layer (PluginLayerSection.tsx): help-role text when its plugin is not loaded. */
+.missing {
+  margin: 4px 0;
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size-help);
+  line-height: var(--panel-line-height-help);
+  font-weight: var(--panel-weight-help);
+  color: var(--color-text-tertiary);
+}

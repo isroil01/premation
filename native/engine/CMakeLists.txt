@@ -663,6 +663,12 @@ if(MOTION_BUILD_TESTS AND TARGET fxkit)
     COMMAND premation-plugins --plugins ${PREMATION_PLUGIN_BUNDLES}/fxkit
             test ${CMAKE_CURRENT_SOURCE_DIR}/../sdk/samples/fxkit/tests/cases.json)
 endif()
+if(MOTION_BUILD_TESTS AND TARGET bounce)
+  # SDK 1.4 simulation sample (T5): stepped to each case's frame, then rendered.
+  add_test(NAME plugin_goldens_bounce
+    COMMAND premation-plugins --plugins ${PREMATION_PLUGIN_BUNDLES}/bounce
+            test ${CMAKE_CURRENT_SOURCE_DIR}/../sdk/samples/bounce/tests/cases.json)
+endif()
 if(MOTION_BUILD_TESTS AND TARGET chartlayer)
   # SDK 1.4 layer type sample (L4): the bar chart generator's CPU renders.
   add_test(NAME plugin_goldens_chartlayer

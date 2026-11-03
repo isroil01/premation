@@ -238,6 +238,10 @@ class NativeEffects {
   /// module stays). No handler = no plugin host.
   using ReloadFn = std::function<bool(std::string_view plugin, std::string& why)>;
   static void set_reload_handler(ReloadFn reload);
+  /// SDK 1.4 (T2): the bytes of simulation states kept in RAM and on disk (getRenderStats).
+  using SimBytesFn = std::function<std::pair<std::uint64_t, std::uint64_t>()>;
+  static void set_sim_bytes_handler(SimBytesFn fn);
+  [[nodiscard]] static std::optional<std::pair<std::uint64_t, std::uint64_t>> sim_bytes();
   /// SDK 1.1 viewer overlays: DRAW_OVERLAY (overlay geometry) and OVERLAY_DRAG (dragEffectOverlay).
   using OverlayFn = std::function<std::variant<std::vector<NativeOverlayItem>, NativeFailure>(const NativeActionRequest&)>;
   using DragFn = std::function<std::variant<NativeEdit, NativeFailure>(const NativeActionRequest&, const NativeOverlayDrag&)>;

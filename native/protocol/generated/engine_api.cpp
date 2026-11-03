@@ -26720,6 +26720,8 @@ void encode(wire::Writer& w, const RenderStats& v) {
   for (const auto& e : v.layer_costs) { w.varint(202U); { const std::size_t s = w.begin_ld(); encode(w, e); w.end_ld(s); } }
   if (v.layer_costs_frame_ms.has_value()) { w.varint(209U); w.f64(*v.layer_costs_frame_ms); }
   if (v.layer_costs_ago_ms.has_value()) { w.varint(217U); w.f64(*v.layer_costs_ago_ms); }
+  if (v.sim_state_bytes.has_value()) { w.varint(224U); w.varint(*v.sim_state_bytes); }
+  if (v.sim_state_disk_bytes.has_value()) { w.varint(232U); w.varint(*v.sim_state_disk_bytes); }
 }
 
 Status decode(wire::Reader& r, RenderStats& out) {
@@ -26886,6 +26888,18 @@ Status decode(wire::Reader& r, RenderStats& out) {
         double e = 0.0;
         if (!r.f64(e)) return Status::truncated;
         out.layer_costs_ago_ms = std::move(e);
+        break;
+      }
+      case 224U: {
+        std::uint64_t e = 0;
+        if (!r.varint(e)) return Status::truncated;
+        out.sim_state_bytes = std::move(e);
+        break;
+      }
+      case 232U: {
+        std::uint64_t e = 0;
+        if (!r.varint(e)) return Status::truncated;
+        out.sim_state_disk_bytes = std::move(e);
         break;
       }
       default:

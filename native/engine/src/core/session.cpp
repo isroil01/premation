@@ -2611,6 +2611,10 @@ api::RenderStats Session::render_stats() {
   const CacheCoverageSnap cacheSnap = sink_.cache_coverage();
   st.ram_cache_bytes = cacheSnap.ramBytes;
   st.disk_cache_bytes = cacheSnap.diskBytes;
+  if (const auto sim = doc::NativeEffects::sim_bytes()) {  // SDK 1.4 (T2): plugin simulation states
+    st.sim_state_bytes = sim->first;
+    st.sim_state_disk_bytes = sim->second;
+  }
   st.ram_cache_budget = cacheSnap.ramBudget;
   st.vram_cache_bytes = cacheSnap.vramBytes;
   st.vram_cache_budget = cacheSnap.vramBudget;

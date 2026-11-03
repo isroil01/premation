@@ -56,6 +56,7 @@ import { SORT_KEYS, sortLabel, useHasCloudPlugins } from './PluginStore';
 import { StoreMessageLine } from './StoreMessageLine';
 import styles from './NativePluginsPanel.module.css';
 import { t } from '@core/i18n';
+import { PluginDevModeCard } from './PluginDevMode';
 
 type StoreBrowse = PluginStoreBrowse & { reload: () => void };
 
@@ -499,6 +500,10 @@ export function NativePluginsPanel(): JSX.Element {
           <StoreMessageLine message={store.message} />
         </div>
       ) : null}
+      {/* W2: Developer Mode — the editor's own way to it (the dashboard page has it too; the local edition has no dashboard). */}
+      <div className={styles.messageLine}>
+        <PluginDevModeCard />
+      </div>
       <FootRow native={native} store={store} />
     </div>
   );

@@ -518,7 +518,7 @@ class Sampler {
 }  // namespace
 
 void finish_native_frame(const scene::BuildContext& c, std::string_view comp, double t, const scene::ViewSpec& view,
-                         bool motionBlur, scene::NativeFrame& frame, PluginHost* host) {
+                         bool motionBlur, scene::NativeFrame& frame, PluginHost* host, double simBudgetMs) {
   // Frames are built on several threads (the session's prefetch workers); a
   // plugin's instances are not required to be re-entrant: one frame's plugin
   // work at a time.
@@ -630,9 +630,14 @@ void finish_native_frame(const scene::BuildContext& c, std::string_view comp, do
         q.frame = step > 0 ? std::max<std::int64_t>(0, (lt + step / 2) / step) : 0;
         q.inputsKey = sim_inputs_key(c.d, *node, effectId, text_of(e, "sequence"));
         q.inputsAt = [&](std::int64_t k) { return sampler.inputs_at(*spec, e, docLayer, effectId, k * step); };
+        bool partial = false;
+        q.budgetMs = simBudgetMs;
+        q.partial = &partial;
         std::string why;
         if (std::optional<std::vector<std::uint8_t>> st = host->sim_state(q, why)) {
           set_text(e, "simState", doc::native_base64(*st));
+        } else if (partial) {
+          frame.simPending = true;  // still catching up: not final, drawn again (engine_frames.cpp)
         } else if (reported.insert(instance + "#sim").second) {
           frame.errors.push_back(scene::LayerError{layerId, "", "plugin", "simulation: " + why});
         }

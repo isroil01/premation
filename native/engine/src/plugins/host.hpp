@@ -240,12 +240,18 @@ struct SimRequest {
   std::uint64_t inputsKey = 0;
   /// The effect's inputs at layer frame `k` (its params evaluated at k × step).
   std::function<RenderInputs(std::int64_t k)> inputsAt;
+  /// T4: stop stepping after this long (ms) and set `*partial` — the viewer's frame stays
+  /// responsive; the states made so far are kept and the next request goes on from them. 0 = no limit.
+  double budgetMs = 0;
+  bool* partial = nullptr;
 };
 
 struct SimStats {
   std::uint64_t steps = 0;      ///< SIM_STEP calls made
   std::uint64_t cacheHits = 0;  ///< requests answered by a kept state without stepping
-  std::uint64_t bytes = 0;      ///< states kept now
+  std::uint64_t bytes = 0;      ///< states kept in RAM now
+  std::uint64_t diskBytes = 0;  ///< states kept on disk now (HostOptions::simDiskDir)
+  std::uint64_t diskHits = 0;   ///< requests a state read back from disk answered
 };
 
 /// SDK 1.2: what SMART_PRE_RENDER said besides layer checkouts.
@@ -361,6 +367,11 @@ struct HostOptions {
   /// files stay unlocked, so the author's build can overwrite them, and reload() loads the new
   /// build. Empty = load in place (the shipping default).
   std::filesystem::path shadowDir;
+  /// SDK 1.4 (T2): where simulation states evicted from RAM go (`--sim-cache-dir`). Named by the
+  /// hash chain of their inputs, so they stay valid across sessions; empty = RAM only.
+  std::filesystem::path simDiskDir;
+  /// How much of it they may use; the oldest files go first.
+  std::uint64_t simDiskBudget = std::uint64_t{1} << 30U;
   /// The registry's signed revocation list, already verified by Electron
   /// (`--revoked <file>`): plugin id → reason. A revoked plugin is listed
   /// `revoked` and never loaded; setPluginEnabled cannot turn it on.

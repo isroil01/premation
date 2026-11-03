@@ -76,17 +76,15 @@ as 1.4 additions if they can stay appended, otherwise they wait for **2.0**
   path is reused unchanged (frame test: the entry reaches the chain at layer
   size). Its own effect cannot be removed / duplicated / copied / moved, and
   nothing goes before it. Missing plugin: empty layer + layerErrors.
-- [x] L3 **Editor.** (partial) Layer ▸ New lists plugin layer types
+- [x] L3 **Editor.** Layer ▸ New lists plugin layer types
   (`withPluginLayerTypes`); the params are timeline rows in the layer's
   Contents group; `LayerInfo.pluginLayerType`; MCP `create_layer kind=plugin`.
-  Not yet: the TopNav "+" menu, an Effect Controls presentation of the own
-  effect as the layer's section (it shows as an ordinary effect card whose
-  remove the engine refuses), a layer glyph.
+  The TopNav "+" menu lists them too; the own effect's Effect Controls card
+  offers no Move / Duplicate / Copy / Remove and does not drag.
 - [x] L4 **Proof: `chartlayer` sample** (Bar Chart, Value 1–6 animatable) +
   CPU goldens (`plugin_goldens_chartlayer`), `test_plugin_finish.cpp
-  [layertype]`, `pluginLayerTypes.native.test.ts`. A GPU-path golden scene of
-  the layer through the full renderer is still to add (the full engine exe
-  was held by the running app).
+  [layertype]`, `pluginLayerTypes.native.test.ts`, GPU golden scene
+  `plugin-layer-chart`.
 
 ### D — plugins inside the 3D scene (needs Q1)
 
@@ -113,20 +111,23 @@ as 1.4 additions if they can stay appended, otherwise they wait for **2.0**
   rendering reads the frame's state through `get_sim_state` (appended to
   PrHostSuite). One SIM_STEP selector instead of SIM_STEP + SIM_RENDER: the
   ordinary render selectors draw from the state.
-- [~] T2 **Host sim cache.** RAM only: `PluginHost::sim_state` keeps every state
+- [x] T2 **Host sim cache.** RAM + disk (`--sim-cache-dir`, 1 GB, kept across sessions; Cache & Memory shows both): `PluginHost::sim_state` keeps every state
   keyed by a hash chain of all earlier frames' inputs (an edit at k re-steps
-  from k), LRU under a budget (256 MB). Not yet: disk cache, Cache & Memory
-  panel.
+  from k), LRU under a budget (256 MB).
 - [x] T3 **Determinism.** Per-instance seed; the state is computed on the
   document side and travels with the frame (`simState`); two hosts walking
   vs jumping produce identical bytes (test).
-- [ ] T4 **Watchdog / prefetch.** SIM_STEP runs under the render watchdog per
-  call; a cold catch-up still runs on the frame being built, not ahead on
-  the prefetch workers.
-- [~] T5 **Proof:** the `bounce` sample (a new sample, not a stateful mode of
+- [x] T4 **Watchdog / viewer.** SIM_STEP runs under the render watchdog per
+  call; a viewer frame gives a catch-up 80 ms, then draws without the state,
+  not final, and is drawn again (BuiltFrame.simPending, a settle sentinel)
+  until done; export waits. (Not on the prefetch workers: the document's
+  inputs are evaluated on the building thread.)
+- [x] T5 **Proof:** the `bounce` sample (a new sample, not a stateful mode of
   `particles`) + `engine_plugins_tests [sim]` (cold = walked, scrub back =
   0 steps, edit at k, budget) and `engine_plugins_scene_tests [sim]`
-  (document keyframes drive steps). No golden image yet.
+  (document keyframes drive steps), CPU goldens `plugin_goldens_bounce`
+  (premation-plugins test steps to each case's time) and the GPU golden
+  scene `plugin-sim-bounce` (packages/render-tests).
 
 ### M — ML inference suite (needs Q5)
 
@@ -254,10 +255,12 @@ as 1.4 additions if they can stay appended, otherwise they wait for **2.0**
   tolerance per bits, `<name>.actual.pgold` on a fail; ctest
   `plugin_goldens_fxkit`. A 4 → 5 px change fails (0.54), an unchanged
   render passes at 0.
-- [~] W5 **Debugging guide.** Attaching a debugger to the engine (or to the
+- [x] W5 **Debugging guide.** Attaching a debugger to the engine (or to the
   plugin host after X1), symbols, the crash journal. (PLUGIN_SDK.md now has
   "Starting a plugin", "Writing effects in WGSL: fxkit" and "Golden tests";
-  the debugger section is still to write.)
+  "Debugging a plugin": premation-plugins under a debugger, attaching to
+  premation-engine, `--plugin-watchdog 0` via `PREMATION_ENGINE_ARGS`, logs,
+  quarantine.)
 
 ## 3. Order and gates
 

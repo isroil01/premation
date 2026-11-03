@@ -1,6 +1,7 @@
 #include "host.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <condition_variable>
 #include <cstdio>
@@ -368,6 +369,20 @@ struct PluginHost::Impl {
   std::uint64_t simClock = 0;
   SimStats simStats;
   void sim_evict();
+  // T2: the disk tier — (instance hash, frame) → the chain of the state kept there, its size and age.
+  struct SimFile {
+    std::uint64_t chain = 0;
+    std::uint64_t size = 0;
+    std::uint64_t order = 0;  ///< write order (older = smaller): what the budget removes first
+  };
+  std::map<std::pair<std::uint64_t, std::int64_t>, SimFile> simFiles;
+  std::uint64_t simDiskBytes = 0;
+  std::uint64_t simFileOrder = 0;
+  bool simDiskScanned = false;
+  [[nodiscard]] fs::path sim_file(std::uint64_t inst, std::int64_t frame, std::uint64_t chain) const;
+  void sim_disk_scan();
+  void sim_disk_put(std::uint64_t inst, std::int64_t frame, std::uint64_t chain, const std::vector<std::uint8_t>& bytes);
+  [[nodiscard]] std::optional<std::vector<std::uint8_t>> sim_disk_get(std::uint64_t inst, std::int64_t frame, std::uint64_t chain);
 
   std::mutex gpuMutex;
   std::map<std::pair<const EffectSpec*, std::uint32_t>, PrHandle> gpuData;
@@ -1320,6 +1335,10 @@ PluginHost::PluginHost(HostOptions options) : impl_(std::make_unique<Impl>(*this
       return plugin_infos();
     });
     doc::NativeEffects::set_reload_handler([this](std::string_view plugin, std::string& why) { return reload(plugin, why); });
+    doc::NativeEffects::set_sim_bytes_handler([this] {
+      const SimStats s = sim_stats();
+      return std::pair<std::uint64_t, std::uint64_t>{s.bytes, s.diskBytes};
+    });
     contrib_->attach();  // P7: runPluginCommand, listPluginCommands, plugin importers
     doc::NativeEffects::set_overlay_handlers([this](const doc::NativeActionRequest& r) { return draw_overlay(r); },
                                              [this](const doc::NativeActionRequest& r, const doc::NativeOverlayDrag& d) {
@@ -2647,9 +2666,92 @@ void PluginHost::Impl::sim_evict() {
     for (auto it = simKept.begin(); it != simKept.end(); ++it) {
       if (it->second.lastUse < oldest->second.lastUse) oldest = it;
     }
+    // Off RAM, onto disk (when there is a disk tier): scrubbing back to it later reads, not steps.
+    sim_disk_put(mix_str(14695981039346656037ULL, oldest->first.first), oldest->first.second, oldest->second.chain, oldest->second.bytes);
     simBytes -= oldest->second.bytes.size();
     simKept.erase(oldest);
   }
+}
+
+fs::path PluginHost::Impl::sim_file(std::uint64_t inst, std::int64_t frame, std::uint64_t chain) const {
+  char name[64];  // NOLINT(cppcoreguidelines-avoid-c-arrays, modernize-avoid-c-arrays): snprintf target
+  std::snprintf(name, sizeof name, "%016llx", static_cast<unsigned long long>(inst));
+  char file[96];  // NOLINT(cppcoreguidelines-avoid-c-arrays, modernize-avoid-c-arrays): snprintf target
+  std::snprintf(file, sizeof file, "%lld-%016llx.sim", static_cast<long long>(frame), static_cast<unsigned long long>(chain));
+  return options.simDiskDir / name / file;
+}
+
+/// Index what earlier sessions left (once): the files are named "<frame>-<chain>.sim" under the
+/// instance's hash, so a state is found without reading or even stating a file.
+void PluginHost::Impl::sim_disk_scan() {
+  if (simDiskScanned || options.simDiskDir.empty()) return;
+  simDiskScanned = true;
+  std::error_code ec;
+  std::vector<std::pair<fs::file_time_type, std::pair<std::pair<std::uint64_t, std::int64_t>, SimFile>>> found;
+  for (const auto& dir : fs::directory_iterator(options.simDiskDir, ec)) {
+    if (!dir.is_directory(ec)) continue;
+    const std::uint64_t inst = std::strtoull(dir.path().filename().string().c_str(), nullptr, 16);
+    for (const auto& f : fs::directory_iterator(dir.path(), ec)) {
+      const std::string n = f.path().filename().string();
+      const std::size_t dash = n.find('-');
+      if (dash == std::string::npos || !n.ends_with(".sim")) continue;
+      SimFile sf;
+      sf.chain = std::strtoull(n.substr(dash + 1).c_str(), nullptr, 16);
+      sf.size = f.file_size(ec);
+      found.push_back({f.last_write_time(ec), {{inst, std::strtoll(n.c_str(), nullptr, 10)}, sf}});
+    }
+  }
+  std::ranges::sort(found, [](const auto& a, const auto& b) { return a.first < b.first; });
+  for (auto& [when, kv] : found) {
+    kv.second.order = ++simFileOrder;
+    simDiskBytes += kv.second.size;
+    simFiles[kv.first] = kv.second;
+  }
+  sim_disk_put(0, -1, 0, {});  // apply the budget to what was found
+}
+
+void PluginHost::Impl::sim_disk_put(std::uint64_t inst, std::int64_t frame, std::uint64_t chain, const std::vector<std::uint8_t>& bytes) {
+  if (options.simDiskDir.empty()) return;
+  std::error_code ec;
+  if (frame >= 0) {
+    const fs::path file = sim_file(inst, frame, chain);
+    fs::create_directories(file.parent_path(), ec);
+    const fs::path tmp = fs::path(file).concat(".tmp");
+    {
+      std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+      f.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast): raw bytes
+      if (!f) return;
+    }
+    fs::rename(tmp, file, ec);  // temp + rename: a crash never leaves half a state
+    if (ec) return;
+    // One state per (instance, frame): a newer chain replaces the old file.
+    if (const auto old = simFiles.find({inst, frame}); old != simFiles.end()) {
+      if (old->second.chain != chain) fs::remove(sim_file(inst, frame, old->second.chain), ec);
+      simDiskBytes -= old->second.size;
+    }
+    simFiles[{inst, frame}] = SimFile{chain, bytes.size(), ++simFileOrder};
+    simDiskBytes += bytes.size();
+  }
+  while (simDiskBytes > options.simDiskBudget && !simFiles.empty()) {
+    auto oldest = simFiles.begin();
+    for (auto it = simFiles.begin(); it != simFiles.end(); ++it) {
+      if (it->second.order < oldest->second.order) oldest = it;
+    }
+    fs::remove(sim_file(oldest->first.first, oldest->first.second, oldest->second.chain), ec);
+    simDiskBytes -= oldest->second.size;
+    simFiles.erase(oldest);
+  }
+}
+
+std::optional<std::vector<std::uint8_t>> PluginHost::Impl::sim_disk_get(std::uint64_t inst, std::int64_t frame, std::uint64_t chain) {
+  const auto it = simFiles.find({inst, frame});
+  if (it == simFiles.end() || it->second.chain != chain) return std::nullopt;
+  std::ifstream f(sim_file(inst, frame, chain), std::ios::binary);
+  if (!f) return std::nullopt;
+  std::vector<std::uint8_t> bytes(it->second.size);
+  f.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast): raw bytes
+  if (!f) return std::nullopt;
+  return bytes;
 }
 
 std::optional<std::vector<std::uint8_t>> PluginHost::sim_state(const SimRequest& q, std::string& why) {
@@ -2686,10 +2788,23 @@ std::optional<std::vector<std::uint8_t>> PluginHost::sim_state(const SimRequest&
     memo.chain.push_back(mix64(prev, inputs_hash(q.inputsAt(k))));
   }
   // The newest kept state whose inputs, and every earlier frame's, are still the same.
+  m.sim_disk_scan();
+  const std::uint64_t instHash = mix_str(14695981039346656037ULL, instance);
   std::int64_t from = frame;
   for (; from >= 0; --from) {
+    const std::uint64_t want = memo.chain[static_cast<std::size_t>(from)];
     const auto it = m.simKept.find({instance, from});
-    if (it != m.simKept.end() && it->second.chain == memo.chain[static_cast<std::size_t>(from)]) break;
+    if (it != m.simKept.end() && it->second.chain == want) break;
+    // T2: kept on disk (evicted earlier, or by an earlier session): back into RAM.
+    if (std::optional<std::vector<std::uint8_t>> disk = m.sim_disk_get(instHash, from, want)) {
+      Impl::SimKept& kept = m.simKept[{instance, from}];
+      m.simBytes -= kept.bytes.size();
+      kept.chain = want;
+      kept.bytes = std::move(*disk);
+      m.simBytes += kept.bytes.size();
+      ++m.simStats.diskHits;
+      break;
+    }
   }
   std::vector<std::uint8_t> state;
   if (from >= 0) {
@@ -2701,7 +2816,18 @@ std::optional<std::vector<std::uint8_t>> PluginHost::sim_state(const SimRequest&
       return state;
     }
   }
+  const auto started = std::chrono::steady_clock::now();
   for (std::int64_t k = from + 1; k <= frame; ++k) {
+    // T4: a viewer frame does not wait for a long catch-up: what is stepped is kept, the frame is
+    // drawn without a state (not final), and the next draw goes on from here.
+    if (q.budgetMs > 0 && k > from + 1 &&
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count() > q.budgetMs) {
+      if (q.partial != nullptr) *q.partial = true;
+      why = "simulating (frame " + std::to_string(k - 1) + " of " + std::to_string(frame) + ")";
+      m.sim_evict();
+      m.simStats.bytes = m.simBytes;
+      return std::nullopt;
+    }
     RenderInputs in = q.inputsAt(k);
     in.layerTime = k * q.step;
     const InstanceLease lease = m.instance_for(in, *e, *p, r);
@@ -2757,6 +2883,7 @@ SimStats PluginHost::sim_stats() const {
   const std::scoped_lock lock(m.simMutex);
   SimStats s = m.simStats;
   s.bytes = m.simBytes;
+  s.diskBytes = m.simDiskBytes;
   return s;
 }
 

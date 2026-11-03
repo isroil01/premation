@@ -671,6 +671,23 @@ export interface EngineHostOptions {
 }
 
 /**
+ * `PREMATION_ENGINE_ARGS` (whitespace-separated): extra engine flags for debugging — e.g. a plugin
+ * author's `--plugin-watchdog 0` so a breakpoint in a selector is not taken for a hang. Only
+ * `--plugin-watchdog` and `--log-level` (with their value) are passed on; anything else is ignored.
+ */
+export function extraEngineArgs(env: Record<string, string | undefined>): string[] {
+  const words = (env.PREMATION_ENGINE_ARGS ?? '').split(/\s+/).filter(Boolean);
+  const out: string[] = [];
+  for (let i = 0; i + 1 < words.length; i += 1) {
+    if ((words[i] === '--plugin-watchdog' && /^\d+$/.test(words[i + 1]!)) || (words[i] === '--log-level' && /^(debug|info|warn|error)$/.test(words[i + 1]!))) {
+      out.push(words[i]!, words[i + 1]!);
+      i += 1;
+    }
+  }
+  return out;
+}
+
+/**
  * The engine's plugin arguments (G1, docs/PLUGIN_SDK.md). The engine process
  * hosts native SDK plugins itself; `PREMATION_PLUGIN_PATH` adds folders on its side.
  */
@@ -887,6 +904,10 @@ export class EngineHost {
           ...nativePluginArgs(o.nativePluginDir, o.nativePluginJournal),
           // Dawn's blob cache: shaders compile once per machine, not once per launch (gpu.cpp).
           ...(o.userDataPath ? ['--shader-cache-dir', path.join(o.userDataPath, 'shader-cache')] : []),
+          // SDK 1.4 (T2): plugin simulation states evicted from RAM, kept across sessions.
+          ...(o.userDataPath ? ['--sim-cache-dir', path.join(o.userDataPath, 'sim-cache')] : []),
+          // A plugin author's own engine flags (docs/PLUGIN_SDK.md "Debugging a plugin": `--plugin-watchdog 0`).
+          ...extraEngineArgs(o.env ?? process.env),
         ],
         ...(o.nativePluginLaunchArgs ? { launchArgs: o.nativePluginLaunchArgs } : {}),
       },

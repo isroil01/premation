@@ -65,6 +65,11 @@ struct EngineOptions {
   /// Developer Mode (`--plugin-shadow DIR`): plugin binaries load from copies under DIR, so a
   /// plugin's own build can overwrite them, and reloadPlugin swaps in the rebuilt module.
   std::string pluginShadow;
+  /// SDK 1.4 (T2): where plugin simulation states evicted from RAM are kept (`--sim-cache-dir`); empty = RAM only.
+  std::string pluginSimDir;
+  /// `--plugin-watchdog <ms>`: how long a plugin call may run before it is a hang (0 = never: a
+  /// debugger stopped in a selector); negative = the host's default (10 s).
+  int pluginWatchdogMs = -1;
   /// The verified revocation list as a file (`{"revoked":[{"id","reason"}]}`); empty = none.
   std::string pluginRevoked;
   /// The Premation Cloud entitlement token file (`--entitlement`); empty = none (entitled plugins are locked).
