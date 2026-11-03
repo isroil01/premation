@@ -18,6 +18,7 @@ import {
   normalizePercent,
   parseUpdateSettings,
   resolvePolicy,
+  updatedFrom,
   type UpdateEnvironment,
 } from './updaterPolicy';
 
@@ -154,5 +155,18 @@ describe('normalizePercent', () => {
     expect(normalizePercent(undefined)).toBe(0);
     expect(normalizePercent(null)).toBe(0);
     expect(normalizePercent(-5)).toBe(0);
+  });
+});
+
+describe('updatedFrom', () => {
+  it('names the previous version after an upgrade', () => {
+    expect(updatedFrom('1.0.4', '1.0.5')).toBe('1.0.4');
+    expect(updatedFrom('1.0.9', '1.0.10')).toBe('1.0.9');
+  });
+
+  it('says nothing on a first run, a relaunch, or a downgrade', () => {
+    expect(updatedFrom(null, '1.0.5')).toBeNull();
+    expect(updatedFrom('1.0.5', '1.0.5')).toBeNull();
+    expect(updatedFrom('1.0.4', '0.9.0')).toBeNull();
   });
 });

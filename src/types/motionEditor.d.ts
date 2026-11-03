@@ -481,6 +481,14 @@ export type UpdateStatus =
   | { kind: 'unsupported'; reason: string }
   | { kind: 'error'; message: string };
 
+/** A user-asked check's answer, mirrored from `electron/updaterPolicy.ts` like `UpdateStatus`. */
+export type InteractiveCheckResult =
+  | { kind: 'upToDate'; version: string }
+  | { kind: 'found'; version: string }
+  | { kind: 'ready'; version: string }
+  | { kind: 'unsupported'; version: string; reason: string }
+  | { kind: 'failed'; message: string };
+
 /** A script file read for File ▸ Scripts / the Script Editor (electron/ipc/scripts.ts). */
 export interface ScriptFileInfo {
   name: string;
@@ -966,6 +974,12 @@ export interface MotionEditorApi {
     downloadNow(): Promise<boolean>;
     /** Quit into the installer and come back. */
     restartAndInstall(): Promise<void>;
+    /** Help ▸ Check for Updates…'s check, run by the update dialog. */
+    checkInteractive(): Promise<InteractiveCheckResult>;
+    /** The menu asked for the update dialog. Returns an unsubscribe fn. */
+    onOpenDialog(handler: () => void): () => void;
+    /** `{ from, to }` once, on the first launch after an upgrade; null otherwise. */
+    takeJustUpdated(): Promise<{ from: string; to: string } | null>;
   };
   /** Subscribe to native menu command ids. Returns an unsubscribe fn. */
   onMenuCommand?(handler: (commandId: string) => void): () => void;

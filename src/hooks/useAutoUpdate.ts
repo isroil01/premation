@@ -32,6 +32,8 @@
 
 import { useEffect } from 'react';
 import { useUpdateStore } from '@stores/updateStore';
+import { useUIStore } from '@stores/uiStore';
+import { t } from '@core/i18n';
 import type { UpdateStatus } from '@app-types/motionEditor';
 
 /** The bridge, or null in a browser build where there is nothing to update. */
@@ -65,6 +67,30 @@ export function useAutoUpdate(): void {
     void bridge.getStatus().then(onStatus).catch(() => {
       /* no status yet — nothing to record */
     });
-    return unsubscribe;
+
+    // Help ▸ Check for Updates… — the user asked, so `UpdateDialog` answers.
+    const unsubscribeDialog = bridge.onOpenDialog(() => useUpdateStore.getState().setDialogOpen(true));
+
+    // The one launch after an upgrade says so, once. The other half of a
+    // background update: without it the app simply comes back different. A
+    // toast, not a dialog: it is news, nothing to decide.
+    void bridge
+      .takeJustUpdated()
+      .then((updated) => {
+        if (!updated) return;
+        useUIStore.getState().notify({
+          level: 'success',
+          message: t('updates.justUpdated', 'Premation is updated to {version}.', { version: updated.to }),
+          durationMs: 6000,
+        });
+      })
+      .catch(() => {
+        /* older shell without the channel: nothing to announce */
+      });
+
+    return () => {
+      unsubscribe();
+      unsubscribeDialog();
+    };
   }, []);
 }

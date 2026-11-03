@@ -29,15 +29,20 @@ interface UpdateState {
   readyVersion: string | null;
   /** True from the moment a restart is requested — the button is spent. */
   restarting: boolean;
+  /** Help ▸ Check for Updates…'s dialog (`UpdateDialog`) is showing. */
+  dialogOpen: boolean;
   setReady(version: string | null): void;
   setRestarting(v: boolean): void;
+  setDialogOpen(open: boolean): void;
 }
 
 export const useUpdateStore = create<UpdateState>((set) => ({
   readyVersion: null,
   restarting: false,
+  dialogOpen: false,
   setReady: (version) => set({ readyVersion: version }),
   setRestarting: (v) => set({ restarting: v }),
+  setDialogOpen: (open) => set({ dialogOpen: open }),
 }));
 
 /** Non-hook read, for callers outside React. */

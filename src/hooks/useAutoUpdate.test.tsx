@@ -46,6 +46,9 @@ function installBridge(): {
         restarts += 1;
         return Promise.resolve();
       },
+      checkInteractive: () => Promise.resolve({ kind: 'upToDate', version: '1.0.0' }),
+      onOpenDialog: () => () => {},
+      takeJustUpdated: () => Promise.resolve(null),
     },
   };
   return {

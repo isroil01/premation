@@ -22,8 +22,8 @@ const mainSrc = readFileSync(join(ROOT, 'electron', 'updaterPolicy.ts'), 'utf8')
 const rendererSrc = readFileSync(join(ROOT, 'src', 'types', 'motionEditor.d.ts'), 'utf8');
 
 /** Pull the `UpdateStatus` union out of a file and normalise it to compare. */
-function unionOf(src: string): string {
-  const start = src.indexOf('export type UpdateStatus');
+function unionOf(src: string, name = 'UpdateStatus'): string {
+  const start = src.indexOf(`export type ${name} `);
   expect(start).toBeGreaterThan(-1);
   // The union ends at the first `};` — every member before it closes with `}`
   // then a newline, so this cannot stop early on a member's own semicolons
@@ -56,6 +56,13 @@ describe('UpdateStatus stays identical on both sides of the IPC boundary', () =>
   });
 });
 
+describe('InteractiveCheckResult stays identical on both sides too', () => {
+  it('declares the SAME union in both places', () => {
+    expect(unionOf(rendererSrc, 'InteractiveCheckResult')).toBe(unionOf(mainSrc, 'InteractiveCheckResult'));
+    expect(unionOf(mainSrc, 'InteractiveCheckResult')).toContain("kind: 'upToDate'");
+  });
+});
+
 describe('the preload bridge exposes what the renderer type promises', () => {
   const preload = readFileSync(join(ROOT, 'electron', 'preload.ts'), 'utf8');
 
@@ -67,6 +74,9 @@ describe('the preload bridge exposes what the renderer type promises', () => {
     'check',
     'downloadNow',
     'restartAndInstall',
+    'checkInteractive',
+    'onOpenDialog',
+    'takeJustUpdated',
   ])('forwards %s', (member) => {
     expect(preload).toMatch(new RegExp(`${member}\\s*:`));
   });

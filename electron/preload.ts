@@ -688,6 +688,16 @@ const bridge = {
     downloadNow: () => ipcRenderer.invoke('updater:downloadNow'),
     /** Quit into the installer and come back. */
     restartAndInstall: () => ipcRenderer.invoke('updater:restartAndInstall'),
+    /** The update dialog's check (Help ▸ Check for Updates…): fetches, and says "up to date". */
+    checkInteractive: () => ipcRenderer.invoke('updater:checkInteractive'),
+    /** Help ▸ Check for Updates… was chosen. Returns an unsubscribe. */
+    onOpenDialog: (handler: () => void) => {
+      const listener = (): void => handler();
+      ipcRenderer.on('updater:openDialog', listener);
+      return () => ipcRenderer.removeListener('updater:openDialog', listener);
+    },
+    /** `{ from, to }` once, on the first launch after an upgrade; null otherwise. */
+    takeJustUpdated: () => ipcRenderer.invoke('updater:takeJustUpdated'),
   },
 
   /**

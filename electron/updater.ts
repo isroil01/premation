@@ -32,6 +32,10 @@
  *  • Failures are logged, never shown, unless the user asked the question via
  *    Help ▸ Check for Updates. A dialog on every launch behind a corporate
  *    proxy is worse than no updates.
+ *  • That question is answered IN the app (`src/layout/Updates/UpdateDialog`),
+ *    not with OS message boxes: the menu item asks the renderer to open its
+ *    dialog, and the dialog runs `updater:checkInteractive` and follows the
+ *    download through to "ready".
  *  • Nothing runs unless the app is packaged.
  *  • The concern behind the old prompt — a silent ~150 MB download on someone's
  *    phone tether — is real, and is answered by a SETTING (on by default)
@@ -41,7 +45,7 @@
 import { execFile } from 'node:child_process';
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { app, dialog, type BrowserWindow } from 'electron';
+import { app, type BrowserWindow } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import { handle } from './ipcGuard';
 import {
@@ -52,12 +56,43 @@ import {
   normalizePercent,
   parseUpdateSettings,
   resolvePolicy,
+  updatedFrom,
+  type InteractiveCheckResult,
   type UpdateSettings,
   type UpdateStatus,
   type UpdateSupport,
 } from './updaterPolicy';
 
 const SETTINGS_FILE = (): string => path.join(app.getPath('userData'), 'update-settings.json');
+const LAST_VERSION_FILE = (): string => path.join(app.getPath('userData'), 'last-version.json');
+
+/**
+ * `{ from, to }` when this launch is the first one after an upgrade, so the
+ * renderer can say "Updated to Premation X" once. Read and rewritten at
+ * startup; handed out once (`updater:takeJustUpdated` clears it), so a reload
+ * does not announce it again.
+ */
+let justUpdated: Promise<{ from: string; to: string } | null> | null = null;
+
+async function readJustUpdated(): Promise<{ from: string; to: string } | null> {
+  const current = app.getVersion();
+  let previous: string | null = null;
+  try {
+    const raw = JSON.parse(await readFile(LAST_VERSION_FILE(), 'utf8')) as { version?: unknown };
+    previous = typeof raw.version === 'string' ? raw.version : null;
+  } catch {
+    // First run with this file, or unreadable: nothing to announce.
+  }
+  if (previous !== current) {
+    try {
+      await writeFile(LAST_VERSION_FILE(), JSON.stringify({ version: current }), 'utf8');
+    } catch (err) {
+      console.error('[updater] could not record the running version:', err);
+    }
+  }
+  const from = updatedFrom(previous, current);
+  return from ? { from, to: current } : null;
+}
 
 let settings: UpdateSettings = { ...DEFAULT_UPDATE_SETTINGS };
 let settingsLoaded = false;
@@ -133,8 +168,6 @@ function publish(status: UpdateStatus): void {
   target.webContents.send('updater:status', status);
 }
 
-/** Set when the check came from the Help menu, which SHOULD report its result. */
-let userInitiated = false;
 let wired = false;
 let timer: ReturnType<typeof setInterval> | null = null;
 
@@ -156,48 +189,46 @@ function wire(): void {
     });
   });
 
-  autoUpdater.on('update-not-available', () => {
-    publish({ kind: 'idle' });
-    if (!userInitiated) return;
-    userInitiated = false;
-    void showInfo('No updates', `Premation ${app.getVersion()} is the latest version.`);
-  });
+  autoUpdater.on('update-not-available', () => publish({ kind: 'idle' }));
 
   autoUpdater.on('update-downloaded', (info) => {
-    // No dialog. The renderer shows a dismissible toast, and the update applies
-    // on quit whether or not anyone reads it.
+    // No dialog. The title bar's "Restart to update" button (and the update
+    // dialog, if the user has it open) shows it; the update applies on quit
+    // whether or not anyone reads it.
     publish({ kind: 'ready', version: info.version });
-    if (!userInitiated) return;
-    userInitiated = false;
-    void showInfo(
-      'Update ready',
-      `Premation ${info.version} will be installed when you quit.`,
-      'You can also restart now from the notification in the app.',
-    );
   });
 
   autoUpdater.on('error', (err) => {
     const message = String((err as Error)?.message ?? err);
     console.error('[updater] failed:', message);
     publish({ kind: 'error', message });
-    if (!userInitiated) return;
-    userInitiated = false;
-    void showWarning('Update check failed', 'Could not check for updates.', message);
   });
 }
 
-function showInfo(title: string, message: string, detail?: string): Promise<unknown> {
-  const opts = { type: 'info' as const, buttons: ['OK'], title, message, ...(detail ? { detail } : {}) };
-  return target && !target.isDestroyed()
-    ? dialog.showMessageBox(target, opts)
-    : dialog.showMessageBox(opts);
-}
-
-function showWarning(title: string, message: string, detail: string): Promise<unknown> {
-  const opts = { type: 'warning' as const, buttons: ['OK'], title, message, detail };
-  return target && !target.isDestroyed()
-    ? dialog.showMessageBox(target, opts)
-    : dialog.showMessageBox(opts);
+/**
+ * The check behind Help ▸ Check for Updates…, answered to the renderer's
+ * dialog. Fetches even if background downloads are off: the user asked, which
+ * is the consent that setting stands in for.
+ */
+async function interactiveCheck(): Promise<InteractiveCheckResult> {
+  const support = await currentSupport();
+  if (!support.ok) return { kind: 'unsupported', version: app.getVersion(), reason: support.reason };
+  if (!wired) {
+    wire();
+    wired = true;
+  }
+  // Already on disk, or already coming down: report it rather than ask again.
+  if (lastStatus.kind === 'ready') return { kind: 'ready', version: lastStatus.version };
+  if (lastStatus.kind === 'downloading' && lastStatus.version) return { kind: 'found', version: lastStatus.version };
+  autoUpdater.autoDownload = true;
+  try {
+    const result = await autoUpdater.checkForUpdates();
+    if (!result || !result.isUpdateAvailable) return { kind: 'upToDate', version: app.getVersion() };
+    return { kind: 'found', version: result.updateInfo.version };
+  } catch (err) {
+    console.error('[updater] check failed:', err);
+    return { kind: 'failed', message: String((err as Error)?.message ?? err) };
+  }
 }
 
 /** Apply the current settings to electron-updater and run a check. */
@@ -243,6 +274,12 @@ function registerIpc(): void {
     await check();
     return lastStatus;
   });
+  handle('updater:checkInteractive', () => interactiveCheck());
+  handle('updater:takeJustUpdated', async () => {
+    const value = await (justUpdated ?? Promise.resolve(null));
+    justUpdated = Promise.resolve(null);
+    return value;
+  });
   handle('updater:restartAndInstall', () => {
     // isSilent=false so the installer's own UI shows; isForceRunAfter so the
     // user lands back in the app rather than at their desktop.
@@ -274,6 +311,7 @@ let ipcRegistered = false;
  */
 export function registerUpdaterIpc(): void {
   if (ipcRegistered) return;
+  justUpdated = readJustUpdated();
   registerIpc();
   ipcRegistered = true;
 }
@@ -308,31 +346,13 @@ export function initAutoUpdate(win: BrowserWindow): void {
   })();
 }
 
-/** Help ▸ Check for Updates… — same flow, but it reports "you're up to date". */
+/**
+ * Help ▸ Check for Updates… — opens the renderer's update dialog, which runs
+ * `updater:checkInteractive` and reports every outcome, "you're up to date"
+ * included.
+ */
 export function checkForUpdatesInteractive(win: BrowserWindow): void {
   target = win;
-  void (async () => {
-    const support = await currentSupport();
-    if (!support.ok) {
-      void showInfo(
-        'Updates unavailable',
-        `Premation ${app.getVersion()}`,
-        `Automatic updates are not active for this build: ${support.reason}.`,
-      );
-      return;
-    }
-    if (!wired) {
-      wire();
-      wired = true;
-    }
-    // A user-initiated check should fetch even if background downloads are off:
-    // they asked for it, which is the consent the setting was standing in for.
-    autoUpdater.autoDownload = true;
-    userInitiated = true;
-    try {
-      await autoUpdater.checkForUpdates();
-    } catch (err) {
-      console.error('[updater] check failed:', err);
-    }
-  })();
+  if (win.isDestroyed()) return;
+  win.webContents.send('updater:openDialog');
 }

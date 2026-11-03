@@ -1,0 +1,59 @@
+/* Help ▸ Check for Updates… — one column: the product, one sentence about
+   where the update stands, and the bar or the detail that goes with it. */
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.product {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.productText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.productName {
+  color: var(--color-text-primary);
+  font-size: var(--panel-font-size);
+  font-weight: var(--font-weight-semibold);
+  line-height: var(--panel-line-height);
+}
+
+.productVersion {
+  color: var(--color-text-tertiary);
+  font-family: var(--panel-font-family-value);
+  font-size: var(--panel-font-size-help);
+  line-height: var(--panel-line-height-help);
+}
+
+.message {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+}
+
+/* The updater's own words (a network error, why updates are off): kept, for
+   whoever has to diagnose it, but quiet and capped at three lines. */
+.detail {
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-family: var(--panel-font-family-value);
+  font-size: var(--panel-font-size-help);
+  line-height: var(--panel-line-height-help);
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}

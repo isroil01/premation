@@ -131,6 +131,42 @@ export type UpdateStatus =
   | { kind: 'error'; message: string };
 
 /**
+ * The answer to a check the USER asked for (Help ▸ Check for Updates…), which
+ * the renderer's update dialog draws. `found` means a download is now running
+ * (or already was); its progress and the `ready` that ends it arrive as
+ * ordinary `UpdateStatus` pushes.
+ */
+export type InteractiveCheckResult =
+  | { kind: 'upToDate'; version: string }
+  | { kind: 'found'; version: string }
+  | { kind: 'ready'; version: string }
+  | { kind: 'unsupported'; version: string; reason: string }
+  | { kind: 'failed'; message: string };
+
+/** Numeric x.y.z compare; a pre-release tag or junk counts as 0. */
+function compareVersions(a: string, b: string): number {
+  const pa = a.split(/[.+-]/).slice(0, 3).map((n) => Number.parseInt(n, 10) || 0);
+  const pb = b.split(/[.+-]/).slice(0, 3).map((n) => Number.parseInt(n, 10) || 0);
+  for (let i = 0; i < 3; i++) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
+
+/**
+ * The version this launch was updated FROM, or null.
+ *
+ * `previous` is the version recorded by the last launch (null on a first run).
+ * Only an upgrade counts: a first run is not news, and a downgrade (someone
+ * reinstalling an older build) is not an "update" to announce.
+ */
+export function updatedFrom(previous: string | null, current: string): string | null {
+  if (!previous) return null;
+  return compareVersions(current, previous) > 0 ? previous : null;
+}
+
+/**
  * Clamp a download-progress percentage into something a UI can render.
  *
  * electron-updater's `percent` is a float that can arrive as NaN on the first
