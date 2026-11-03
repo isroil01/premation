@@ -125,7 +125,8 @@ export function PluginEffectFrame({ nodeId, effect, def, time, plugin }: Omit<Pr
       return panelReply(req.id, { ok: true, image: `data:image/${res.value.format || 'png'};base64,${bytesToBase64(res.value.data)}` });
     }
     const label = panelLabel(req, d.label, d.params.map((p) => ({ key: p.key, name: p.label, enabled: true, hidden: false })));
-    const res = await edit(label, panelCommands(req, { layer, effectId: fx.id, time: secondsToFlicks(t) }), { quiet: true });
+    const choices = new Map(d.params.filter((p) => p.options && p.options.length > 0).map((p) => [p.key, p.options!.map((o) => String(o.label))]));
+    const res = await edit(label, panelCommands(req, { layer, effectId: fx.id, time: secondsToFlicks(t), choices }), { quiet: true });
     return res.ok ? panelReply(req.id, { ok: true }) : panelReply(req.id, { ok: false, error: res.error.message });
   }, []);
 

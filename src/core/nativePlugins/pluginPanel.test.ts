@@ -14,6 +14,18 @@ import {
 const T = { layer: 'L1', effectId: 'fx_1', time: 705_600_000 };
 
 describe('plugin panel protocol', () => {
+  it("sends a popup's 1-based index as its choice (the engine refuses a scalar for a popup)", () => {
+    const choices = new Map([['p23', ['Exponential', 'Lens Iris']]]);
+    const t = { ...T, choices };
+    expect(panelCommand({ id: 1, type: 'setParam', key: 'p23', value: 2 }, t)).toMatchObject({ value: { kind: 'choice', value: 'Lens Iris' } });
+    // Out of range clamps; a non-popup number stays a scalar.
+    expect(panelCommand({ id: 1, type: 'setParam', key: 'p23', value: 9 }, t)).toMatchObject({ value: { kind: 'choice', value: 'Lens Iris' } });
+    expect(panelCommand({ id: 1, type: 'setParam', key: 'p1', value: 9 }, t)).toMatchObject({ value: { kind: 'scalar', value: 9 } });
+    // setParams (a preset) converts each popup in the batch.
+    const batch = panelCommands({ id: 2, type: 'setParams', values: [{ key: 'p23', value: 1 }, { key: 'p1', value: 40 }] }, t);
+    expect(batch.map((c) => (c as { value: unknown }).value)).toEqual([{ kind: 'choice', value: 'Exponential' }, { kind: 'scalar', value: 40 }]);
+  });
+
   it('addresses the bundle by plugin id, scripts-only sandbox', () => {
     expect(panelUrl('com.premation.samples.rings')).toBe('plugin-ui://com.premation.samples.rings/index.html');
     expect(panelUrl('Com.Vendor.X')).toBe('plugin-ui://com.vendor.x/index.html');

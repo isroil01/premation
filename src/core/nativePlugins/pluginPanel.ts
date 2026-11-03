@@ -137,7 +137,14 @@ export function parsePanelMessage(raw: unknown): PanelMessage | null {
   }
 }
 
-function toValue(v: PanelParamValue): Value {
+function toValue(v: PanelParamValue, choices?: readonly string[]): Value {
+  // A popup is a choice in the document, and the engine refuses a scalar for it ("takes a choice,
+  // got scalar"). The panel protocol carries a popup as its 1-based index (the SDK's own encoding,
+  // what PrParamDef.value[0] holds), so the index is turned into the choice's label here.
+  if (typeof v === 'number' && choices && choices.length > 0) {
+    const i = Math.min(choices.length, Math.max(1, Math.round(v)));
+    return { kind: 'choice', value: choices[i - 1]! };
+  }
   if (typeof v === 'number') return { kind: 'scalar', value: v };
   if (typeof v === 'boolean') return { kind: 'bool', value: v };
   return { kind: 'color', value: { r: v.r, g: v.g, b: v.b, a: v.a ?? 1 } };
@@ -162,6 +169,8 @@ export interface PanelTarget {
   effectId: string;
   /** The editor's time, flicks: an animated param keys here. */
   time: number;
+  /** The effect's popup params (`p<id>`) → their choices, in order: a number sent for one becomes that choice. */
+  choices?: ReadonlyMap<string, readonly string[]>;
 }
 
 /** The engine commands for an edit request (not for `requestPreview`): sent as ONE batch, one undo entry. */
@@ -175,7 +184,7 @@ export function panelCommand(req: Exclude<PanelRequest, { type: 'requestPreview'
   const group = `effects/${t.effectId}`;
   switch (req.type) {
     case 'setParam':
-      return { type: 'setProperty', prop: { layer: t.layer, path: `${group}/${req.key}` }, value: toValue(req.value), time: t.time };
+      return { type: 'setProperty', prop: { layer: t.layer, path: `${group}/${req.key}` }, value: toValue(req.value, t.choices?.get(req.key)), time: t.time };
     case 'setArbitraryData':
       return { type: 'setPluginData', layer: t.layer, group, key: `arb:${req.key}`, data: base64ToBytes(req.data) };
     case 'invokeButton':
