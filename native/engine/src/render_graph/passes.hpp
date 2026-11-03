@@ -37,6 +37,9 @@ inline constexpr std::string_view kFxBlendInput = "fx-blend-input";
 /// its chain runs — an adjustment layer's untouched frame (mixed back through
 /// its mask and opacity) and the fx-graph's BACKDROP slot (fx_graph.hpp).
 inline constexpr std::string_view kFxBackdrop = "fx-backdrop";
+/// Gamma blending (ColorPipeline::gammaBlend): the scratch a comp target is
+/// encoded / decoded through in place, and the decoded frame a layer reads.
+inline constexpr std::string_view kGammaScratch = "gamma-scratch";
 /// AE parity 5.3: scratch buffers of the multi-pass keying / matte / grade
 /// passes (effect_chain.cpp, matte-ops.wgsl) — data, not colour: always float
 /// (kDataTargetFormat), whatever the project's bit depth.

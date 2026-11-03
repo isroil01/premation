@@ -5808,6 +5808,12 @@ export interface RenderView {
    * the display transform. Absent = 0. Exports leave it off.
    */
   exposure?: number;
+  /**
+   * Project Settings ▸ "Blend Colors Using 1.0 Gamma" OFF (After Effects' default): layers composite
+   * over their comp in display-encoded (sRGB) values — opacity mixes, antialiased edges, blend modes.
+   * Absent / false = linear-light compositing, as every render file before it.
+   */
+  gammaBlending?: boolean;
 }
 
 /** A texture key the scene samples → the content it resolved to when the frame was rendered. */

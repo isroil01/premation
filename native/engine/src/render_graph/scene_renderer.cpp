@@ -249,6 +249,7 @@ bool SceneRenderer::render_impl(const api::RenderFrameFile& file, const wgpu::Te
     default: ctx.color.display = DisplayTransform::srgb; break;
   }
   ctx.color.bitDepth = file.view.bit_depth;
+  ctx.color.gammaBlend = file.view.gamma_blending.value_or(false);
   ctx.external = external_;
   ctx.nativeFx = nativeFx_;
   ctx.fxCache = &fxCache_;

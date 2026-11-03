@@ -841,6 +841,10 @@ void Session::load_new_project(api::ResetReason reason, bool emit) {
   // composition, `comp_root`, and its timeline.
   const BuildLock lock(*this, true);
   doc_ = doc::Document{};
+  // After Effects' default for a new project: layers blend in gamma ("Blend
+  // Colors Using 1.0 Gamma" off). The document default stays linear for files
+  // that predate the setting (model.cpp default_project_settings).
+  doc_.project_mut().linear_blending = false;
   doc::Node root;
   root.id = "comp_root";
   root.name = "Composition 1";

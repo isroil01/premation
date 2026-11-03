@@ -1769,3 +1769,114 @@ TEST_CASE("2D effects: a wide blur on the pyramid matches a narrow one scaled; a
   CHECK(rowEdge(flat) > columnEdge(flat));
   CHECK(columnEdge(turned) > rowEdge(turned));
 }
+
+namespace {
+
+/// solid_scene with gamma blending on (Project Settings, After Effects' default) or off.
+api::RenderFrameFile gamma(api::RenderFrameFile f, bool on) {
+  if (on) f.view.gamma_blending = true;
+  return f;
+}
+
+}  // namespace
+
+TEST_CASE("gamma blending: the gamma-out wrapper keeps the fragment entry and encodes what it returns", "[blend][gamma]") {
+  const std::string_view src = R"(@fragment
+fn fs(@builtin(position) fc : vec4<f32>, @location(0) uv : vec2<f32>,) -> @location(0) vec4<f32> {
+  return vec4<f32>(uv, fc.x, 1.0);
+})";
+  const std::optional<std::string> out = gamma_out_wgsl(src);
+  REQUIRE(out);
+  CHECK(out->find("fn pmLinearOut(fc : vec4<f32>, uv : vec2<f32>) -> vec4<f32> {") != std::string::npos);
+  CHECK(out->find("return pmGammaOut(pmLinearOut(fc, uv));") != std::string::npos);
+  CHECK(out->find("fn fs(@builtin(position) fc : vec4<f32>, @location(0) uv : vec2<f32>,)") != std::string::npos);
+  CHECK(out->find("@fragment") == out->rfind("@fragment"));  // one entry: the wrapper
+  // Not a single vec4 entry it can call: nothing (the material draws linear).
+  CHECK_FALSE(gamma_out_wgsl("@fragment fn fs(v : VOut) -> FragOut { return x; }"));
+  CHECK_FALSE(gamma_out_wgsl("fn main() {}"));
+
+  std::string err;
+  auto renderer = SceneRenderer::create({}, err);
+  if (!renderer) return;
+  // Every builtin material that builds also builds its gamma-out variant.
+  Device& dev = renderer->device();
+  for (std::size_t i = 0; i < static_cast<std::size_t>(Mat::Count_); ++i) {
+    const auto m = static_cast<Mat>(i);
+    if (!dev.pipeline_error(m, Blend::normal, wgpu::TextureFormat::RGBA16Float).empty()) continue;
+    INFO(material(m).shader);
+    CHECK(dev.has_gamma_out(m));
+    CHECK(dev.pipeline_error(m, Blend::normal, wgpu::TextureFormat::RGBA16Float, true).empty());
+  }
+}
+
+TEST_CASE("gamma blending: 50 % white over black is sRGB 128 as in After Effects, linear 188; opaque pixels are the same", "[blend][gamma]") {
+  std::string err;
+  auto renderer = SceneRenderer::create({}, err);
+  if (!renderer) return;
+  const auto near = [](int v, int want) { return std::abs(v - want) <= 2; };
+  auto file = solid_scene(1, 1, 1);
+  file.scene.renderables[0].opacity = 0.5;
+  const Frame lin = render_ok(*renderer, gamma(file, false));
+  const Frame gam = render_ok(*renderer, gamma(file, true));
+  CHECK(near(Px{lin}.at(32, 24, 1), 188));
+  CHECK(near(Px{gam}.at(32, 24, 1), 128));
+  CHECK(Px{gam}.at(2, 2, 1) == 0);  // the background, through the encode / decode untouched
+  CHECK(Px{gam}.at(2, 2, 3) == 255);
+
+  // Opaque layers over an opaque background: no mix, so no difference (16-bit round trip).
+  auto opaque = solid_scene(0.3, 0.6, 0.9);
+  opaque.scene.background = api::Color{0.2, 0.25, 0.3, 1};
+  const Frame a = render_ok(*renderer, gamma(opaque, false));
+  const Frame b = render_ok(*renderer, gamma(opaque, true));
+  REQUIRE(a.rgba.size() == b.rgba.size());
+  int worst = 0;
+  for (std::size_t i = 0; i < a.rgba.size(); ++i) worst = std::max(worst, std::abs(int{a.rgba[i]} - int{b.rgba[i]}));
+  CHECK(worst <= 1);
+}
+
+TEST_CASE("gamma blending: blend modes, track mattes, precomps and adjustment layers mix in display values", "[blend][gamma]") {
+  std::string err;
+  auto renderer = SceneRenderer::create({}, err);
+  if (!renderer) return;
+  const auto near = [](int v, int want) { return std::abs(v - want) <= 2; };
+
+  // Screen, sRGB grey 0.5 over sRGB grey 0.5: 0.75 in gamma (191); linear light 0.382 (166).
+  auto screen = solid_scene(0.5, 0.5, 0.5);
+  screen.scene.background = api::Color{0.5, 0.5, 0.5, 1};
+  screen.scene.renderables[0].advanced_blend = 2;
+  CHECK(near(Px{render_ok(*renderer, gamma(screen, false))}.at(32, 24, 1), 166));
+  CHECK(near(Px{render_ok(*renderer, gamma(screen, true))}.at(32, 24, 1), 191));
+  CHECK(near(Px{render_ok(*renderer, gamma(screen, true))}.at(2, 2, 1), 128));  // outside the layer: the grey backdrop
+
+  // A luma matte of sRGB grey 0.5 passes half the white layer: 128 in gamma.
+  const api::RenderMatte luma{api::RenderMatteMode::luma, false, "m"};
+  CHECK(near(Px{render_ok(*renderer, gamma(matted_scene(luma, api::Color{0.5, 0.5, 0.5, 1}), true))}.at(24, 24, 1), 128));
+
+  // An isolated precomp mixes its own layers in gamma: 50 % white over its black solid → 128.
+  auto nested = solid_scene(1, 1, 1);
+  api::Renderable white = nested.scene.renderables[0];
+  white.opacity = 0.5;
+  api::Renderable black = white;
+  black.id = "black";
+  black.opacity = 1;
+  black.color = api::Color{0, 0, 0, 1};
+  api::Renderable pc = precomp_layer("pc", black, 1);
+  pc.precomp_children.push_back(white);
+  nested.scene.background = api::Color{1, 0, 0, 1};
+  nested.scene.renderables[0] = pc;
+  CHECK(near(Px{render_ok(*renderer, gamma(nested, false))}.at(32, 24, 1), 188));
+  const Frame np = render_ok(*renderer, gamma(nested, true));
+  CHECK(near(Px{np}.at(32, 24, 1), 128));
+  CHECK(Px{np}.at(2, 2, 0) == 255);  // the comp's red background around it
+
+  // An adjustment layer reads the frame decoded and writes it back: an identity one changes nothing.
+  auto adjusted = solid_scene(1, 1, 1);
+  adjusted.scene.renderables[0].opacity = 0.5;
+  api::Renderable adj = red_adjustment();
+  adj.adjustment->color_matrix->m = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+  adj.adjustment->color_matrix->offset = {0, 0, 0};
+  adjusted.scene.renderables.push_back(adj);
+  const Frame pa = render_ok(*renderer, gamma(adjusted, true));
+  CHECK(near(Px{pa}.at(32, 24, 1), 128));
+  CHECK(Px{pa}.at(2, 2, 1) == 0);
+}

@@ -179,6 +179,8 @@ NativeFrame native_frame_of(const doc::Document& d, Snapshot snap, const ViewSpe
   ColorManagementChoice cmc = color_management_of(d, view.outputColorSpace);
   v.color_management = std::move(cmc.management);
   if (!cmc.note.empty()) nf.errors.push_back({"", "", "color", std::move(cmc.note)});
+  // Project Settings ▸ Blend Colors Using 1.0 Gamma off: layers composite in display-encoded values (AE).
+  if (!d.project().linear_blending) v.gamma_blending = true;
   v.float16_textures = true;
   v.float32_textures = true;
   v.surface_format = view.surfaceFormat;

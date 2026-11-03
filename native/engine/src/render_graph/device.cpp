@@ -491,22 +491,43 @@ wgpu::Buffer Device::geometry(std::string_view key, std::span<const std::uint8_t
   return b;
 }
 
-wgpu::ShaderModule& Device::shader(std::string_view name) {
-  auto it = shaders_.find(std::string(name));
-  if (it != shaders_.end()) return it->second;
+std::string Device::wgsl_of(std::string_view name) const {
   const auto dyn = dynamicWgsl_.find(std::string(name));
-  const std::string code = dyn != dynamicWgsl_.end() ? dyn->second : builtin_wgsl(name);
+  return dyn != dynamicWgsl_.end() ? dyn->second : builtin_wgsl(name);
+}
+
+wgpu::ShaderModule& Device::shader(std::string_view name, bool gammaOut) {
+  std::string label(name);
+  if (gammaOut) label += "#gamma-out";
+  auto it = shaders_.find(label);
+  if (it != shaders_.end()) return it->second;
+  std::string code = wgsl_of(name);
+  if (gammaOut) {
+    std::optional<std::string> wrapped = gamma_out_wgsl(code);
+    gammaOut_[std::string(name)] = wrapped.has_value();
+    if (!wrapped) {  // drawn linear (has_gamma_out says so): the plain module under both names
+      wgpu::ShaderModule plain = shader(name, false);
+      return shaders_.emplace(label, std::move(plain)).first->second;
+    }
+    code = std::move(*wrapped);
+  }
   wgpu::ShaderSourceWGSL wgsl{};
   wgsl.code = code.c_str();
   wgpu::ShaderModuleDescriptor desc{};
   desc.nextInChain = &wgsl;
-  const std::string label(name);
   desc.label = label.c_str();
   return shaders_.emplace(label, device_.CreateShaderModule(&desc)).first->second;
 }
 
+bool Device::has_gamma_out(Mat material) {
+  const std::string name(material_of(material).shader);
+  const auto it = gammaOut_.find(name);
+  if (it != gammaOut_.end()) return it->second;
+  return gammaOut_.emplace(name, gamma_out_wgsl(wgsl_of(name)).has_value()).first->second;
+}
+
 const Device::Pipeline& Device::pipeline(Mat material, Blend blend, wgpu::TextureFormat format, std::uint32_t samples,
-                                         std::uint8_t depthWrite) {
+                                         std::uint8_t depthWrite, bool gammaOut) {
   key_.assign("pipeline:");
   append_u64(key_, static_cast<std::uint64_t>(material));
   key_ += ':';
@@ -519,6 +540,7 @@ const Device::Pipeline& Device::pipeline(Mat material, Blend blend, wgpu::Textur
     key_ += ":dw";
     append_u64(key_, depthWrite);
   }
+  if (gammaOut) key_ += ":g";
   return pipelines_.acquire(
       key_, frame_,
       [&] {
@@ -590,7 +612,7 @@ const Device::Pipeline& Device::pipeline(Mat material, Blend blend, wgpu::Textur
           vbl[i].attributes = attrs[i].data();
         }
 
-        wgpu::ShaderModule& module = shader(m.shader);
+        wgpu::ShaderModule& module = shader(m.shader, gammaOut);
         wgpu::BlendState bs{};
         const bool blended = blend_state(blend, bs);
         wgpu::ColorTargetState target{};
@@ -698,7 +720,7 @@ wgpu::RenderPassEncoder Device::begin_pass(const Attachment& att, std::uint32_t 
 }
 
 void Device::execute(wgpu::RenderPassEncoder& pass, const Commands& cmds, wgpu::TextureFormat format,
-                     std::uint32_t samples) {
+                     std::uint32_t samples, bool gammaOut) {
   std::uint64_t boundPipeline = 0;
   std::array<std::uint32_t, 4> scissor = passRect_;
   for (const DrawItem& it : cmds.items()) {
@@ -707,7 +729,8 @@ void Device::execute(wgpu::RenderPassEncoder& pass, const Commands& cmds, wgpu::
       pass.SetScissorRect(want[0], want[1], want[2], want[3]);
       scissor = want;
     }
-    const Pipeline& p = pipeline(it.material, it.blend, format, samples, it.depthWrite);
+    if (gammaOut && !has_gamma_out(it.material)) ++stats_.gammaOutFallbacks;
+    const Pipeline& p = pipeline(it.material, it.blend, format, samples, it.depthWrite, gammaOut);
     if (p.id != boundPipeline) {
       pass.SetPipeline(p.pipeline);
       boundPipeline = p.id;
@@ -832,16 +855,17 @@ void Device::side_draw(const wgpu::TextureView& target, wgpu::TextureFormat form
   ++stats_.draws;
 }
 
-const std::string& Device::pipeline_error(Mat material, Blend blend, wgpu::TextureFormat format) {
+const std::string& Device::pipeline_error(Mat material, Blend blend, wgpu::TextureFormat format, bool gammaOut) {
   std::string key;
   append_u64(key, static_cast<std::uint64_t>(material));
   key += ':';
   append_u64(key, static_cast<std::uint64_t>(blend));
   key += ':';
   append_u64(key, static_cast<std::uint64_t>(format));
+  if (gammaOut) key += ":g";
   if (const auto it = pipelineErrors_.find(key); it != pipelineErrors_.end()) return it->second;
   device_.PushErrorScope(wgpu::ErrorFilter::Validation);
-  (void)pipeline(material, blend, format, 1);
+  (void)pipeline(material, blend, format, 1, DrawItem::kDepthWriteMaterial, gammaOut);
   std::string message;
   instance_.WaitAny(device_.PopErrorScope(wgpu::CallbackMode::WaitAnyOnly,
                                           [&message](wgpu::PopErrorScopeStatus status, wgpu::ErrorType type, wgpu::StringView msg) {

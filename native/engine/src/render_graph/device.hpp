@@ -201,6 +201,8 @@ class Commands {
 
 struct DeviceStats {
   std::uint64_t pipelinesCreated = 0;
+  /// Gamma blending: shaders drawn into an encoded target without a gamma-out variant (linear output).
+  std::uint64_t gammaOutFallbacks = 0;
   std::uint64_t bindGroupHits = 0;
   std::uint64_t bindGroupMisses = 0;
   std::uint64_t targetHits = 0;
@@ -284,8 +286,10 @@ class Device {
                                      const wgpu::TextureView& surfaceView, wgpu::TextureFormat surfaceFormat,
                                      const std::array<std::uint32_t, 4>* scissor, bool depth);
   /// QuadRenderer.execute: bind pipelines + groups and draw every item.
+  /// `gammaOut`: the target holds sRGB-encoded colour (gamma blending), so every
+  /// item draws through its shader's gamma_out_wgsl variant.
   void execute(wgpu::RenderPassEncoder& pass, const Commands& cmds, wgpu::TextureFormat format,
-               std::uint32_t samples);
+               std::uint32_t samples, bool gammaOut = false);
 
   /// Draw one quad into `target` OUTSIDE the frame's command encoder: its own
   /// command buffer, submitted now — so it runs before the frame's — with its
@@ -319,7 +323,10 @@ class Device {
   /// message (a WGSL error, a layout mismatch). Kept per pipeline. A caller
   /// that draws only with valid pipelines cannot invalidate the frame's
   /// command buffer — a bad dynamic shader skips its own effect, never the frame.
-  [[nodiscard]] const std::string& pipeline_error(Mat material, Blend blend, wgpu::TextureFormat format);
+  [[nodiscard]] const std::string& pipeline_error(Mat material, Blend blend, wgpu::TextureFormat format, bool gammaOut = false);
+  /// Whether `material`'s shader has a gamma-out variant (gamma_out_wgsl). One
+  /// without draws linear into an encoded target (DeviceStats::gammaOutFallbacks).
+  [[nodiscard]] bool has_gamma_out(Mat material);
 
  private:
   struct Pipeline {
@@ -328,7 +335,7 @@ class Device {
     std::uint64_t id = 0;
   };
   const Pipeline& pipeline(Mat material, Blend blend, wgpu::TextureFormat format, std::uint32_t samples,
-                           std::uint8_t depthWrite = DrawItem::kDepthWriteMaterial);
+                           std::uint8_t depthWrite = DrawItem::kDepthWriteMaterial, bool gammaOut = false);
   wgpu::BindGroup make_bind_group(const Pipeline& p, const MaterialDesc& m, const DrawItem& it, const wgpu::Buffer& uniforms,
                                   std::uint64_t size);
   /// Fill levels [from, to) of `tex` (w × h at level 0), each from the one above (kMipWgsl).
@@ -337,7 +344,10 @@ class Device {
   /// texture() with `levels` allocated; `build`: the chain filled now (else level 0 only).
   TexRef make_texture(std::string_view hash, std::uint32_t w, std::uint32_t h, wgpu::TextureFormat format,
                       std::span<const std::uint8_t> pixels, std::uint32_t levels, bool build);
-  wgpu::ShaderModule& shader(std::string_view name);
+  /// `gammaOut`: the gamma_out_wgsl variant (the plain module when it has none).
+  wgpu::ShaderModule& shader(std::string_view name, bool gammaOut = false);
+  /// The WGSL of shader `name`: a dynamic material's, else the builtin table's.
+  [[nodiscard]] std::string wgsl_of(std::string_view name) const;
   /// Reserve `bytes` of uniform space; returns (chunk, byte offset).
   std::pair<std::uint32_t, std::uint32_t> uniform_alloc(std::span<const float> data);
 
@@ -360,6 +370,8 @@ class Device {
   Pool<Pipeline> pipelines_{nullptr};
   Pool<wgpu::BindGroup> bindGroups_{nullptr};
   std::unordered_map<std::string, wgpu::ShaderModule> shaders_;
+  /// Per shader name: whether gamma_out_wgsl could wrap it (filled on first ask).
+  std::unordered_map<std::string, bool> gammaOut_;
   struct Dynamic {
     std::string key;
     std::string shader;

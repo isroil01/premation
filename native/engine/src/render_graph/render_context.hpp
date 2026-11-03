@@ -1,6 +1,7 @@
 // What every pass is handed (RenderPassContext + RenderServices in the TS graph).
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <optional>
 #include <string>
@@ -157,6 +158,16 @@ struct PassContext {
   /// E1/E2: 3D surfaces resolved so far this frame (threed.cpp) — each keeps
   /// its chain result in a target of its own, named by this count.
   std::uint32_t surfaceFx = 0;
+
+  /// Gamma blending (ColorPipeline::gammaBlend): the comp targets a list is
+  /// compositing into right now. They hold sRGB-encoded premultiplied colour,
+  /// so draw_into draws into them through each shader's gamma-out variant, and
+  /// whoever reads one decodes it (composition_pass.cpp). A handful at most:
+  /// the nesting depth of precomps being drawn.
+  std::vector<std::string> gammaTargets{};
+  [[nodiscard]] bool gamma_target(std::string_view name) const {
+    return std::ranges::find(gammaTargets, name) != gammaTargets.end();
+  }
 
   /// ctx.target(name): nullptr = the surface (or an undeclared name). A
   /// declared target is allocated (from the device pool) on its first use.

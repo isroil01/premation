@@ -214,6 +214,11 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   if (as1 <= 0.0 && mode != 31 && mode != 32) { return d; }
   var cs = vec3<f32>(0.0); if (as1 > 0.0) { cs = storageToWorking(s.rgb / as1); }
   var cb = vec3<f32>(0.0); if (ad > 0.0) { cb = storageToWorking(d.rgb / ad); }
+  // cr0.w: gamma blending (Project Settings; After Effects' default). The blend
+  // and the mix run on display-encoded straight colour; the result is made
+  // linear again below, so how the target stores colour stays the caller's.
+  let gammaBlend = obj.cr0.w > 0.5;
+  if (gammaBlend) { cs = linearToSrgbRgb(cs); cb = linearToSrgbRgb(cb); }
   if (boundedMode(mode)) {
     cs = clamp(cs, vec3<f32>(0.0), vec3<f32>(1.0));
     cb = clamp(cb, vec3<f32>(0.0), vec3<f32>(1.0));
@@ -260,6 +265,7 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
     var dLin = d.rgb;
     if (as1 > 0.0) { sLin = storageToWorking(s.rgb / as1) * as1; }
     if (ad > 0.0) { dLin = storageToWorking(d.rgb / ad) * ad; }
+    if (gammaBlend) { sLin = cs * as1; dLin = cb * ad; }
     co = sLin + (1.0 - as1) * dLin;
   } else if (mode >= 31 && mode <= 34) {
     // ── Matte family (31-34): Stencil / Silhouette ──
@@ -327,7 +333,9 @@ fn fs(@location(0) uv : vec2<f32>) -> @location(0) vec4<f32> {
   }
   // Encode linear premul → storage space (identity when RTs already store linear).
   if (!skipEncode && ao > 0.0001) {
-    co = workingToStorage(co / ao) * ao;
+    var straight = co / ao;
+    if (gammaBlend) { straight = srgbToLinearRgb(straight); }
+    co = workingToStorage(straight) * ao;
   }
   return vec4<f32>(co, ao);
 }

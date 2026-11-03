@@ -49,7 +49,11 @@ api::ProjectSettings default_project_settings() {
   api::ProjectSettings s;
   s.bit_depth = api::BitDepth::u8;
   s.working_space = api::ColorWorkingSpace::srgb_linear;
-  s.linear_blending = false;
+  // "Blend Colors Using 1.0 Gamma" ON: linear-light compositing, which is how
+  // every project saved before the setting reached the renderer was drawn —
+  // so a file without the setting (docio project_settings_of) keeps its look.
+  // A new project starts with After Effects' default, off (Session::load_new_project).
+  s.linear_blending = true;
   s.ocio_config = "";
   s.time_display = api::TimeDisplay::timecode;
   s.expression_engine = api::ExpressionEngine::premation;

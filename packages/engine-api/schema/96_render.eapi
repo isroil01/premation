@@ -440,6 +440,10 @@ struct RenderView {
   /// The viewer's exposure in stops (viewport-only; AE's Adjust Exposure): the linear working colour is scaled by 2^exposure before
   /// the display transform. Absent = 0. Exports leave it off.
   exposure?: f64 = 22;
+  /// Project Settings ▸ "Blend Colors Using 1.0 Gamma" OFF (After Effects' default): layers composite
+  /// over their comp in display-encoded (sRGB) values — opacity mixes, antialiased edges, blend modes.
+  /// Absent / false = linear-light compositing, as every render file before it.
+  gammaBlending?: bool = 23;
 }
 
 /// A texture key the scene samples → the content it resolved to when the frame was rendered.

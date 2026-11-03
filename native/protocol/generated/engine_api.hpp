@@ -6768,6 +6768,7 @@ struct RenderView {
   std::optional<RenderColorManagement> color_management;
   std::optional<ChannelView> channel;
   std::optional<double> exposure;
+  std::optional<bool> gamma_blending;
   bool operator==(const RenderView&) const = default;
 };
 

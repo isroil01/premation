@@ -33052,6 +33052,7 @@ void encode(wire::Writer& w, const RenderView& v) {
   if (v.color_management.has_value()) { w.varint(162U); { const std::size_t s = w.begin_ld(); encode(w, *v.color_management); w.end_ld(s); } }
   if (v.channel.has_value()) { w.varint(168U); w.varint(static_cast<std::uint32_t>(*v.channel)); }
   if (v.exposure.has_value()) { w.varint(177U); w.f64(*v.exposure); }
+  if (v.gamma_blending.has_value()) { w.varint(184U); w.boolean(*v.gamma_blending); }
 }
 
 Status decode(wire::Reader& r, RenderView& out) {
@@ -33189,6 +33190,12 @@ Status decode(wire::Reader& r, RenderView& out) {
         double e = 0.0;
         if (!r.f64(e)) return Status::truncated;
         out.exposure = std::move(e);
+        break;
+      }
+      case 184U: {
+        bool e = false;
+        if (!r.boolean(e)) return Status::truncated;
+        out.gamma_blending = std::move(e);
         break;
       }
       default:
