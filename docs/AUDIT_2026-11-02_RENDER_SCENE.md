@@ -118,7 +118,7 @@ frames look worse than AE is a short list of specific wrong choices, most of the
   the final blit; pass the ROI into `visibleWorldRect` and chain boxes so layers outside are culled.
 
 ### 11. Nothing is pixel-exact in the viewer — major
-- **Partly fixed 2026-11-03:** Zoom In / Out step AE's ladder; a wheel zoom within 1.5 % of a stop takes it; pans, zooms and Fit settle the comp origin on a whole device pixel. Not done: 100 % = one comp px per device px.
+- **Partly fixed 2026-11-03:** Zoom In / Out step AE's ladder; a wheel zoom within 1.5 % of a stop takes it; pans, zooms and Fit settle the comp origin on a whole device pixel. 100 % is now one comp px per DEVICE px (the % field, the ladder and the wheel snap count device pixels).
 - `packages/workspace/src/camera/Camera.ts:127-137` zoom is an arbitrary float after any wheel
   zoom; no rounding of `offsetX·dpr`; "100 %" is 1 comp px = 1 CSS px (then × DPR); +/− steps ×1.2
   (`WorkspaceController.ts:288-294`) instead of AE's 12.5/25/50/100/200 ladder.
@@ -127,7 +127,7 @@ frames look worse than AE is a short list of specific wrong choices, most of the
   step the preset ladder.
 
 ### 12. Viewer colour — major
-- **Partly fixed 2026-11-03:** View ▸ Adjust Exposure applies on the OCIO route. Not done: 8-bit output surface, screen-fixed checkerboard, gamma-space compositing option.
+- **Partly fixed 2026-11-03:** View ▸ Adjust Exposure applies on the OCIO route. The transparency grid's cell is 16 screen px at the view's zoom (power of two). Not done: 8-bit output surface, gamma-space compositing option.
 - Output slots are RGBA8 (`shared_texture_ffi.cpp:88`), canvas has no `colorSpace`, so no HDR or P3
   display; PQ/HLG display transforms are tone-mapped onto 8-bit SDR.
 - `render_graph/passes.cpp:88-91`: exposure is not applied on the OCIO route — View ▸ Adjust
@@ -154,7 +154,7 @@ frames look worse than AE is a short list of specific wrong choices, most of the
   comparison sampler; RGBA transmission map; always pack `RenderShade3D` when any light exists.
 
 ### 14. Blur / vector / text quality — major to minor
-- **Partly fixed 2026-11-03:** Fast Box Blur is a true box × Iterations; Repeat Edge Pixels on footage; adjustment layers honour their blend mode; Luminescent Premul keeps colour past alpha; Alpha Add sums coverage; hardware Multiply keeps the backdrop; shutter up to 720°. Gaussian Blur past σ 16 texels runs on a half / quarter pyramid level; Corner Pin anti-aliases its edges and supersamples where it shrinks; mask feather already has AE's Linear (distance) falloff beside Smooth. Not done: Bézier path operators, float text/shape rasters, parent/expression motion blur, scrub latency.
+- **Partly fixed 2026-11-03:** Fast Box Blur is a true box × Iterations; Repeat Edge Pixels on footage; adjustment layers honour their blend mode; Luminescent Premul keeps colour past alpha; Alpha Add sums coverage; hardware Multiply keeps the backdrop; shutter up to 720°. Gaussian Blur past σ 16 texels runs on a half / quarter pyramid level; Corner Pin anti-aliases its edges and supersamples where it shrinks; mask feather already has AE's Linear (distance) falloff beside Smooth. Motion blur samples are the layer's WORLD pose at each sample time (parents' motion and transform expressions included). Path operators flatten at the layer's world scale (a segment every 2.5 screen px, not layer px). (Dithering the 8-bit gradient rasters was tried and reverted: a blend like Pin Light turned the ±1 dither into visible speckle — banding waits for float rasters.) Not done: true Bézier output from path operators, float text/shape rasters, scrub latency.
 - `blur.wgsl:160-162`: above σ ≈ 12 taps are spaced > 1 texel with bilinear filling, no pyramid;
   `fast-box-blur` is the same Gaussian, not a box; no Repeat Edge Pixels on gaussian-blur/blur.
 - `scene/path_ops.cpp:188-216`: Trim/Offset/Round Corners/Merge flatten Béziers to 2.5 px

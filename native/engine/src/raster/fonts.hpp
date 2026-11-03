@@ -64,6 +64,9 @@ struct FaceInfo {
   std::string file;
   /// Face index inside a collection (.ttc).
   int ttcIndex = 0;
+  /// A variable face registered as one named weight ("Bahnschrift Light"):
+  /// its `wght` axis is held there whatever weight is asked for. 0 = not held.
+  int pinWeight = 0;
 };
 
 /// A variation axis setting ('wght' 700).

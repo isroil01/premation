@@ -88,6 +88,8 @@ struct CompOverrides {
   /// A viewport's Draft 3D and transparency grid (with_viewport_view).
   bool draft3d = false;
   bool transparencyGrid = false;
+  /// The grid's cell in comp px (≈ 16 screen px at the view's zoom); 0 = 16.
+  double transparencyGridCell = 0;
 };
 
 /// The file half of build_native_frame: `snap` flattened (build_frame_scene)

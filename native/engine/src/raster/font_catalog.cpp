@@ -339,6 +339,53 @@ std::string generic_family_default(std::string_view family) {
   return std::string(family);
 }
 
+std::optional<WeightVariant> split_weight_variant(std::string_view family) {
+  static constexpr std::array<std::pair<std::string_view, int>, 20> kWeights{{
+      {"thin", 100},      {"hairline", 100},  {"extralight", 200}, {"ultralight", 200}, {"light", 300},
+      {"semilight", 350}, {"demilight", 350}, {"regular", 400},    {"normal", 400},     {"book", 400},
+      {"medium", 500},    {"semibold", 600},  {"demibold", 600},   {"bold", 700},       {"extrabold", 800},
+      {"ultrabold", 800}, {"black", 900},     {"heavy", 900},      {"extrablack", 950}, {"ultrablack", 950},
+  }};
+  static constexpr std::array<std::string_view, 9> kWidths{"ultracondensed", "extracondensed", "condensed",
+                                                           "semicondensed",  "narrow",         "semiexpanded",
+                                                           "expanded",       "extraexpanded",  "ultraexpanded"};
+  std::vector<std::string> words;
+  for (std::size_t i = 0; i < family.size();) {
+    const std::size_t end = std::min(family.find(' ', i), family.size());
+    if (end > i) words.emplace_back(family.substr(i, end - i));
+    i = end + 1;
+  }
+  // A width word may follow the weight ("SemiBold Condensed"); it stays in the family.
+  std::string width;
+  if (!words.empty() && std::ranges::find(kWidths, lower(words.back())) != kWidths.end()) {
+    width = words.back();
+    words.pop_back();
+  }
+  const auto weightOf = [](const std::string& w) -> std::optional<int> {
+    for (const auto& [name, v] : kWeights) {
+      if (name == w) return v;
+    }
+    return std::nullopt;
+  };
+  std::optional<int> weight;
+  std::size_t used = 0;
+  if (words.size() >= 3) {  // "Extra Light", "Semi Bold"
+    weight = weightOf(lower(words[words.size() - 2]) + lower(words.back()));
+    used = 2;
+  }
+  if (!weight && words.size() >= 2) {
+    weight = weightOf(lower(words.back()));
+    used = 1;
+  }
+  if (!weight) return std::nullopt;
+  words.resize(words.size() - used);
+  if (!width.empty()) words.push_back(width);
+  WeightVariant out;
+  out.weight = *weight;
+  for (const auto& w : words) out.family += (out.family.empty() ? "" : " ") + w;
+  return out;
+}
+
 std::optional<CatalogFace> resolve_system_font(std::string_view family, int weight, bool italic) {
   const std::shared_ptr<const std::vector<CatalogFace>> held = system_font_catalog();
   const std::vector<CatalogFace>& faces = *held;
@@ -359,6 +406,9 @@ std::optional<CatalogFace> resolve_system_font(std::string_view family, int weig
   // Blink retries once with the alternate name (Arial ↔ Helvetica, Courier ↔ Courier New, …).
   const std::string alt(blink_alternate_family(mapped));
   if (!alt.empty()) return lookup(alt);
+#if defined(_WIN32)
+  if (const auto v = split_weight_variant(mapped)) return match_face(faces, v->family, v->weight, italic);
+#endif
   return std::nullopt;
 #endif
 }

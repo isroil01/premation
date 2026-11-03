@@ -370,6 +370,9 @@ struct SnapshotComp {  // NOLINT(bugprone-exception-escape): MSVC's std::map all
   /// comp draws a checkerboard where it is transparent instead of its
   /// background. Viewer-only — never in an export, a thumbnail or a precomp.
   bool transparencyGrid = false;
+  /// Its cell in comp px: 16 SCREEN px at the viewer's zoom, to the nearest power
+  /// of two (AE's grid does not zoom with the picture); 0 = 16 comp px.
+  double transparencyGridCell = 0;
   /// The comp's Enable Frame Blending switch (absent = on): off gates every layer's.
   bool frameBlending = true;
 };

@@ -506,9 +506,11 @@ export class Workspace implements InputSink {
   onWheel(e: WheelInput): void {
     this.tools.onWheel(e);
     // A wheel / pinch zoom that lands within 1.5 % of a ladder stop (100 %, 50 %, 200 %…) takes the stop.
-    const z = this.camera.zoom;
+    // The ladder counts DEVICE pixels per comp pixel (100 % = 1 : 1 on the screen's own pixels).
+    const dpr = this.viewport.devicePixelRatio;
+    const z = this.camera.zoom * dpr;
     const stop = snapZoomToLadder(z);
-    if (stop !== z) this.camera.zoomTo(stop, this.viewport.screenToViewport(e.position));
+    if (stop !== z) this.camera.zoomTo(stop / dpr, this.viewport.screenToViewport(e.position));
     this.reconcile();
     // The view settles on whole device pixels once the wheel goes quiet.
     if (this.wheelSettle !== null) clearTimeout(this.wheelSettle);

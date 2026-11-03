@@ -287,19 +287,31 @@ export class WorkspaceController {
 
   /** Zoom In / Zoom Out step through After Effects' ladder (12.5, 25, 33.3, 50, 100, 200 %…), then settle on device pixels. */
   zoomIn(): void {
-    this.ws.setZoom(zoomLadderStep(this.ws.camera.zoom, 1), this.viewportCenterScreen());
+    const dpr = this.devicePixelRatio();
+    this.ws.setZoom(zoomLadderStep(this.ws.camera.zoom * dpr, 1) / dpr, this.viewportCenterScreen());
   }
 
   zoomOut(): void {
-    this.ws.setZoom(zoomLadderStep(this.ws.camera.zoom, -1), this.viewportCenterScreen());
+    const dpr = this.devicePixelRatio();
+    this.ws.setZoom(zoomLadderStep(this.ws.camera.zoom * dpr, -1) / dpr, this.viewportCenterScreen());
   }
 
+  /**
+   * After Effects' magnification: 100 % is one comp pixel on one DEVICE pixel —
+   * what the export looks like — not one CSS pixel (which a 125 % Windows
+   * display scale resampled by 1.25). The camera's zoom stays CSS px per comp px.
+   */
   setZoomPercent(percent: number): void {
-    this.ws.setZoom(percent / 100, this.viewportCenterScreen());
+    this.ws.setZoom(percent / 100 / this.devicePixelRatio(), this.viewportCenterScreen());
   }
 
   zoomPercent(): number {
-    return Math.round(this.ws.camera.zoom * 100);
+    return Math.round(this.ws.camera.zoom * this.devicePixelRatio() * 100);
+  }
+
+  private devicePixelRatio(): number {
+    const dpr = this.ws.viewport.devicePixelRatio;
+    return Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
   }
 
   /** Frame the whole composition in the viewport, and (re-)enable auto-fit so it

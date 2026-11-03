@@ -105,6 +105,17 @@ bool refresh_system_fonts();
 /// other names come back unchanged.
 [[nodiscard]] std::string generic_family_default(std::string_view family);
 
+/// A family name that ends in a weight word, split: "Segoe UI Semibold" →
+/// {"Segoe UI", 600}, "Bahnschrift Light Condensed" → {"Bahnschrift
+/// Condensed", 300}. Windows' GDI names single faces this way and SVG
+/// exporters write those names into font-family; Blink on Windows retries a
+/// family it does not know without the weight word, at that weight.
+struct WeightVariant {
+  std::string family;
+  int weight = 400;
+};
+[[nodiscard]] std::optional<WeightVariant> split_weight_variant(std::string_view family);
+
 // ── the OS-independent halves, exposed for tests ────────────────────────────
 
 /// find_system_fonts over a given list.

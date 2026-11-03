@@ -17,9 +17,11 @@
 
 #include "raster/canvas.hpp"
 #include "raster/canvas_replay.hpp"
+#include "raster/font_catalog.hpp"
 #include "raster/fonts.hpp"
 #include "raster/optical_kerning.hpp"
 #include "raster/raster_source.hpp"
+#include "raster/svg_render.hpp"
 
 using namespace premation::raster;
 
@@ -457,3 +459,86 @@ TEST_CASE("blur: the fast per-glyph blur stays close to the shader algorithm", "
     if (blur >= 6) CHECK(share < 0.01);
   }
 }
+
+namespace {
+float wght_of(const ShapedText& s) {
+  for (const AxisValue& a : s.axes) {
+    if (a.tag == 0x77676874U) return a.value;  // 'wght'
+  }
+  return -1;
+}
+}  // namespace
+
+TEST_CASE("fonts: a family name ending in a weight word splits into family + weight", "[raster][fonts]") {
+  const auto split = [](std::string_view f) { return split_weight_variant(f); };
+  REQUIRE(split("Segoe UI Semibold"));
+  CHECK(split("Segoe UI Semibold")->family == "Segoe UI");
+  CHECK(split("Segoe UI Semibold")->weight == 600);
+  CHECK(split("Arial Black")->weight == 900);
+  CHECK(split("Montserrat Extra Light")->family == "Montserrat");
+  CHECK(split("Montserrat Extra Light")->weight == 200);
+  CHECK(split("Bahnschrift Light Condensed")->family == "Bahnschrift Condensed");
+  CHECK(split("Bahnschrift Light Condensed")->weight == 300);
+  CHECK_FALSE(split("Bold"));  // a weight word alone is no family
+  CHECK_FALSE(split("Inter"));
+  CHECK_FALSE(split("Segoe UI"));
+}
+
+TEST_CASE("fonts: a variable face held at one weight draws it whatever weight is asked", "[raster][fonts]") {
+  const auto inter = std::filesystem::path(PREMATION_RASTER_FONTS).parent_path() / "../../../../resources/fonts/Inter-opsz-wght.ttf";
+  std::ifstream in(inter, std::ios::binary);
+  REQUIRE(in);
+  const std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  FontSet fonts{FontOptions{}};
+  FaceInfo info;
+  info.family = "Inter Light";
+  info.file = "Inter-opsz-wght.ttf";
+  info.pinWeight = 300;
+  std::string err;
+  REQUIRE(fonts.add_face(info, bytes, err));
+  ShapeRequest r;
+  r.font = *css::parse_font("400 56px \"Inter Light\"");
+  CHECK(wght_of(fonts.shape("Motion", r)) == 300);
+  r.font = *css::parse_font("700 56px \"Inter Light\"");
+  const ShapedText bold = fonts.shape("Motion", r);
+  CHECK(wght_of(bold) == 300);
+  REQUIRE_FALSE(bold.glyphs.empty());
+  CHECK(bold.glyphs.front().fakeBold);  // bold asked of a Light face synthesizes, as for a static Light
+}
+
+#if defined(_WIN32)
+TEST_CASE("fonts: Windows GDI face names (Segoe UI Semibold, Arial Black) resolve to their weight", "[raster][fonts]") {
+  // A user's SVG with font-family 'Segoe UI Semibold' drew in Times New Roman:
+  // DirectWrite lists that face only under "Segoe UI" (user report 2026-11-03).
+  FontSet fonts{FontOptions::chromium_windows()};
+  if (fonts.add_system_family("Segoe UI") == 0) SKIP("Segoe UI is not installed");
+  CHECK(fonts.add_system_family("Segoe UI Semibold") > 0);
+  CHECK(fonts.add_system_family("Segoe UI Light") > 0);
+  CHECK(fonts.add_system_family("Arial Black") > 0);
+  CHECK(fonts.add_system_family("Premation Nonexistent Bold") == 0);
+  ShapeRequest r;
+  const auto width = [&](const char* family) {
+    r.font = *css::parse_font(std::string("400 56px \"") + family + "\"");
+    return fonts.shape("Motion Design", r).width;
+  };
+  const double regular = width("Segoe UI");
+  CHECK(width("Segoe UI Semibold") > regular);
+  CHECK(width("Segoe UI Light") < regular);
+  if (fonts.add_system_family("Bahnschrift Light") > 0) {  // a variable face, held at 300
+    r.font = *css::parse_font("400 56px \"Bahnschrift Light\"");
+    CHECK(wght_of(fonts.shape("Motion", r)) == 300);
+  }
+  // Through the SVG painter on the OS fonts: the GDI name draws exactly what
+  // the base family at that weight draws, not the serif fallback.
+  const auto svgText = [](const std::string& font) {
+    const std::string markup = "<svg xmlns='http://www.w3.org/2000/svg' width='320' height='80'><text x='8' y='60' font-size='48' " +
+                               font + ">Premation</text></svg>";
+    const RasterOutput out = svg::rasterize_svg(markup, svg::RasterizeOptions{});
+    REQUIRE(out.ok);
+    return out.rgba;
+  };
+  const auto gdi = svgText("font-family=\"'Segoe UI Semibold'\"");
+  CHECK(gdi == svgText("font-family='Segoe UI' font-weight='600'"));
+  CHECK(gdi != svgText("font-family='serif'"));
+}
+#endif

@@ -254,6 +254,7 @@ NativeFrame build_native_frame(const BuildContext& c, std::string_view comp, dou
   if (overrides.customViewCamera) sc.customViewCamera = overrides.customViewCamera;
   if (overrides.draft3d) sc.draft3d = true;
   if (overrides.transparencyGrid) sc.transparencyGrid = true;
+  if (overrides.transparencyGridCell > 0) sc.transparencyGridCell = overrides.transparencyGridCell;
   std::optional<MotionBlurCfg> mb;
   if (motionBlur) mb = motion_blur_of(c.d, comp);
   // Expressions that fail while the frame evaluates fall back to their

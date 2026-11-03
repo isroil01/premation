@@ -5,6 +5,8 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -210,4 +212,58 @@ TEST_CASE("a matte source stays a matte when the layer it mattes is hidden", "[s
   REQUIRE(logo != nullptr);
   CHECK_FALSE(logo->isMatteSource);
   CHECK(logo->visible);
+}
+
+TEST_CASE("motion blur: a still child of a moving null blurs with the null's motion, in world space", "[scene][motion-blur]") {
+  // `rig` (a null) moves 0 → 300 px in x over 1 s; `child` sits still at (20, 10) under it, its
+  // motion-blur switch on. AE blurs the child by the parent's motion; samples are world poses.
+  const char* project = R"json({
+    "version":"1.9.0",
+    "scene":{"version":"1.0.0","nodes":[
+      {"id":"comp_root","name":"C","parent":null,"children":["rig"],
+       "transform":{"position":{"x":0,"y":0},"rotation":0,"scale":{"x":1,"y":1}},"visible":true,"locked":false,
+       "components":[{"id":"comp_root_meta","type":"group","props":{"__kind":"group"}}]},
+      {"id":"rig","name":"rig","children":["child"],"parent":"comp_root",
+       "transform":{"position":{"x":0,"y":0},"rotation":0,"scale":{"x":1,"y":1}},
+       "components":[{"id":"rig_t","type":"Transform","props":{"__kind":"null","x":0,"y":100,"rotation":0}}],
+       "visible":true,"locked":false},
+      {"id":"child","name":"child","children":[],"parent":"rig",
+       "transform":{"position":{"x":0,"y":0},"rotation":0,"scale":{"x":1,"y":1}},
+       "components":[
+         {"id":"child_t","type":"Transform","props":{"__kind":"shape","x":20,"y":10,"rotation":0,"width":20,"height":20}},
+         {"id":"child_s","type":"Style","props":{"opacity":100,"fill":"#000"}},
+         {"id":"child_fx","type":"fx","props":{"solid":true,"fill":"#ffffff","motionBlur":true}}],
+       "visible":true,"locked":false}
+    ]},
+    "animation":{"tracks":{"rig":{"x":[{"t":0,"value":0},{"t":1,"value":300}]}},"expressions":{}},
+    "comps":{"comp_root":{"id":"comp_root","name":"C","width":320,"height":220,"fps":30,"durationSeconds":10,"background":"#0c0c12"}},
+    "motionBlur":{"enabled":true,"shutterAngle":180,"shutterPhase":-90,"samples":8,"adaptiveSampleLimit":128}
+  })json";
+  const auto parsed = premation::js::parse(project);
+  REQUIRE(parsed.has_value());
+  doc::Document d;
+  doc::EditorView view;
+  doc::ExprCache cache;
+  (void)doc::restore_document(d, view, *parsed, {});
+  const doc::DocExprEnv env(d, view, cache);
+  sc::BuildContext ctx{d, view, env, cache, nullptr, {}};
+  const sc::SnapshotComp comp = sc::snapshot_comp_of(d, "comp_root");
+  const std::optional<sc::MotionBlurCfg> mb(sc::motion_blur_of(d, "comp_root"));
+  const sc::Snapshot s = sc::build_snapshot(ctx, comp, 0.5, mb);
+  const sc::RLayer* child = layer(s, "child");
+  REQUIRE(child != nullptr);
+  // At 0.5 s the rig is at x 150: the child at 170 in the world.
+  CHECK(child->x == Approx(170).margin(0.5));
+  REQUIRE(child->motionSamples.size() > 1);
+  // The samples span the shutter (180° at 30 fps: 1/60 s → 5 px of rig travel) around the world pose.
+  double lo = 1e9;
+  double hi = -1e9;
+  for (const sc::MotionSample& m : child->motionSamples) {
+    lo = std::min(lo, m.x);
+    hi = std::max(hi, m.x);
+    CHECK(m.y == Approx(110).margin(0.5));
+  }
+  CHECK(hi - lo == Approx(5).margin(1));
+  CHECK(lo >= 160);
+  CHECK(hi <= 180);
 }

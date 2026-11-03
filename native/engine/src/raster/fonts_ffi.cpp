@@ -515,6 +515,10 @@ bool FontSet::add_face(const FaceInfo& info, std::span<const std::uint8_t> bytes
   if (hb_ot_var_find_axis_info(face->face.get(), HB_OT_TAG_VAR_AXIS_WEIGHT, &wght) != 0 && wght.min_value < wght.max_value) {
     face->wghtMin = static_cast<int>(std::lround(wght.min_value));
     face->wghtMax = static_cast<int>(std::lround(wght.max_value));
+    if (info.pinWeight >= face->wghtMin && info.pinWeight <= face->wghtMax) {
+      face->wghtMin = face->wghtMax = info.pinWeight;
+      face->info.weight = info.pinWeight;
+    }
   }
   hb_ot_var_axis_info_t opsz{};
   if (hb_ot_var_find_axis_info(face->face.get(), HB_OT_TAG_VAR_AXIS_OPTICAL_SIZE, &opsz) != 0 && opsz.min_value < opsz.max_value) {
@@ -557,7 +561,15 @@ std::size_t FontSet::add_system_family(const std::string& family) {
   }
   const sk_sp<SkFontMgr> sys = SkFontMgr_New_DirectWrite();
   if (!sys) return 0;
-  const sk_sp<SkFontStyleSet> set = sys->matchFamily(real.c_str());
+  sk_sp<SkFontStyleSet> set = sys->matchFamily(real.c_str());
+  // A GDI face name ("Segoe UI Semibold", "Arial Black", "Montserrat Light"),
+  // which DirectWrite lists only under its base family: as Blink, the base
+  // family's face nearest that weight (split_weight_variant).
+  std::optional<WeightVariant> variant;
+  if (!set || set->count() == 0) {
+    variant = split_weight_variant(real);
+    if (variant) set = sys->matchFamily(variant->family.c_str());
+  }
   if (!set) return 0;
   std::size_t added = 0;
   // DirectWrite lists a family's SIMULATED faces beside the real ones ("Arial
@@ -570,6 +582,7 @@ std::size_t FontSet::add_system_family(const std::string& family) {
   // each distinct file (bytes + collection index) is registered once; a style
   // the family really lacks is synthesized by the shaper, as for bundled faces.
   std::vector<std::pair<std::uint64_t, int>> seen;
+  std::vector<std::pair<FaceInfo, std::vector<std::uint8_t>>> found;
   for (int i = 0; i < set->count(); ++i) {
     const sk_sp<SkTypeface> tf = set->createTypeface(i);
     if (!tf) continue;
@@ -588,6 +601,20 @@ std::size_t FontSet::add_system_family(const std::string& family) {
     info.italic = own ? own->italic : tf->fontStyle().slant() != SkFontStyle::kUpright_Slant;
     info.file = "system:" + real;
     info.ttcIndex = ttc;
+    found.emplace_back(std::move(info), std::move(bytes));
+  }
+  if (variant) {
+    // Only the faces at the weight nearest the variant's (heavier on a tie past
+    // 500, as CSS matching leans); a variable face is held at the variant's weight.
+    const auto dist = [&](const FaceInfo& f) {
+      return std::abs(f.weight - variant->weight) * 2 + ((f.weight > variant->weight) == (variant->weight <= 500) ? 1 : 0);
+    };
+    int best = std::numeric_limits<int>::max();
+    for (const auto& [info, bytes] : found) best = std::min(best, dist(info));
+    std::erase_if(found, [&](const auto& f) { return dist(f.first) != best; });
+    for (auto& [info, bytes] : found) info.pinWeight = variant->weight;
+  }
+  for (const auto& [info, bytes] : found) {
     std::string err;
     if (add_face(info, bytes, err)) ++added;
   }
@@ -880,7 +907,10 @@ ShapedText FontSet::shape(std::string_view text, const ShapeRequest& req) const 
     return std::ranges::none_of(out.axes, [tag](const AxisValue& a) { return a.tag == tag; });
   };
   if (setAxis(HB_OT_TAG_VAR_AXIS_WEIGHT) && usedFace([](const Impl::Face& f) { return f.wghtMax > 0; })) {
-    out.axes.push_back({HB_OT_TAG_VAR_AXIS_WEIGHT, static_cast<float>(req.font.weight)});
+    // A held axis (FaceInfo::pinWeight) has min == max.
+    const auto& p = *impl.faces[static_cast<std::size_t>(primary)];
+    const int w = p.wghtMax > 0 && p.wghtMin == p.wghtMax ? p.wghtMax : req.font.weight;
+    out.axes.push_back({HB_OT_TAG_VAR_AXIS_WEIGHT, static_cast<float>(w)});
   }
   if (setAxis(HB_OT_TAG_VAR_AXIS_OPTICAL_SIZE) && req.font.sizePx > 0 && usedFace([](const Impl::Face& f) { return f.has_opsz(); })) {
     // Clamped to the primary's axis and whole units: each value is a typeface

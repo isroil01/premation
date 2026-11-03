@@ -560,6 +560,7 @@ class EngineFrameBuilder final : public FrameBuilder, public TextQueries, public
       ov.customViewCamera = sc.customViewCamera;
       ov.draft3d = sc.draft3d;
       ov.transparencyGrid = sc.transparencyGrid;
+      ov.transparencyGridCell = sc.transparencyGridCell;
       // The Layer panel draws the layer at its own size, centred in the comp's
       // frame: the comp's clip cut whatever of it falls outside the composition (a
       // picture wider or taller than the comp) along a straight line.

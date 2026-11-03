@@ -392,7 +392,16 @@ class Walk final : public Scene3DHost {
   void mask_motion_samples(Json& mask, const doc::Node& n);
   void motion_samples(RLayer& l, const doc::Node& n, const Base& base, const std::string& id,
                       const std::function<Scene3D::MotionPose(double, double)>& matrixAt = {},
-                      const std::function<std::optional<std::array<double, 8>>(double, double)>& quadAt = {});
+                      const std::function<std::optional<std::array<double, 8>>(double, double)>& quadAt = {},
+                      bool world = true);
+  /// A node's own 2D transform at comp time `tc` (its clip time, keyframes AND
+  /// expressions — anim_evaluate_node), for motion-blur samples.
+  xf::Local2D local_at(const std::string& id, double tc);
+  /// The node's world transform at comp time `tc`: every ancestor's local_at
+  /// composed down (world_matrix's chain, at another time).
+  xf::Local2D world_at(const std::string& id, double tc);
+  /// Whether the node's 2D transform moves over time: a key on it, or an expression.
+  bool transform_moves(const std::string& id);
   void text_fields(RLayer& l, const doc::Node& n, const Base& base, const Values& a);
   void attach_precomps(std::vector<RLayer>& list);
 
@@ -978,7 +987,7 @@ RLayer Walk::precomp_container(const doc::Node& group, std::optional<NestedComp>
     } else {
       // A comp LAYER's own motion blur: the walk's samples on its local pose,
       // carried onto the world pose (the parent chain held still).
-      motion_samples(l, group, gb, group.id);
+      motion_samples(l, group, gb, group.id, {}, {}, false);
       if (!l.motionSamples.empty()) {
         LocalPose now;
         now.x = gv.get("x").value_or(gb.x);
@@ -1005,9 +1014,58 @@ void Walk::attach_precomps(std::vector<RLayer>& list) {
   }
 }
 
+xf::Local2D Walk::local_at(const std::string& id, double tc) {
+  xf::Local2D l;
+  const doc::Node* n = node(id);
+  if (n == nullptr) return l;
+  const Base b = read_base(*n);
+  const double tt = remap(id, tc, true);
+  std::optional<double> x, y, rotation, scale, scaleX, scaleY;
+  for (const auto& [prop, v] : doc::anim_evaluate_node(d_, c_.expr, c_.cache, sid(id), tt)) {
+    if (wn_->is_overridden(id, prop)) continue;
+    if (prop == "x") x = v;
+    else if (prop == "y") y = v;
+    else if (prop == "rotation") rotation = v;
+    else if (prop == "scale") scale = v;
+    else if (prop == "scaleX") scaleX = v;
+    else if (prop == "scaleY") scaleY = v;
+  }
+  l.x = x.value_or(b.x);
+  l.y = y.value_or(b.y);
+  l.rotation = rotation.value_or(b.rotation);
+  l.scale_x = scaleX.value_or(scale.value_or(b.scaleX));
+  l.scale_y = scaleY.value_or(scale.value_or(b.scaleY));
+  return l;
+}
+
+xf::Local2D Walk::world_at(const std::string& id, double tc) {
+  xf::Mat2D w = xf::local_matrix(local_at(id, tc));
+  std::optional<std::string> p = parent_of(id);
+  for (int depth = 0; p && depth < 64; ++depth) {
+    if (node(*p) == nullptr) break;
+    w = xf::multiply(xf::local_matrix(local_at(*p, tc)), w);
+    p = parent_of(*p);
+  }
+  return xf::matrix_to_local(w);
+}
+
+bool Walk::transform_moves(const std::string& id) {
+  static constexpr std::array<std::string_view, 6> kProps = {"x", "y", "rotation", "scale", "scaleX", "scaleY"};
+  if (std::ranges::any_of(kProps, [&](std::string_view p) { return !wn_->is_overridden(id, p) && doc::anim_is_animated(d_, sid(id), p); })) {
+    return true;
+  }
+  const doc::NodeAnim* a = d_.anim(sid(id));
+  if (a == nullptr) return false;
+  for (const auto& [prop, st] : a->exprs) {
+    if (st.enabled && std::ranges::find(kProps, std::string_view(prop)) != kProps.end()) return true;
+  }
+  return false;
+}
+
 void Walk::motion_samples(RLayer& l, const doc::Node& n, const Base& base, const std::string& id,
                           const std::function<Scene3D::MotionPose(double, double)>& matrixAt,
-                          const std::function<std::optional<std::array<double, 8>>(double, double)>& quadAt) {
+                          const std::function<std::optional<std::array<double, 8>>(double, double)>& quadAt,
+                          bool world) {
   if (!mb_) return;
   // Force Motion Blur (forceMotionBlur.ts readForceMotionBlur) overrides the two opt-ins.
   std::optional<MotionBlurCfg> forced;
@@ -1033,8 +1091,21 @@ void Walk::motion_samples(RLayer& l, const doc::Node& n, const Base& base, const
       "orientationX", "orientationY", "orientationZ"};
   const bool moves = std::ranges::any_of(
       kMoves, [&](std::string_view p) { return !wn_->is_overridden(id, p) && doc::anim_is_animated(d_, sid(id), p); });
+  // A 2D layer also moves when a parent does, or an expression drives its
+  // transform: its samples are then its WORLD pose at each sample time (AE).
+  bool chainMoves = false;
+  if (!matrixAt && world) {
+    chainMoves = transform_moves(id);
+    std::optional<std::string> p = parent_of(id);
+    for (int depth = 0; p && !chainMoves && depth < 64; ++depth) {
+      if (node(*p) == nullptr) break;
+      chainMoves = transform_moves(*p);
+      p = parent_of(*p);
+    }
+  }
   // A 3D layer also moves on screen when the camera does.
-  if (!moves && !(matrixAt && three_ && three_->camera_animated())) return;
+  if (!moves && !chainMoves && !(matrixAt && three_ && three_->camera_animated())) return;
+  const bool worldSamples = !matrixAt && world;
   const auto sample = [&](std::string_view prop, double tt) { return anim_sample_of(id, prop, tt); };
   const double limit = cfg.adaptiveSampleLimit;
   const std::vector<double> probe = motion_blur_sample_times(t_, cfg.fps, cfg.shutterAngle, 2, cfg.shutterPhase, limit);
@@ -1072,8 +1143,12 @@ void Walk::motion_samples(RLayer& l, const doc::Node& n, const Base& base, const
       p.sy = sc ? *sc : sample("scaleY", tt).value_or(base.scaleY);
       return p;
     };
-    const P a = at(ta);
-    const P b = at(tb);
+    const auto worldP = [&](double tc) {
+      const xf::Local2D w = world_at(id, tc);
+      return P{w.x, w.y, w.rotation, w.scale_x, w.scale_y};
+    };
+    const P a = worldSamples ? worldP(probe.front()) : at(ta);
+    const P b = worldSamples ? worldP(probe.back()) : at(tb);
     const double hd = std::max(0.0, hypot2(base.width.value_or(0), base.height.value_or(0)) / 2);
     const double anchor = hypot2(b.x - a.x, b.y - a.y);
     const double rot = std::abs(b.r - a.r) * (std::numbers::pi / 180) * hd;
@@ -1089,11 +1164,21 @@ void Walk::motion_samples(RLayer& l, const doc::Node& n, const Base& base, const
     const auto sc = sample("scale", ti);
     const auto op = sample("opacity", ti);
     MotionSample s;
-    s.x = sample("x", ti).value_or(base.x);
-    s.y = sample("y", ti).value_or(base.y);
-    s.rotation = sample("rotation", ti).value_or(base.rotation);
-    s.scaleX = sc ? *sc : sample("scaleX", ti).value_or(base.scaleX);
-    s.scaleY = sc ? *sc : sample("scaleY", ti).value_or(base.scaleY);
+    if (worldSamples) {
+      // The world pose at this instant: parents' motion and expressions included.
+      const xf::Local2D w = world_at(id, tc);
+      s.x = w.x;
+      s.y = w.y;
+      s.rotation = w.rotation;
+      s.scaleX = w.scale_x;
+      s.scaleY = w.scale_y;
+    } else {
+      s.x = sample("x", ti).value_or(base.x);
+      s.y = sample("y", ti).value_or(base.y);
+      s.rotation = sample("rotation", ti).value_or(base.rotation);
+      s.scaleX = sc ? *sc : sample("scaleX", ti).value_or(base.scaleX);
+      s.scaleY = sc ? *sc : sample("scaleY", ti).value_or(base.scaleY);
+    }
     s.opacity = op ? *op / 100 : base.opacity;
     if (matrixAt) {
       const Scene3D::MotionPose pose = matrixAt(ti, tc);
@@ -2668,8 +2753,9 @@ Snapshot Walk::run() {
     grid.height = comp_.height;
     grid.fill = "#3d3d3d";
     Json params = Json::object();
-    params.set("width", Json::number(16));
-    params.set("height", Json::number(16));
+    const double cell = comp_.transparencyGridCell > 0 ? comp_.transparencyGridCell : 16;
+    params.set("width", Json::number(cell));
+    params.set("height", Json::number(cell));
     params.set("anchorX", Json::number(0));
     params.set("anchorY", Json::number(0));
     params.set("colorA", Json::string("#3d3d3d"));
@@ -2837,6 +2923,10 @@ SnapshotComp snapshot_comp_of(const Document& d, std::string_view comp) {
 SnapshotComp with_viewport_view(SnapshotComp sc, const ViewportConfig& viewport) {
   sc.draft3d = viewport.draft3d;
   sc.transparencyGrid = viewport.transparencyGrid && viewport.layer.empty();
+  if (sc.transparencyGrid && viewport.zoom > 0) {
+    // 16 screen px at this zoom, on a power of two (zooms inside one tier share their frames).
+    sc.transparencyGridCell = 16.0 / std::exp2(std::round(std::log2(viewport.zoom)));
+  }
   if (viewport.view.empty() || viewport.view == "active") return sc;
   if (viewport.view != "custom") {
     sc.camera3dMode = viewport.view;

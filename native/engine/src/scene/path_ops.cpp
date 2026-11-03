@@ -185,14 +185,16 @@ Pt cubic_at(const BPt& a, const BPt& b, double t) {
   return {w0 * a.x + w1 * a.outX + w2 * b.inX + w3 * b.x, w0 * a.y + w1 * a.outY + w2 * b.inY + w3 * b.y};
 }
 
-double adaptive_steps(const BPt& a, const BPt& b) {
+/// `detail`: the layer's world scale (≥ 1) — a segment every 2.5 px ON SCREEN,
+/// so a path the layer scales up does not facet (it was 2.5 layer px).
+double adaptive_steps(const BPt& a, const BPt& b, double detail) {
   const double len = hypot2(a.outX - a.x, a.outY - a.y) + hypot2(b.inX - a.outX, b.inY - a.outY) +
                      hypot2(b.x - b.inX, b.y - b.inY);
-  const double steps = std::ceil(len / 2.5);
-  return jmax(8, jmin(160, steps));
+  const double steps = std::ceil(len * detail / 2.5);
+  return jmax(8, jmin(160 * detail, steps));
 }
 
-Poly flatten_outline(const std::vector<BPt>& pts, bool open) {
+Poly flatten_outline(const std::vector<BPt>& pts, bool open, double detail = 1) {
   const std::size_t n = pts.size();
   Poly out;
   if (n < 2) {
@@ -207,7 +209,7 @@ Poly flatten_outline(const std::vector<BPt>& pts, bool open) {
     // `!==` — NaN handles count as curved, exactly as undefined ones do in JS.
     const bool curved = a.outX != a.x || a.outY != a.y || b.inX != b.x || b.inY != b.y;
     if (curved) {
-      const double steps = adaptive_steps(a, b);
+      const double steps = adaptive_steps(a, b, detail);
       for (double s = 1; s < steps; ++s) out.push_back(cubic_at(a, b, s / steps));
     }
   }
@@ -1073,21 +1075,24 @@ GeometryStatus apply_path_ops(const doc::Node& n, const Values& a, double layerT
   if (ops.empty()) return GeometryStatus::none;
 
   const bool dense = std::ranges::any_of(ops, [](const Op& o) { return o.type == "pucker" || o.type == "twist"; });
+  // The layer's world scale: the outline is flattened finely enough for it on screen.
+  const double detail = std::clamp(std::max(std::abs(layer.scaleX), std::abs(layer.scaleY)), 1.0, 16.0);
   std::vector<Run> seed;
   if (layer.subpaths.is_array() && !layer.subpaths.arr().empty()) {
     for (const Json& sp : layer.subpaths.arr()) {
       const bool open = sp.at("open").is_bool() && sp.at("open").b();
-      seed.push_back({flatten_outline(read_bezier(sp.at("points")), open), !open, std::nullopt, std::nullopt});
+      seed.push_back({flatten_outline(read_bezier(sp.at("points")), open, detail), !open, std::nullopt, std::nullopt});
     }
   } else {
     Poly base;
     if (layer.pathPoints.is_array() && layer.pathPoints.arr().size() > 1) {
-      base = flatten_outline(read_bezier(layer.pathPoints), layer.pathOpen);
+      base = flatten_outline(read_bezier(layer.pathPoints), layer.pathOpen, detail);
     } else {
       // `layer.cornerRadii ?? layer.cornerRadius` (a number rounds all four).
       std::optional<std::array<double, 4>> radii = layer.cornerRadii;
       if (!radii) radii = std::array<double, 4>{layer.cornerRadius, layer.cornerRadius, layer.cornerRadius, layer.cornerRadius};
-      base = shape_outline(layer.primitive, layer.width, layer.height, 48, dense ? 8 : 0, radii, layer.cornerRadiusScale);
+      base = shape_outline(layer.primitive, layer.width, layer.height, std::min(256.0, 48 * detail), dense ? 8 : 0, radii,
+                           layer.cornerRadiusScale);
     }
     seed.push_back({std::move(base), !layer.pathOpen, std::nullopt, std::nullopt});
   }
