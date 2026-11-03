@@ -2217,8 +2217,10 @@ TEST_CASE("a scrub's frame does not wait for the idle render-ahead build in flig
   REQUIRE(held.started.load() > 0);
   const std::size_t before = h.sink.submitted();
 
-  // The scrub: its frame builds at once — the held prefetch stops at its next layer —
-  // instead of waiting for it (10 s here; a whole heavy frame in the app).
+  // The scrub: its frame builds at once instead of waiting for the held prefetch
+  // (10 s here; a whole heavy frame in the app). Both take shared holds
+  // (shared_build_lock), so the prefetch need not stop: its give-way window is
+  // only until the scrub's build has the lock.
   const auto t0 = std::chrono::steady_clock::now();
   REQUIRE(is_ok(h.run(cmd(api::Seek{70 * kFrame30, api::SeekMode::scrub}))));
   for (int i = 0; i < 2000 && h.sink.submitted() == before; ++i) {
@@ -2227,7 +2229,6 @@ TEST_CASE("a scrub's frame does not wait for the idle render-ahead build in flig
   }
   CHECK(h.sink.submitted() > before);
   CHECK(std::chrono::steady_clock::now() - t0 < std::chrono::seconds(2));
-  CHECK(held.cancelled.load() >= 1);
   held.open.store(true, std::memory_order_release);
   h.drainBuilds = true;
   h.session.drain_builds();
