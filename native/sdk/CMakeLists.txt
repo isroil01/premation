@@ -119,7 +119,8 @@ premation_sample_plugin(ppmseq samples/ppmseq/ppmseq.cpp)           # SDK 1.2: a
 premation_sample_plugin(mathfns samples/mathfns/mathfns.cpp)  # SDK 1.4: expression functions + an interpolator (E1/E2)
 premation_sample_plugin(channels samples/channels/channels.cpp)
 premation_sample_plugin(scatter samples/scatter/scatter.cpp)
-premation_sample_plugin(mlstyle samples/mlstyle/mlstyle.cpp)  # SDK 1.4 (M): an ONNX model run through the ML suite (pr_ml.h)  # SDK 1.4 (U): a VIEWER TOOL (manifest `tools`) run by a command  # SDK 1.4 (C): PUBLISHED CHANNELS (publish_channel / read_channel)
+premation_sample_plugin(mlstyle samples/mlstyle/mlstyle.cpp)  # SDK 1.4 (M): an ONNX model run through the ML suite (pr_ml.h)
+premation_sample_plugin(meshgen samples/meshgen/meshgen.cpp)  # SDK 1.4 (D): meshes and a light in the comp's 3D scene  # SDK 1.4 (U): a VIEWER TOOL (manifest `tools`) run by a command  # SDK 1.4 (C): PUBLISHED CHANNELS (publish_channel / read_channel)
 premation_sample_plugin(bounce samples/bounce/bounce.cpp)  # SDK 1.4: a SIMULATION (PR_OUT_FLAG_STATEFUL, SIM_STEP, get_sim_state)
 premation_sample_plugin(chartlayer samples/chartlayer/chartlayer.cpp)  # SDK 1.4: a plugin LAYER TYPE (manifest layerTypes) drawn by a generator
 premation_sample_plugin(statspanel samples/statspanel/statspanel.cpp)  # SDK 1.2: a panel without an effect (+ a command)

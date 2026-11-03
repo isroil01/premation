@@ -898,3 +898,45 @@ TEST_CASE("SDK 1.4 C: a controller's published channel reaches its readers in th
     for (const sc::LayerError& e : errors) CHECK(e.message.find("cycle") != std::string::npos);
   }
 }
+
+TEST_CASE("SDK 1.4 D: a plugin's mesh and light join the comp's 3D scene", "[plugins][finish][scene3d]") {
+  Json document = scene_json("plugin-model3d-occlusion.json");
+  Json* node = find_node(document, "solid");
+  REQUIRE(node != nullptr);
+  // A 3D layer (z set), drawing Mesh Cube instead of the model.
+  for (Json& c : node->find_mut("components")->arr_mut()) {
+    if (c.at("type").str() == "Transform") c.find_mut("props")->set("z", Json::number(0));
+  }
+  Json::Array effects;
+  effects.push_back(effect_json("fx", "com.premation.samples.meshgen"));
+  fx_props(*node).set("effects", Json::array(std::move(effects)));
+  Fixture f(std::move(document));
+  const sc::BuildContext ctx{f.d, f.view, *f.env, f.cache, nullptr, {}};
+  const sc::ViewSpec vs = sc::export_view(480, 360, 480, 360);
+  sc::NativeFrame nf = sc::build_native_frame(ctx, "comp_root", 0.5, vs, false);
+  const std::size_t lightsBefore = nf.file.scene.lights3d.size();
+  pl::finish_native_frame(ctx, "comp_root", 0.5, vs, false, nf, f.host.get());
+  for (const sc::LayerError& e : nf.errors) INFO(e.message);
+  const auto& list = nf.file.scene.renderables;
+  const auto at = std::ranges::find_if(list, [](const api::Renderable& r) { return r.id == "solid::plugin-mesh-0"; });
+  REQUIRE(at != list.end());
+  // Right after its layer, on the 3D path, with the plugin's material.
+  REQUIRE(at != list.begin());
+  CHECK(std::prev(at)->id == "solid");
+  const api::Renderable& mesh = *at;
+  REQUIRE(mesh.extruded_mesh.has_value());
+  CHECK(mesh.extruded_mesh->vertices.size() == std::size_t{24} * 8 * 4);
+  CHECK(mesh.extruded_mesh->indices.size() == std::size_t{36} * 4);
+  REQUIRE(mesh.three_d.has_value());
+  REQUIRE(mesh.three_d->model.size() == 16);
+  CHECK(mesh.three_d->casts_shadow == std::optional<bool>(true));
+  REQUIRE(mesh.three_d->shade.has_value());
+  CHECK(std::abs(*mesh.three_d->shade->metal - 0.3) < 1e-9);
+  // Placed by the layer: its centre (layer px 240, 180) lands where the layer's centre is in the comp.
+  const std::vector<double>& m = mesh.three_d->model;
+  CHECK(std::abs((m[0] * 240) + (m[4] * 180) + m[12] - 240) < 1e-6);
+  CHECK(std::abs((m[1] * 240) + (m[5] * 180) + m[13] - 180) < 1e-6);
+  // Its light joins the comp's lights.
+  CHECK(nf.file.scene.lights3d.size() == lightsBefore + 1);
+  CHECK(nf.file.scene.lights3d.back().type == api::RenderLightType::point);
+}

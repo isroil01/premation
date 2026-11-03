@@ -262,6 +262,14 @@ typedef struct PrHostSuite {
   PrErr(PR_CALL* ml_load)(PrHost* host, const char* bundle_path, uint32_t* out_model);
   PrErr(PR_CALL* ml_run)(PrHost* host, uint32_t model, const PrTensor* inputs, uint32_t input_count, PrTensor* outputs, uint32_t output_count);
   PrErr(PR_CALL* ml_provider)(PrHost* host, uint32_t model, char* out, uint32_t capacity);
+
+  /* ── SDK 1.4, the 3D scene (pr_scene.h; appended after ml_provider; check struct_size >=
+   *    offsetof(PrHostSuite, scene_add_light) + sizeof(void*)) ──
+   * PR_CMD_SCENE_CONTRIBUTE only. scene_add_mesh copies the mesh (≤ PR_MAX_SCENE_MESHES per
+   * frame); scene_add_light adds a light (a PrLight with its position and direction in LAYER px,
+   * ≤ 8 per frame). PR_ERR_INVALID_PARAM: a malformed mesh (an index out of range, a NaN). */
+  PrErr(PR_CALL* scene_add_mesh)(PrHost* host, const PrSceneMesh* mesh);
+  PrErr(PR_CALL* scene_add_light)(PrHost* host, const PrLight* light);
 } PrHostSuite;
 
 /* SDK 1.3: ui_text's `align`. */

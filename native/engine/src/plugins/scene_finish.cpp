@@ -338,6 +338,9 @@ class Sampler {
     return in;
   }
 
+  /// SDK 1.4 (D): layer px → comp world px (column-major) at the frame's time.
+  std::optional<motion::xf::Mat4> layer_world(const std::string& layerId) { return eval_.layer_world(layerId, t_); }
+
   void layer_matrices(api::RenderEffect& e, const EffectSpec& spec) {
     for (const ParamSpec& s : spec.params) {
       if (s.type != PR_PARAM_LAYER) continue;
@@ -517,6 +520,126 @@ class Sampler {
 
 }  // namespace
 
+namespace {
+
+/// SDK 1.4 (D): a plugin's mesh as a 3D renderable of the comp (the extruded-mesh path: 8 floats
+/// per vertex, u32 indices), placed by its layer's world matrix.
+api::Renderable contributed_mesh(const api::Renderable& owner, const ContribMesh& m, const motion::xf::Mat4& world, std::size_t i) {
+  api::Renderable r;
+  const std::size_t n = m.positions.size() / 3;
+  api::RenderExtrudedMesh em;
+  em.vertices.reserve(n * 8 * 4);
+  std::uint64_t h = 1469598103934665603ULL;
+  const auto put = [&](float f) {
+    std::uint32_t bits = 0;
+    std::memcpy(&bits, &f, sizeof bits);
+    for (std::uint32_t k = 0; k < 4; ++k) {
+      const auto b = static_cast<std::uint8_t>((bits >> (8U * k)) & 0xFFU);
+      em.vertices.push_back(b);
+      h = (h ^ b) * 1099511628211ULL;
+    }
+  };
+  for (std::size_t v = 0; v < n; ++v) {
+    for (std::size_t k = 0; k < 3; ++k) put(m.positions[(3 * v) + k]);
+    const float nx = m.normals[3 * v], ny = m.normals[(3 * v) + 1], nz = m.normals[(3 * v) + 2];
+    const float len = std::sqrt((nx * nx) + (ny * ny) + (nz * nz));
+    put(len > 0 ? nx / len : 0.0F);
+    put(len > 0 ? ny / len : 0.0F);
+    put(len > 0 ? nz / len : 1.0F);
+    put(m.uvs[2 * v]);
+    put(m.uvs[(2 * v) + 1]);
+  }
+  em.indices.reserve(m.indices.size() * 4);
+  for (const std::uint32_t ix : m.indices) {
+    for (std::uint32_t k = 0; k < 4; ++k) {
+      const auto b = static_cast<std::uint8_t>((ix >> (8U * k)) & 0xFFU);
+      em.indices.push_back(b);
+      h = (h ^ b) * 1099511628211ULL;
+    }
+  }
+  em.index_format = api::RenderIndexFormat::uint32;
+  r.id = owner.id + "::plugin-mesh-" + std::to_string(i);
+  char key[17];
+  std::snprintf(key, sizeof key, "%016llx", static_cast<unsigned long long>(h));
+  em.key = r.id + "#" + key;  // the GPU buffers are kept by key: new geometry, new key
+  api::RenderMeshRange range;
+  range.role = api::RenderMeshRole::front;
+  range.first = 0;
+  range.count = static_cast<std::uint32_t>(m.indices.size());
+  range.color.r = m.color[0];
+  range.color.g = m.color[1];
+  range.color.b = m.color[2];
+  range.color.a = m.color[3];
+  range.gain = 1;
+  em.ranges.push_back(range);
+  em.surface = api::RenderMeshSurface::uv;
+  em.surface_width = 1;
+  em.surface_height = 1;
+  r.extruded_mesh = std::move(em);
+  r.kind = api::RenderableKind::rect;
+  r.model_matrix = owner.model_matrix;
+  r.bounds = owner.bounds;
+  r.opacity = owner.opacity;
+  r.blend = api::RenderBlendMode::normal;
+  r.sampling = owner.sampling;
+  r.color = api::Color{1, 1, 1, 1};
+  api::RenderThreeD t;
+  const motion::xf::Mat4 local = [&] {
+    motion::xf::Mat4 x{};
+    std::ranges::copy(m.transform, x.begin());
+    return x;
+  }();
+  const motion::xf::Mat4 model = motion::xf::multiply(world, local);
+  t.model.assign(model.begin(), model.end());
+  t.casts_shadow = m.castsShadows;
+  t.accepts_shadows = m.acceptsShadows;
+  api::RenderShade3D shade;
+  shade.specular = 0.5;
+  shade.shininess = 5 + ((1 - m.roughness) * 95);
+  shade.metal = m.metallic;
+  shade.roughness = m.roughness;
+  shade.accepts_shadows = m.acceptsShadows;
+  t.shade = shade;
+  r.three_d = std::move(t);
+  return r;
+}
+
+/// SDK 1.4 (D): a plugin's light (layer px) as a comp light.
+api::RenderLight3D contributed_light(const ContribLight& l, const motion::xf::Mat4& world) {
+  const auto apply = [&](const std::array<double, 3>& p) {
+    return std::array<double, 3>{(world[0] * p[0]) + (world[4] * p[1]) + (world[8] * p[2]) + world[12],
+                                 (world[1] * p[0]) + (world[5] * p[1]) + (world[9] * p[2]) + world[13],
+                                 (world[2] * p[0]) + (world[6] * p[1]) + (world[10] * p[2]) + world[14]};
+  };
+  api::RenderLight3D o;
+  o.type = l.type == PR_LIGHT_PARALLEL ? api::RenderLightType::parallel
+           : l.type == PR_LIGHT_SPOT   ? api::RenderLightType::spot
+           : l.type == PR_LIGHT_POINT  ? api::RenderLightType::point
+                                       : api::RenderLightType::ambient;
+  o.color = {l.color[0], l.color[1], l.color[2]};
+  o.gain = l.intensity;
+  const std::array<double, 3> p = apply(l.position);
+  const std::array<double, 3> aim = apply({l.position[0] + l.direction[0], l.position[1] + l.direction[1], l.position[2] + l.direction[2]});
+  o.x = p[0];
+  o.y = p[1];
+  o.z = p[2];
+  o.aim_x = aim[0];
+  o.aim_y = aim[1];
+  o.aim_z = aim[2];
+  o.half_cone_rad = l.coneAngle / 2;
+  o.cone_feather_rad = l.coneFeather;
+  o.falloff_mode = l.falloff;
+  o.falloff_distance = l.falloffDistance;
+  if (l.castsShadows) {
+    o.shadow_map = true;
+    o.shadow_darkness = l.shadowDarkness;
+    o.shadow_diffusion = l.shadowDiffusion;
+  }
+  return o;
+}
+
+}  // namespace
+
 void finish_native_frame(const scene::BuildContext& c, std::string_view comp, double t, const scene::ViewSpec& view,
                          bool motionBlur, scene::NativeFrame& frame, PluginHost* host, double simBudgetMs) {
   // Frames are built on several threads (the session's prefetch workers); a
@@ -534,6 +657,14 @@ void finish_native_frame(const scene::BuildContext& c, std::string_view comp, do
   const double compW = frame.file.scene.width;
   const double compH = frame.file.scene.height;
   std::vector<Want> wants;
+  // SDK 1.4 (D): instances that add meshes / lights to the comp's 3D scene (after the loop).
+  struct Contribution {
+    api::RenderEffect entry;
+    const EffectSpec* spec;
+    std::string ownerId, layerId, docLayer, effectId, instance;
+    std::int64_t lt;
+  };
+  std::vector<Contribution> contributions;
   std::set<std::string> reported;
   Sampler sampler(c, comp, t, view, frame.file.scene);
 
@@ -727,6 +858,14 @@ void finish_native_frame(const scene::BuildContext& c, std::string_view comp, do
           param(e, "ch." + n, api::RenderParamKind::numbers).numbers = it->second;
         }
       }
+      if (spec->has(PR_OUT_FLAG_SCENE_CONTRIBUTE)) {
+        if (r.three_d && &list == &frame.file.scene.renderables) {
+          contributions.push_back({e, spec, r.id, layerId, docLayer, effectId, instance, lt});
+        } else if (reported.insert(instance + "#scene").second) {
+          frame.errors.push_back(scene::LayerError{layerId, "", "plugin",
+                                                   matchName + " adds 3D geometry only on a 3D layer of the composition itself"});
+        }
+      }
       if (blurOn && spec->has(PR_OUT_FLAG_USES_SHUTTER)) blursItself = true;
       if (!spec->has(PR_OUT_FLAG_SMART_RENDER)) continue;
       // SMART_PRE_RENDER in the layer's own pixels: the checkouts at other times (WIDE_TIME_INPUT),
@@ -771,6 +910,28 @@ void finish_native_frame(const scene::BuildContext& c, std::string_view comp, do
     // SDK 1.2 (S2): an effect that renders its own motion blur — the layer is not supersampled through it.
     if (blursItself) r.motion_samples.clear();
   });
+
+  // SDK 1.4 (D): what the instances add to the 3D scene, drawn right after their layer.
+  for (const Contribution& q : contributions) {
+    std::vector<ContribMesh> meshes;
+    std::vector<ContribLight> lights;
+    const RenderInputs in = sampler.inputs_at(*q.spec, q.entry, q.docLayer, q.effectId, q.lt);
+    const CallResult cr = host->scene_contribute(in, meshes, lights);
+    if (!cr.ok) {
+      if (!cr.skipped && reported.insert(q.instance + "#scene").second) {
+        frame.errors.push_back(scene::LayerError{q.layerId, "", "plugin", "3D scene: " + cr.message});
+      }
+      continue;
+    }
+    const std::optional<motion::xf::Mat4> world = sampler.layer_world(q.docLayer);
+    List& top = frame.file.scene.renderables;
+    const auto owner = std::ranges::find_if(top, [&](const api::Renderable& x) { return x.id == q.ownerId; });
+    if (!world || owner == top.end()) continue;
+    std::vector<api::Renderable> added;
+    for (std::size_t i = 0; i < meshes.size(); ++i) added.push_back(contributed_mesh(*owner, meshes[i], *world, i));
+    top.insert(owner + 1, std::make_move_iterator(added.begin()), std::make_move_iterator(added.end()));
+    for (const ContribLight& l : lights) frame.file.scene.lights3d.push_back(contributed_light(l, *world));
+  }
 
   if (wants.empty()) return;
   std::map<std::int64_t, scene::NativeFrame> atTime;

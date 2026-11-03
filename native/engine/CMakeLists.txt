@@ -1314,7 +1314,7 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
     target_link_libraries(engine_plugins_scene_tests PRIVATE engine_scene engine_export_core motion::options Catch2::Catch2WithMain)
     target_compile_definitions(engine_plugins_scene_tests PRIVATE PREMATION_PLUGIN_BUNDLES="${PREMATION_PLUGIN_BUNDLES}"
       PREMATION_GOLDEN_SCENES="${CMAKE_CURRENT_SOURCE_DIR}/../../packages/render-tests/scenes")
-    add_dependencies(engine_plugins_scene_tests particles model3d ppmio chartlayer bounce channels grademap mathfns)  # model3d: scene depth at sub-times (S6); ppmio: Collect Files
+    add_dependencies(engine_plugins_scene_tests particles model3d ppmio chartlayer bounce channels grademap mathfns meshgen)  # model3d: scene depth at sub-times (S6); ppmio: Collect Files
     if(MSVC)
       target_compile_options(engine_plugins_scene_tests PRIVATE /bigobj)
     endif()

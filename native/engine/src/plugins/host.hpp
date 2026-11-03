@@ -117,6 +117,30 @@ class OopChannel {
 };
 using OopSpawnFn = std::function<std::unique_ptr<OopChannel>(const std::filesystem::path& bundle, std::string& error)>;
 
+/// SDK 1.4 (D): a mesh an effect added to the comp's 3D scene (layer px), as the host copied it.
+struct ContribMesh {
+  std::vector<float> positions;  ///< xyz
+  std::vector<float> normals;    ///< xyz (computed when the plugin gave none)
+  std::vector<float> uvs;        ///< uv
+  std::vector<std::uint32_t> indices;
+  std::array<double, 16> transform{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+  std::array<double, 4> color{1, 1, 1, 1};
+  double metallic = 0, roughness = 0.5;
+  bool castsShadows = true, acceptsShadows = true;
+};
+
+/// SDK 1.4 (D): a light an effect added (layer px).
+struct ContribLight {
+  std::int32_t type = 2;  ///< PrLightType
+  std::array<double, 3> color{1, 1, 1};
+  double intensity = 1;
+  std::array<double, 3> position{};
+  std::array<double, 3> direction{};
+  double coneAngle = 0, coneFeather = 0, falloffDistance = 0, shadowDarkness = 0, shadowDiffusion = 0;
+  std::int32_t falloff = 0;
+  bool castsShadows = false;
+};
+
 /// SDK 1.4 (C): one frame's published channels, by name.
 using ChannelValues = std::map<std::string, std::vector<double>, std::less<>>;
 
@@ -503,6 +527,8 @@ class PluginHost {
   /// SDK 1.4 (C): PR_CMD_PUBLISH_CHANNELS — the channels the instance publishes this frame
   /// (`in.channels`: the ones it reads, published before it). Crash-guarded like a render.
   CallResult publish_channels(const RenderInputs& in, ChannelValues& out);
+  /// SDK 1.4 (D): PR_CMD_SCENE_CONTRIBUTE — the meshes and lights the instance adds this frame.
+  CallResult scene_contribute(const RenderInputs& in, std::vector<ContribMesh>& meshes, std::vector<ContribLight>& lights);
   /// SDK 1.4 (M): a model of `pluginId`'s bundle ("models/<name>.onnx") as the plugin's model id.
   PrErr ml_load(std::string_view pluginId, std::string_view bundlePath, std::uint32_t& id, std::string& why);
   /// SDK 1.4 (M): run model `id` of `pluginId` (ml.hpp tensors). False + `why`.

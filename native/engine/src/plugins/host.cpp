@@ -83,6 +83,9 @@ struct PrHost {
   std::vector<std::vector<float>> mlOut;
   std::vector<std::vector<std::int64_t>> mlShapes;
   std::vector<std::string> mlNames;
+  /// SDK 1.4 (D) — SCENE_CONTRIBUTE: where scene_add_mesh / scene_add_light write.
+  std::vector<premation::plugins::ContribMesh>* meshes = nullptr;
+  std::vector<premation::plugins::ContribLight>* lights = nullptr;
   /// SDK 1.4 (C) — PUBLISH_CHANNELS: where publish_channel writes.
   premation::plugins::ChannelValues* published = nullptr;
   /// SDK 1.1 — the render selector's inputs and effect (get_comp_camera, …).
@@ -440,7 +443,7 @@ struct PluginHost::Impl {
   static std::string out_of_process_refusal(const EffectSpec& e) {
     constexpr std::uint32_t kNeedsEngine = PR_OUT_FLAG_SEQUENCE_DATA | PR_OUT_FLAG_WIDE_TIME_INPUT | PR_OUT_FLAG_SEND_UPDATE_PARAMS_UI |
                                            PR_OUT_FLAG_CUSTOM_OVERLAY | PR_OUT_FLAG_SAMPLES_TIME | PR_OUT_FLAG_USES_SCENE_DEPTH |
-                                           PR_OUT_FLAG_STATEFUL | PR_OUT_FLAG_PUBLISHES;
+                                           PR_OUT_FLAG_STATEFUL | PR_OUT_FLAG_PUBLISHES | PR_OUT_FLAG_SCENE_CONTRIBUTE;
     if ((e.outFlags & kNeedsEngine) != 0) return "sequence data, other times, overlays, scene depth, a simulation or channels";
     for (const ParamSpec& s : e.params) {
       if (s.type == PR_PARAM_LAYER) return "another layer (a LAYER param)";
@@ -1219,6 +1222,71 @@ PrErr PR_CALL cb_read_channel(PrHost* h, const char* name, double* out, std::uin
   return PR_ERR_NONE;
 }
 
+// SDK 1.4 (D): geometry and lights for the comp's 3D scene.
+PrErr PR_CALL cb_scene_add_mesh(PrHost* h, const PrSceneMesh* m) {
+  if (h == nullptr || h->cmd != PR_CMD_SCENE_CONTRIBUTE || h->meshes == nullptr) return PR_ERR_INVALID_CALLBACK;
+  if (m == nullptr || m->struct_size < sizeof(PrSceneMesh) || m->positions == nullptr || m->indices == nullptr) return PR_ERR_INVALID_PARAM;
+  if (m->vertex_count == 0 || m->vertex_count > PR_MAX_SCENE_VERTICES || m->index_count == 0 || m->index_count % 3 != 0 ||
+      m->index_count > 3 * PR_MAX_SCENE_VERTICES || h->meshes->size() >= PR_MAX_SCENE_MESHES) {
+    return PR_ERR_INVALID_PARAM;
+  }
+  ContribMesh c;
+  const std::size_t n = m->vertex_count;
+  c.positions.assign(m->positions, m->positions + (3 * n));  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic): the SDK's arrays
+  c.indices.assign(m->indices, m->indices + m->index_count);  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+  if (!std::ranges::all_of(c.positions, [](float v) { return std::isfinite(v); })) return PR_ERR_INVALID_PARAM;
+  if (!std::ranges::all_of(c.indices, [n](std::uint32_t i) { return i < n; })) return PR_ERR_INVALID_PARAM;
+  if (m->normals != nullptr) {
+    c.normals.assign(m->normals, m->normals + (3 * n));  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+  } else {
+    // Flat: each vertex takes the sum of its triangles' normals.
+    c.normals.assign(3 * n, 0.0F);
+    for (std::size_t t = 0; t + 2 < c.indices.size(); t += 3) {
+      const std::uint32_t a = c.indices[t], b = c.indices[t + 1], d = c.indices[t + 2];
+      const std::array<float, 3> e1{c.positions[3 * b] - c.positions[3 * a], c.positions[3 * b + 1] - c.positions[3 * a + 1],
+                                    c.positions[3 * b + 2] - c.positions[3 * a + 2]};
+      const std::array<float, 3> e2{c.positions[3 * d] - c.positions[3 * a], c.positions[3 * d + 1] - c.positions[3 * a + 1],
+                                    c.positions[3 * d + 2] - c.positions[3 * a + 2]};
+      const std::array<float, 3> nn{e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]};
+      for (const std::uint32_t v : {a, b, d}) {
+        for (std::size_t k = 0; k < 3; ++k) c.normals[3 * v + k] += nn[k];
+      }
+    }
+  }
+  if (m->uvs != nullptr) c.uvs.assign(m->uvs, m->uvs + (2 * n));  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+  else c.uvs.assign(2 * n, 0.0F);
+  std::ranges::copy(m->transform, c.transform.begin());
+  if (m->material.struct_size >= sizeof(PrSceneMaterial)) {
+    std::ranges::copy(m->material.base_color, c.color.begin());
+    c.metallic = std::clamp(m->material.metallic, 0.0, 1.0);
+    c.roughness = std::clamp(m->material.roughness, 0.0, 1.0);
+    c.castsShadows = m->material.casts_shadows != 0;
+    c.acceptsShadows = m->material.accepts_shadows != 0;
+  }
+  h->meshes->push_back(std::move(c));
+  return PR_ERR_NONE;
+}
+
+PrErr PR_CALL cb_scene_add_light(PrHost* h, const PrLight* l) {
+  if (h == nullptr || h->cmd != PR_CMD_SCENE_CONTRIBUTE || h->lights == nullptr) return PR_ERR_INVALID_CALLBACK;
+  if (l == nullptr || l->struct_size < sizeof(PrLight) || h->lights->size() >= 8) return PR_ERR_INVALID_PARAM;
+  ContribLight c;
+  c.type = l->type;
+  std::ranges::copy(l->color, c.color.begin());
+  c.intensity = l->intensity;
+  std::ranges::copy(l->position, c.position.begin());
+  std::ranges::copy(l->direction, c.direction.begin());
+  c.coneAngle = l->cone_angle;
+  c.coneFeather = l->cone_feather;
+  c.falloff = l->falloff;
+  c.falloffDistance = l->falloff_distance;
+  c.castsShadows = l->casts_shadows != 0;
+  c.shadowDarkness = l->shadow_darkness;
+  c.shadowDiffusion = l->shadow_diffusion;
+  h->lights->push_back(c);
+  return PR_ERR_NONE;
+}
+
 // SDK 1.4 (M): the ML suite.
 PrErr PR_CALL cb_ml_load(PrHost* h, const char* path, std::uint32_t* out) {
   if (h == nullptr || h->host == nullptr || h->effect == nullptr) return PR_ERR_INVALID_CALLBACK;
@@ -1483,6 +1551,8 @@ PluginHost::PluginHost(HostOptions options) : impl_(std::make_unique<Impl>(*this
   s.ml_load = &cb_ml_load;  // SDK 1.4 (M)
   s.ml_run = &cb_ml_run;
   s.ml_provider = &cb_ml_provider;
+  s.scene_add_mesh = &cb_scene_add_mesh;  // SDK 1.4 (D)
+  s.scene_add_light = &cb_scene_add_light;
 
   int threads = m.options.threads;
   if (threads <= 0) threads = std::clamp(static_cast<int>(std::thread::hardware_concurrency()) - 1, 0, 16);
@@ -2753,6 +2823,36 @@ CallResult PluginHost::publish_channels(const RenderInputs& in, ChannelValues& o
   ctx.published = &out;
   r = m.call_render(*p, *e, in, ctx, PR_CMD_PUBLISH_CHANNELS, nullptr, nullptr, lease.sequence());
   if (!r.ok) out.clear();
+  return r;
+}
+
+CallResult PluginHost::scene_contribute(const RenderInputs& in, std::vector<ContribMesh>& meshes, std::vector<ContribLight>& lights) {
+  Impl& m = *impl_;
+  CallResult r;
+  EffectSpec* e = nullptr;
+  Plugin* p = nullptr;
+  meshes.clear();
+  lights.clear();
+  if (!resolve(*this, m, in, e, p, r)) return r;
+  if (!e->has(PR_OUT_FLAG_SCENE_CONTRIBUTE) || p->outOfProcess) {
+    r.ok = true;
+    return r;
+  }
+  const InstanceLease lease = m.instance_for(in, *e, *p, r);
+  if (!lease) {
+    if (r.fault) m.on_fault(*p, e, &in, r);
+    return r;
+  }
+  const RenderLock lock(*p, *e);
+  PrHost ctx;
+  ctx.host = this;
+  ctx.meshes = &meshes;
+  ctx.lights = &lights;
+  r = m.call_render(*p, *e, in, ctx, PR_CMD_SCENE_CONTRIBUTE, nullptr, nullptr, lease.sequence());
+  if (!r.ok) {
+    meshes.clear();
+    lights.clear();
+  }
   return r;
 }
 

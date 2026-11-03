@@ -1145,6 +1145,31 @@ A crash, `abort()`, heap corruption or a hang there never ends the engine.
 It checks for the same pixels as in process, then injects an `abort()` and a
 hang, and checks the restart and the session limit.
 
+## Geometry in the 3D scene (SDK 1.4)
+
+An effect on a 3D layer can add meshes and lights to the comp's own 3D
+render, instead of rendering its own 3D world and compositing it. Declare
+`PR_OUT_FLAG_SCENE_CONTRIBUTE`. Then, in `PR_CMD_SCENE_CONTRIBUTE` each frame,
+call `scene_add_mesh` (a `PrSceneMesh`) and `scene_add_light` (a `PrLight`).
+
+- **Layer space.** Positions, the mesh transform and light positions are in
+  the layer's pixels: (0, 0) is the top-left, y points down, z points away
+  from the camera. The host places everything with the layer's 3D transform.
+- **Meshes.** Each mesh has float positions and optional normals (without
+  them the host computes flat ones) and optional UVs, plus u32 triangles. Up
+  to 64 meshes and 2^20 vertices per mesh are allowed. The material has a base
+  colour, metallic, roughness and shadow switches. The host draws each mesh
+  right after its layer on the depth-tested 3D path: sorted and intersecting
+  with the comp's other 3D layers, lit by its lights, casting and receiving
+  shadows, and in the camera's depth of field.
+- **Lights.** Up to 8 lights per frame join the comp's lights.
+- **Limits.** This works only on a 3D layer of the composition itself; a 2D
+  or nested layer reports it on `layerErrors`. Motion vectors (D2) and custom
+  shading (D3) are not in yet, so a contributed mesh is not motion-blurred.
+
+The `meshgen` sample (Mesh Cube) adds a lit cube and a point light.
+`engine_plugins_scene_tests [scene3d]` checks where they land in the frame.
+
 ## Sequence data
 
 Per-instance state lives **in the document**, not only in the process:

@@ -93,7 +93,8 @@ typedef int32_t PrCmd;
 #define PR_CMD_PARAM_UI_DRAG 22 /* SDK 1.3 */
 #define PR_CMD_SIM_STEP 23 /* SDK 1.4: one simulation step (PR_OUT_FLAG_STATEFUL, PrSimStepExtra) */
 #define PR_CMD_PUBLISH_CHANNELS 24 /* SDK 1.4 (C): publish this frame's channels (PR_OUT_FLAG_PUBLISHES) */
-#define PR_CMD_COUNT 25
+#define PR_CMD_SCENE_CONTRIBUTE 25 /* SDK 1.4 (D): add meshes / lights to the comp's 3D scene (PR_OUT_FLAG_SCENE_CONTRIBUTE) */
+#define PR_CMD_COUNT 26
 
 /* ── out flags (GLOBAL_SETUP) ─────────────────────────────────────────────── */
 #define PR_OUT_FLAG_DEEP_COLOR_AWARE (1u << 0)     /* processes 16-bit worlds */
@@ -136,6 +137,9 @@ typedef int32_t PrCmd;
 /* SDK 1.4 (C): the effect publishes named channels each frame (PR_CMD_PUBLISH_CHANNELS, publish_channel)
  * that other instances read (read_channel). The manifest lists each effect's "publishes" / "reads". */
 #define PR_OUT_FLAG_PUBLISHES (1u << 19)
+/* SDK 1.4 (D): on a 3D layer, PR_CMD_SCENE_CONTRIBUTE each frame adds meshes and lights to the
+ * comp's 3D render (scene_add_mesh / scene_add_light, pr_scene.h); the host draws them. */
+#define PR_OUT_FLAG_SCENE_CONTRIBUTE (1u << 20)
 /** SDK 1.4 (C): the most numbers one channel carries. */
 #define PR_MAX_CHANNEL_VALUES 4096
 

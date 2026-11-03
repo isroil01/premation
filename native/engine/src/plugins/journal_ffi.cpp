@@ -239,13 +239,13 @@ std::string_view command_name(std::int32_t cmd) noexcept {
     case 1030: return "EXPRESSION_FUNCTION";  // SDK 1.4 (E1)
     default: break;
   }
-  static constexpr std::array<std::string_view, 25> kNames = {
+  static constexpr std::array<std::string_view, 26> kNames = {
       "ABOUT",           "GLOBAL_SETUP",       "GLOBAL_SETDOWN",   "PARAMS_SETUP",      "SEQUENCE_SETUP",
       "SEQUENCE_RESETUP", "SEQUENCE_FLATTEN",  "SEQUENCE_SETDOWN", "FRAME_SETUP",       "FRAME_SETDOWN",
       "RENDER",          "SMART_PRE_RENDER",   "SMART_RENDER",     "USER_CHANGED_PARAM", "UPDATE_PARAMS_UI",
       "GPU_DEVICE_SETUP", "GPU_DEVICE_SETDOWN", "SMART_RENDER_GPU", "DRAW_OVERLAY",     "OVERLAY_DRAG",
       "LIST_ASSET_FILES", "DRAW_PARAM_UI",     "PARAM_UI_DRAG",    "SIM_STEP",
-      "PUBLISH_CHANNELS"};
+      "PUBLISH_CHANNELS", "SCENE_CONTRIBUTE"};
   return cmd >= 0 && static_cast<std::size_t>(cmd) < kNames.size() ? kNames.at(static_cast<std::size_t>(cmd)) : "a selector";
 }
 
