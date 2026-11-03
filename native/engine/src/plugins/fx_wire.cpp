@@ -444,6 +444,10 @@ void decode_native_fx(const api::RenderEffect& e, const EffectSpec& spec, Render
   out.instance = ix.text("instance");
   out.layerId = ix.text("layerId");
   if (auto seq = doc::native_unbase64(ix.text("sequence"))) out.sequence = std::move(*seq);
+  // SDK 1.4 (T): a STATEFUL effect's state for this frame (scene_finish.cpp); absent = none.
+  if (const auto* sim = ix.find("simState"); sim != nullptr) {
+    if (auto st = doc::native_unbase64(sim->text)) out.simState = std::move(*st);
+  }
   out.compTime = static_cast<std::int64_t>(std::llround(ix.num("compTime", 0)));
   out.layerTime = static_cast<std::int64_t>(std::llround(ix.num("layerTime", static_cast<double>(out.compTime))));
   out.fps = ix.num("fps", 30);

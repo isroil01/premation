@@ -1,0 +1,208 @@
+{
+  "version": "1.9.0",
+  "scene": {
+    "version": "1.0.0",
+    "nodes": [
+      {
+        "id": "comp_root",
+        "name": "Composition 1",
+        "parent": null,
+        "children": [
+          "solid",
+          "cam"
+        ],
+        "transform": {
+          "position": {
+            "x": 0,
+            "y": 0
+          },
+          "rotation": 0,
+          "scale": {
+            "x": 1,
+            "y": 1
+          }
+        },
+        "visible": true,
+        "locked": false,
+        "components": [
+          {
+            "id": "comp_root_meta",
+            "type": "group",
+            "props": {
+              "__kind": "group"
+            }
+          }
+        ]
+      },
+      {
+        "id": "solid",
+        "name": "Bar Chart",
+        "children": [],
+        "parent": "comp_root",
+        "transform": {
+          "position": {
+            "x": 240,
+            "y": 180
+          },
+          "rotation": 0,
+          "scale": {
+            "x": 1,
+            "y": 1
+          }
+        },
+        "components": [
+          {
+            "id": "solid_t",
+            "type": "Transform",
+            "props": {
+              "__kind": "shape",
+              "x": 240,
+              "y": 180,
+              "rotation": 0,
+              "width": 480,
+              "height": 360,
+              "shapeType": "rect"
+            }
+          },
+          {
+            "id": "solid_s",
+            "type": "Style",
+            "props": {
+              "opacity": 100,
+              "fill": "rgba(0,0,0,0)"
+            }
+          },
+          {
+            "id": "solid_fx",
+            "type": "fx",
+            "props": {
+              "solid": true,
+              "fill": {
+                "type": "solid",
+                "color": "rgba(0,0,0,0)"
+              },
+              "pluginLayer": "com.premation.samples.chartlayer:bars",
+              "effects": [
+                {
+                  "id": "layer",
+                  "type": "com.premation.samples.chartlayer.bars",
+                  "params": {
+                    "p2": 40,
+                    "p8": 25
+                  },
+                  "layerType": true
+                }
+              ]
+            }
+          }
+        ],
+        "visible": true,
+        "locked": false
+      }
+    ]
+  },
+  "animation": {
+    "tracks": {
+      "solid": {
+        "effect.layer.p1": {
+          "nodeId": "solid",
+          "prop": "effect.layer.p1",
+          "keyframes": [
+            {
+              "t": 0,
+              "value": 10
+            },
+            {
+              "t": 1,
+              "value": 95
+            }
+          ]
+        },
+        "effect.layer.p4": {
+          "nodeId": "solid",
+          "prop": "effect.layer.p4",
+          "keyframes": [
+            {
+              "t": 0,
+              "value": 90
+            },
+            {
+              "t": 1,
+              "value": 20
+            }
+          ]
+        }
+      }
+    },
+    "expressions": {}
+  },
+  "comps": {
+    "comp_root": {
+      "id": "comp_root",
+      "name": "comp_root",
+      "width": 480,
+      "height": 360,
+      "fps": 30,
+      "durationSeconds": 2,
+      "background": "#0c0c12"
+    }
+  },
+  "motionBlur": {
+    "enabled": false,
+    "shutterAngle": 180,
+    "shutterPhase": -90,
+    "samples": 8,
+    "adaptiveSampleLimit": 128
+  },
+  "colorManagement": {
+    "workingSpace": "srgb-linear",
+    "displayTransform": "srgb",
+    "bitDepth": 16
+  },
+  "projectItems": {
+    "folders": [],
+    "footage": {}
+  },
+  "openTabs": {
+    "tabOrder": [
+      "tab1"
+    ],
+    "activeTabId": "tab1",
+    "tabs": {
+      "tab1": {
+        "id": "tab1",
+        "compositionId": "comp_root",
+        "breadcrumbPath": [
+          "comp_root"
+        ],
+        "title": "comp_root",
+        "time": 0,
+        "frame": 0
+      }
+    }
+  },
+  "harness": {
+    "sceneId": "plugin-layer-chart",
+    "frames": [
+      0,
+      15,
+      30
+    ],
+    "fps": 30,
+    "size": {
+      "w": 480,
+      "h": 360
+    },
+    "motionBlurFps": null,
+    "motionBlurOn": false,
+    "overlays": null,
+    "viewerLut": false,
+    "assets": [],
+    "compId": "comp_root",
+    "viewerLutCube": null,
+    "media": [],
+    "tolerance": null,
+    "fidelityOnly": false,
+    "description": "Plugin SDK 1.4 (L4): a plugin LAYER TYPE \u2014 the chartlayer sample's Bar Chart as its own layer (createLayer kind=generator: a transparent solid drawn by the type's generator, effect `layer`), Value 1 and Value 4 keyframed over 1 s."
+  }
+}

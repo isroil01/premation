@@ -580,7 +580,7 @@ class EngineFrameBuilder final : public FrameBuilder, public TextQueries, public
       // G1: native plugin entries completed from the document (sequence data,
       // times), their checkouts at other times added, disabled instances reported.
       plugins::PluginHost* host = plugins::PluginHost::active();
-      plugins::finish_native_frame(ctx, comp, seconds, vs, viewport.previewMotionBlur, nf, host);
+      plugins::finish_native_frame(ctx, comp, seconds, vs, viewport.previewMotionBlur, nf, host, kViewerSimBudgetMs);
       if (host != nullptr) {
         host->next_frame();
         // Instances no frame has used for a while give their state back
@@ -590,6 +590,7 @@ class EngineFrameBuilder final : public FrameBuilder, public TextQueries, public
       // The viewer LUT (setViewerLut): graded on the final blit of a viewport
       // frame (EffectPass), never in an export or a thumbnail.
       if (viewport.viewerLut && !viewport.ghost) attach_viewer_lut(viewport.viewerLut, nf);
+      out->simPending = nf.simPending;
       out->file = std::move(nf.file);
       out->textures = std::move(nf.textures);
       errors.reserve(nf.errors.size());
@@ -863,6 +864,9 @@ class EngineFrameBuilder final : public FrameBuilder, public TextQueries, public
   }
 
   static constexpr std::uint64_t kIdleInstanceFrames = 600;
+  /// SDK 1.4 (T4): how long one viewer frame lets a plugin simulation catch up before it is drawn
+  /// without the state and drawn again (exports wait for the whole catch-up).
+  static constexpr double kViewerSimBudgetMs = 80;
   /// attach_viewer_lut's memo: the table it last parsed (held, so a new table
   /// can never reuse its address) and what it made of it. Under the session's
   /// build lock, like build() (core/session.hpp "the build worker").
@@ -955,6 +959,9 @@ class ViewportDrawer final : public render::BuiltFrameDrawer {
     // worker) is not final either: not cached, and drawn again once it is in.
     svgWant_ = textures_->svg_stand_in();
     if (svgWant_) exact_ = false;
+    // SDK 1.4 (T4): a simulation still catching up — drawn again on the next settle poll.
+    simRetry_ = frame.simPending;
+    if (simRetry_) exact_ = false;
     // A GPU error during the frame (validation, out of memory): what it drew
     // may be missing a layer. Cached, that frame would come back on every pass
     // over it — an object blinking out at the same frame each loop. Never
@@ -990,6 +997,8 @@ class ViewportDrawer final : public render::BuiltFrameDrawer {
     // A frame a GPU error spoiled: drawn again on the next settle poll (a sentinel, settled at once).
     if (gpuRetry_) out.emplace_back(kGpuRetrySource, 0);
     gpuRetry_ = false;
+    if (simRetry_) out.emplace_back(kSimRetrySource, 0);
+    simRetry_ = false;
     return out;
   }
   [[nodiscard]] std::uint64_t vram_bytes() override {
@@ -1031,7 +1040,7 @@ class ViewportDrawer final : public render::BuiltFrameDrawer {
   [[nodiscard]] bool media_settled(const render::MediaWants& wants) override {
     return std::ranges::all_of(wants, [this](const auto& w) {
       if (w.first == kSvgWantSource) return !textures_->svg_pending();  // E4
-      if (w.first == kGpuRetrySource) return true;
+      if (w.first == kGpuRetrySource || w.first == kSimRetrySource) return true;
 #if defined(PREMATION_HAVE_MEDIA)
       return media_->settled(w.first, w.second);
 #else
@@ -1390,6 +1399,7 @@ class ViewportDrawer final : public render::BuiltFrameDrawer {
   static constexpr std::uint32_t kSvgWantSource = 0xFFFFFFFFU;
   /// The last draw hit a GPU error: draw it again (take_media_wants' sentinel), up to kGpuRetries in a row.
   bool gpuRetry_ = false;
+  bool simRetry_ = false;
   std::uint32_t gpuErrorStreak_ = 0;
   static constexpr std::uint32_t kGpuRetries = 2;
   /// A still whose footage missed prepare()'s exact wait (250 ms — a seek in
@@ -1397,6 +1407,8 @@ class ViewportDrawer final : public render::BuiltFrameDrawer {
   static constexpr std::uint32_t kStillDecodeRetries = 2;
   static constexpr std::chrono::milliseconds kStillDecodeWait{2000};
   static constexpr std::uint32_t kGpuRetrySource = 0xFFFFFFFEU;
+  /// SDK 1.4 (T4): a frame drawn while a plugin simulation caught up (BuiltFrame::simPending).
+  static constexpr std::uint32_t kSimRetrySource = 0xFFFFFFFDU;
 #if defined(PREMATION_HAVE_MEDIA)
   std::vector<std::pair<media::SourceId, std::int64_t>> wants_;  // the last draw's stand-in footage frames
 #endif

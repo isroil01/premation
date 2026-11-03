@@ -349,6 +349,8 @@ int run_engine(const EngineOptions& options) {
       ho.journal = options.pluginJournal;
       ho.disabled = options.pluginDisabled;
       ho.shadowDir = options.pluginShadow;
+      ho.simDiskDir = options.pluginSimDir;
+      if (options.pluginWatchdogMs >= 0) ho.watchdog = std::chrono::milliseconds(options.pluginWatchdogMs);
       if (!options.pluginRevoked.empty()) ho.revoked = plugins::read_revoked_file(options.pluginRevoked);
       ho.entitlement = options.pluginEntitlement;
       ho.onProgress = [&coreProgress] {

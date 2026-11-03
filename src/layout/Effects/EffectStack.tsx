@@ -59,7 +59,7 @@ import { CurveEditor } from './CurveEditor';
 import { useActiveWorkspace } from '@stores/projectStore';
 import { useTrackNavigator } from '@layout/Inspector/AnimToggle';
 import { documentMirror } from '@stores/documentMirror';
-import { useMirrorTrackWatch, useMirrorTreeGroups } from '@hooks/useMirror';
+import { useMirrorLayer, useMirrorTrackWatch, useMirrorTreeGroups } from '@hooks/useMirror';
 import { isTrackAnimated, readTrack, valueNumbersAt, trackRef as mirrorTrackRef } from '@core/mirror/selection';
 import { mirrorPropertyMeta } from '@core/mirror/metaFacts';
 import { mirrorEffects, mirrorMaskHeaders } from '@core/mirror/effects';
@@ -941,7 +941,14 @@ export function effectPresetMenuItems(nodeId: string, effectId: string, type: st
 }
 
 /** Right-click on an effect's header: AE's Duplicate (Ctrl+D) and Copy, Reset / Remove, and a plugin's presets. */
-function effectHeaderMenuItems(nodeId: string, effectId: string, type: string, name: string, index: number, count: number): ContextMenuItem[] {
+function effectHeaderMenuItems(nodeId: string, effectId: string, type: string, name: string, index: number, count: number, own = false): ContextMenuItem[] {
+  // SDK 1.4: a plugin layer's own effect draws the layer — it stays first and cannot go (the engine refuses).
+  if (own) {
+    return [
+      ...effectPresetMenuItems(nodeId, effectId, type, name),
+      { id: 'fx-reset', label: t('effects.stack.reset', 'Reset'), onSelect: () => { void resetEffectEdit(nodeId, effectId, name); } },
+    ];
+  }
   return [
     { id: 'fx-up', label: t('effects.stack.moveUp', 'Move Up'), icon: 'arrow-up', disabled: index === 0, onSelect: () => { void nudgeEffectEdit(nodeId, effectId, -1); } },
     { id: 'fx-down', label: t('effects.stack.moveDown', 'Move Down'), icon: 'arrow-down', disabled: index === count - 1, onSelect: () => { void nudgeEffectEdit(nodeId, effectId, 1); } },
@@ -1029,6 +1036,9 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
   // A plugin effect's card (its params) needs its definition, which can arrive after the stack drew.
   useSyncExternalStore(subscribePluginEffectDefs, pluginEffectDefsRevision, pluginEffectDefsRevision);
   const effects = mirrorEffects(tree);
+  // SDK 1.4: on a plugin layer, effect `layer` is the layer's own content (createLayer kind=generator).
+  const pluginLayer = useMirrorLayer(nodeId)?.pluginLayerType !== undefined;
+  const isOwn = (id: string): boolean => pluginLayer && id === 'layer';
   // "Gaussian Blur 2" for the second of a kind — see effectDisplayNames.
   const names = effectDisplayNames(effects);
   // Which effect owns the canvas handles. Subscribed, not read via getState():
@@ -1121,7 +1131,8 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
               )}
               // The HEADER is the drag handle, not the whole card — dragging
               // from the body would fight every scrubby slider inside it.
-              draggable
+              // A plugin layer's own effect stays first: not draggable.
+              draggable={!isOwn(e.id)}
               onDragStart={(ev) => {
                 setDragId(e.id);
                 ev.dataTransfer.effectAllowed = 'move';
@@ -1131,7 +1142,7 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
               onDragEnd={() => { setDragId(null); setDropIndex(null); }}
               onContextMenu={(ev) => {
                 ev.preventDefault();
-                openContextMenu(ev.clientX, ev.clientY, effectHeaderMenuItems(nodeId, e.id, e.type, name, i, effects.length));
+                openContextMenu(ev.clientX, ev.clientY, effectHeaderMenuItems(nodeId, e.id, e.type, name, i, effects.length, isOwn(e.id)));
               }}
             >
               <button
@@ -1221,7 +1232,7 @@ export function EffectStack({ nodeId }: { nodeId: string }): JSX.Element {
                     </button>
                   }
                   items={() => [
-                    ...asDropdownItems(effectHeaderMenuItems(nodeId, e.id, e.type, name, i, effects.length)),
+                    ...asDropdownItems(effectHeaderMenuItems(nodeId, e.id, e.type, name, i, effects.length, isOwn(e.id))),
                     { type: 'separator' },
                     {
                       type: 'item',

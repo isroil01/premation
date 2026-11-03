@@ -72,6 +72,8 @@ struct NativeFrame {
   std::vector<LayerError> errors;
   double snapshotMs = 0;
   double sceneMs = 0;
+  /// SDK 1.4 (T4): a plugin simulation was still catching up — the frame is not final.
+  bool simPending = false;
 };
 
 /// What an export changes about the composition it renders (offlineRenderer.ts

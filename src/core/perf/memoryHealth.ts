@@ -56,6 +56,9 @@ export interface MemoryReadout {
   gpuTotal: number | null;
   /** Graphics memory the engine gave back under pressure this session (cached frames moved to RAM, idle buffers freed). */
   gpuTrimmed: number;
+  /** SDK 1.4: plugin simulation states kept in RAM and on disk (null without a plugin host). */
+  simBytes: number | null;
+  simDiskBytes: number | null;
 }
 
 export function readMemory(s: RenderStats): MemoryReadout {
@@ -80,6 +83,8 @@ export function readMemory(s: RenderStats): MemoryReadout {
     gpuUsed: s.gpuMemoryUsed ?? null,
     gpuTotal: s.gpuMemoryTotal ?? null,
     gpuTrimmed: s.gpuMemoryTrimmed ?? 0,
+    simBytes: s.simStateBytes ?? null,
+    simDiskBytes: s.simStateDiskBytes ?? null,
   };
 }
 

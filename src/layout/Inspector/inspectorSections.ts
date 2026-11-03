@@ -64,7 +64,7 @@ import type { ComponentType } from 'react';
 import type { IconName } from '@components/Icon';
 import { documentMirror } from '@stores/documentMirror';
 import { trackRefIn } from '@core/mirror/trackIndex';
-import { canBe3DLayer, inspectorKindOf, is3DLayer, isAbstractLayer, layerExists } from './inspectorMirror';
+import { canBe3DLayer, inspectorKindOf, is3DLayer, isAbstractLayer, layerExists, mirrorLayer, PLUGIN_LAYER_KIND } from './inspectorMirror';
 
 import { AppearanceSection, AppearancePresetAction } from './AppearanceSection';
 import { TextSection, TextPresetAction, hasTextSection } from './TextSection';
@@ -89,6 +89,7 @@ import { TrackMotionSection } from './TrackMotionSection';
 import { ModelSection } from './ModelSection';
 import { MotionToolsSection, hasMotionToolsSection } from './MotionToolsSection';
 import { ParticleSection } from './ParticleSection';
+import { PluginLayerSection } from './PluginLayerSection';
 import { PathOpsSection } from './PathOpsSection';
 import { PolystarSection, hasPolystarSection } from './PolystarSection';
 import { PrimitiveSection, hasPrimitiveSection } from './PrimitiveSection';
@@ -437,6 +438,17 @@ export const INSPECTOR_SECTIONS: readonly InspectorSectionDef[] = [
     Component: LightSection,
     // The light's looks ("Light Presets ▸"), one pick = one undoable edit.
     menu: LightPresetsMenu,
+  },
+  {
+    // SDK 1.4: a plugin layer type's own params — the layer's content (its effect `layer`).
+    id: 'custom',
+    title: (id) => mirrorLayer(id)?.name ?? t('inspector.sections.pluginLayer', 'Plugin layer'),
+    icon: 'plugin',
+    category: 'layer',
+    defaultOpen: true,
+    keywords: 'settings plugin layer contents',
+    appliesTo: isKind(PLUGIN_LAYER_KIND),
+    Component: PluginLayerSection,
   },
   {
     id: 'custom',

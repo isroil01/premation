@@ -34,6 +34,7 @@
 //                  "bits": 32, "size": [64, 48], "time": 0.5,            (defaults: 32, 64x48, 0 s)
 //                  "params": { "3": 12, "5": [1, 0.5, 0, 1] },           (by SDK param id: v[0] or v[0..3])
 //                  "tolerance": 1e-4 } ] }                              (default by bits: 1/255, 1e-3, 1e-4)
+// A simulation (PR_OUT_FLAG_STATEFUL) steps from frame 0 to `time` × 30 before it renders.
 // Prints `pass|fail|blessed <name> ...` per case; a fail also writes <name>.actual.pgold beside the golden.
 //
 // Exit codes: 0 ok · 1 the check failed · 2 usage · 86 hang (the host's default).
@@ -294,6 +295,26 @@ int test(pl::PluginHost& host, const Options& o, const fs::path& casesFile) {
     }
     if (badParam) continue;
 
+    // SDK 1.4: a simulation steps from its frame 0 to the case's frame (time at 30 fps), its params
+    // held at the case's values, and renders with that state.
+    if (spec->has(PR_OUT_FLAG_STATEFUL)) {
+      pl::SimRequest q;
+      q.base = ri;
+      q.step = PR_TIME_SCALE / 30;
+      q.frame = (ri.layerTime + q.step / 2) / q.step;
+      q.inputsKey = 1;
+      q.inputsAt = [&ri, &q](std::int64_t k) {
+        pl::RenderInputs at = ri;
+        at.layerTime = k * q.step;
+        return at;
+      };
+      std::string why;
+      ri.simState = host.sim_state(q, why);
+      if (!ri.simState) {
+        fail("simulation: " + why);
+        continue;
+      }
+    }
     const pl::TexelImage input = pattern(format_for(bits), w, h);
     pl::TexelImage out;
     const pl::CallResult r = pl::run_native_cpu(host, ri, input, {}, out);

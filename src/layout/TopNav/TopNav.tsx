@@ -82,6 +82,9 @@ import { MacWindowControls } from '@layout/TitleBar/MacWindowControls';
 import { EditorChromeActions } from '@layout/TitleBar/EditorChromeActions';
 import { UpdateButton } from '@layout/TitleBar/UpdateButton';
 import { importBrowserFilesEdit } from '@layout/Assets/assetEdits';
+import { pluginLayerTypes } from '@core/nativePlugins/pluginContrib';
+import { usePluginContrib } from '@hooks/usePluginContrib';
+import { newPluginLayerFromEditor } from '@layout/Menu/pluginMenu';
 
 /**
  * A toolbar tool. NO `shortcut` field, deliberately.
@@ -318,6 +321,8 @@ function CompChip(): JSX.Element {
 
 export function TopNav(): JSX.Element {
   const navigate = useNavigate();
+  // SDK 1.4: re-render when plugins load, reload or go (their layer types are in the New Layer menu).
+  usePluginContrib();
   const activeTool = useUIStore((s) => s.activeTool);
   const puppetPinKind = useUIStore((s) => s.puppetPinKind);
   const setPuppetPinKind = useUIStore((s) => s.setPuppetPinKind);
@@ -786,6 +791,8 @@ export function TopNav(): JSX.Element {
                   { type: 'item', id: 'new-camera', label: t('topNav.newLayer.camera', 'Camera…'), icon: 'camera', onSelect: () => openCameraDialog() },
                   { type: 'item', id: 'new-light', label: t('topNav.newLayer.light', 'Light…'), icon: 'light', onSelect: () => openLightDialog() },
                   { type: 'item', id: 'new-particle', label: t('topNav.newLayer.particle', 'Particle System'), icon: 'sparkles', onSelect: () => { void createLayerEdit('particle', { name: 'Particles 1', label: 'New Particle System' }); } },
+                  // SDK 1.4: the layer types of the loaded native plugins (Layer ▸ New lists them too).
+                  ...pluginLayerTypes().map((lt) => ({ type: 'item' as const, id: `new-plugin-${lt.type}`, label: lt.name, icon: 'plugin' as const, onSelect: () => { void newPluginLayerFromEditor(lt.type, lt.name); } })),
                   { type: 'separator' },
                   // Built off-document and inserted as ONE pasteLayers entry (like insertShape).
                   { type: 'item', id: 'new-3d-text', label: t('topNav.newLayer.text3d', '3D Extruded Text'), icon: 'text-3d', onSelect: () => { const target = activeInsertTarget(); if (target) void insert3DTextEdit('3D TEXT', 'New 3D Text', { comp: target.comp }); } },

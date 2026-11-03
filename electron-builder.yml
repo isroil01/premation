@@ -39,7 +39,8 @@ extraResources:
   # missing (docs/TS_ENGINE_REMOVAL.md: one engine). Beside it:
   #   Windows  dxcompiler.dll + dxil.dll — Dawn loads DXC at runtime;
   #            DirectML.dll — ONNX Runtime's GPU provider for the ML jobs
-  #   macOS    premation-host-bridge.node — main's IOSurface lookup (route C)
+  #   macOS    premation-host-bridge.node — main's IOSurface lookup (route C);
+  #            libpdfium.dylib — PDF footage, linked via @executable_path
   #   Linux    any shared libraries the engine was linked against (*.so, *.so.N)
   - from: build/engine
     to: engine
@@ -47,6 +48,7 @@ extraResources:
       - premation-engine*
       - premation-host-bridge.node
       - '*.dll'
+      - '*.dylib'
       - '*.so'
       - '*.so.*'
   # The bundled ML models (electron/models.json `bundled: true`, staged by

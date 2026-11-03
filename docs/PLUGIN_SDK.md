@@ -9,7 +9,7 @@ so an AE plugin author can find their way around.
 | | |
 |---|---|
 | Headers | `native/sdk/include/premation_sdk/` (C, versioned ABI; `premation_sdk.h` includes all) |
-| Samples | `native/sdk/samples/` — `ripple` (CPU), `rings` (generator + sequence data + button), `checkout` (Layer Displace, Time Echo), `grade` (GPU), `particles` (SDK 1.1: comp camera, lights, layer transforms; SDK 1.2: trails and its own motion blur through `checkout_time`, comp space, presets, a layer-time button); SDK 1.2 plugins that are not effects: `distribute` (a command), `ppmio` (an importer), `ppmseq` (an output module), `statspanel` (a panel + a command); `fxkit` (two effects written once in WGSL, see "Writing effects in WGSL: fxkit"); SDK 1.4: `chartlayer` (a plugin layer type, see "Layer types") |
+| Samples | `native/sdk/samples/` — `ripple` (CPU), `rings` (generator + sequence data + button), `checkout` (Layer Displace, Time Echo), `grade` (GPU), `particles` (SDK 1.1: comp camera, lights, layer transforms; SDK 1.2: trails and its own motion blur through `checkout_time`, comp space, presets, a layer-time button); SDK 1.2 plugins that are not effects: `distribute` (a command), `ppmio` (an importer), `ppmseq` (an output module), `statspanel` (a panel + a command); `fxkit` (two effects written once in WGSL, see "Writing effects in WGSL: fxkit"); SDK 1.4: `chartlayer` (a plugin layer type, see "Layer types"), `bounce` (a simulation, see "Simulations") |
 | Host | `native/engine/src/plugins/` (runs inside `premation-engine`) |
 | Tool | `premation-plugins` — list, render, crash-check a plugin folder without an editor |
 | Next | `docs/PROGRAM_PLUGINS_BEYOND_AE.md` — proposed SDK 1.4 / 2.0: layer types, plugins in the 3D scene, simulations, ML, out-of-process host (not built) |
@@ -913,6 +913,53 @@ The `chartlayer` sample (`native/sdk/samples/chartlayer`) is a bar chart whose
 Value 1–6 are animatable layer properties. Its golden renders run as ctest
 `plugin_goldens_chartlayer`.
 
+## Simulations (SDK 1.4)
+
+An effect whose frame N needs frame N-1, such as particles with forces, cloth,
+fluids or a bouncing body, declares `PR_OUT_FLAG_STATEFUL`. It keeps no cache
+of its own: the host owns the stepping and the states.
+
+- **`PR_CMD_SIM_STEP`** is called once per layer frame, in order from the
+  layer's frame 0. Its `PrSimStepExtra` carries:
+  - `state_in`: the previous state's bytes, `NULL` at frame 0;
+  - `frame`, `dt`, and `seed` (per instance and stable; use it for randomness,
+    never a clock);
+  - `state_out`: the new state, a `handle_new` handle that the host takes.
+    Leave it at 0 to keep `state_in` unchanged.
+
+  Params and `current_time` are that step's frame's values. States are plain
+  bytes of up to 64 MB.
+- **`get_sim_state`** (appended to `PrHostSuite`) hands `SMART_RENDER` /
+  `SMART_RENDER_GPU` the state after this frame's step. `PR_ERR_NOT_FOUND`
+  means a step failed: render empty, never stale.
+- **Kept states.** The host keeps every state it makes, up to a RAM budget
+  (256 MB by default, least recently used first). Each state is keyed by a hash
+  of every input of frames 0..N: params, sequence data and layer size.
+  Scrubbing back steps nothing, and playing on steps once per frame. Editing a
+  keyframe at frame k keeps every state before k and steps again from k.
+- **Expressions.** When one of the effect's params has an expression, every
+  frame's inputs are evaluated again on each request. The answer stays exact
+  but costs more.
+- **Determinism.** The state is computed on the document side
+  (`scene_finish.cpp`) and travels with the frame as `simState`. A frame is
+  therefore a function of the document: the same pixels in the viewer, the
+  render queue and on another machine.
+- **Failures.** A step that faults disables the instance as a render fault
+  does. A failed step is reported on `layerErrors` as `simulation: …`.
+- **On disk.** States evicted from RAM are written to
+  `<userData>/sim-cache` (engine flag `--sim-cache-dir`), named by their
+  input chain, so they stay valid across sessions and projects. The cap is
+  1 GB, oldest first. Reopening a project scrubs straight to kept frames.
+  Cache & Memory shows "Plugin simulations: N in memory · M on disk".
+- **The viewer never waits long.** A viewer frame lets a catch-up run for
+  80 ms. It then draws without the state, is marked not final (never cached),
+  and is drawn again, with each pass going on from the kept states. Export and
+  thumbnails wait for the whole catch-up.
+
+The `bounce` sample (`native/sdk/samples/bounce`) is a ball under keyframeable
+Gravity and Bounciness. `engine_plugins_tests [sim]` and
+`engine_plugins_scene_tests [sim]` hold it to the rules above.
+
 ## Sequence data
 
 Per-instance state lives **in the document**, not only in the process:
@@ -1305,6 +1352,74 @@ step at 8 bpc, 1e-3 at 16 and 1e-4 at 32. A failure prints the max
 difference and writes `<name>.actual.pgold` next to the golden. The exit code
 is 0 only when every case passes. The fxkit sample's cases run in ctest as
 `plugin_goldens_fxkit`.
+
+## Debugging a plugin
+
+Plugins run inside `premation-engine`, a separate process that Electron
+supervises. Debug that process, not the editor window.
+
+**Fast loop.** Turn on Developer Mode ("Hot reload" above) and point it at your
+build folder. Each rebuild is loaded within a second. A failed build keeps the
+old one and says why in a toast.
+
+**Without the editor.** Most bugs reproduce in `premation-plugins`, which is
+the same host in a small console process that is easy to debug:
+
+```sh
+premation-plugins --plugins build/plugins/glow --bits 32 --size 256x144 render com.you.glow
+premation-plugins --plugins build/plugins/glow test tests/cases.json          # your golden cases
+premation-plugins --plugins build/plugins/glow crash-check com.you.glow 2     # prove a fault is contained
+```
+
+Run it under your debugger, for example
+`lldb -- premation-plugins --plugins … render …`, or Visual Studio's
+"Debug ▸ Attach / Open Project (exe)". Breakpoints in your selectors hit
+directly. Build the plugin with symbols (`-DCMAKE_BUILD_TYPE=RelWithDebInfo`,
+or `/Zi` + `/DEBUG` on Windows) and keep the `.pdb` / `.dSYM` beside the
+binary.
+
+**Attaching to the editor's engine.** Start the editor, then attach to the
+process named `premation-engine` (Visual Studio: Debug ▸ Attach to Process;
+lldb: `process attach --name premation-engine`; gdb: `gdb -p $(pidof
+premation-engine)`). Keep three things in mind:
+
+- **Developer Mode loads shadow copies.** Set breakpoints by symbol or source
+  line, not by module path. The module is loaded from
+  `<userData>/plugin-shadow/<launch>/<id>/<n>/`.
+- **The watchdog.** A selector stopped at a breakpoint for more than 10 s
+  counts as a hang. The engine quarantines your plugin and ends, and the
+  editor restarts it. To debug render selectors, run the engine with
+  `--plugin-watchdog 0`: start the editor with `PREMATION_ENGINE_ARGS="--plugin-watchdog 0"`
+  (the editor passes on `--plugin-watchdog` and `--log-level` from it), or
+  debug in `premation-plugins --watchdog 0`. Electron's
+  own 30 s deadlock check (`stuckMs`) also applies to the core thread.
+- **Crash isolation catches your fault.** A crash in a render selector
+  disables only that instance (the layer shows its input) and is recorded in
+  `layerErrors`. Your debugger sees the first-chance exception or signal
+  before the guard does. Break on it there.
+
+**Logs.** `host->log(host, PR_LOG_INFO, "…")` (or `PR_LOG_WARN` / `PR_LOG_ERROR`)
+writes to the engine log as `plugin_log` lines, with the selector named.
+Faults are `plugin_fault`, hangs `plugin_hang_fatal`, and loading problems
+`plugin_not_loaded` / `plugin_reload_failed`. The log is
+`<userData>/logs/engine.log` (Help ▸ Open Logs Folder; Help ▸ Copy Diagnostics
+Report includes its tail).
+`--log-level debug` adds more.
+
+**"It crashed last time."** A plugin that killed the engine (`abort()`, heap
+corruption, a hang) is QUARANTINED at the next start by the crash journal
+(`native-plugin-journal.bin` in userData). It stays listed but is not loaded
+until Plugins ▸ Installed turns it on again (`setPluginEnabled(true)`). A
+Developer Mode reload also lifts the quarantine.
+
+**Simulations.** If a `SIM_STEP` misbehaves, `premation-plugins test` steps
+from frame 0 to each case's `time`, which gives a small deterministic
+reproduction. A failed step appears in `layerErrors` as `simulation: …`.
+
+**GPU paths.** Run `premation-render --plugins <dir> --plugin-gpu 0` to force
+the CPU path, then compare. A WebGPU validation error is caught by the host's
+error scope (the frame falls back to your CPU path) and reported. Dawn's own
+messages are in the engine log.
 
 ## Building and testing a plugin
 

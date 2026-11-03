@@ -222,6 +222,36 @@ struct RenderInputs {
   std::array<double, 9> compToWorld{1, 0, 0, 0, 1, 0, 0, 0, 1};
   /// The times the effect checked out (PR_OUT_FLAG_SAMPLES_TIME), sorted by time.
   std::vector<TimeSample> samples;
+  /// SDK 1.4 (T): a STATEFUL effect's state after this frame's SIM_STEP (get_sim_state); absent = none.
+  std::optional<std::vector<std::uint8_t>> simState;
+};
+
+/// SDK 1.4 (T): the state of a STATEFUL effect instance at one of its layer frames.
+struct SimRequest {
+  /// Any frame's inputs (matchName, instance, layer size, sequence…): the effect and the instance.
+  RenderInputs base;
+  /// The layer frame wanted (0 = the layer's first frame; earlier times use frame 0).
+  std::int64_t frame = 0;
+  /// Flicks per frame (the step's dt).
+  std::int64_t step = 0;
+  /// What makes every frame's inputs what they are (the effect's record, its keyframes, the
+  /// sequence data): while it is the same, the per-frame input hashes are kept. 0 = re-evaluate
+  /// every frame's inputs on every call (an expression may read anything).
+  std::uint64_t inputsKey = 0;
+  /// The effect's inputs at layer frame `k` (its params evaluated at k × step).
+  std::function<RenderInputs(std::int64_t k)> inputsAt;
+  /// T4: stop stepping after this long (ms) and set `*partial` — the viewer's frame stays
+  /// responsive; the states made so far are kept and the next request goes on from them. 0 = no limit.
+  double budgetMs = 0;
+  bool* partial = nullptr;
+};
+
+struct SimStats {
+  std::uint64_t steps = 0;      ///< SIM_STEP calls made
+  std::uint64_t cacheHits = 0;  ///< requests answered by a kept state without stepping
+  std::uint64_t bytes = 0;      ///< states kept in RAM now
+  std::uint64_t diskBytes = 0;  ///< states kept on disk now (HostOptions::simDiskDir)
+  std::uint64_t diskHits = 0;   ///< requests a state read back from disk answered
 };
 
 /// SDK 1.2: what SMART_PRE_RENDER said besides layer checkouts.
@@ -337,6 +367,11 @@ struct HostOptions {
   /// files stay unlocked, so the author's build can overwrite them, and reload() loads the new
   /// build. Empty = load in place (the shipping default).
   std::filesystem::path shadowDir;
+  /// SDK 1.4 (T2): where simulation states evicted from RAM go (`--sim-cache-dir`). Named by the
+  /// hash chain of their inputs, so they stay valid across sessions; empty = RAM only.
+  std::filesystem::path simDiskDir;
+  /// How much of it they may use; the oldest files go first.
+  std::uint64_t simDiskBudget = std::uint64_t{1} << 30U;
   /// The registry's signed revocation list, already verified by Electron
   /// (`--revoked <file>`): plugin id → reason. A revoked plugin is listed
   /// `revoked` and never loaded; setPluginEnabled cannot turn it on.
@@ -418,6 +453,14 @@ class PluginHost {
                         const PrGpuWorld& input, const PrGpuWorld& output);
   /// GPU_DEVICE_SETDOWN for every effect set up on `deviceIndex` (the device is going away).
   void gpu_device_gone(std::uint32_t deviceIndex);
+  /// SDK 1.4 (T): the state after layer frame `q.frame`'s SIM_STEP. Steps from the newest kept
+  /// state whose every earlier frame had the same inputs (frame 0 starts from none), keeping each
+  /// state it makes; scrubbing back re-uses them, and an edit at frame k re-steps from k. nullopt +
+  /// `why` when a step fails (a fault disables the instance, as in a render).
+  std::optional<std::vector<std::uint8_t>> sim_state(const SimRequest& q, std::string& why);
+  [[nodiscard]] SimStats sim_stats() const;
+  /// The RAM the kept states may use (default 256 MB); the least recently used go first.
+  void set_sim_budget(std::size_t bytes);
 
   /// The world depth an effect renders at in a project of `projectBits` (AE's down-conversion).
   [[nodiscard]] static PrPixelFormat world_format(const EffectSpec& e, std::uint32_t projectBits) noexcept;

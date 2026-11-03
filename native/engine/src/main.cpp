@@ -21,6 +21,8 @@
 //                    [--plugin-journal F]  the plugin crash journal (quarantines a plugin that killed the engine)
 //                    [--plugin-disabled ID] a plugin the user disabled: listed, not loaded (repeatable)
 //                    [--plugin-shadow D]   Developer Mode: load plugin binaries from copies under D (reloadPlugin)
+//                    [--sim-cache-dir D]   plugin simulation states evicted from RAM are kept under D (SDK 1.4)
+//                    [--plugin-watchdog MS] a plugin call longer than MS is a hang (0 = never: debugging)
 //                    [--revoked F]         the verified revocation list: listed plugins never load
 //                    [--entitlement F]     the Premation Cloud entitlement token (plugins/entitlement.hpp)
 //                    [--version]
@@ -31,6 +33,7 @@
 // stdin/stdout: the command pipe; fd 3/4: the frame channel; stderr: log.
 // See engine_process.hpp for the thread structure and exit codes.
 
+#include <algorithm>
 #include <charconv>
 #include <cstdio>
 #include <cstdlib>
@@ -217,6 +220,13 @@ int run(int argc, char** argv) {
       ok = !v.empty();
     } else if (k == "--plugin-disabled") {
       o.pluginDisabled.emplace_back(v);
+      ok = !v.empty();
+    } else if (k == "--plugin-watchdog") {
+      std::uint32_t ms = 0;
+      ok = parse_u32(v, ms);
+      o.pluginWatchdogMs = static_cast<int>(std::min<std::uint32_t>(ms, 3'600'000U));
+    } else if (k == "--sim-cache-dir") {
+      o.pluginSimDir = std::string(v);
       ok = !v.empty();
     } else if (k == "--plugin-shadow") {
       o.pluginShadow = std::string(v);

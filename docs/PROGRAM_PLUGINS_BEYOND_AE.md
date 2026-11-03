@@ -4,7 +4,7 @@ Owner ask (2026-11-03): how far can the plugin system go, so authors can build
 plugins much deeper than today and use them inside the editor. Builds on
 docs/PLUGIN_PLATFORM_PLAN.md (P1–P7), docs/PROGRAM_DEEP_PLUGINS.md (SDK 1.2,
 Element 3D class, closed 2026-10-13) and docs/PLUGIN_SDK.md (SDK 1.3: custom
-UI in Effect Controls). Status: **in progress** (W1, W3, W4 1d712106; W2 28cc8e40; L built 2026-11-03, uncommitted). Everything stays
+UI in Effect Controls). Status: **in progress** (W1, W3, W4 1d712106; W2 28cc8e40; L f3fabaf9; T built 2026-11-03, uncommitted). Everything stays
 local on `native-core` until the owner says push.
 
 ## 0. Where we stand, and what "beyond AE" means
@@ -76,17 +76,15 @@ as 1.4 additions if they can stay appended, otherwise they wait for **2.0**
   path is reused unchanged (frame test: the entry reaches the chain at layer
   size). Its own effect cannot be removed / duplicated / copied / moved, and
   nothing goes before it. Missing plugin: empty layer + layerErrors.
-- [x] L3 **Editor.** (partial) Layer ▸ New lists plugin layer types
+- [x] L3 **Editor.** Layer ▸ New lists plugin layer types
   (`withPluginLayerTypes`); the params are timeline rows in the layer's
   Contents group; `LayerInfo.pluginLayerType`; MCP `create_layer kind=plugin`.
-  Not yet: the TopNav "+" menu, an Effect Controls presentation of the own
-  effect as the layer's section (it shows as an ordinary effect card whose
-  remove the engine refuses), a layer glyph.
+  The TopNav "+" menu lists them too; the own effect's Effect Controls card
+  offers no Move / Duplicate / Copy / Remove and does not drag.
 - [x] L4 **Proof: `chartlayer` sample** (Bar Chart, Value 1–6 animatable) +
   CPU goldens (`plugin_goldens_chartlayer`), `test_plugin_finish.cpp
-  [layertype]`, `pluginLayerTypes.native.test.ts`. A GPU-path golden scene of
-  the layer through the full renderer is still to add (the full engine exe
-  was held by the running app).
+  [layertype]`, `pluginLayerTypes.native.test.ts`, GPU golden scene
+  `plugin-layer-chart`.
 
 ### D — plugins inside the 3D scene (needs Q1)
 
@@ -108,24 +106,28 @@ as 1.4 additions if they can stay appended, otherwise they wait for **2.0**
 
 ### T — simulations and their cache
 
-- [ ] T1 **`PR_OUT_FLAG_STATEFUL`.** The plugin declares that frame N needs
-  its state after frame N−1. Selectors `SIM_STEP` (state in, state out, dt,
-  params at the step's time) and `SIM_RENDER` (state → pixels or D1
-  contribution). State is opaque bytes the plugin flattens.
-- [ ] T2 **Host sim cache.** The host steps from the nearest cached state,
-  keeps states in RAM (LRU next to `render/frame_cache.cpp`) and on disk
-  (`render/disk_cache.cpp`), keyed by everything upstream of the step; any
-  param edit before frame N invalidates from N on. Scrubbing backwards never
-  re-simulates from 0 when a state is cached. The Cache & Memory panel shows
-  sim caches.
-- [ ] T3 **Determinism.** The host passes a seed per instance; the same
-  document gives the same state on every machine and in export. A test runs a
-  sim forwards, scrubs back, renders again and compares bytes.
-- [ ] T4 **Watchdog.** `SIM_STEP` is a render selector (no progress
-  extension); a cold cache is filled on the prefetch workers, not on the
-  shown frame.
-- [ ] T5 **Proof: `particles` gains a stateful mode** (forces, collisions with
-  D1 meshes) + golden frames at 0, 60, 120 and after a backwards scrub.
+- [x] T1 **`PR_OUT_FLAG_STATEFUL`.** (2026-11-03, uncommitted) `PR_CMD_SIM_STEP`
+  (23) with `PrSimStepExtra` (state_in, frame, dt, seed, state_out);
+  rendering reads the frame's state through `get_sim_state` (appended to
+  PrHostSuite). One SIM_STEP selector instead of SIM_STEP + SIM_RENDER: the
+  ordinary render selectors draw from the state.
+- [x] T2 **Host sim cache.** RAM + disk (`--sim-cache-dir`, 1 GB, kept across sessions; Cache & Memory shows both): `PluginHost::sim_state` keeps every state
+  keyed by a hash chain of all earlier frames' inputs (an edit at k re-steps
+  from k), LRU under a budget (256 MB).
+- [x] T3 **Determinism.** Per-instance seed; the state is computed on the
+  document side and travels with the frame (`simState`); two hosts walking
+  vs jumping produce identical bytes (test).
+- [x] T4 **Watchdog / viewer.** SIM_STEP runs under the render watchdog per
+  call; a viewer frame gives a catch-up 80 ms, then draws without the state,
+  not final, and is drawn again (BuiltFrame.simPending, a settle sentinel)
+  until done; export waits. (Not on the prefetch workers: the document's
+  inputs are evaluated on the building thread.)
+- [x] T5 **Proof:** the `bounce` sample (a new sample, not a stateful mode of
+  `particles`) + `engine_plugins_tests [sim]` (cold = walked, scrub back =
+  0 steps, edit at k, budget) and `engine_plugins_scene_tests [sim]`
+  (document keyframes drive steps), CPU goldens `plugin_goldens_bounce`
+  (premation-plugins test steps to each case's time) and the GPU golden
+  scene `plugin-sim-bounce` (packages/render-tests).
 
 ### M — ML inference suite (needs Q5)
 
@@ -253,10 +255,12 @@ as 1.4 additions if they can stay appended, otherwise they wait for **2.0**
   tolerance per bits, `<name>.actual.pgold` on a fail; ctest
   `plugin_goldens_fxkit`. A 4 → 5 px change fails (0.54), an unchanged
   render passes at 0.
-- [~] W5 **Debugging guide.** Attaching a debugger to the engine (or to the
+- [x] W5 **Debugging guide.** Attaching a debugger to the engine (or to the
   plugin host after X1), symbols, the crash journal. (PLUGIN_SDK.md now has
   "Starting a plugin", "Writing effects in WGSL: fxkit" and "Golden tests";
-  the debugger section is still to write.)
+  "Debugging a plugin": premation-plugins under a debugger, attaching to
+  premation-engine, `--plugin-watchdog 0` via `PREMATION_ENGINE_ARGS`, logs,
+  quarantine.)
 
 ## 3. Order and gates
 

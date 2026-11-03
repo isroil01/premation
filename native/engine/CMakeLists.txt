@@ -667,6 +667,12 @@ if(MOTION_BUILD_TESTS AND TARGET fxkit)
     COMMAND premation-plugins --plugins ${PREMATION_PLUGIN_BUNDLES}/fxkit
             test ${CMAKE_CURRENT_SOURCE_DIR}/../sdk/samples/fxkit/tests/cases.json)
 endif()
+if(MOTION_BUILD_TESTS AND TARGET bounce)
+  # SDK 1.4 simulation sample (T5): stepped to each case's frame, then rendered.
+  add_test(NAME plugin_goldens_bounce
+    COMMAND premation-plugins --plugins ${PREMATION_PLUGIN_BUNDLES}/bounce
+            test ${CMAKE_CURRENT_SOURCE_DIR}/../sdk/samples/bounce/tests/cases.json)
+endif()
 if(MOTION_BUILD_TESTS AND TARGET chartlayer)
   # SDK 1.4 layer type sample (L4): the bar chart generator's CPU renders.
   add_test(NAME plugin_goldens_chartlayer
@@ -688,7 +694,7 @@ if(MOTION_BUILD_TESTS)
   target_compile_definitions(engine_plugins_tests PRIVATE
     PREMATION_PLUGIN_BUNDLES="${PREMATION_PLUGIN_BUNDLES}"
     PREMATION_PLUGINS_TOOL="$<TARGET_FILE:premation-plugins>")
-  add_dependencies(engine_plugins_tests premation-plugins ripple rings checkout particles grademap distribute ppmio ppmseq statspanel chartlayer)
+  add_dependencies(engine_plugins_tests premation-plugins ripple rings checkout particles grademap distribute ppmio ppmseq statspanel chartlayer bounce)
   add_test(NAME engine_plugins_tests COMMAND engine_plugins_tests --reporter compact)
   target_sources(engine_plugins_tests PRIVATE tests/test_plugin_sdk12.cpp)  # SDK 1.2: times, shutter, assets, presets
   target_sources(engine_plugins_tests PRIVATE tests/test_plugin_param_ui.cpp)  # SDK 1.3: Effect Controls boxes
@@ -716,6 +722,7 @@ if(MOTION_BUILD_TESTS)
     add_dependencies(engine_plugins_tests reload_probe_v${_v})
   endforeach()
   target_sources(engine_plugins_tests PRIVATE tests/test_plugin_reload.cpp)
+  target_sources(engine_plugins_tests PRIVATE tests/test_plugin_sim.cpp)  # SDK 1.4 (T): simulations and their kept states
   target_compile_definitions(engine_plugins_tests PRIVATE
     RELOAD_PROBE_V1="$<TARGET_FILE:reload_probe_v1>"
     RELOAD_PROBE_V2="$<TARGET_FILE:reload_probe_v2>")
@@ -1294,7 +1301,7 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
     target_link_libraries(engine_plugins_scene_tests PRIVATE engine_scene engine_export_core motion::options Catch2::Catch2WithMain)
     target_compile_definitions(engine_plugins_scene_tests PRIVATE PREMATION_PLUGIN_BUNDLES="${PREMATION_PLUGIN_BUNDLES}"
       PREMATION_GOLDEN_SCENES="${CMAKE_CURRENT_SOURCE_DIR}/../../packages/render-tests/scenes")
-    add_dependencies(engine_plugins_scene_tests particles model3d ppmio chartlayer)  # model3d: scene depth at sub-times (S6); ppmio: Collect Files
+    add_dependencies(engine_plugins_scene_tests particles model3d ppmio chartlayer bounce)  # model3d: scene depth at sub-times (S6); ppmio: Collect Files
     if(MSVC)
       target_compile_options(engine_plugins_scene_tests PRIVATE /bigobj)
     endif()

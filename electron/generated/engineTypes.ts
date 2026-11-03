@@ -4830,6 +4830,9 @@ export interface RenderStats {
   /** That frame's measured GPU total (ms) and how long ago it was drawn (ms). */
   layerCostsFrameMs?: number;
   layerCostsAgoMs?: number;
+  /** SDK 1.4 (T2): plugin simulation states the engine keeps — in RAM, and on disk (`--sim-cache-dir`), bytes. Absent = no plugin host. */
+  simStateBytes?: number;
+  simStateDiskBytes?: number;
 }
 
 export interface LayerCost {

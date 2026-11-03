@@ -39,6 +39,7 @@ struct State {
   NativeEffects::UiFn ui;
   NativeEffects::ListFn rescan;
   NativeEffects::ReloadFn reload;
+  NativeEffects::SimBytesFn simBytes;
   NativeEffects::OverlayFn overlay;
   NativeEffects::DragFn drag;
   NativeEffects::SceneFn scene;  // SDK 1.2
@@ -165,6 +166,7 @@ void NativeEffects::clear_handlers() {
   set_query_handlers({}, {});
   set_rescan_handler({});
   set_reload_handler({});
+  set_sim_bytes_handler({});
   set_overlay_handlers({}, {});
   set_scene_handler({});
   set_asset_files_handler({});
@@ -209,6 +211,23 @@ std::optional<std::vector<api::PluginInfo>> NativeEffects::rescan() {
   {
     const std::scoped_lock lock(s.handlerMutex);
     fn = s.rescan;
+  }
+  if (!fn) return std::nullopt;
+  return fn();
+}
+
+void NativeEffects::set_sim_bytes_handler(SimBytesFn fn) {
+  State& s = state();
+  const std::scoped_lock lock(s.handlerMutex);
+  s.simBytes = std::move(fn);
+}
+
+std::optional<std::pair<std::uint64_t, std::uint64_t>> NativeEffects::sim_bytes() {
+  State& s = state();
+  SimBytesFn fn;
+  {
+    const std::scoped_lock lock(s.handlerMutex);
+    fn = s.simBytes;
   }
   if (!fn) return std::nullopt;
   return fn();

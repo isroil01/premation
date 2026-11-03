@@ -238,6 +238,19 @@ function Overview({ readout }: { readout: MemoryReadout | null }): JSX.Element {
           onPurge={purgeDisk}
           purgeLabel={t('cacheMemory.purgeDisk', 'Empty the disk cache')}
         />
+        {(r?.simBytes ?? 0) + (r?.simDiskBytes ?? 0) > 0 ? (
+          <>
+            <div className={styles.rowHead}>
+              <span className={styles.group}>{t('cacheMemory.sims', 'Plugin simulations')}</span>
+              <span className={styles.value} data-numeric>
+                {t('cacheMemory.simsValue', '{ram} in memory · {disk} on disk', { ram: formatBytes(r?.simBytes ?? 0), disk: formatBytes(r?.simDiskBytes ?? 0) })}
+              </span>
+            </div>
+            <span className={styles.help}>
+              {t('cacheMemory.simsHelp', 'Simulation steps kept so scrubbing back and playing on do not run them again. An edit re-runs only the frames after it.')}
+            </span>
+          </>
+        ) : null}
       </section>
 
       <section className={styles.section} aria-label={t('cacheMemory.comp', 'This composition')}>

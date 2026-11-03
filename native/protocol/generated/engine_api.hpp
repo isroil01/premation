@@ -5756,6 +5756,8 @@ struct RenderStats {
   std::vector<LayerCost> layer_costs;
   std::optional<double> layer_costs_frame_ms;
   std::optional<double> layer_costs_ago_ms;
+  std::optional<std::uint64_t> sim_state_bytes;
+  std::optional<std::uint64_t> sim_state_disk_bytes;
   bool operator==(const RenderStats&) const = default;
 };
 

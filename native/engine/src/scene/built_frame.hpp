@@ -22,6 +22,9 @@ struct BuiltFrame {
   std::vector<scene::TextureRequest> textures;
   /// Transport playing: footage decodes ahead of the playhead.
   bool playing = false;
+  /// SDK 1.4 (T4): a plugin simulation was still catching up when this was built: never final,
+  /// drawn again until it is.
+  bool simPending = false;
   double buildMs = 0;
   /// Font families the document's text names (the render thread's FontSet
   /// loads new ones before rasterising — FontSet is filled before shaping).

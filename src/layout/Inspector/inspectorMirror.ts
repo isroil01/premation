@@ -27,11 +27,16 @@ export function layerExists(id: string | null | undefined): boolean {
  * for a generator layer the plugin kind id (`<pluginId>.<kindId>`) when the
  * layer is a plugin-provided kind.
  */
+/** SDK 1.4: the editor kind of a native plugin layer type (createLayer kind=generator). */
+export const PLUGIN_LAYER_KIND = 'pluginLayer';
+
 export function inspectorKindOf(id: string | null | undefined): string | null {
   const layer = mirrorLayer(id);
   if (!layer) return null;
   // A plugin-provided kind: LayerInfo.generator names it (B4).
   if (layer.generator !== '') return layer.generator;
+  // SDK 1.4: a native plugin layer type — its own effect is its content, not a shape's fill and stroke.
+  if (layer.pluginLayerType !== undefined) return PLUGIN_LAYER_KIND;
   return uiKindOf(layer);
 }
 
