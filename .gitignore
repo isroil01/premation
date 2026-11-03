@@ -22,6 +22,11 @@ build/*
 # The NSIS include (electron-builder.yml nsis.include): removes Premation from
 # Claude Desktop's config on uninstall (docs/MCP_PLAN.md D9).
 !build/installer.nsh
+# The installer wizard bitmaps (scripts/renderInstallerArt.cjs). Tracked so
+# packaging never has to render them.
+!build/installerSidebar.bmp
+!build/uninstallerSidebar.bmp
+!build/installerHeader.bmp
 .vite/
 
 # Test / coverage

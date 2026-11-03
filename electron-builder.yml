@@ -181,6 +181,14 @@ win:
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
+  # Branded wizard art, rendered from scripts/installer-art/art.html by
+  # `npx electron scripts/renderInstallerArt.cjs`. Drawn at 2x the MUI2 sizes
+  # (sidebar 164x314, header 150x57): NSIS fits the bitmap to its control, so
+  # it is 1:1 at 200 % scaling and downsampled, not blurred, at 100 %.
+  installerSidebar: build/installerSidebar.bmp
+  uninstallerSidebar: build/uninstallerSidebar.bmp
+  installerHeader: build/installerHeader.bmp
+  # Page wording lives in installer.nsh (customWelcomePage / customUnWelcomePage).
   # customUnInstall: take Premation out of Claude Desktop's config on a real
   # uninstall (not an update) — docs/MCP_PLAN.md D9.
   include: build/installer.nsh

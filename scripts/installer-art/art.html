@@ -1,0 +1,97 @@
+<!doctype html>
+<!--
+  Source of the Windows installer bitmaps (build/installerSidebar.bmp,
+  build/uninstallerSidebar.bmp, build/installerHeader.bmp). Rendered by
+  scripts/renderInstallerArt.cjs; ?art= picks which one.
+
+  Drawn at 2x the MUI2 sizes (sidebar 164x314, header 150x57): NSIS stretches
+  the bitmap to its control, so a 2x source is 1:1 at 200 % display scaling and
+  downsampled (not blown up) at 100 %. Hence big shapes and one line of type,
+  nothing thin enough to break up when resampled.
+
+  The shapes are the app mark's own geometry (build/icon.png, 512 grid): the
+  bowl (x 165-400, y 90-306) and the square (x 118-210, y 316-408).
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  @font-face {
+    font-family: "IBM Plex Sans";
+    font-weight: 600;
+    src: url("../../node_modules/@fontsource/ibm-plex-sans/files/ibm-plex-sans-latin-600-normal.woff2") format("woff2");
+  }
+  :root {
+    /* src/tokens/colors.css */
+    --frame: #111113;
+    --well: #0b0b0c;
+    --azure: #4d8dff;
+    --text: #e1e1e1;
+    --text-muted: #8c8c8c;
+  }
+  html, body { margin: 0; padding: 0; overflow: hidden; }
+  body { font-family: "IBM Plex Sans", sans-serif; -webkit-font-smoothing: antialiased; }
+  .art { display: none; position: relative; overflow: hidden; }
+  body[data-art="sidebar"] #sidebar,
+  body[data-art="unsidebar"] #sidebar,
+  body[data-art="header"] #header { display: block; }
+
+  #sidebar {
+    width: 328px; height: 628px;
+    background: linear-gradient(180deg, var(--frame) 0%, var(--well) 100%);
+  }
+  #sidebar svg { position: absolute; inset: 0; }
+  .wordmark {
+    position: absolute; left: 32px; bottom: 34px;
+    color: var(--text); font-size: 27px; font-weight: 600; letter-spacing: -0.01em;
+    line-height: 1;
+  }
+
+  #header { width: 300px; height: 114px; background: #ffffff; }
+  #header img { position: absolute; right: 22px; top: 25px; width: 64px; height: 64px; }
+</style>
+</head>
+<body>
+  <div class="art" id="sidebar">
+    <svg width="328" height="628" viewBox="0 0 328 628">
+      <defs>
+        <linearGradient id="bowl" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#4d8dff"/>
+          <stop offset="1" stop-color="#2f5fc0"/>
+        </linearGradient>
+      </defs>
+      <!-- The mark at 1.25x in sidebar pixels: bowl 270 tall (radius 135),
+           its curve bleeding 22 px off the right edge; square 115, set off
+           the bowl's lower-left corner as in the icon. -->
+      <path d="M118 64 H215 A135 135 0 0 1 215 334 H118 Z" fill="url(#bowl)"/>
+      <!-- The square easing into its place, onion-skinned like a motion
+           path: older frames fainter. Installer: arrives from below-left.
+           Uninstaller: leaves the same way (opacities reversed below). -->
+      <g id="frames">
+        <rect class="f" x="-3" y="409" width="115" height="115" fill="#ffffff" opacity="0.06"/>
+        <rect class="f" x="21" y="385" width="115" height="115" fill="#ffffff" opacity="0.12"/>
+        <rect class="f" x="41" y="365" width="115" height="115" fill="#ffffff" opacity="0.26"/>
+        <rect class="f" x="59" y="347" width="115" height="115" fill="#ffffff" opacity="1"/>
+      </g>
+    </svg>
+    <div class="wordmark">Premation</div>
+  </div>
+
+  <div class="art" id="header">
+    <img src="../../build/icon.png" alt="">
+  </div>
+
+<script>
+  const art = new URLSearchParams(location.search).get('art') || 'sidebar';
+  document.body.dataset.art = art;
+  if (art === 'unsidebar') {
+    // Same frames, opposite story: the square is solid at its outermost
+    // position and the ghosts trail back toward the mark.
+    const f = [...document.querySelectorAll('#frames .f')];
+    const ops = f.map((r) => r.getAttribute('opacity')).reverse();
+    f.forEach((r, i) => r.setAttribute('opacity', ops[i]));
+  }
+  document.fonts.ready.then(() => { document.body.dataset.ready = '1'; });
+</script>
+</body>
+</html>
