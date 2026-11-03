@@ -19,6 +19,9 @@
 #               headers, CPU always); its test assets in samples/model3d/models
 #     grade     GPU effect (SMART_RENDER_GPU on the engine's Dawn device) + CPU
 #               fallback — needs Dawn's headers, so only with the `engine` feature
+#     fxkit     two effects written once in WGSL (fxkit/, docs/PLUGIN_SDK.md "fxkit"): the GPU path
+#               is the WGSL, the CPU path its generated C++ twin; gen/ is committed and
+#               `node fxkit/fxkit.mjs samples/fxkit --check` holds it to fx/*.fx
 
 add_library(premation_sdk INTERFACE)
 target_include_directories(premation_sdk INTERFACE
@@ -36,6 +39,8 @@ add_library(premation::sdk ALIAS premation_sdk)
 #   bin/premation-plugins[.exe]                 list / render / crash-check a bundle
 #                                               (installed by engine/CMakeLists.txt)
 #   share/premation-sdk/{pack,sign}-plugin.mjs  package + sign for the store
+#   share/premation-sdk/create-premation-plugin.mjs  start a plugin project (effect / fx / command)
+#   share/premation-sdk/fxkit/                  WGSL → C++ twin generator + runtime (premation_add_fx_plugin)
 #   share/premation-sdk/samples/                the sample plugins (+ common/sample_util.hpp)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
@@ -53,7 +58,12 @@ write_basic_package_version_file(${CMAKE_CURRENT_BINARY_DIR}/PremationSdkConfigV
 install(FILES cmake/PremationSdkConfig.cmake ${CMAKE_CURRENT_BINARY_DIR}/PremationSdkConfigVersion.cmake
   DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/PremationSdk COMPONENT sdk)
 install(DIRECTORY samples/ DESTINATION ${CMAKE_INSTALL_DATADIR}/premation-sdk/samples COMPONENT sdk)
+# fxkit: the WGSL → C++ twin generator, its runtime headers and plugin source (docs/PLUGIN_SDK.md "fxkit").
+install(DIRECTORY fxkit/include/premation_fxkit DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT sdk)
+install(FILES fxkit/fxkit.mjs fxkit/prelude.wgsl fxkit/std.fx fxkit/src/fxkit_plugin.cpp
+  DESTINATION ${CMAKE_INSTALL_DATADIR}/premation-sdk/fxkit COMPONENT sdk)
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/pack-plugin.mjs ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/sign-plugin.mjs
+              ${CMAKE_CURRENT_SOURCE_DIR}/../../scripts/create-premation-plugin.mjs
   DESTINATION ${CMAKE_INSTALL_DATADIR}/premation-sdk COMPONENT sdk)
 
 set(PREMATION_PLUGIN_BUNDLES ${CMAKE_BINARY_DIR}/plugins CACHE INTERNAL "Where the sample plugin bundles are laid out")
@@ -104,6 +114,10 @@ premation_sample_plugin(ppmseq samples/ppmseq/ppmseq.cpp)           # SDK 1.2: a
 premation_sample_plugin(statspanel samples/statspanel/statspanel.cpp)  # SDK 1.2: a panel without an effect (+ a command)
 premation_sample_plugin(silkwaves samples/silkwaves/silkwaves.cpp)  # Silk Waves: a looping silk/light generator (GPU with Dawn's headers, CPU always)
 
+# fxkit: one module from samples/fxkit/fx/*.fx (generated into samples/fxkit/gen/).
+premation_sample_plugin(fxkit fxkit/src/fxkit_plugin.cpp)
+target_include_directories(fxkit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/samples/fxkit ${CMAKE_CURRENT_SOURCE_DIR}/fxkit/include)
+
 premation_sample_plugin(model3d samples/model3d/model3d.cpp)  # SDK 1.2: glTF, camera + lights, shutter blur, scene depth (S8)
 foreach(_f box.glb box.gltf box.bin checker.png)
   configure_file(${CMAKE_CURRENT_SOURCE_DIR}/samples/model3d/models/${_f} ${PREMATION_PLUGIN_BUNDLES}/model3d/models/${_f} COPYONLY)
@@ -121,4 +135,6 @@ if(TARGET dawn::webgpu_dawn)
   target_compile_definitions(model3d PRIVATE PRS_SAMPLE_GPU)
   target_include_directories(silkwaves PRIVATE $<TARGET_PROPERTY:dawn::webgpu_dawn,INTERFACE_INCLUDE_DIRECTORIES>)
   target_compile_definitions(silkwaves PRIVATE PRS_SAMPLE_GPU)
+  target_include_directories(fxkit PRIVATE $<TARGET_PROPERTY:dawn::webgpu_dawn,INTERFACE_INCLUDE_DIRECTORIES>)
+  target_compile_definitions(fxkit PRIVATE FXKIT_GPU=1)
 endif()

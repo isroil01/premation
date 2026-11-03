@@ -1,0 +1,8 @@
+{
+  "cases": [
+    { "name": "chroma-split-angle", "effect": "com.premation.sample.fxkit.chroma_split", "params": { "1": 4, "2": 30 } },
+    { "name": "chroma-split-radial-8bpc", "effect": "com.premation.sample.fxkit.chroma_split", "bits": 8, "params": { "1": 6, "3": 1 } },
+    { "name": "dot-grid-t0.5", "effect": "com.premation.sample.fxkit.dot_grid", "time": 0.5, "size": [96, 64],
+      "params": { "1": 10, "2": 70, "3": 60, "4": 1.5, "5": [0.8, 0.4, 0.2, 1] } }
+  ]
+}

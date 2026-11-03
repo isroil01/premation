@@ -452,7 +452,7 @@ export default tseslint.config(
     // files: a genuinely undefined name would have looked exactly like the
     // false ones and been read as more of the same noise. Same shape as F25 —
     // a list inside a guard, silently narrowing what the guard covers.
-    files: ['**/*.{mjs,cjs}', 'scripts/**', 'packages/*/jest.config.cjs', 'jest.*.cjs'],
+    files: ['**/*.{mjs,cjs}', 'scripts/**', 'native/sdk/**/*.js', 'packages/*/jest.config.cjs', 'jest.*.cjs'],
     languageOptions: {
       globals: {
         ...globals.node,

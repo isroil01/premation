@@ -577,6 +577,7 @@ if(TARGET engine_render_graph)
       PREMATION_RENDER_TOOL="$<TARGET_FILE:premation-render>")
     add_dependencies(engine_plugins_gpu_tests premation-render grade checkout)
     add_dependencies(engine_plugins_gpu_tests model3d)  # SDK 1.2: scene depth (S6) + the model3d sample (S8)
+    add_dependencies(engine_plugins_gpu_tests fxkit)    # fxkit: WGSL and its generated C++ twin
     if(MSVC)
       target_compile_options(engine_plugins_gpu_tests PRIVATE /bigobj)
       target_compile_definitions(engine_plugins_gpu_tests PRIVATE _CRT_SECURE_NO_WARNINGS)
@@ -656,6 +657,12 @@ endif()
 # premation-plugins: list / render / crash-check plugins without an editor (tools/premation_plugins.cpp).
 add_executable(premation-plugins tools/premation_plugins.cpp)
 target_link_libraries(premation-plugins PRIVATE engine_plugins motion::options)
+if(MOTION_BUILD_TESTS AND TARGET fxkit)
+  # The plugin test kit on the fxkit sample: its CPU renders against samples/fxkit/tests/golden.
+  add_test(NAME plugin_goldens_fxkit
+    COMMAND premation-plugins --plugins ${PREMATION_PLUGIN_BUNDLES}/fxkit
+            test ${CMAKE_CURRENT_SOURCE_DIR}/../sdk/samples/fxkit/tests/cases.json)
+endif()
 # Part of the SDK release artifact (native/sdk/CMakeLists.txt, `--component sdk`).
 install(TARGETS premation-plugins RUNTIME DESTINATION bin COMPONENT sdk)
 if(MSVC)

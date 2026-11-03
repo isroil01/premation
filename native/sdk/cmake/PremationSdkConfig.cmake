@@ -43,3 +43,55 @@ function(premation_add_plugin name)
   configure_file(${arg_MANIFEST} ${_dir}/premation-plugin.json COPYONLY)
   set_property(TARGET ${name} PROPERTY PREMATION_BUNDLE_DIR ${_dir})
 endfunction()
+
+# fxkit (docs/PLUGIN_SDK.md "Writing effects in WGSL: fxkit"):
+#
+#   premation_add_fx_plugin(myfx PROJECT ${CMAKE_CURRENT_SOURCE_DIR})
+#
+# PROJECT holds fxkit.json and fx/*.fx. When Node is found, the build regenerates
+# PROJECT/gen/* and PROJECT/premation-plugin.json from them first; without Node it
+# builds the committed gen/. Pass DAWN_INCLUDE_DIR (webgpu.h, dawn_proc_table.h) for
+# the GPU path; without it the plugin renders on its CPU twin only.
+set(PREMATION_FXKIT_DIR "${PREMATION_SDK_TOOLS_DIR}/fxkit")
+find_program(PREMATION_NODE node)
+
+function(premation_add_fx_plugin name)
+  cmake_parse_arguments(PARSE_ARGV 1 arg "" "PROJECT;DAWN_INCLUDE_DIR" "")
+  if(NOT arg_PROJECT)
+    message(FATAL_ERROR "premation_add_fx_plugin(${name} PROJECT <dir with fxkit.json and fx/>)")
+  endif()
+  set(_gen ${arg_PROJECT}/gen/fx_gen.hpp)
+  if(PREMATION_NODE)
+    # Once now, so the manifest exists for premation_add_plugin; then on every build that
+    # changed an .fx (the custom command below), with the manifest re-copied after the link.
+    execute_process(COMMAND ${PREMATION_NODE} ${PREMATION_FXKIT_DIR}/fxkit.mjs ${arg_PROJECT}
+      RESULT_VARIABLE _fxkit_rc OUTPUT_VARIABLE _fxkit_out ERROR_VARIABLE _fxkit_err)
+    if(NOT _fxkit_rc EQUAL 0)
+      message(FATAL_ERROR "fxkit (${name}):\n${_fxkit_err}${_fxkit_out}")
+    endif()
+    file(GLOB _fx CONFIGURE_DEPENDS ${arg_PROJECT}/fx/*.fx)
+    add_custom_command(OUTPUT ${_gen} ${arg_PROJECT}/gen/lib.inc ${arg_PROJECT}/premation-plugin.json
+      COMMAND ${PREMATION_NODE} ${PREMATION_FXKIT_DIR}/fxkit.mjs ${arg_PROJECT}
+      DEPENDS ${_fx} ${arg_PROJECT}/fxkit.json ${PREMATION_FXKIT_DIR}/fxkit.mjs
+      COMMENT "fxkit: ${name}"
+      VERBATIM)
+  elseif(NOT EXISTS ${_gen})
+    message(FATAL_ERROR "premation_add_fx_plugin(${name}): no Node to run fxkit.mjs and no committed ${_gen}")
+  endif()
+  premation_add_plugin(${name} SOURCES ${PREMATION_FXKIT_DIR}/fxkit_plugin.cpp ${_gen} MANIFEST ${arg_PROJECT}/premation-plugin.json)
+  target_include_directories(${name} PRIVATE ${arg_PROJECT})
+  get_target_property(_bundle ${name} PREMATION_BUNDLE_DIR)
+  add_custom_command(TARGET ${name} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${arg_PROJECT}/premation-plugin.json ${_bundle}/premation-plugin.json
+    VERBATIM)
+  # The CPU twin must run the WGSL's maths: nothing fused behind the generator's back.
+  if(MSVC)
+    target_compile_options(${name} PRIVATE /utf-8 /EHsc /bigobj /clang:-ffp-contract=off)
+  else()
+    target_compile_options(${name} PRIVATE -ffp-contract=off)
+  endif()
+  if(arg_DAWN_INCLUDE_DIR)
+    target_include_directories(${name} PRIVATE ${arg_DAWN_INCLUDE_DIR})
+    target_compile_definitions(${name} PRIVATE FXKIT_GPU=1)
+  endif()
+endfunction()

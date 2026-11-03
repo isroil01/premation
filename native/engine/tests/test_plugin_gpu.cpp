@@ -283,6 +283,63 @@ TEST_CASE("plugin GPU: grade's SMART_RENDER_GPU equals its CPU twin at 8, 16 and
   }
 }
 
+// fxkit (native/sdk/fxkit): an effect written once in WGSL. The GPU path runs that WGSL, the
+// CPU path the C++ the generator transpiled from it; both must draw the same picture.
+TEST_CASE("plugin GPU: fxkit effects — the WGSL and its generated C++ twin agree at 8, 16 and 32 bpc", "[plugins][gpu][fxkit]") {
+  auto r = renderer_or_skip();
+  if (!r) return;
+  pl::PluginHost host(options());
+  host.scan();
+  pl::RenderGlue glue(&host);
+  r->set_native_effects(&glue);
+
+  const auto fxkit_effect = [](const char* slug, std::vector<api::RenderEffectParam> params) {
+    api::RenderEffect e;
+    e.type = "native-plugin";
+    e.params = {text("matchName", (std::string("com.premation.sample.fxkit.") + slug).c_str()),
+                text("instance", "img/fx1"),
+                text("layerId", "img"),
+                num("compTime", 0.5),
+                num("layerTime", 0.5),
+                num("fps", 30),
+                num("layerW", 32),
+                num("layerH", 32)};
+    e.params.insert(e.params.end(), params.begin(), params.end());
+    return e;
+  };
+  const api::RenderEffect split = fxkit_effect("chroma_split", {num("p.p1", 3.5), num("p.p2", 30), num("p.p3", 0)});
+  const api::RenderEffect radial = fxkit_effect("chroma_split", {num("p.p1", 5), num("p.p3", 1)});
+  const api::RenderEffect dots =
+      fxkit_effect("dot_grid", {num("p.p1", 7), num("p.p2", 70), num("p.p3", 60), num("p.p4", 1.5), color("p.p5", 0.9, 0.6, 0.3, 1)});
+
+  for (const auto* fx : {&split, &radial, &dots}) {
+    REQUIRE(host.effect(fx->params[0].text) != nullptr);
+    REQUIRE(host.effect(fx->params[0].text)->has(PR_OUT_FLAG_GPU_RENDER));
+    for (const std::uint32_t bits : {8U, 16U, 32U}) {
+      if (bits == 32 && !r->supports_float32()) continue;
+      INFO(fx->params[0].text << " at " << bits << " bpc");
+      const Rendered plain = render(*r, frame(bits, nullptr));
+      glue.set_gpu_enabled(true);
+      const auto before = glue.stats();
+      const Rendered gpu = render(*r, frame(bits, fx));
+      CHECK(glue.stats().gpu == before.gpu + 1);
+      CHECK(gpu.stats.diagnostics.empty());
+      glue.set_gpu_enabled(false);
+      const Rendered cpu = render(*r, frame(bits, fx));
+      CHECK(glue.stats().cpu == before.cpu + 1);
+      CHECK(cpu.stats.diagnostics.empty());
+      glue.set_gpu_enabled(true);
+
+      CHECK(max_diff(gpu.scene, plain.scene) > 0.02F);  // the effect did something
+      const float d = max_diff(gpu.scene, cpu.scene);
+      const float tol = bits == 8 ? 1.01F / 255.0F : bits == 16 ? 2e-3F : 1e-4F;
+      std::printf("[measure] fxkit %s GPU vs CPU twin at %u bpc: max |diff| %.3g (tolerance %.3g)\n",
+                  fx->params[0].text.c_str(), bits, static_cast<double>(d), static_cast<double>(tol));
+      CHECK(d <= tol);
+    }
+  }
+}
+
 TEST_CASE("plugin GPU: a layer checkout displaces on the GPU the same as the CPU twin", "[plugins][gpu]") {
   auto r = renderer_or_skip();
   if (!r) return;

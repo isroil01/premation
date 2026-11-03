@@ -9,9 +9,10 @@ so an AE plugin author can find their way around.
 | | |
 |---|---|
 | Headers | `native/sdk/include/premation_sdk/` (C, versioned ABI; `premation_sdk.h` includes all) |
-| Samples | `native/sdk/samples/` — `ripple` (CPU), `rings` (generator + sequence data + button), `checkout` (Layer Displace, Time Echo), `grade` (GPU), `particles` (SDK 1.1: comp camera, lights, layer transforms; SDK 1.2: trails and its own motion blur through `checkout_time`, comp space, presets, a layer-time button); SDK 1.2 plugins that are not effects: `distribute` (a command), `ppmio` (an importer), `ppmseq` (an output module), `statspanel` (a panel + a command) |
+| Samples | `native/sdk/samples/` — `ripple` (CPU), `rings` (generator + sequence data + button), `checkout` (Layer Displace, Time Echo), `grade` (GPU), `particles` (SDK 1.1: comp camera, lights, layer transforms; SDK 1.2: trails and its own motion blur through `checkout_time`, comp space, presets, a layer-time button); SDK 1.2 plugins that are not effects: `distribute` (a command), `ppmio` (an importer), `ppmseq` (an output module), `statspanel` (a panel + a command); `fxkit` (two effects written once in WGSL, see "Writing effects in WGSL: fxkit") |
 | Host | `native/engine/src/plugins/` (runs inside `premation-engine`) |
 | Tool | `premation-plugins` — list, render, crash-check a plugin folder without an editor |
+| Next | `docs/PROGRAM_PLUGINS_BEYOND_AE.md` — proposed SDK 1.4 / 2.0: layer types, plugins in the 3D scene, simulations, ML, out-of-process host (not built) |
 | Tests | `engine_plugins_tests` (`tests/test_plugin_host.cpp`, `tests/test_plugin_session.cpp`, `tests/test_plugin_scene.cpp`, `tests/test_plugin_entitlement.cpp`, `tests/test_plugin_sdk12.cpp`, `tests/test_plugin_contrib.cpp`: commands, importers, output modules, panels), `engine_plugins_scene_tests` (`tests/test_plugin_finish.cpp`: the frame hook over a document), `engine_plugins_gpu_tests`, the golden scene `plugin-particles-orbit` (packages/render-tests) |
 
 ## Packaging
@@ -1120,6 +1121,103 @@ light), `plugin-model3d-blur` (the sample's own motion blur under a camera pan),
 `plugin-model3d-occlusion` (a 3D card in front of the model).
 `models/make_models.mjs` regenerates the test assets (a 2 × 1 × 1 box as `.glb`
 and as `.gltf` + `.bin`, an 8 × 8 checker), all made for the sample.
+
+## Starting a plugin
+
+`create-premation-plugin.mjs` (in the SDK's `share/premation-sdk/`, source
+`scripts/create-premation-plugin.mjs`) writes a complete project:
+
+```sh
+node sdk/share/premation-sdk/create-premation-plugin.mjs glow --id com.you.glow --name "Glow" --template effect
+```
+
+| Template | What you get |
+|---|---|
+| `effect` | a C++ effect: CPU smart render, 8/16/32 bpc, rows in parallel (a tint mixed by Amount, to replace) |
+| `fx` | an effect written once in WGSL with fxkit (below): GPU path + generated C++ CPU twin (a vignette) |
+| `command` | a Plugins-menu command that edits the project through `engine_command`, one undo step (nudges the selection) |
+
+Each has `CMakeLists.txt` (`find_package(PremationSdk)`), the manifest,
+`tests/cases.json` for the test kit, a README, `.gitignore` and the CI
+workflow from `examples/plugin-ci/` (three platforms, golden renders, a signed
+`.pplugin`, publish on a `v*` tag). All three build against an installed SDK
+and load in `premation-plugins` (checked 2026-11-03 on Windows / clang-cl).
+The script is not on npm; run it from the SDK.
+
+## Writing effects in WGSL: fxkit
+
+fxkit (`native/sdk/fxkit/`, installed as `share/premation-sdk/fxkit/` and
+`include/premation_fxkit/`) writes an effect **once**: the GPU runs the WGSL,
+and `fxkit.mjs` transpiles the same kernel to C++ for the CPU path. The
+plugin stays a native module (decision G2): fxkit is a code generator, not a
+script runtime. It is the generator the Atelier pack is built with.
+
+A project is a folder with `fxkit.json` (the manifest, plus an optional
+`"fxkit": { "category", "families", "catalogJs" }` block) and `fx/*.fx`:
+
+```text
+/*@fx
+{ "name": "Chroma Split", "family": "Distort", "summary": "…",
+  "params": [ { "id": 1, "key": "amount", "type": "float", "name": "Amount", "unit": "px",
+                "default": 12, "min": 0, "max": 400 } ],
+  "expand": "amount + 2",
+  "presets": [ { "name": "Subtle Lens", "values": { "amount": 4 } } ] }
+*/
+fn effect(p: vec2f) -> vec4f {
+  let d = vec2f(prm.amount, 0.0);
+  return vec4f(src(p - d).r, src(p).g, src(p + d).b, src(p).a);
+}
+```
+
+- `node fxkit.mjs <project>` writes `gen/fx_gen.hpp`, `gen/lib.inc`,
+  `gen/catalog.json` and `premation-plugin.json`; `--check` fails if any is
+  out of date (and holds the kit's swizzle tables to the generator).
+  `premation_add_fx_plugin(name PROJECT <dir> [DAWN_INCLUDE_DIR <dir>])`
+  runs it at configure time and again when an `.fx` changes. Without
+  `DAWN_INCLUDE_DIR` the plugin renders on its CPU twin only.
+- Params: `float`, `int`, `angle`, `checkbox`, `popup`, `color`, `point`,
+  `layer` (one aux layer, read with `aux(p)`), groups and buttons; ids 1..899
+  (900+ are the kit's: Mix or Composite/Opacity, a hidden Set Values button,
+  a hidden path tag). `"unit": "px"` lengths are scaled with the preview
+  resolution; points arrive in world px; colours in linear light. `"show"`
+  hides a param by an expression over the others.
+- The kernel sees `p` in world px (pixel centres) and returns premultiplied
+  linear RGBA. Inputs: `src(p)`, `texel(i)`, `level(k, p)` (a pyramid of up
+  to 6 levels, `"pyramid": n`), `pass_a(p)` / `pass_b(p)` (up to 2 earlier
+  full-frame passes, `"passes": ["blur_x", "blur_y"]`), `aux(p)`. Frame:
+  `to_layer`, `to_world`, `layer_size`, `world_size`, `comp_size`, `time_s`,
+  `px_scale`, `quality`. Library (`fxkit/std.fx`, plus your own
+  `fx/_lib.fx`): hashes, value / gradient noise, fBm, Voronoi, complex maths,
+  sRGB / OKLab / HSV, blend helpers, `blurred`, `luma_grad`.
+- `"generator": true` composites over the layer (Composite popup);
+  `"animated": true` re-renders every frame; `"expand"` grows the output
+  (an expression over the params, in px).
+- The WGSL subset (`fxkit.mjs` refuses anything else, naming the file): `fn`
+  with typed params, `let` / `var` / `const`, `if (…)`, `for` / `loop`,
+  `vec2f`/`vec3f`/`vec4f`/`vec2i`/`f32`/`i32`/`u32`, read-only swizzles,
+  `array<T, N>`. No structs, ternaries (use `select`), float `%` (use
+  `fmodp`), vector compares, swizzle assignment, matrices or `discard`.
+- Parity: the CPU twin is built with `-ffp-contract=off`.
+  `engine_plugins_gpu_tests "[fxkit]"` holds the sample's GPU and CPU paths to
+  within one 8-bit step, 2.4e-4 at 16 bpc and 8.1e-7 at 32 bpc (RTX 4060,
+  2026-11-03).
+
+## Golden tests: `premation-plugins test`
+
+```sh
+premation-plugins --plugins build/plugins/glow test tests/cases.json --bless   # write tests/golden/*.pgold
+premation-plugins --plugins build/plugins/glow test tests/cases.json           # compare
+```
+
+`cases.json` is `{ "cases": [ { "name", "effect", "bits"?, "size"?, "time"?,
+"params"?, "tolerance"? } ] }`. `params` are keyed by SDK param id (`v[0]`,
+or `[v0, v1, v2, v3]` for colours and points). Each case renders the host's
+test pattern on the CPU path and compares it with
+`tests/golden/<name>.pgold` (float RGBA). The default tolerance is one 8-bit
+step at 8 bpc, 1e-3 at 16 and 1e-4 at 32. A failure prints the max
+difference and writes `<name>.actual.pgold` next to the golden. The exit code
+is 0 only when every case passes. The fxkit sample's cases run in ctest as
+`plugin_goldens_fxkit`.
 
 ## Building and testing a plugin
 

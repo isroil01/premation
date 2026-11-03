@@ -1,0 +1,53 @@
+{
+ "effects": [
+  {
+   "slug": "chroma_split",
+   "matchName": "com.premation.sample.fxkit.chroma_split",
+   "name": "Chroma Split",
+   "family": "Distort",
+   "generator": false,
+   "transition": false,
+   "animated": false,
+   "completion": null,
+   "presets": [
+    {
+     "name": "Subtle Lens",
+     "thumb": "chroma_split--subtle-lens",
+     "values": {
+      "p1": 4,
+      "p3": true
+     }
+    },
+    {
+     "name": "Glitch Bar",
+     "thumb": "chroma_split--glitch-bar",
+     "values": {
+      "p1": 40,
+      "p2": 0
+     }
+    }
+   ]
+  },
+  {
+   "slug": "dot_grid",
+   "matchName": "com.premation.sample.fxkit.dot_grid",
+   "name": "Dot Grid",
+   "family": "Generate",
+   "generator": true,
+   "transition": false,
+   "animated": true,
+   "completion": null,
+   "presets": [
+    {
+     "name": "Still",
+     "thumb": "dot_grid--still",
+     "values": {
+      "p3": 0,
+      "p4": 0
+     }
+    }
+   ]
+  }
+ ],
+ "looks": []
+}

@@ -1,0 +1,261 @@
+# Program: plugins beyond After Effects — SDK 1.4 and 2.0
+
+Owner ask (2026-11-03): how far can the plugin system go, so authors can build
+plugins much deeper than today and use them inside the editor. Builds on
+docs/PLUGIN_PLATFORM_PLAN.md (P1–P7), docs/PROGRAM_DEEP_PLUGINS.md (SDK 1.2,
+Element 3D class, closed 2026-10-13) and docs/PLUGIN_SDK.md (SDK 1.3: custom
+UI in Effect Controls). Status: **in progress** (W1, W3, W4 built 2026-11-03, uncommitted). Everything stays
+local on `native-core` until the owner says push.
+
+## 0. Where we stand, and what "beyond AE" means
+
+SDK 1.3 already covers the After Effects plugin surface: CPU and GPU effects
+(WebGPU on the engine's Dawn device), float worlds, comp camera / lights /
+layer transforms at any time, comp motion blur, output past the layer, scene
+depth occlusion, presets, viewer overlays, custom Effect Controls UI, sequence
+data in the document, commands, importers, output modules, HTML panels, a
+signed store with entitlements, a per-instance crash guard, the watchdog and
+quarantine.
+
+What AE plugins cannot do, and what this program adds:
+
+| Need | AE today | Premation today | Row |
+|---|---|---|---|
+| A plugin is its own kind of layer, with its own properties in the timeline | no (effect on a solid) | no | L |
+| A plugin's meshes / lights take part in the comp's 3D render (shadows, DOF, depth sort, MB) | no (E3D renders its own world and composites) | depth **in** only (`checkout_scene_depth`) | D |
+| Frame N depends on frame N-1 (simulations), with a host-managed cache | no (every plugin rolls its own) | no | T |
+| Run an ML model on the GPU through the host | no | the engine runs ORT on DirectML for its own jobs only (`jobs/*_ort_ffi.cpp`) | M |
+| A plugin crash or hang never ends the engine | no (in-process) | an instance fault is contained; `abort()`, heap corruption and hangs end the engine | X |
+| Tools in the comp viewer with full pointer / keyboard | partly (AEGP + effect events) | effect overlays only | U |
+| Plugins add expression functions, interpolators, property types | no | no | E |
+| Plugins talk to each other (a controller drives many emitters) | no | no | C |
+| Run the existing OpenFX catalogue (Sapphire, Boris FX, Neat Video) | no (AE has its own format) | no | O |
+| Audio plugins on audio layers | no | no (audio from importers only) | A |
+| Write one shader, get both paths; hot reload; scaffolding; test kit | no | samples + `premation-plugins` tool | W |
+
+## 1. Owner decisions this program needs
+
+Settled decisions are not reopened: the JS/WGSL plugin system is not ported
+(G2), the C++ engine is the only engine (docs/TS_ENGINE_REMOVAL.md). These are
+new, and each blocks only its own rows:
+
+- **Q1 (rows D)** — plugins write geometry and lights into the comp's 3D scene.
+  PROGRAM_DEEP_PLUGINS.md lists this as an open decision.
+- **Q2 (rows X)** — a second native process, `premation-plugin-host`, run and
+  supervised by `premation-engine`. CLAUDE.md says native engine code runs in
+  `premation-engine`; plugin code is third-party, not engine code, but the
+  owner confirms.
+- **Q3 (rows O)** — host OpenFX plugins. Real `.aex` loading stays G3, not
+  this program.
+- **Q4 (rows A)** — host VST3 / CLAP (licence: VST3 SDK is GPLv3 or Steinberg's
+  proprietary licence; CLAP is MIT).
+- **Q5 (rows M)** — ship ONNX Runtime as a plugin-facing suite (its version
+  becomes part of the SDK contract).
+
+## 2. Rows
+
+Status: `[ ]` open · `[~]` in progress · `[x]` done (commit).
+
+ABI rule as before: everything is appended (callbacks at the end of
+`PrHostSuite`, trailing `PrInData` / `PrPluginInfo` fields, new flags and
+selectors in free bits). SDK 1.0–1.3 plugins load and render unchanged.
+Rows L, T, M, U, E, C, W are **SDK 1.4** (`PR_SDK_VERSION_MINOR` = 4).
+Rows D and X change how a plugin is run, not only what it can call; they land
+as 1.4 additions if they can stay appended, otherwise they wait for **2.0**
+(a major bump, with a 1.x compatibility shim in the host).
+
+### L — plugin layer types
+
+- [ ] L1 **Manifest `layerTypes`.** `{ id, name, icon, is3d, params }`; a new
+  `PrLayerTypeEntry` in `PrPluginInfo` (trailing field). The engine stores the
+  layer as kind `plugin` with the type's match name, its params as ordinary
+  animatable properties (`core/plugin_props.cpp`), and its sequence data as an
+  effect's is stored today.
+- [ ] L2 **Render.** A layer type renders through the same selectors as a
+  generator effect (`SMART_PRE_RENDER` / `SMART_RENDER[_GPU]`) with the layer's
+  own size, time and transform; the layer's effects, masks, mattes, styles and
+  blend mode then apply as on any layer. Missing plugin: the layer passes
+  through empty, `layerErrors`, one notice (as `missingPluginContent.ts`).
+- [ ] L3 **Editor.** New ▸ Layer lists plugin types; the timeline twirls the
+  type's params under the layer name (not under Effects); Properties shows its
+  custom UI boxes (SDK 1.3); MCP `create_layer` accepts the type.
+- [ ] L4 **Proof: `chartlayer` sample** (bars from a CSV param, animated
+  values) + golden scene.
+
+### D — plugins inside the 3D scene (needs Q1)
+
+- [ ] D1 **Contribute selector.** `PR_SEL_SCENE_CONTRIBUTE` (layer types and
+  3D effects): the plugin hands the host meshes (positions, normals, UVs,
+  indices; GPU buffers or CPU arrays), PBR materials using the engine's
+  material model, and lights. The host owns drawing them in the 3D pass
+  (`scene/frame_build.cpp`, `lights3d.cpp`): they cast and receive shadows,
+  depth-sort and intersect with native 3D layers, get DOF and motion blur.
+- [ ] D2 **Motion vectors.** The plugin gives the previous-sample transform
+  per mesh (or the host checks out the contribution at shutter samples via
+  `checkout_time`) so comp motion blur is exact.
+- [ ] D3 **Custom shading (opt-in).** A plugin may supply a WGSL material
+  function the host links into its forward pass, inside the GPU error scope;
+  on failure the mesh draws with a default material and `layerErrors`.
+- [ ] D4 **Proof: `model3d` moves from "renders its own world" to D1**, and
+  a golden scene where a model shadows a native 3D text layer and is
+  intersected by it.
+
+### T — simulations and their cache
+
+- [ ] T1 **`PR_OUT_FLAG_STATEFUL`.** The plugin declares that frame N needs
+  its state after frame N−1. Selectors `SIM_STEP` (state in, state out, dt,
+  params at the step's time) and `SIM_RENDER` (state → pixels or D1
+  contribution). State is opaque bytes the plugin flattens.
+- [ ] T2 **Host sim cache.** The host steps from the nearest cached state,
+  keeps states in RAM (LRU next to `render/frame_cache.cpp`) and on disk
+  (`render/disk_cache.cpp`), keyed by everything upstream of the step; any
+  param edit before frame N invalidates from N on. Scrubbing backwards never
+  re-simulates from 0 when a state is cached. The Cache & Memory panel shows
+  sim caches.
+- [ ] T3 **Determinism.** The host passes a seed per instance; the same
+  document gives the same state on every machine and in export. A test runs a
+  sim forwards, scrubs back, renders again and compares bytes.
+- [ ] T4 **Watchdog.** `SIM_STEP` is a render selector (no progress
+  extension); a cold cache is filled on the prefetch workers, not on the
+  shown frame.
+- [ ] T5 **Proof: `particles` gains a stateful mode** (forces, collisions with
+  D1 meshes) + golden frames at 0, 60, 120 and after a backwards scrub.
+
+### M — ML inference suite (needs Q5)
+
+- [ ] M1 **`pr_ml.h`.** `ml_load(host, asset or bundle path, &model)`,
+  `ml_run(model, inputs, outputs)` with tensors as CPU arrays or GPU textures;
+  the session runs on the engine's ORT build (DirectML on Windows, CoreML on
+  macOS), one shared environment, sessions cached per model hash.
+- [ ] M2 **Budgets.** Model memory counts against the GPU memory pressure
+  relief and shows per plugin in the layer profiler; a run past the render
+  deadline drops to the plugin's CPU path or passes through, `layerErrors`.
+- [ ] M3 **Packaging.** `.onnx` files live in the bundle (`models/`), are
+  covered by the signature, and are never downloaded at run time.
+- [ ] M4 **Proof: `mlstyle` sample** (a small style-transfer net) + a CPU-path
+  golden; the GPU path is checked against it with a tolerance.
+
+### X — plugins out of process (needs Q2)
+
+- [ ] X1 **`premation-plugin-host`.** One process per plugin (or per
+  publisher), started by the engine; the selector calls go over a shared-memory
+  ring; GPU textures cross via the shared-texture code the viewport already
+  uses (`shared_texture_ffi*.cpp`). The plugin sees the same SDK; nothing
+  changes for authors.
+- [ ] X2 **Policy.** Signed Premation plugins may run in process (today's
+  path); third-party plugins run out of process by default; a user can pin
+  either per plugin. A host crash or hang restarts that host only: its
+  instances pass through for that frame, `layerErrors`, quarantine after
+  repeat faults. The engine never ends because of a plugin.
+- [ ] X3 **Cost.** `npm run bench` before/after with `grade` and `particles`
+  in and out of process; the per-frame overhead is quoted and stays under a
+  budget the owner sets.
+- [ ] X4 **Tests.** The existing crash suite (`abort`, heap corruption, hang)
+  re-runs with the plugin out of process and asserts the engine survives.
+
+### U — viewer tools
+
+- [ ] U1 **Manifest `tools`.** A toolbar tool with an icon and shortcut; while
+  active it receives pointer, wheel and key events in comp space (camera and
+  layer transforms available, as in `DRAW_OVERLAY`) and draws an overlay.
+- [ ] U2 Edits go through `PR_CMD`-style transactions: one drag = one undo
+  entry.
+- [ ] U3 **Proof: a scatter-brush tool** that stamps shape layers along a
+  stroke.
+
+### E — expressions, interpolators, property types
+
+- [ ] E1 **Expression functions.** Manifest `expressionFunctions`; the
+  expression engine (`core/docexpr.cpp`) calls a pure C function with numbers,
+  arrays and strings; no document access; same watchdog as renders.
+- [ ] E2 **Interpolators.** A keyframe's ease may name a plugin interpolator
+  (`(t, params) → value`), shown in the graph editor; a missing plugin falls
+  back to linear and records it.
+- [ ] E3 **Property types.** A plugin param may declare a compound type
+  (e.g. a curve, a colour ramp with positions) the timeline keyframes as one
+  value, interpolated by the plugin.
+
+### C — plugins talking to each other
+
+- [ ] C1 **Published channels.** An instance may publish named values per
+  frame (numbers, arrays, a small blob); other instances (any plugin that
+  declares the channel) read them in `SMART_PRE_RENDER`. The host orders
+  evaluation by these edges and rejects cycles with `layerErrors`.
+- [ ] C2 **Proof:** a controller layer type (L) drives emitters on other
+  layers (T).
+
+### O — OpenFX hosting (needs Q3)
+
+- [ ] O1 **OFX host** in `plugins/ofx_*.cpp`: the Image Effect API 1.4,
+  property suites mapped onto Premation params (curves, choices, groups,
+  pages), Generator / Filter / General contexts, the OpenGL render suite
+  skipped, CUDA / Metal / OpenCL suites out of scope at first (CPU path).
+- [ ] O2 OFX plugins run **out of process only** (X1), with the same journal
+  and quarantine.
+- [ ] O3 Projects store OFX effects by plugin identifier + version; a missing
+  plugin passes through as today.
+- [ ] O4 Test against the open OFX sample plugins; record which commercial
+  packs load (tested on the owner's box only, no redistribution).
+
+### A — audio plugins (needs Q4)
+
+- [ ] A1 CLAP first (MIT), VST3 second. Effects on audio layers in the
+  playback mixer and the export mix (`audio/`), out of process (X1).
+- [ ] A2 Plugin params are keyframeable layer properties; the plugin's own
+  editor window opens from Effect Controls.
+
+### W — authoring
+
+- [x] W1 **Ship the WGSL → C++ twin generator** (from
+  `premation-atelier/tools/gen.mjs`) in the SDK: one WGSL kernel, a generated
+  CPU path, a parity test template. Plugins stay native (G2 holds).
+  (2026-11-03, uncommitted) `native/sdk/fxkit/` — `fxkit.mjs <project>`
+  (project-agnostic: `fxkit.json` + `fx/*.fx`), runtime headers, plugin
+  source, `std.fx`; `premation_add_fx_plugin()` in the installed SDK; sample
+  `samples/fxkit` (Chroma Split, Dot Grid). `engine_plugins_gpu_tests
+  "[fxkit]"`: GPU vs CPU twin ≤ 1/255 at 8 bpc, 2.4e-4 at 16, 8.1e-7 at 32
+  (RTX 4060). Two generator bugs fixed on the way (Atelier has them too):
+  kernel lint errors were found after the problems check and never reported;
+  an integer in `expand` emitted `2F`. All 51 Atelier effects pass the fixed
+  lint.
+- [ ] W2 **Hot reload.** With Developer Mode on, a rebuilt bundle in the dev
+  folder is reloaded without restarting the engine: instances re-run setup
+  with their sequence data; a failed reload keeps the old module.
+  Found 2026-11-03: `rescanPlugins` is documented as never swapping a loaded
+  module; `set_enabled(true)` on a failed plugin already retires the record
+  (pinned library, specs kept alive) and reloads the bundle — the base to
+  build on. Still needed: drop the plugin's instances (re-setup from the
+  document's flat bytes), GPU_DEVICE_SETDOWN for the old module, load from a
+  shadow copy (Windows locks a loaded DLL, so the author's build could not
+  overwrite it), a `reloadPlugin` command, and the editor's dev-folder watch.
+- [x] W3 **Scaffold.** (2026-11-03, uncommitted) `scripts/create-premation-plugin.mjs`
+  (installed in `share/premation-sdk/`): `effect`, `fx`, `command` templates
+  with CMake, manifest, `tests/cases.json`, README and the CI workflow (now
+  also running the golden tests). All three built against a `cmake --install
+  --component sdk` prefix and loaded in `premation-plugins`. Not on npm
+  (`npm create` needs a published package). Layer-type, panel and tool
+  templates follow L and U.
+- [x] W4 **Test kit.** (2026-11-03, uncommitted) `premation-plugins test
+  <cases.json> [--bless]`: CPU renders vs `tests/golden/*.pgold` (float),
+  tolerance per bits, `<name>.actual.pgold` on a fail; ctest
+  `plugin_goldens_fxkit`. A 4 → 5 px change fails (0.54), an unchanged
+  render passes at 0.
+- [~] W5 **Debugging guide.** Attaching a debugger to the engine (or to the
+  plugin host after X1), symbols, the crash journal. (PLUGIN_SDK.md now has
+  "Starting a plugin", "Writing effects in WGSL: fxkit" and "Golden tests";
+  the debugger section is still to write.)
+
+## 3. Order and gates
+
+1. **W1–W5** — cheap, no decision needed, and every later row is built with them.
+2. **L** then **T** — the base for "Particular / Element 3D as a Premation
+   plugin": layer types and simulations.
+3. **X** (after Q2) — before third-party authors are invited to build at this
+   depth.
+4. **D** (after Q1) and **M** (after Q5).
+5. **U, E, C** — as authors ask.
+6. **O** and **A** (after Q3 / Q4) — catalogue growth, each on X.
+
+Every row: tests in `engine_plugins_tests` (and `engine_plugins_gpu_tests` for
+GPU paths), a sample, a golden scene where it renders, PLUGIN_SDK.md updated
+in the same commit, `npm run bench:check` green, nothing pushed until told.

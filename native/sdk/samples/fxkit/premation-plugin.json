@@ -1,0 +1,58 @@
+{
+  "manifestVersion": 1,
+  "id": "com.premation.sample.fxkit",
+  "name": "fxkit Sample",
+  "version": "1.0.0",
+  "vendor": "Premation SDK",
+  "description": "Two effects written once in WGSL with fxkit: the GPU path is the WGSL, the CPU path is its generated C++ twin.",
+  "sdk": {
+    "major": 1,
+    "minor": 2
+  },
+  "binary": {
+    "windows": "fxkit.dll",
+    "macos": "libfxkit.dylib",
+    "linux": "libfxkit.so"
+  },
+  "effects": [
+    {
+      "matchName": "com.premation.sample.fxkit.chroma_split",
+      "name": "Chroma Split",
+      "category": "Sample · fxkit · Distort"
+    },
+    {
+      "matchName": "com.premation.sample.fxkit.dot_grid",
+      "name": "Dot Grid",
+      "category": "Sample · fxkit · Generate"
+    }
+  ],
+  "presets": [
+    {
+      "name": "Subtle Lens",
+      "category": "Sample · fxkit · Chroma Split",
+      "effect": "com.premation.sample.fxkit.chroma_split",
+      "values": {
+        "p1": 4,
+        "p3": true
+      }
+    },
+    {
+      "name": "Glitch Bar",
+      "category": "Sample · fxkit · Chroma Split",
+      "effect": "com.premation.sample.fxkit.chroma_split",
+      "values": {
+        "p1": 40,
+        "p2": 0
+      }
+    },
+    {
+      "name": "Still",
+      "category": "Sample · fxkit · Dot Grid",
+      "effect": "com.premation.sample.fxkit.dot_grid",
+      "values": {
+        "p3": 0,
+        "p4": 0
+      }
+    }
+  ]
+}
