@@ -1208,7 +1208,9 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
 
   /// The conversion pass: a premultiplied texture copied texel for texel, its
   /// straight colour sRGB-encoded (kGammaEncode), decoded (kGammaDecode) or kept.
-  static Mat gamma_material(PassContext& ctx) {
+  /// Made once per device (the dynamic material's key is a string): no allocation per conversion.
+  Mat gamma_material(PassContext& ctx) {
+    if (gammaMat_ && gammaDevice_ == &ctx.dev) return *gammaMat_;
     static constexpr std::string_view kWgsl = R"WGSL(
 struct U { mvp : mat3x3<f32>, mode : vec4<f32> };
 @group(0) @binding(0) var<uniform> u : U;
@@ -1234,11 +1236,15 @@ fn fs(@builtin(position) fc : vec4<f32>) -> @location(0) vec4<f32> {
 )WGSL";
     static constexpr std::array<LayoutEntry, 2> kLayout{{{0, BindingType::uniform, kStageVertex | kStageFragment},
                                                          {1, BindingType::unfilterable, kStageFragment}}};
-    return ctx.dev.dynamic_material("gamma-convert", kWgsl, kLayout);
+    gammaMat_ = ctx.dev.dynamic_material("gamma-convert", kWgsl, kLayout);
+    gammaDevice_ = &ctx.dev;
+    return *gammaMat_;
   }
+  std::optional<Mat> gammaMat_;
+  const Device* gammaDevice_ = nullptr;
 
   /// `from` converted (mode) over the whole of target `to` (same size; no scissor). False = not drawn.
-  static bool gamma_convert(PassContext& ctx, const TexRef& from, std::string_view to, double mode) {
+  bool gamma_convert(PassContext& ctx, const TexRef& from, std::string_view to, double mode) {
     RenderTarget* t = ctx.target(to);
     if (t == nullptr || !from || from.width != t->width || from.height != t->height) return false;
     Commands c;
@@ -1253,7 +1259,7 @@ fn fs(@builtin(position) fc : vec4<f32>) -> @location(0) vec4<f32> {
   }
 
   /// Target `name` converted in place, through kGammaScratch. False = it could not be (nothing changed).
-  static bool gamma_in_place(PassContext& ctx, std::string_view name, double mode) {
+  bool gamma_in_place(PassContext& ctx, std::string_view name, double mode) {
     RenderTarget* t = ctx.target(name);
     RenderTarget* s = ctx.target(kGammaScratch);
     if (t == nullptr || s == nullptr || s->width != t->width || s->height != t->height) return false;

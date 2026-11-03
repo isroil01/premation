@@ -520,10 +520,14 @@ wgpu::ShaderModule& Device::shader(std::string_view name, bool gammaOut) {
 }
 
 bool Device::has_gamma_out(Mat material) {
+  const auto i = static_cast<std::size_t>(material);
+  if (i >= gammaOutByMat_.size()) gammaOutByMat_.resize(i + 1, -1);
+  if (gammaOutByMat_[i] >= 0) return gammaOutByMat_[i] != 0;
   const std::string name(material_of(material).shader);
-  const auto it = gammaOut_.find(name);
-  if (it != gammaOut_.end()) return it->second;
-  return gammaOut_.emplace(name, gamma_out_wgsl(wgsl_of(name)).has_value()).first->second;
+  auto it = gammaOut_.find(name);
+  if (it == gammaOut_.end()) it = gammaOut_.emplace(name, gamma_out_wgsl(wgsl_of(name)).has_value()).first;
+  gammaOutByMat_[i] = it->second ? 1 : 0;
+  return it->second;
 }
 
 const Device::Pipeline& Device::pipeline(Mat material, Blend blend, wgpu::TextureFormat format, std::uint32_t samples,

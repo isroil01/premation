@@ -163,8 +163,9 @@ struct PassContext {
   /// compositing into right now. They hold sRGB-encoded premultiplied colour,
   /// so draw_into draws into them through each shader's gamma-out variant, and
   /// whoever reads one decodes it (composition_pass.cpp). A handful at most:
-  /// the nesting depth of precomps being drawn.
-  std::vector<std::string> gammaTargets{};
+  /// the nesting depth of precomps being drawn. Views of the names render_list
+  /// holds while it runs; the vector's one allocation is per gamma frame.
+  std::vector<std::string_view> gammaTargets{};
   [[nodiscard]] bool gamma_target(std::string_view name) const {
     return std::ranges::find(gammaTargets, name) != gammaTargets.end();
   }

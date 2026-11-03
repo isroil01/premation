@@ -12,7 +12,7 @@
 //       as <out>/<scene>/<frame>.png for the pixel gate (render-tests
 //       `native-scene`, scripts/nativeBackend.mjs).
 //
-//   premation-scene --bench <scenes> --fonts <fonts.json> [--only a,b] [--frames N] [--gpu-effects]
+//   premation-scene --bench <scenes> --fonts <fonts.json> [--only a,b] [--frames N] [--gpu-effects] [--blending gamma|linear]
 //       frame-build (snapshot + scene), raster and render time per scene.
 //       --gpu-effects (also for --batch): layers the TypeScript bakes run their
 //       stack on the GPU chain when they can (E4, the engine's default); the
@@ -440,6 +440,9 @@ struct Options {
   bool gpuEffects = false;
   /// --plugins DIR: native plugin bundles a scene's effects use (render-tests V3: the SDK samples).
   std::string plugins;
+  /// --bench --blending gamma|linear: every case composites so (Project Settings),
+  /// whatever its document says — the same scenes timed both ways.
+  std::optional<bool> linearBlending;
 };
 
 struct Engine {
@@ -949,6 +952,7 @@ int bench(const Options& o) {
   std::printf("{\"adapter\":\"%s\",\"cases\":[", esc(eng.renderer->adapter()).c_str());  // NOLINT(cppcoreguidelines-pro-type-vararg)
   bool first = true;
   for (Case& c : cases) {
+    if (o.linearBlending) c.p->d.project_mut().linear_blending = *o.linearBlending;
     sc::BuildContext ctx{c.p->d, c.p->view, *c.p->env, c.p->cache, measurer.get(), {}};
     const doc::Json* rec = c.p->d.comp(c.p->comp);
     sc::ViewSpec view = sc::export_view(c.w, c.h, rec->at("width").num(), rec->at("height").num());
@@ -1037,6 +1041,7 @@ int run(int argc, char** argv) {
   o.hash = opt.contains("hash");
   o.gpuEffects = opt.contains("gpu-effects");
   if (opt.contains("plugins")) o.plugins = opt["plugins"];
+  if (opt.contains("blending")) o.linearBlending = opt["blending"] != "gamma";
   if (opt.contains("only")) {
     std::stringstream ss(opt["only"]);
     std::string s;

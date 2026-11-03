@@ -372,6 +372,8 @@ class Device {
   std::unordered_map<std::string, wgpu::ShaderModule> shaders_;
   /// Per shader name: whether gamma_out_wgsl could wrap it (filled on first ask).
   std::unordered_map<std::string, bool> gammaOut_;
+  /// has_gamma_out by material index (-1 = not asked yet): the per-draw lookup allocates nothing once warm.
+  std::vector<std::int8_t> gammaOutByMat_;
   struct Dynamic {
     std::string key;
     std::string shader;
