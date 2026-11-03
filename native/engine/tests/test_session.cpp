@@ -11,6 +11,8 @@
 #include <atomic>
 #include <algorithm>
 #include <chrono>
+#include <condition_variable>
+#include <mutex>
 #include <set>
 #include <thread>
 
@@ -1958,6 +1960,114 @@ TEST_CASE("idle render-ahead on prefetch workers: the range fills with frames bu
   REQUIRE(is_ok(set_prop(h, layer, "transform/position", vec2(999, 0), 2 * kSec)));
   CHECK(none_cached(h, 50, 70));
   h.session.set_prefetch_builders({});
+  h.session.set_frame_builder(nullptr);
+}
+
+namespace {
+/// The main builder, held at a gate while closed; past it, it stops as the
+/// real builder does at its next layer when its cancel flag is up.
+class GatedBuilder final : public FrameBuilder {
+ public:
+  std::shared_ptr<BuiltFrame> build(const doc::Document& /*d*/, const doc::EditorView& /*view*/, const doc::ExprEnv& /*expr*/,
+                                    doc::ExprCache& /*cache*/, std::string_view /*comp*/, api::Time /*time*/,
+                                    const ViewportConfig& /*viewport*/, bool /*playing*/,
+                                    std::vector<api::LayerError>& /*errors*/) override {
+    {
+      std::unique_lock<std::mutex> lock(m_);
+      ++entered_;
+      cv_.notify_all();
+      cv_.wait(lock, [this] { return open_; });
+    }
+    if (cancel_ != nullptr && cancel_->load(std::memory_order_acquire) != 0) throw BuildCancelled{};
+    built.fetch_add(1, std::memory_order_relaxed);
+    return nullptr;
+  }
+  void set_cancel_flag(const std::atomic<std::uint32_t>* flag) noexcept override { cancel_ = flag; }
+  void close() {
+    const std::lock_guard<std::mutex> lock(m_);
+    open_ = false;
+    entered_ = 0;
+  }
+  [[nodiscard]] bool entered() {
+    const std::lock_guard<std::mutex> lock(m_);
+    return entered_ > 0;
+  }
+  void open() {
+    {
+      const std::lock_guard<std::mutex> lock(m_);
+      open_ = true;
+    }
+    cv_.notify_all();
+  }
+  std::atomic<int> built{0};
+
+ private:
+  std::mutex m_;
+  std::condition_variable cv_;
+  bool open_ = true;
+  int entered_ = 0;
+  const std::atomic<std::uint32_t>* cancel_ = nullptr;
+};
+}  // namespace
+
+TEST_CASE("idle render-ahead: a prefetch that gave way to a paused viewport frame is built again, not waited for",
+          "[session][cache][prefetch]") {
+  // A prefetch build gives way to a viewport frame queued behind it
+  // (prefetchYield_) and never reaches the sink. When that frame came from no
+  // command (here a pixel read of a cached frame; in the app, the redraw the
+  // skip itself asked for, through the build worker for its overlays), nothing
+  // forgot the prefetch: the prefetcher waited for its answer for good.
+  Harness h(64);
+  GatedBuilder builder;
+  h.session.set_frame_builder(&builder);
+  (void)h.hello();
+  const auto comp = make_comp(h, 30);
+  const api::LayerId layer = make_layer(h, comp);
+  api::AddKeyframes a;
+  for (int k = 0; k <= 10; ++k) {
+    api::KeyframeInsert ins;
+    ins.prop = {layer, "transform/position"};
+    ins.time = static_cast<api::Time>(k) * (kSec / 5);
+    ins.value = vec2(10.0 * k, 0);
+    ins.easing = api::Easing::linear;
+    a.keys.push_back(std::move(ins));
+  }
+  REQUIRE(is_ok(h.run(cmd(a))));
+  api::SetActiveComposition active;
+  active.comp = comp;
+  REQUIRE(is_ok(h.run(cmd(active))));
+  h.sink.contentKeyOf = [](const RenderJob& j) { return std::optional<std::uint64_t>(0x1000 + static_cast<std::uint64_t>(j.frame)); };
+  api::SetViewport v;
+  v.viewport = 1;
+  v.width = 640;
+  v.height = 360;
+  v.device_pixel_ratio = 1.0;
+  REQUIRE(is_ok(h.run(cmd(v))));
+  api::SetWorkArea wa;
+  wa.comp = comp;
+  wa.range = api::TimeRange{kSec, 2 * kSec};
+  REQUIRE(is_ok(h.run(cmd(wa))));
+  REQUIRE(is_ok(h.run(cmd(api::Seek{40 * kFrame30, api::SeekMode::exact}))));
+  h.release_all();
+
+  // The quiet period; then the first prefetch (frame 41) is held in the builder.
+  builder.close();
+  h.drainBuilds = false;
+  for (int i = 0; i < 400 && !builder.entered(); ++i) h.advance(std::chrono::milliseconds(1));
+  REQUIRE(builder.entered());
+  // A built frame for the viewport is wanted, with no command: it is queued
+  // behind the prefetch, which gives way when it goes on.
+  h.sink.want_build(1);
+  h.advance(std::chrono::milliseconds(1));
+  builder.open();
+  h.drainBuilds = true;
+  h.session.drain_builds();
+  h.release_all();
+
+  // The range still fills, frame 41 with it.
+  for (int i = 0; i < 600; ++i) h.advance(std::chrono::milliseconds(1));
+  CHECK(cached_range(h, 30, 90));
+  CHECK(h.session.time() == 40 * kFrame30);
   h.session.set_frame_builder(nullptr);
 }
 

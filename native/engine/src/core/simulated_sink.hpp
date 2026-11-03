@@ -145,6 +145,11 @@ class SimulatedSink final : public FrameSink {
     const std::lock_guard<std::mutex> lock(m_);
     ledger.note_revision(std::move(rev));
   }
+  /// A built frame wanted for `viewport` with no command (RenderThread::want_build: a pixel read of a cached frame).
+  void want_build(std::uint32_t viewport) {
+    const std::lock_guard<std::mutex> lock(m_);
+    buildWanted_.push_back(viewport);
+  }
   [[nodiscard]] std::vector<std::uint32_t> take_build_requests() override {
     const std::lock_guard<std::mutex> lock(m_);
     std::vector<std::uint32_t> out;

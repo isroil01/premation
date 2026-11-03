@@ -2032,6 +2032,7 @@ void Session::note_activity(Clock::time_point now) {
   prefetchOut_.clear();
   prefetchRefused_ = 0;
   prefetchResting_ = false;
+  prefetchRetry_ = false;
   prefetchOrigin_ = -1;
   prefetchAhead_ = 0;
   prefetchBehind_ = 0;
@@ -2058,20 +2059,29 @@ void Session::idle_prefetch(Clock::time_point now) {
   if (!idle_prefetch_armed()) return;
   if (!deferred_.empty() || !forceBuild_.empty() || renderDirty_) return;
   if (now - lastActivity_ < kIdlePrefetchAfter) return;
-  const RenderCounters counters = sink_.counters();
-  if (prefetchOut_.empty()) prefetchSeenAnswered_ = counters.prefetched;
+  // Answered: by the sink, or skipped on a worker (prefetchSkipped_).
+  const std::uint64_t done = sink_.counters().prefetched + prefetchSkipped_;
+  if (prefetchOut_.empty()) prefetchSeenAnswered_ = done;
   // One prefetch per worker in flight (item 7: the prefetch workers build side
-  // by side); `prefetchOut_` is what went since the sink's answered count was
+  // by side); `prefetchOut_` is what went since the answered count was
   // `prefetchSeenAnswered_` (answers to jobs a move forgot count too: clamped).
-  const std::uint64_t answered = counters.prefetched - prefetchSeenAnswered_;
+  const std::uint64_t answered = done - prefetchSeenAnswered_;
   if (!prefetchOut_.empty() && answered >= prefetchOut_.size()) {
     // All landed. The map knows a key once a tier kept it; refused by every tier
     // (the RAM budget full of this range, VRAM too small) a few rounds in a row,
-    // the prefetcher rests until the next edit or move.
+    // the prefetcher rests until the next edit or move. A round with a skipped
+    // build is no refusal: the scan steps out from the playhead again and builds
+    // what is still missing (frames a tier holds are passed over).
     const bool kept = std::ranges::any_of(prefetchOut_, [this](std::uint64_t k) { return k != 0 && sink_.cached_frame(k).has_value(); });
-    prefetchRefused_ = kept ? 0 : prefetchRefused_ + 1;
+    if (kept) prefetchRefused_ = 0;
+    else if (!prefetchRetry_) ++prefetchRefused_;
+    if (prefetchRetry_) {
+      prefetchAhead_ = 0;
+      prefetchBehind_ = 0;
+      prefetchRetry_ = false;
+    }
     prefetchOut_.clear();
-    prefetchSeenAnswered_ = counters.prefetched;
+    prefetchSeenAnswered_ = done;
     if (prefetchRefused_ >= kIdlePrefetchRefusals) {
       prefetchResting_ = true;
       return;
@@ -2913,6 +2923,7 @@ void Session::run_prefetch_build(BuildTask t, std::size_t index) {
   report.comp = t.comp;
   report.viewport = t.job.viewport;
   report.seq = t.seq;
+  report.prefetch = true;
   bool submit = false;
   bool toMain = false;
   if (prefetchYield_.load(std::memory_order_acquire) != 0) {
@@ -2970,6 +2981,7 @@ void Session::run_build(BuildTask t) {
   report.announce = t.announce;
   report.viewport = t.job.viewport;
   report.seq = t.seq;
+  report.prefetch = t.job.prefetch;
   bool submit = false;
   const auto ftWait0 = Clock::now();
   // A paused viewport frame no longer holds the prefetches back once it has the lock (or is skipped).
@@ -3090,12 +3102,18 @@ void Session::pump_builds() {
   }
   bool rebuild = false;
   for (BuildReport& r : reports) {
+    if (r.skipped && r.prefetch) {
+      // A skipped prefetch is never shown: no redraw (one went through the
+      // build worker with overlays, and made the next prefetch give way again).
+      // Answered for idle_prefetch, which builds the frame again.
+      ++prefetchSkipped_;
+      prefetchRetry_ = true;
+      continue;
+    }
     if (r.skipped) {
       // Build again only if no frame for this viewport was queued after the
       // skipped task: the edit that made it stale queues its own frame
-      // (flush_render after the command), and that one is the rebuild. A
-      // skipped prefetch (never recorded in lastFrameSeq_) re-requests the
-      // viewport's frame unless a frame was queued since.
+      // (flush_render after the command), and that one is the rebuild.
       const auto last = lastFrameSeq_.find(r.viewport);
       if (last == lastFrameSeq_.end() || last->second <= r.seq) rebuild = true;
       continue;

@@ -331,6 +331,14 @@ class Session {
   /// Prefetched frames the tiers did not keep, in a row; at kIdlePrefetchRefusals the prefetcher rests.
   int prefetchRefused_ = 0;
   bool prefetchResting_ = false;
+  /// Prefetch builds skipped on a worker (they gave way to an edit or a paused
+  /// viewport frame: prefetchYield_). Never at the sink, so never in
+  /// RenderCounters::prefetched: idle_prefetch counts them as answered — without
+  /// that it waited for them for good, as nothing (no command) forgot them.
+  /// Core thread (pump_builds).
+  std::uint64_t prefetchSkipped_ = 0;
+  /// A prefetch of the round in flight was skipped: not a refusal; the scan starts over from the playhead.
+  bool prefetchRetry_ = false;
   /// The frame the prefetcher stepped from, and how far it got each way (reset by every edit / seek).
   std::int64_t prefetchOrigin_ = -1;
   std::int64_t prefetchAhead_ = 0;
@@ -392,6 +400,7 @@ class Session {
     bool announce = false;
     bool skipped = false;  ///< the document moved on before the build began: build again
     bool cached = false;   ///< a cached frame (RenderJob::cachedKey): no build ran
+    bool prefetch = false;  ///< an idle prefetch (RenderJob::prefetch): never shown, a skip is not redrawn
   };
   /// The build lock as the core thread takes it. Nests (only the outermost
   /// locks); `write` marks a document write, which bumps docWrites_ when the
