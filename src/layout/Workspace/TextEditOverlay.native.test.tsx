@@ -25,6 +25,7 @@ jest.mock('@core/workspace/WorkspaceController', () => ({
   getWorkspaceController: () => ({
     ws: { camera: { zoom: 1 }, worldToScreen: (p: { x: number; y: number }) => ({ x: p.x, y: p.y }) },
     requestRender: () => {},
+    onRender: () => () => {},
   }),
 }));
 

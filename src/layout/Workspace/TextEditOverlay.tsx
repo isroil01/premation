@@ -215,7 +215,10 @@ export function TextEditOverlay(): JSX.Element | null {
     void live?.gesture.end(true);
   }, [nodeId]);
 
-  // Keep the overlay glued to the layer while the camera moves.
+  // Keep the overlay glued to the layer while the camera moves: every frame,
+  // and on the workspace's render tick, which runs in the animation frame an
+  // engine frame lands in (EngineSurface flushes it) — the own rAF alone could
+  // run before that frame's geometry and trail the glyphs by one vsync.
   useEffect(() => {
     if (!nodeId) return;
     let raf = 0;
@@ -271,10 +274,17 @@ export function TextEditOverlay(): JSX.Element | null {
           if (document.activeElement !== box) box.focus();
         }
       }
-      raf = requestAnimationFrame(place);
     };
-    raf = requestAnimationFrame(place);
-    return () => cancelAnimationFrame(raf);
+    const loop = (): void => {
+      place();
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    const offRender = getWorkspaceController().onRender(place);
+    return () => {
+      cancelAnimationFrame(raf);
+      offRender();
+    };
   }, [nodeId]);
 
   // The engine draws the layer's text while you type (the editor's own glyphs

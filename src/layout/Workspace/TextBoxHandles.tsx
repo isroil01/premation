@@ -85,7 +85,10 @@ export function TextBoxHandles({ overflow: liveOverflow }: {
     return () => { void requestOverlayLayers(MAIN_VIEWPORT, 'textBox', [], TEXT_BOX_KINDS); };
   }, [target]);
 
-  // Glue to the layer every frame, like the in-place editor.
+  // Glue to the layer every frame, like the in-place editor — and on the
+  // workspace's render tick, which runs in the very animation frame an engine
+  // frame lands in (EngineSurface flushes it): this component's own rAF may
+  // already have run that frame, which left the box a frame behind its text.
   useEffect(() => {
     if (!target) return;
     let raf = 0;
@@ -124,10 +127,17 @@ export function TextBoxHandles({ overflow: liveOverflow }: {
           el.style.top = `${at.y}px`;
         }
       }
-      raf = requestAnimationFrame(place);
     };
-    raf = requestAnimationFrame(place);
-    return () => cancelAnimationFrame(raf);
+    const loop = (): void => {
+      place();
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    const offRender = getWorkspaceController().onRender(place);
+    return () => {
+      cancelAnimationFrame(raf);
+      offRender();
+    };
   }, [target]);
 
   // A gesture must never outlive the component (tool switch mid-drag).

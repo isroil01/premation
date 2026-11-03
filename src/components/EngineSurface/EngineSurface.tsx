@@ -415,6 +415,17 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
         stats.lastRevision = p.meta.revision;
         // The overlays hold a committed edit's preview until this frame shows it.
         notePresented(ENGINE_SURFACE_VIEWPORT, p.meta.revision);
+        // The chrome over the picture (selection outline, handles, text box) repaints in THIS
+        // animation frame, not the next. The publishes above only ask for a redraw, and a rAF
+        // requested from inside a rAF callback runs one vsync later: the picture moved and its
+        // outline followed a frame behind on every drag frame. Both canvases change in the same
+        // task, so the compositor presents them together. No-op when nothing asked to redraw.
+        // Its own catch: a chrome painter's fault must not fail the frame that is already drawn.
+        try {
+          getWorkspaceController().flushRender();
+        } catch (e) {
+          console.error('[EngineSurface] overlay repaint failed', e);
+        }
         stats.lastFrame = p.meta.frame;
         stats.lastLatencyMs = Date.now() - p.meta.renderDoneUs / 1000;
         stats.lastRenderMs = (p.meta.renderDoneUs - p.meta.renderStartUs) / 1000;
