@@ -24,7 +24,7 @@ jest.mock('@core/api/session', () => ({ ...jest.requireActual('@core/api/session
 const glow = {
   id: 'premation.deepglow', name: 'Deep Glow', version: '1.0.0', vendor: 'Premation', sdk: '1.2', status: 'loaded' as const,
   error: '', effects: ['premation.deepglow'], gpu: true, panel: true, commands: [], importers: [], outputModules: [],
-  panels: [], presets: [],
+  panels: [], presets: [], layerTypes: [],
 };
 
 const listing: StorePluginDetail = {

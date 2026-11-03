@@ -1587,6 +1587,17 @@ Plugin* PluginHost::Impl::load_bundle(const fs::path& dir, Plugin* replacing, st
       }
     }
   }
+  // SDK 1.4: each layer type is drawn by one of the bundle's GENERATOR effects.
+  if (raw->status == PluginStatus::loaded) {
+    for (const ManifestLayerType& lt : raw->manifest.layerTypes) {
+      const auto e = std::ranges::find_if(raw->effects, [&](const auto& x) { return x->matchName == lt.effect; });
+      if (e == raw->effects.end() || !(*e)->has(PR_OUT_FLAG_GENERATOR)) {
+        raw->status = PluginStatus::failed;
+        raw->error = "layer type '" + lt.id + "': effect '" + lt.effect + "' is not a generator (PR_OUT_FLAG_GENERATOR)";
+        break;
+      }
+    }
+  }
   if (replacing != nullptr) return swap_in(std::move(p), *replacing, reloadWhy);
   if (raw->status == PluginStatus::loaded) {
     {
@@ -1778,6 +1789,9 @@ std::string hex_color(const std::array<double, 4>& c) {
 }  // namespace
 
 void PluginHost::Impl::register_document(const Plugin& p) {
+  for (const ManifestLayerType& lt : p.manifest.layerTypes) {
+    doc::NativeEffects::add_layer_type({p.manifest.id + ":" + lt.id, lt.name, lt.effect, lt.category, p.manifest.id});
+  }
   for (const auto& e : p.effects) {
     doc::NativeEffect ne;
     ne.def.type = e->matchName;
@@ -2939,6 +2953,15 @@ std::vector<api::PluginInfo> PluginHost::plugin_infos() const {
     if (!r.icon.empty()) i.icon = std::move(r.icon);
     if (!r.panelTitle.empty()) i.panel_title = std::move(r.panelTitle);
     contrib_->fill(i);  // P7: commands, importers, output modules, panels
+    if (i.status == api::PluginStatus::loaded) {  // SDK 1.4: layer types of a loaded plugin
+      const std::shared_lock lock(impl_->pluginsMutex);
+      for (const auto& p : impl_->plugins) {
+        if (p->manifest.id != i.id) continue;
+        for (const ManifestLayerType& lt : p->manifest.layerTypes) {
+          i.layer_types.push_back(api::PluginLayerTypeInfo{p->manifest.id + ":" + lt.id, lt.name, lt.effect, lt.category});
+        }
+      }
+    }
     out.push_back(std::move(i));
   }
   return out;

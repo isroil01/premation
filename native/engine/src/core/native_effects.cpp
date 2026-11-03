@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <deque>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
@@ -44,6 +45,8 @@ struct State {
   NativeEffects::AssetFilesFn assetFiles;  // SDK 1.2 LIST_ASSET_FILES
   /// Plugin ids listed `locked` (no entitlement).
   std::vector<std::string> locked;
+  /// SDK 1.4: layer types by "<pluginId>:<id>".
+  std::map<std::string, NativeLayerType, std::less<>> layerTypes;
 };
 
 State& state() {
@@ -62,6 +65,23 @@ void NativeEffects::add(NativeEffect e) {
   if (!s.byType.contains(type)) s.order.push_back(type);
   s.byType.insert_or_assign(type, entry.get());
   s.entries.push_back(std::move(entry));
+}
+
+void NativeEffects::add_layer_type(NativeLayerType t) {
+  State& s = state();
+  const std::unique_lock lock(s.mutex);
+  std::string key = t.type;
+  s.layerTypes.insert_or_assign(std::move(key), std::move(t));
+}
+
+std::optional<NativeLayerType> NativeEffects::layer_type(std::string_view type) {
+  State& s = state();
+  const std::shared_lock lock(s.mutex);
+  const auto it = s.layerTypes.find(type);
+  if (it == s.layerTypes.end()) return std::nullopt;
+  const auto fx = s.byType.find(it->second.effect);
+  if (fx == s.byType.end() || !fx->second->available) return std::nullopt;
+  return it->second;
 }
 
 const NativeEffect* NativeEffects::find(std::string_view type) noexcept {

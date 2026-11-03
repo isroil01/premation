@@ -155,6 +155,11 @@ export interface SceneFacade {
    * (`line`, `polystar` with its parameters) — the host inserts that one whole.
    */
   create(kind: string, name: string, at?: { x: number; y: number }, shape?: LayerShapeSpec): Promise<string>;
+  /**
+   * SDK 1.4: a layer a native plugin draws — layer type `type` ("<pluginId>:<id>", from
+   * list_capabilities `kinds`). Its properties are its effect `layer`'s params. Absent: no plugin host.
+   */
+  createPluginLayer?(type: string, name: string): Promise<string>;
   remove(nodeId: string): Promise<void>;
   /** Re-parent a node. By default the node keeps its WORLD pose (local transform
    *  is recompensated). Pass `{ preserveWorld: false }` to keep the LOCAL

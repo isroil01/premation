@@ -20,7 +20,7 @@ jest.mock('./pluginIcons', () => ({
 function info(over: Partial<PluginInfo>): PluginInfo {
   return {
     id: 'premation.deepglow', name: 'Deep Glow', version: '1.0.0', vendor: '', sdk: '1.2', status: 'loaded', error: '',
-    effects: ['premation.deepglow'], gpu: false, panel: true, commands: [], importers: [], outputModules: [], panels: [], presets: [],
+    effects: ['premation.deepglow'], gpu: false, panel: true, commands: [], importers: [], outputModules: [], panels: [], presets: [], layerTypes: [],
     ...over,
   };
 }

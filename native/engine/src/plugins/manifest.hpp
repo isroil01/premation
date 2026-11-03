@@ -59,6 +59,16 @@ struct ManifestPanel {
   std::string page;
 };
 
+/// SDK 1.4 (L1) — a layer type (manifest `layerTypes`): a kind of layer the plugin draws. It is
+/// drawn by one of the bundle's own GENERATOR effects (`effect`), whose params become the layer's
+/// own properties; no new entry point.
+struct ManifestLayerType {
+  std::string id;      ///< local id; the layer's type is "<plugin id>:<id>"
+  std::string name;    ///< New ▸ Layer ▸ <name>
+  std::string effect;  ///< the generator effect's match name (listed in `effects`)
+  std::string category;
+};
+
 struct Manifest {
   std::uint32_t manifestVersion = 1;
   std::string id;
@@ -84,6 +94,7 @@ struct Manifest {
   std::vector<ManifestImporter> importers;
   std::vector<ManifestOutputModule> outputModules;
   std::vector<ManifestPanel> panels;
+  std::vector<ManifestLayerType> layerTypes;  // SDK 1.4
 };
 
 /// Parse + validate. `platforms` are the `binary` keys to try, most specific

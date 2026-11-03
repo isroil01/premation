@@ -1343,6 +1343,23 @@ void rekey_text_animator_tracks(Document& d, std::string_view layer,
 
 // ── handlers ─────────────────────────────────────────────────────────────
 
+namespace {
+/// SDK 1.4: a plugin layer's own effect (createLayer kind=generator) — the first in its stack.
+bool is_layer_type_effect(const Json& e) { return e.at("layerType").is_bool() && e.at("layerType").b(); }
+bool starts_with_layer_type_effect(const std::vector<Json>& effects) {
+  return !effects.empty() && is_layer_type_effect(effects.front());
+}
+void refuse_layer_type_effect(const Document& d, const GroupRef& r, std::string_view what) {
+  if (r.kind != GK::effect) return;
+  const std::vector<Json> effects = get_node_effects(d, r.layer);  // kept alive: find_by_id points into it
+  const Json* e = find_by_id(effects, r.id);
+  if (e != nullptr && is_layer_type_effect(*e)) {
+    fail(ErrorCode::invalid_argument, "a plugin layer's own effect cannot be " + std::string(what) + " (it draws the layer)",
+         {.layer = r.layer, .path = "effects/" + r.id});
+  }
+}
+}  // namespace
+
 ResultOf<api::AddEffect> handle(const api::AddEffect& c, HCtx& x) {
   Document& d = x.d;
   if (c.layers.empty()) fail(ErrorCode::invalid_argument, "no layers given");
@@ -1364,6 +1381,9 @@ ResultOf<api::AddEffect> handle(const api::AddEffect& c, HCtx& x) {
   for (const auto& layer : c.layers) {
     (void)require_layer(d, layer);
     const std::size_t count = get_node_effects(d, layer).size();
+    if (c.index && *c.index == 0 && starts_with_layer_type_effect(get_node_effects(d, layer))) {
+      fail(ErrorCode::out_of_range, "index 0 is the plugin layer's own effect; effects go after it", {.layer = layer});
+    }
     if (c.index && *c.index > count) {
       fail(ErrorCode::out_of_range,
            "index " + std::to_string(*c.index) + " is past the " + std::to_string(count) + " effects of '" + layer + "'",
@@ -1575,6 +1595,7 @@ ResultOf<api::RemovePropertyGroups> handle(const api::RemovePropertyGroups& c, H
   if (c.groups.empty()) fail(ErrorCode::invalid_argument, "no groups given");
   std::vector<GroupRef> refs;
   for (const auto& g : c.groups) refs.push_back(resolve_group(d, g));
+  for (const auto& r : refs) refuse_layer_type_effect(d, r, "removed");
   // Remove text animators/selectors highest index first so earlier indices stay valid.
   std::stable_sort(refs.begin(), refs.end(), [](const GroupRef& a, const GroupRef& b) {
     return (a.has_index() ? a.index : 0) > (b.has_index() ? b.index : 0);
@@ -1594,6 +1615,10 @@ ResultOf<api::MovePropertyGroup> handle(const api::MovePropertyGroup& c, HCtx& x
     case GK::effect: {
       const std::vector<Json> list = get_node_effects(d, r.layer);
       if (to >= list.size()) fail(ErrorCode::out_of_range, "toIndex past the end");
+      refuse_layer_type_effect(d, r, "moved");
+      if (to == 0 && starts_with_layer_type_effect(list)) {
+        fail(ErrorCode::out_of_range, "index 0 is the plugin layer's own effect; effects go after it", {.layer = r.layer});
+      }
       write_node_effects(d, r.layer, move_item(list, index_of_id(list, r.id), to));
       break;
     }
@@ -1672,6 +1697,7 @@ ResultOf<api::DuplicatePropertyGroups> handle(const api::DuplicatePropertyGroups
   for (const auto& r : refs) {
     if (r.kind == GK::control) fail(ErrorCode::unsupported, "expression controls are added by name with addPropertyGroup");
   }
+  for (const auto& r : refs) refuse_layer_type_effect(d, r, "copied on its own");
   std::vector<std::string> newIds;
   for (const auto& r : refs) newIds.push_back(mint_for(x, r, r.layer));
   x.label = "Duplicate " + plural(refs.size(), "Group");
@@ -1819,6 +1845,9 @@ ResultOf<api::PasteEffects> handle(const api::PasteEffects& c, HCtx& x) {
   for (const auto& layer : c.layers) {
     (void)require_layer(d, layer);
     const std::size_t count = get_node_effects(d, layer).size();
+    if (c.index && *c.index == 0 && starts_with_layer_type_effect(get_node_effects(d, layer))) {
+      fail(ErrorCode::out_of_range, "index 0 is the plugin layer's own effect; effects go after it", {.layer = layer});
+    }
     if (c.index && *c.index > count) {
       fail(ErrorCode::out_of_range,
            "index " + std::to_string(*c.index) + " is past the " + std::to_string(count) + " effects of '" + layer + "'",
@@ -1880,6 +1909,7 @@ ResultOf<api::CopyPropertyGroups> handle(const api::CopyPropertyGroups& c, HCtx&
   for (const auto& r : refs) {
     if (r.kind == GK::control) fail(ErrorCode::unsupported, "expression controls are added by name with addPropertyGroup");
   }
+  for (const auto& r : refs) refuse_layer_type_effect(d, r, "copied on its own");
   for (const auto& l : c.to_layers) (void)require_layer(d, l);
   struct Plan {
     const GroupRef* r;

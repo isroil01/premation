@@ -25,6 +25,7 @@
 #include "docexpr.hpp"
 #include "docio.hpp"
 #include "fx_wire.hpp"
+#include "cpu_render.hpp"
 #include "host.hpp"
 #include "json.hpp"
 #include "model.hpp"
@@ -183,6 +184,53 @@ TEST_CASE("SDK 1.2 S3: the effect gets its layer's time", "[plugins][finish]") {
   CHECK(in.compTime == flicks(1.0));
   CHECK(in.layerTime == flicks(0.5));
   CHECK(in.layerStart == flicks(0.5));
+}
+
+TEST_CASE("SDK 1.4 L2: a plugin layer type's layer reaches the frame with its own generator, sized as the layer",
+          "[plugins][finish][layertype]") {
+  // The layer createLayer kind=generator makes (handlers_layers.cpp): a solid with a transparent
+  // fill, fx.pluginLayer, and the type's generator as its effect `layer`.
+  Json document = scene_json();
+  Json* node = find_node(document, "solid");
+  REQUIRE(node != nullptr);
+  for (Json& c : node->find_mut("components")->arr_mut()) {
+    if (c.at("type").str() == "Style") c.find_mut("props")->set("fill", Json::string("rgba(0,0,0,0)"));
+  }
+  Json& fx = fx_props(*node);
+  Json fill = Json::object();
+  fill.set("type", Json::string("solid"));
+  fill.set("color", Json::string("rgba(0,0,0,0)"));
+  fx.set("solid", Json::boolean(true));
+  fx.set("fill", std::move(fill));
+  fx.set("pluginLayer", Json::string("com.premation.samples.chartlayer:bars"));
+  Json own = Json::object();
+  own.set("id", Json::string("layer"));
+  own.set("type", Json::string("com.premation.samples.chartlayer.bars"));
+  Json params = Json::object();
+  params.set("p4", Json::number(25));
+  own.set("params", std::move(params));
+  own.set("layerType", Json::boolean(true));
+  Json::Array effects;
+  effects.push_back(std::move(own));
+  fx.set("effects", Json::array(std::move(effects)));
+
+  Fixture f(std::move(document));
+  const pl::EffectSpec* bars = f.host->effect("com.premation.samples.chartlayer.bars");
+  REQUIRE(bars != nullptr);
+  const Fixture::Built b = f.frame(0.5);
+  // A transparent solid is not culled: its chain runs, and the generator draws it.
+  const auto match = std::ranges::find_if(b.entry.params, [](const api::RenderEffectParam& p) { return p.name == "matchName"; });
+  REQUIRE(match != b.entry.params.end());
+  CHECK(match->text == "com.premation.samples.chartlayer.bars");
+  pl::RenderInputs in;
+  pl::decode_native_fx(b.entry, *bars, in);
+  CHECK(in.instance == "solid/layer");
+  CHECK(in.layerW == 480);
+  CHECK(in.layerH == 360);
+  const int slot = pl::param_slot(*bars, 4);
+  REQUIRE(slot >= 0);
+  CHECK(in.values.at(static_cast<std::size_t>(slot)).v[0] == 25);
+  CHECK(f.plugin_errors(0.5).empty());
 }
 
 TEST_CASE("SDK 1.2 S1: checkout_time samples are evaluated off the document", "[plugins][finish]") {

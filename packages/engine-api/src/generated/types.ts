@@ -1890,7 +1890,7 @@ export interface CreateLayer {
   startTime?: Time;
   /** Property values to set at creation (transform/position, shape/size, text/sourceText, …). */
   init: PropertyInit[];
-  /** Plugin generator id / effect match name for kind=generator. */
+  /** kind=generator: the plugin layer type `<pluginId>:<typeId>` (PluginInfo.layerTypes, SDK 1.4). The layer is a solid of the comp's size carrying that type's generator effect as effect `layer`, whose params are the layer's own properties (`effects/layer/<key>`; `init` may set them). `notFound`: no loaded plugin has that type. */
   generator?: string;
 }
 
@@ -3789,6 +3789,8 @@ export interface LayerInfo {
   caption?: boolean;
   /** B4 round 5 — a multicam ANGLE layer's number (1-based, `__multicamAngle` on its Transform): what the Multicam viewer lists and cuts between. Absent for any other layer. */
   multicamAngle?: number;
+  /** SDK 1.4 (L1) — a native plugin layer type's id `<pluginId>:<typeId>` (createLayer kind=generator): the layer is a solid drawn by that type's generator effect (effect id `layer`, its params the layer's own properties). Absent otherwise. Not `generator`, which marks retired JavaScript plugin layers. */
+  pluginLayerType?: string;
 }
 
 /** B4 — one dimension's own expression on an UNSEPARATED vector (setExpression `member`). */
@@ -4461,6 +4463,16 @@ export interface PluginInfo {
   icon?: string;
   /** The manifest's `panelTitle`: the label of the effect card's button to the bundle's panel ("Studio"; absent = "Panel"). */
   panelTitle?: string;
+  /** SDK 1.4 (L1) — the manifest's `layerTypes`: kinds of layer the plugin draws (New ▸ Layer). Listed from the manifest only while the plugin is loaded. */
+  layerTypes: PluginLayerTypeInfo[];
+}
+
+/** A plugin layer type: `type` = `<pluginId>:<id>` (createLayer's `generator`), drawn by generator effect `effect`. */
+export interface PluginLayerTypeInfo {
+  type: string;
+  name: string;
+  effect: string;
+  category: string;
 }
 
 export interface PluginList {

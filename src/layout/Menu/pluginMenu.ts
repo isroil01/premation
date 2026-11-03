@@ -20,7 +20,9 @@ import { getCommandRegistry } from '@core/commands/Command';
 import { getShortcutManager } from '@core/commands/ShortcutManager';
 import { engine } from '@core/engine/engineInstance';
 import {
+  createPluginLayer,
   pluginCommands,
+  pluginLayerTypes,
   pluginName,
   pluginPanels,
   runPluginCommand,
@@ -53,6 +55,45 @@ export async function runPluginCommandFromEditor(c: Pick<PluginCommandInfo, 'plu
     res.ok
       ? { level: 'success', message: res.message || c.name, durationMs: 2400 }
       : { level: 'error', message: `${c.name}: ${res.error}`, durationMs: 6000 },
+  );
+}
+
+/** SDK 1.4: make a plugin layer in the active composition; a failure as a toast. */
+export async function newPluginLayerFromEditor(type: string, name: string): Promise<void> {
+  const comp = activeComp();
+  if (!comp) {
+    useUIStore.getState().notify({ level: 'error', message: t('menuBar.plugins.noComp', 'Open a composition to add a {name} layer.', { name }), durationMs: 4000 });
+    return;
+  }
+  const res = await createPluginLayer(engine(), comp, type);
+  if (res.ok) useSelectionStore.getState().set([res.layer]);
+  else useUIStore.getState().notify({ level: 'error', message: `${name}: ${res.error}`, durationMs: 6000 });
+}
+
+/**
+ * Layer ▸ New with the plugin layer types (SDK 1.4) after the built-in kinds — where menuModel.ts
+ * says plugin layer kinds go. Unchanged when no loaded plugin has one.
+ */
+export function withPluginLayerTypes(groups: ReadonlyArray<MenuGroupModel>): MenuGroupModel[] {
+  const types = pluginLayerTypes();
+  if (types.length === 0) return [...groups];
+  const extra: MenuItemModel[] = [
+    { separator: true },
+    ...types.map((lt) => ({ label: lt.name, onSelect: () => void newPluginLayerFromEditor(lt.type, lt.name) })),
+  ];
+  const children = (c: NonNullable<MenuItemModel['children']>) => (typeof c === 'function' ? c() : c);
+  const withExtra = (c: NonNullable<MenuItemModel['children']>) => [...children(c), ...extra];
+  return groups.map((g) =>
+    g.id !== 'layer'
+      ? g
+      : {
+          ...g,
+          items: g.items.map((item) =>
+            item.labelKey === 'menu.sub.new' && item.children
+              ? { ...item, children: withExtra(item.children) }
+              : item,
+          ),
+        },
   );
 }
 

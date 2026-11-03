@@ -272,6 +272,20 @@ std::optional<Manifest> parse_manifest(std::string_view json, std::span<const st
   // `"panelTitle"`: what the effect card's button to the bundle's panel (ui/index.html) says ("Studio").
   if (const js::Json& t = j.at("panelTitle"); t.is_string() && !t.str().empty() && t.str().size() <= 40) m.panelTitle = t.str();
   if (!parse_contributions(j, m, error)) return std::nullopt;
+  // SDK 1.4: layer types, each drawn by one of the effects above (checked to be a generator at load).
+  if (!contribution_list(j, "layerTypes", error)) return std::nullopt;
+  for (const js::Json& e : j.at("layerTypes").arr()) {
+    ManifestLayerType lt;
+    lt.id = e.at("id").str();
+    lt.name = str_or(e.at("name"), lt.id);
+    lt.effect = e.at("effect").is_string() ? e.at("effect").str() : std::string();
+    lt.category = str_or(e.at("category"), m.name);
+    if (std::ranges::none_of(m.effects, [&](const ManifestEffect& me) { return me.matchName == lt.effect; })) {
+      error = "layerTypes: '" + lt.id + "' names effect '" + lt.effect + "', which the manifest's \"effects\" do not list";
+      return std::nullopt;
+    }
+    m.layerTypes.push_back(std::move(lt));
+  }
   if (m.effects.empty() && m.commands.empty() && m.importers.empty() && m.outputModules.empty() && m.panels.empty()) {
     error = "the manifest lists no effects, commands, importers, output modules or panels";
     return std::nullopt;

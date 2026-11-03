@@ -19396,6 +19396,54 @@ Status decode(wire::Reader& r, PluginPresetInfo& out) {
   return Status::ok;
 }
 
+void encode(wire::Writer& w, const PluginLayerTypeInfo& v) {
+  w.varint(10U); w.str(v.type);
+  w.varint(18U); w.str(v.name);
+  w.varint(26U); w.str(v.effect);
+  w.varint(34U); w.str(v.category);
+}
+
+Status decode(wire::Reader& r, PluginLayerTypeInfo& out) {
+  bool has_type = false;
+  bool has_name = false;
+  bool has_effect = false;
+  bool has_category = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 10U: {
+        if (!r.str(out.type)) return Status::truncated;
+        has_type = true;
+        break;
+      }
+      case 18U: {
+        if (!r.str(out.name)) return Status::truncated;
+        has_name = true;
+        break;
+      }
+      case 26U: {
+        if (!r.str(out.effect)) return Status::truncated;
+        has_effect = true;
+        break;
+      }
+      case 34U: {
+        if (!r.str(out.category)) return Status::truncated;
+        has_category = true;
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_type) return Status::missing_field;
+  if (!has_name) return Status::missing_field;
+  if (!has_effect) return Status::missing_field;
+  if (!has_category) return Status::missing_field;
+  return Status::ok;
+}
+
 void encode(wire::Writer& w, const PluginInfo& v) {
   w.varint(10U); w.str(v.id);
   w.varint(18U); w.str(v.name);
@@ -19414,6 +19462,7 @@ void encode(wire::Writer& w, const PluginInfo& v) {
   for (const auto& e : v.presets) { w.varint(122U); { const std::size_t s = w.begin_ld(); encode(w, e); w.end_ld(s); } }
   if (v.icon.has_value()) { w.varint(130U); w.str(*v.icon); }
   if (v.panel_title.has_value()) { w.varint(138U); w.str(*v.panel_title); }
+  for (const auto& e : v.layer_types) { w.varint(146U); { const std::size_t s = w.begin_ld(); encode(w, e); w.end_ld(s); } }
 }
 
 Status decode(wire::Reader& r, PluginInfo& out) {
@@ -19515,6 +19564,11 @@ Status decode(wire::Reader& r, PluginInfo& out) {
         std::string e;
         if (!r.str(e)) return Status::truncated;
         out.panel_title = std::move(e);
+        break;
+      }
+      case 146U: {
+        auto& e = out.layer_types.emplace_back();
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
         break;
       }
       default:
@@ -22564,6 +22618,7 @@ void encode(wire::Writer& w, const LayerInfo& v) {
   if (v.plugin_schema_version.has_value()) { w.varint(7368U); w.varint(*v.plugin_schema_version); }
   if (v.caption.has_value()) { w.varint(7376U); w.boolean(*v.caption); }
   if (v.multicam_angle.has_value()) { w.varint(7384U); w.varint(*v.multicam_angle); }
+  if (v.plugin_layer_type.has_value()) { w.varint(7394U); w.str(*v.plugin_layer_type); }
 }
 
 Status decode(wire::Reader& r, LayerInfo& out) {
@@ -22716,6 +22771,12 @@ Status decode(wire::Reader& r, LayerInfo& out) {
         std::uint32_t e = 0;
         if (!r.u32(e)) return Status::bad_value;
         out.multicam_angle = std::move(e);
+        break;
+      }
+      case 7394U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.plugin_layer_type = std::move(e);
         break;
       }
       default:
@@ -33601,7 +33662,7 @@ Status roundtrip(std::span<const std::uint8_t> bytes, std::vector<std::uint8_t>&
   out = w.take();
   return Status::ok;
 }
-constexpr std::array<std::string_view, 578> kNames = {
+constexpr std::array<std::string_view, 579> kNames = {
     "Empty",
     "Vec2",
     "Vec3",
@@ -34028,6 +34089,7 @@ constexpr std::array<std::string_view, 578> kNames = {
     "ParamUiDrawing",
     "ParamUiItem",
     "PluginInfo",
+    "PluginLayerTypeInfo",
     "PluginList",
     "PluginPresetInfo",
     "EffectParamUi",
@@ -34612,6 +34674,7 @@ Status roundtrip_by_name(std::string_view type, std::span<const std::uint8_t> by
   if (type == "ParamUiDrawing") return roundtrip<ParamUiDrawing>(bytes, out);
   if (type == "ParamUiItem") return roundtrip<ParamUiItem>(bytes, out);
   if (type == "PluginInfo") return roundtrip<PluginInfo>(bytes, out);
+  if (type == "PluginLayerTypeInfo") return roundtrip<PluginLayerTypeInfo>(bytes, out);
   if (type == "PluginList") return roundtrip<PluginList>(bytes, out);
   if (type == "PluginPresetInfo") return roundtrip<PluginPresetInfo>(bytes, out);
   if (type == "EffectParamUi") return roundtrip<EffectParamUi>(bytes, out);

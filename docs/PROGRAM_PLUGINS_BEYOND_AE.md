@@ -4,7 +4,7 @@ Owner ask (2026-11-03): how far can the plugin system go, so authors can build
 plugins much deeper than today and use them inside the editor. Builds on
 docs/PLUGIN_PLATFORM_PLAN.md (P1–P7), docs/PROGRAM_DEEP_PLUGINS.md (SDK 1.2,
 Element 3D class, closed 2026-10-13) and docs/PLUGIN_SDK.md (SDK 1.3: custom
-UI in Effect Controls). Status: **in progress** (W1, W3, W4 committed 1d712106; W2 built 2026-11-03, uncommitted). Everything stays
+UI in Effect Controls). Status: **in progress** (W1, W3, W4 1d712106; W2 28cc8e40; L built 2026-11-03, uncommitted). Everything stays
 local on `native-core` until the owner says push.
 
 ## 0. Where we stand, and what "beyond AE" means
@@ -66,21 +66,27 @@ as 1.4 additions if they can stay appended, otherwise they wait for **2.0**
 
 ### L — plugin layer types
 
-- [ ] L1 **Manifest `layerTypes`.** `{ id, name, icon, is3d, params }`; a new
-  `PrLayerTypeEntry` in `PrPluginInfo` (trailing field). The engine stores the
-  layer as kind `plugin` with the type's match name, its params as ordinary
-  animatable properties (`core/plugin_props.cpp`), and its sequence data as an
-  effect's is stored today.
-- [ ] L2 **Render.** A layer type renders through the same selectors as a
-  generator effect (`SMART_PRE_RENDER` / `SMART_RENDER[_GPU]`) with the layer's
-  own size, time and transform; the layer's effects, masks, mattes, styles and
-  blend mode then apply as on any layer. Missing plugin: the layer passes
-  through empty, `layerErrors`, one notice (as `missingPluginContent.ts`).
-- [ ] L3 **Editor.** New ▸ Layer lists plugin types; the timeline twirls the
-  type's params under the layer name (not under Effects); Properties shows its
-  custom UI boxes (SDK 1.3); MCP `create_layer` accepts the type.
-- [ ] L4 **Proof: `chartlayer` sample** (bars from a CSV param, animated
-  values) + golden scene.
+- [x] L1 **Manifest `layerTypes`.** (2026-11-03, uncommitted) Built WITHOUT a new
+  entry point: a layer type names one of the bundle's GENERATOR effects
+  (`{ id, name, effect, category }`; checked at load). SDK minor 4.
+  `PluginInfo.layerTypes`, `NativeEffects::layer_type`.
+- [x] L2 **Render.** createLayer kind=generator + `generator` = "<pluginId>:<id>"
+  makes a transparent comp-sized solid (`fx.pluginLayer`) carrying the type's
+  generator as effect `layer` (`layerType: true`); the generator-effect render
+  path is reused unchanged (frame test: the entry reaches the chain at layer
+  size). Its own effect cannot be removed / duplicated / copied / moved, and
+  nothing goes before it. Missing plugin: empty layer + layerErrors.
+- [x] L3 **Editor.** (partial) Layer ▸ New lists plugin layer types
+  (`withPluginLayerTypes`); the params are timeline rows in the layer's
+  Contents group; `LayerInfo.pluginLayerType`; MCP `create_layer kind=plugin`.
+  Not yet: the TopNav "+" menu, an Effect Controls presentation of the own
+  effect as the layer's section (it shows as an ordinary effect card whose
+  remove the engine refuses), a layer glyph.
+- [x] L4 **Proof: `chartlayer` sample** (Bar Chart, Value 1–6 animatable) +
+  CPU goldens (`plugin_goldens_chartlayer`), `test_plugin_finish.cpp
+  [layertype]`, `pluginLayerTypes.native.test.ts`. A GPU-path golden scene of
+  the layer through the full renderer is still to add (the full engine exe
+  was held by the running app).
 
 ### D — plugins inside the 3D scene (needs Q1)
 

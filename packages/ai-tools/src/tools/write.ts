@@ -143,7 +143,14 @@ export const createLayerDef: AiToolDef = {
       id: ALIAS_PROP,
       kind: {
         type: 'string',
-        enum: ['shape', 'text', 'solid', 'null', 'group', 'camera', 'light', 'adjustment', 'particle', 'primitive'],
+        enum: ['shape', 'text', 'solid', 'null', 'group', 'camera', 'light', 'adjustment', 'particle', 'primitive', 'plugin'],
+      },
+      layerType: {
+        type: 'string',
+        description:
+          'For kind=plugin: the plugin layer type "<pluginId>:<id>" (list_capabilities kinds → pluginLayerTypes). ' +
+          'The layer is drawn by that plugin and fills the comp; its properties are its effect "layer" ' +
+          '(update_effect_param / set_keyframes on effects/layer/<param>).',
       },
       primitive: {
         type: 'string',

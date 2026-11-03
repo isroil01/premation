@@ -1354,6 +1354,7 @@ struct PluginOutputOption;
 struct PluginOutputModuleInfo;
 struct PluginPanelInfo;
 struct PluginPresetInfo;
+struct PluginLayerTypeInfo;
 struct PluginInfo;
 struct PluginList;
 struct PluginCommandResult;
@@ -4569,6 +4570,14 @@ struct PluginPresetInfo {
   bool operator==(const PluginPresetInfo&) const = default;
 };
 
+struct PluginLayerTypeInfo {
+  std::string type;
+  std::string name;
+  std::string effect;
+  std::string category;
+  bool operator==(const PluginLayerTypeInfo&) const = default;
+};
+
 struct PluginInfo {
   std::string id;
   std::string name;
@@ -4587,6 +4596,7 @@ struct PluginInfo {
   std::vector<PluginPresetInfo> presets;
   std::optional<std::string> icon;
   std::optional<std::string> panel_title;
+  std::vector<PluginLayerTypeInfo> layer_types;
   bool operator==(const PluginInfo&) const = default;
 };
 
@@ -5024,6 +5034,7 @@ struct LayerInfo {
   std::optional<std::uint32_t> plugin_schema_version;
   std::optional<bool> caption;
   std::optional<std::uint32_t> multicam_angle;
+  std::optional<std::string> plugin_layer_type;
   bool operator==(const LayerInfo&) const = default;
 };
 
@@ -7572,6 +7583,8 @@ void encode(wire::Writer& w, const PluginPanelInfo& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, PluginPanelInfo& out);
 void encode(wire::Writer& w, const PluginPresetInfo& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, PluginPresetInfo& out);
+void encode(wire::Writer& w, const PluginLayerTypeInfo& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, PluginLayerTypeInfo& out);
 void encode(wire::Writer& w, const PluginInfo& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, PluginInfo& out);
 void encode(wire::Writer& w, const PluginList& v);

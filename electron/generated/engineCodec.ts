@@ -10837,6 +10837,7 @@ function encS_LayerInfo(w: Writer, v: T.LayerInfo): void {
   if (v.pluginSchemaVersion !== undefined) { w.varint(7368); w.u32(v.pluginSchemaVersion); }
   if (v.caption !== undefined) { w.varint(7376); w.bool(v.caption); }
   if (v.multicamAngle !== undefined) { w.varint(7384); w.u32(v.multicamAngle); }
+  if (v.pluginLayerType !== undefined) { w.varint(7394); w.str(v.pluginLayerType); }
 }
 function decS_LayerInfo(r: Reader, end: number, o: any): T.LayerInfo {
   const l_children: string[] = [];
@@ -10881,6 +10882,7 @@ function decS_LayerInfo(r: Reader, end: number, o: any): T.LayerInfo {
   let v_pluginSchemaVersion: number | undefined;
   let v_caption: boolean | undefined;
   let v_multicamAngle: number | undefined;
+  let v_pluginLayerType: string | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -10909,6 +10911,7 @@ function decS_LayerInfo(r: Reader, end: number, o: any): T.LayerInfo {
       case 7368: v_pluginSchemaVersion = r.u32(); break;
       case 7376: v_caption = r.bool(); break;
       case 7384: v_multicamAngle = r.u32(); break;
+      case 7394: v_pluginLayerType = r.str(); break;
       default: r.skip(key);
     }
   }
@@ -10955,6 +10958,7 @@ function decS_LayerInfo(r: Reader, end: number, o: any): T.LayerInfo {
   if (v_pluginSchemaVersion !== undefined) o.pluginSchemaVersion = v_pluginSchemaVersion;
   if (v_caption !== undefined) o.caption = v_caption;
   if (v_multicamAngle !== undefined) o.multicamAngle = v_multicamAngle;
+  if (v_pluginLayerType !== undefined) o.pluginLayerType = v_pluginLayerType;
   return o;
 }
 function encS_MemberExpression(w: Writer, v: T.MemberExpression): void {
@@ -13554,6 +13558,7 @@ function encS_PluginInfo(w: Writer, v: T.PluginInfo): void {
   { const a = v.presets; for (let i = 0; i < a.length; i++) { w.byte(122); { const s = w.beginLd(); encS_PluginPresetInfo(w, a[i]!); w.endLd(s); } } }
   if (v.icon !== undefined) { w.varint(130); w.str(v.icon); }
   if (v.panelTitle !== undefined) { w.varint(138); w.str(v.panelTitle); }
+  { const a = v.layerTypes; for (let i = 0; i < a.length; i++) { w.varint(146); { const s = w.beginLd(); encS_PluginLayerTypeInfo(w, a[i]!); w.endLd(s); } } }
 }
 function decS_PluginInfo(r: Reader, end: number, o: any): T.PluginInfo {
   const l_effects: string[] = [];
@@ -13562,6 +13567,7 @@ function decS_PluginInfo(r: Reader, end: number, o: any): T.PluginInfo {
   const l_outputModules: T.PluginOutputModuleInfo[] = [];
   const l_panels: T.PluginPanelInfo[] = [];
   const l_presets: T.PluginPresetInfo[] = [];
+  const l_layerTypes: T.PluginLayerTypeInfo[] = [];
   let h_id = false;
   let h_name = false;
   let h_version = false;
@@ -13602,6 +13608,7 @@ function decS_PluginInfo(r: Reader, end: number, o: any): T.PluginInfo {
       case 122: l_presets.push(decS_PluginPresetInfo(r, r.ldEnd(), {})); break;
       case 130: v_icon = r.str(); break;
       case 138: v_panelTitle = r.str(); break;
+      case 146: l_layerTypes.push(decS_PluginLayerTypeInfo(r, r.ldEnd(), {})); break;
       default: r.skip(key);
     }
   }
@@ -13632,6 +13639,43 @@ function decS_PluginInfo(r: Reader, end: number, o: any): T.PluginInfo {
   o.presets = l_presets;
   if (v_icon !== undefined) o.icon = v_icon;
   if (v_panelTitle !== undefined) o.panelTitle = v_panelTitle;
+  o.layerTypes = l_layerTypes;
+  return o;
+}
+function encS_PluginLayerTypeInfo(w: Writer, v: T.PluginLayerTypeInfo): void {
+  w.byte(10); w.str(v.type);
+  w.byte(18); w.str(v.name);
+  w.byte(26); w.str(v.effect);
+  w.byte(34); w.str(v.category);
+}
+function decS_PluginLayerTypeInfo(r: Reader, end: number, o: any): T.PluginLayerTypeInfo {
+  let h_type = false;
+  let h_name = false;
+  let h_effect = false;
+  let h_category = false;
+  let v_type: string | undefined;
+  let v_name: string | undefined;
+  let v_effect: string | undefined;
+  let v_category: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_type = r.str(); h_type = true; break;
+      case 18: v_name = r.str(); h_name = true; break;
+      case 26: v_effect = r.str(); h_effect = true; break;
+      case 34: v_category = r.str(); h_category = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_type) throw new DecodeError('PluginLayerTypeInfo.type: missing', 'missingField');
+  if (!h_name) throw new DecodeError('PluginLayerTypeInfo.name: missing', 'missingField');
+  if (!h_effect) throw new DecodeError('PluginLayerTypeInfo.effect: missing', 'missingField');
+  if (!h_category) throw new DecodeError('PluginLayerTypeInfo.category: missing', 'missingField');
+  o.type = v_type;
+  o.name = v_name;
+  o.effect = v_effect;
+  o.category = v_category;
   return o;
 }
 function encS_PluginList(w: Writer, v: T.PluginList): void {
@@ -20855,6 +20899,7 @@ export const codecs = {
   ParamUiDrawing: mk<T.ParamUiDrawing>(encS_ParamUiDrawing, (r, e) => decS_ParamUiDrawing(r, e, {})),
   ParamUiItem: mk<T.ParamUiItem>(encS_ParamUiItem, (r, e) => decS_ParamUiItem(r, e, {})),
   PluginInfo: mk<T.PluginInfo>(encS_PluginInfo, (r, e) => decS_PluginInfo(r, e, {})),
+  PluginLayerTypeInfo: mk<T.PluginLayerTypeInfo>(encS_PluginLayerTypeInfo, (r, e) => decS_PluginLayerTypeInfo(r, e, {})),
   PluginList: mk<T.PluginList>(encS_PluginList, (r, e) => decS_PluginList(r, e, {})),
   PluginPresetInfo: mk<T.PluginPresetInfo>(encS_PluginPresetInfo, (r, e) => decS_PluginPresetInfo(r, e, {})),
   EffectParamUi: mk<T.EffectParamUi>(encS_EffectParamUi, (r, e) => decS_EffectParamUi(r, e, {})),

@@ -10,7 +10,7 @@ import { APP_MENU, type MenuGroupModel, type MenuItemModel } from './menuModel';
 import { useCatalogueRevision } from '@hooks/useLocale';
 import { localizeMenuGroups } from './menuI18n';
 import { usePluginContrib } from '@hooks/usePluginContrib';
-import { buildPluginMenuGroup, installPluginMenuCommands } from './pluginMenu';
+import { buildPluginMenuGroup, installPluginMenuCommands, withPluginLayerTypes } from './pluginMenu';
 import { dockedPluginPanelsKey } from './extensionsMenu';
 import { useLayoutStore } from '@stores/layoutStore';
 import { useScriptsStore } from '@stores/scriptsStore';
@@ -31,7 +31,9 @@ export function useAppMenuGroups(): MenuGroupModel[] {
   return useMemo(
     () => {
       const plugins = buildPluginMenuGroup();
-      const groups = plugins ? withPluginGroup(APP_MENU, plugins) : APP_MENU;
+      // SDK 1.4: plugin layer types join Layer ▸ New.
+      const base = withPluginLayerTypes(APP_MENU);
+      const groups = plugins ? withPluginGroup(base, plugins) : base;
       return localizeMenuGroups(groups.map((g) => ({ ...g, items: visibleItems(g.items) })));
     },
     // The catalogue is read by `t()` inside, not by this closure — hence the rule.

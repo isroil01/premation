@@ -6772,6 +6772,7 @@
   "menuBar.native.checkForUpdates": "Check for Updates…",
   "menuBar.native.settings": "Settings…",
   "menuBar.native.version": "Version {version}",
+  "menuBar.plugins.noComp": "Open a composition to add a {name} layer.",
   "menuBar.plugins.panels": "Panels",
   "menuBar.workspace.customize": "Customize…",
   "menuBar.workspace.reset": "Reset Layout",

@@ -99,6 +99,16 @@ struct NativeEffect {
   std::vector<NativeCustomUi> customUis;
 };
 
+/// SDK 1.4 (L1) — a plugin layer type (manifest `layerTypes`): createLayer kind=generator with
+/// `generator` = `type` makes a solid carrying `effect` as its effect `layer`.
+struct NativeLayerType {
+  std::string type;      ///< "<pluginId>:<id>"
+  std::string name;
+  std::string effect;    ///< the generator effect's match name
+  std::string category;
+  std::string provider;  ///< the plugin id
+};
+
 /// SDK 1.1 — one item of a plugin's viewer overlay (DRAW_OVERLAY), layer px (SDK 1.2: or comp px, `space`);
 /// SDK 1.3 — or of an Effect Controls box (DRAW_PARAM_UI), box px.
 struct NativeOverlayItem {
@@ -195,6 +205,10 @@ struct NativeFailure {
 class NativeEffects {
  public:
   static void add(NativeEffect e);
+  /// SDK 1.4: register a plugin layer type (newest wins, as for effects).
+  static void add_layer_type(NativeLayerType t);
+  /// The layer type `type` while its plugin's effects are available; nullopt otherwise.
+  [[nodiscard]] static std::optional<NativeLayerType> layer_type(std::string_view type);
   /// The newest registration of `type`, or nullptr (not a native effect).
   [[nodiscard]] static const NativeEffect* find(std::string_view type) noexcept;
   /// Every native effect currently available (newest per type, in registration order).

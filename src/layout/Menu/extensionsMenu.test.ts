@@ -11,7 +11,7 @@ import { buildExtensionsMenuItems } from './extensionsMenu';
 const plugin = {
   id: 'premation.deepglow', name: 'Deep Glow', version: '1.0.0', vendor: 'Premation', sdk: '1.2', status: 'loaded' as const,
   error: '', effects: ['premation.deepglow'], gpu: true, panel: true, commands: [], importers: [], outputModules: [],
-  panels: [{ id: 'scene', name: 'Scene Setup', page: 'scene.html' }], presets: [],
+  panels: [{ id: 'scene', name: 'Scene Setup', page: 'scene.html' }], presets: [], layerTypes: [],
 };
 
 const actions = (items: MenuItemModel[]): MenuItemModel[] => items.filter((i) => !i.separator && i.onSelect);

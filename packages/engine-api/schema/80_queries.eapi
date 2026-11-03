@@ -92,6 +92,8 @@ struct LayerInfo {
   caption?: bool = 922;
   /// B4 round 5 — a multicam ANGLE layer's number (1-based, `__multicamAngle` on its Transform): what the Multicam viewer lists and cuts between. Absent for any other layer.
   multicamAngle?: u32 = 923;
+  /// SDK 1.4 (L1) — a native plugin layer type's id `<pluginId>:<typeId>` (createLayer kind=generator): the layer is a solid drawn by that type's generator effect (effect id `layer`, its params the layer's own properties). Absent otherwise. Not `generator`, which marks retired JavaScript plugin layers.
+  pluginLayerType?: string = 924;
 }
 
 /// B4 — one dimension's own expression on an UNSEPARATED vector (setExpression `member`).
@@ -494,7 +496,11 @@ struct PluginInfo {
   icon?: string = 16;
   /// The manifest's `panelTitle`: the label of the effect card's button to the bundle's panel ("Studio"; absent = "Panel").
   panelTitle?: string = 17;
+  /// SDK 1.4 (L1) — the manifest's `layerTypes`: kinds of layer the plugin draws (New ▸ Layer). Listed from the manifest only while the plugin is loaded.
+  layerTypes: PluginLayerTypeInfo[] = 18;
 }
+/// A plugin layer type: `type` = `<pluginId>:<id>` (createLayer's `generator`), drawn by generator effect `effect`.
+struct PluginLayerTypeInfo { type: string = 1; name: string = 2; effect: string = 3; category: string = 4; }
 struct PluginList { plugins: PluginInfo[] = 1; }
 /// Plugin SDK 1.2 — one preset a plugin ships (AE's .ffx): applying it is `addEffect` of `effect` with `values` as its `params`, ONE undo entry. `values` are the effect's own property paths (`p2`, `p1X`, `p4`) with values in the API's encoding.
 struct PluginPresetInfo { name: string = 1; effect: string = 2; values: PropertyInit[] = 3; category: string = 4; }

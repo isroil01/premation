@@ -19,7 +19,11 @@ struct FactoryInput {
   const Json* asset = nullptr;  ///< footage record for image/video/audio/svg/sequence
   std::optional<std::string> refCompId;
   const Json* refComp = nullptr;  ///< the referenced composition record (precomp)
+  /// SDK 1.4 (L1), kind=generator: the plugin layer type "<pluginId>:<id>" (fx.pluginLayer).
+  std::string pluginLayerType;
 };
+/// SDK 1.4: a plugin layer's own effect — the type's generator, whose params are the layer's properties.
+inline constexpr std::string_view kPluginLayerEffectId = "layer";
 [[nodiscard]] Node make_layer_node(const FactoryInput& in);
 /// compInstance.ts `wouldCreateCompCycle(host, ref)`.
 [[nodiscard]] bool would_create_comp_cycle(const Document& d, std::string_view hostComp, std::string_view refComp);

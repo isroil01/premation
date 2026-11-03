@@ -408,6 +408,8 @@ api::LayerKind layer_kind_of(const Node& n) {
                           (seq.is_string() && seq.str().empty()));
     return truthy ? K::sequence : K::image;
   }
+  // SDK 1.4: a plugin layer type is a solid its plugin draws (fx.pluginLayer).
+  if (n.fx().at("pluginLayer").is_string()) return K::generator;
   if (is_solid_node(n)) return K::solid;
   for (const auto& c : n.components) {
     if (c.type == "Primitive" || c.type == "Model") return K::model3d;

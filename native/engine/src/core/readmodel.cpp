@@ -455,6 +455,8 @@ api::LayerInfo layer_info(const Document& d, std::string_view layer) {
       info.multicam_angle = static_cast<std::uint32_t>(std::floor(std::clamp(a.num(), 0.0, 4294967295.0)));
     }
   }
+  // SDK 1.4: the plugin layer type this layer is (createLayer kind=generator).
+  if (const Json& t = n.fx().at("pluginLayer"); t.is_string() && !t.str().empty()) info.plugin_layer_type = t.str();
   return info;
 }
 

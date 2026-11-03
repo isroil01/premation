@@ -98,10 +98,12 @@ std::vector<StaticPropertyRow> effect_rows(const Node& n) {
     const EffectDef* def = registry().effect(effect.at("type").str());
     if (def == nullptr) continue;
     const std::string id = effect.at("id").is_string() ? effect.at("id").str() : "undefined";
+    // SDK 1.4: a plugin layer type's own effect is the layer's content, not an applied effect.
+    const char* group = effect.at("layerType").is_bool() && effect.at("layerType").b() ? "contents" : "effects";
     for (const auto& p : def->params) {
       const std::string path = "effect." + id + "." + p.key;
-      if (p.type == "number") out.push_back(row(&n, path, "effects", {path}));
-      else if (p.type == "color") out.push_back(color_row(&n, path, "effects"));
+      if (p.type == "number") out.push_back(row(&n, path, group, {path}));
+      else if (p.type == "color") out.push_back(color_row(&n, path, group));
     }
     if (effect_has_opacity(effect)) {
       const std::string path = "effect." + id + "." + std::string(kEffectOpacityKey);

@@ -1,0 +1,15 @@
+{
+  "manifestVersion": 1,
+  "id": "com.premation.samples.chartlayer",
+  "name": "Chart Layer (sample)",
+  "version": "1.0.0",
+  "vendor": "Premation",
+  "sdk": { "major": 1, "minor": 4 },
+  "binary": { "windows": "chartlayer.dll", "macos": "libchartlayer.dylib", "linux": "libchartlayer.so" },
+  "effects": [
+    { "matchName": "com.premation.samples.chartlayer.bars", "name": "Bar Chart", "category": "Premation Samples" }
+  ],
+  "layerTypes": [
+    { "id": "bars", "name": "Bar Chart", "effect": "com.premation.samples.chartlayer.bars", "category": "Premation Samples" }
+  ]
+}

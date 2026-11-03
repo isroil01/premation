@@ -7,6 +7,8 @@
 
 #include "catalog_data.hpp"
 #include "fxstate.hpp"
+#include "handlers_native.hpp"
+#include "native_effects.hpp"
 #include "parenting.hpp"
 #include "readmodel.hpp"
 #include "time_conv.hpp"
@@ -107,6 +109,23 @@ Node make_layer_node(const FactoryInput& in) {
     case api::LayerKind::null:
       node.components = {transform("null", {{"width", N(100)}, {"height", N(100)}})};
       break;
+    case api::LayerKind::generator: {
+      // SDK 1.4 plugin layer type: a comp-sized solid the type's generator effect draws over. The
+      // fill is transparent, so a missing plugin leaves an empty layer (never a coloured box), and
+      // the Transform stays a "shape": a dotted __kind is a retired JavaScript plugin layer.
+      if (in.pluginLayerType.empty()) fail(ErrorCode::invalid_argument, "a generator layer needs its plugin layer type");
+      Json fill = obj();
+      fill.set("type", S("solid"));
+      fill.set("color", S("rgba(0,0,0,0)"));
+      Json fx = obj();
+      fx.set("solid", B(true));
+      fx.set("fill", std::move(fill));
+      fx.set("pluginLayer", S(in.pluginLayerType));
+      node.components = {transform("shape", {{"width", N(cw)}, {"height", N(ch)}}),
+                         style({{"opacity", N(100)}, {"fill", S("rgba(0,0,0,0)")}}),
+                         Component{id + "_fx", "fx", std::move(fx)}};
+      break;
+    }
     case api::LayerKind::solid:
     case api::LayerKind::adjustment: {
       const bool solid = in.kind == api::LayerKind::solid;
@@ -291,6 +310,15 @@ ResultOf<api::CreateLayer> handle(const api::CreateLayer& c, HCtx& x) {
     asset = find_asset_record(d, *c.source);
     if (asset == nullptr) fail(ErrorCode::not_found, "no footage item '" + *c.source + "'", {.item = *c.source});
   }
+  // SDK 1.4: a plugin layer type resolves to its generator effect (loaded, enabled plugins only).
+  std::optional<NativeLayerType> layerType;
+  if (k == api::LayerKind::generator) {
+    if (!c.generator || c.generator->empty()) fail(ErrorCode::invalid_argument, "a generator layer needs `generator`: a plugin layer type");
+    layerType = NativeEffects::layer_type(*c.generator);
+    if (!layerType) fail(ErrorCode::not_found, "no loaded plugin has layer type '" + *c.generator + "'");
+    if (registry().effect(layerType->effect) == nullptr) fail(ErrorCode::not_found, "no effect '" + layerType->effect + "'");
+    native_check_addable(layerType->effect);
+  }
   std::optional<Json> refComp;
   if (k == api::LayerKind::precomp) {
     if (!c.source || !is_comp_item(d, *c.source)) {
@@ -324,11 +352,15 @@ ResultOf<api::CreateLayer> handle(const api::CreateLayer& c, HCtx& x) {
   fi.asset = asset != nullptr ? &assetCopy : nullptr;
   fi.refCompId = k == api::LayerKind::precomp ? c.source : std::nullopt;
   fi.refComp = refComp ? &*refComp : nullptr;
+  if (layerType) {
+    fi.pluginLayerType = layerType->type;
+    if (!fi.name) fi.name = layerType->name;
+  }
   Node node = make_layer_node(fi);
   ensure_timeline(d, c.comp);
   std::string kw = kind_word(k);
   if (!kw.empty()) kw[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(kw[0])));
-  x.label = "New " + kw + " Layer";
+  x.label = layerType ? "New " + layerType->name + " Layer" : "New " + kw + " Layer";
   // apply
   node.parent = parentId;
   sg_add_child(d, parentId, std::move(node));
@@ -348,6 +380,16 @@ ResultOf<api::CreateLayer> handle(const api::CreateLayer& c, HCtx& x) {
       g.sourceIn = std::max(0.0, start - origin);
       write_geoms(d, c.comp, id, {g});
     }
+  }
+  if (layerType) {
+    // Its own effect first: `init` may set its params (effects/layer/<key>).
+    Json e = obj();
+    e.set("id", Json::string(std::string(kPluginLayerEffectId)));
+    e.set("type", Json::string(layerType->effect));
+    e.set("params", new_instance_params_of(*registry().effect(layerType->effect)));
+    e.set("layerType", Json::boolean(true));
+    write_node_effects(d, id, {std::move(e)});
+    native_effect_added(d, id, kPluginLayerEffectId, layerType->effect);
   }
   if (!c.init.empty()) {
     const Catalog cat = catalog_for(d, id);

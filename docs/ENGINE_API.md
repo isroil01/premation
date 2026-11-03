@@ -364,7 +364,7 @@ coalescable inside a gesture (§5.2). Controls and I/O never enter history.
 
 | Command | Semantics / inverse |
 |---|---|
-| `createLayer` | Any `LayerKind` (null, solid, shape, rectangle, ellipse, polygon, path, text, image, video, audio, svg, precomp, camera, light, group, component, particle, model3d, generator, adjustment, sequence), with source item, parent, stack index, in/out/start and initial property values. Inverse: delete it. |
+| `createLayer` | Any `LayerKind` (null, solid, shape, rectangle, ellipse, polygon, path, text, image, video, audio, svg, precomp, camera, light, group, component, particle, model3d, generator, adjustment, sequence), with source item, parent, stack index, in/out/start and initial property values. `generator` + `generator: "<pluginId>:<typeId>"` (SDK 1.4): a plugin layer type, a solid drawn by that type's generator effect `layer` (docs/PLUGIN_SDK.md "Layer types"). Inverse: delete it. |
 | `deleteLayers` | Children are unparented keeping world transform. Inverse: layers back with the same ids, properties, keyframes, effects, parenting and stack slots; children re-parented. |
 | `duplicateLayers` | Copies directly above; returns new ids in input order. Inverse: delete copies. |
 | `reorderLayers` | Move a set (keeping relative order) to `toIndex`. Inverse: previous full order. |

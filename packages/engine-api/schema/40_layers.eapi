@@ -109,7 +109,7 @@ command createLayer = 200 {
   startTime?: Time = 9;
   /// Property values to set at creation (transform/position, shape/size, text/sourceText, …).
   init: PropertyInit[] = 10;
-  /// Plugin generator id / effect match name for kind=generator.
+  /// kind=generator: the plugin layer type `<pluginId>:<typeId>` (PluginInfo.layerTypes, SDK 1.4). The layer is a solid of the comp's size carrying that type's generator effect as effect `layer`, whose params are the layer's own properties (`effects/layer/<key>`; `init` may set them). `notFound`: no loaded plugin has that type.
   generator?: string = 11;
 } -> LayerRef;
 /// Delete layers. Children are un-parented keeping their world transform. Undo restores the layers, their properties, keyframes, effects, parenting and stack position exactly (same ids).

@@ -19,6 +19,7 @@ import type {
   EngineClient,
   PluginCommandInfo,
   PluginInfo,
+  PluginLayerTypeInfo,
   PluginOutputModuleInfo,
   PluginPanelInfo,
 } from '@motion/engine-api';
@@ -223,6 +224,28 @@ export async function runPluginCommand(
     return { ok: true, message: res.value.message, edits: res.value.edits };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'The command failed.' };
+  }
+}
+
+/** SDK 1.4: every layer type a loaded plugin offers (Layer ▸ New), with its plugin's id, in load order. */
+export function pluginLayerTypes(): readonly (PluginLayerTypeInfo & { plugin: string })[] {
+  return plugins.filter(loaded).flatMap((p) => (p.layerTypes ?? []).map((lt) => ({ ...lt, plugin: p.id })));
+}
+
+export type PluginLayerOutcome = { ok: true; layer: string } | { ok: false; error: string };
+
+/**
+ * createLayer kind=generator: a layer the plugin draws — a solid of the comp's size carrying the
+ * type's generator as its effect `layer`, whose params are the layer's own properties. One undo
+ * entry. Never throws.
+ */
+export async function createPluginLayer(client: Pick<EngineClient, 'execute'>, comp: string, type: string): Promise<PluginLayerOutcome> {
+  try {
+    const res = await client.execute({ type: 'createLayer', comp, kind: 'generator', generator: type, init: [] });
+    if (!res.ok) return { ok: false, error: res.error.message || 'The layer was not created.' };
+    return { ok: true, layer: res.value.layer };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'The layer was not created.' };
   }
 }
 

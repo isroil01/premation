@@ -785,7 +785,7 @@ async function authRequest(path: string, body: unknown): Promise<AuthResult> {
  * stale value hides every plugin built on the newer minor; engineSdk.test.ts
  * pins it to the header.
  */
-export const ENGINE_PLUGIN_SDK = '1.3';
+export const ENGINE_PLUGIN_SDK = '1.4';
 
 /** A native plugin in the store (motion-back plugins.service browse / detail; docs/PLUGIN_STORE.md §3). */
 export interface StorePluginSummary {

@@ -105,6 +105,7 @@ import { defaultStroke, normalizeStroke, type Stroke } from '@core/paint/stroke'
 import { sceneStructureWarnings } from './structureAdvisors';
 import { MAX_STROKE_DASH_ENTRIES } from '@core/paint/strokeTracks';
 import { mirrorStrokes } from '@core/mirror/paintFields';
+import { pluginLayerTypes } from '@core/nativePlugins/pluginContrib';
 
 const def = (name: string) => {
   const d = ALL_TOOL_DEFS.find((t) => t.name === name);
@@ -300,7 +301,9 @@ const listCapabilities: AiTool['handler'] = async (input, ctx) => {
     payload.easing = ['linear', 'step', 'ease', 'easeIn', 'easeOut', 'easeInOut', 'bezier', 'hold', 'autoBezier', 'continuousBezier'];
   }
   if (want('kinds')) {
-    payload.layerKinds = ['shape', 'text', 'solid', 'null', 'group', 'camera', 'light', 'adjustment', 'particle'];
+    payload.layerKinds = ['shape', 'text', 'solid', 'null', 'group', 'camera', 'light', 'adjustment', 'particle', 'plugin'];
+    // SDK 1.4: what kind=plugin can make — the layer types of the loaded native plugins.
+    payload.pluginLayerTypes = pluginLayerTypes().map((lt) => ({ type: lt.type, name: lt.name, plugin: lt.plugin }));
   }
   if (want('puppet')) {
     payload.puppet = {
@@ -382,15 +385,33 @@ async function createPrimitive(
   );
 }
 
+/** kind=plugin (SDK 1.4): a layer a native plugin draws, by its layer type. */
+async function createPluginLayerTool(i: { id?: string; name: string; layerType?: string; parent?: string }, ctx: Parameters<AiTool['handler']>[1]) {
+  if (!i.layerType) return fail('kind=plugin needs layerType: one of list_capabilities kinds → pluginLayerTypes ("<pluginId>:<id>").');
+  if (!ctx.scene.createPluginLayer) return fail('This host has no native plugins to draw a plugin layer.');
+  const id = await ctx.scene.createPluginLayer(i.layerType, i.name);
+  if (!id) return fail(`Could not create a '${i.layerType}' layer.`);
+  bindAlias(ctx, i.id, id);
+  if (i.parent) await ctx.scene.reparent(id, i.parent);
+  const made = await ctx.scene.get(id);
+  const realName = made?.name ?? i.name;
+  return ok(
+    `Created plugin layer '${realName}' (${i.layerType}) with id ${id}. It fills the composition and is drawn by its plugin; ` +
+      `its properties are effect 'layer' — set them with update_effect_param (effect id 'layer') or keyframe effects/layer/<param>.`,
+    { id, name: realName, layerType: i.layerType },
+  );
+}
+
 const createLayer: AiTool['handler'] = async (input, ctx) => {
   const i = input as {
     id?: string; kind: string; name: string; x?: number; y?: number; width?: number; height?: number;
     text?: string; shape?: string; fill?: string; parent?: string;
     points?: number; outerRadius?: number; innerRadius?: number; roundness?: number;
-    primitive?: string; radius?: number; depth?: number; tube?: number;
+    primitive?: string; radius?: number; depth?: number; tube?: number; layerType?: string;
   } & StrokeToolInput;
   if (i.parent && !await ctx.scene.has(i.parent)) return fail((await unknownNode(ctx, i.parent)));
   if (i.kind === 'primitive') return createPrimitive(i, ctx);
+  if (i.kind === 'plugin') return createPluginLayerTool(i, ctx);
   // Accept x-only or y-only (the old code discarded BOTH if either was missing,
   // silently centring the layer). Only when NEITHER is given do we hand the
   // facade `undefined`, which fans the layer out instead of stacking at centre.

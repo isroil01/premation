@@ -9,7 +9,7 @@ so an AE plugin author can find their way around.
 | | |
 |---|---|
 | Headers | `native/sdk/include/premation_sdk/` (C, versioned ABI; `premation_sdk.h` includes all) |
-| Samples | `native/sdk/samples/` — `ripple` (CPU), `rings` (generator + sequence data + button), `checkout` (Layer Displace, Time Echo), `grade` (GPU), `particles` (SDK 1.1: comp camera, lights, layer transforms; SDK 1.2: trails and its own motion blur through `checkout_time`, comp space, presets, a layer-time button); SDK 1.2 plugins that are not effects: `distribute` (a command), `ppmio` (an importer), `ppmseq` (an output module), `statspanel` (a panel + a command); `fxkit` (two effects written once in WGSL, see "Writing effects in WGSL: fxkit") |
+| Samples | `native/sdk/samples/` — `ripple` (CPU), `rings` (generator + sequence data + button), `checkout` (Layer Displace, Time Echo), `grade` (GPU), `particles` (SDK 1.1: comp camera, lights, layer transforms; SDK 1.2: trails and its own motion blur through `checkout_time`, comp space, presets, a layer-time button); SDK 1.2 plugins that are not effects: `distribute` (a command), `ppmio` (an importer), `ppmseq` (an output module), `statspanel` (a panel + a command); `fxkit` (two effects written once in WGSL, see "Writing effects in WGSL: fxkit"); SDK 1.4: `chartlayer` (a plugin layer type, see "Layer types") |
 | Host | `native/engine/src/plugins/` (runs inside `premation-engine`) |
 | Tool | `premation-plugins` — list, render, crash-check a plugin folder without an editor |
 | Next | `docs/PROGRAM_PLUGINS_BEYOND_AE.md` — proposed SDK 1.4 / 2.0: layer types, plugins in the 3D scene, simulations, ML, out-of-process host (not built) |
@@ -870,6 +870,48 @@ and `{ type: 'reply', id, ok, result?, error? }` to each request. Requests over
 1 MiB, non-edit commands (undo, save, transport, jobs) and unknown types are
 refused with an error reply; nothing changes. It also sends `theme`, and the
 panel kit works here too ("Matching the editor" above).
+
+## Layer types (SDK 1.4)
+
+A plugin can add its own **kind of layer**: Layer ▸ New ▸ <name>, beside Text and
+Solid. A layer type is drawn by one of the bundle's own generator effects, so it needs
+no new entry point:
+
+```json
+"effects":    [ { "matchName": "com.you.charts.bars", "name": "Bar Chart" } ],
+"layerTypes": [ { "id": "bars", "name": "Bar Chart", "effect": "com.you.charts.bars" } ]
+```
+
+- The effect must declare `PR_OUT_FLAG_GENERATOR`. A layer type that names a
+  non-generator fails the plugin at load and says why. The manifest says
+  `"sdk": { "minor": 4 }`.
+- The type's id is `<plugin id>:<id>`. `listPlugins` lists it under
+  `PluginInfo.layerTypes` while the plugin is loaded.
+- `createLayer { kind: generator, generator: "<plugin id>:<id>" }` makes a
+  comp-sized solid with a transparent fill. The type's effect is its effect
+  `layer`, marked `layerType`. `LayerInfo.kind` is `generator` and
+  `LayerInfo.pluginLayerType` names the type. `LayerInfo.generator` stays
+  empty: that field marks retired JavaScript plugin layers.
+- The effect's params are the layer's own properties. Their paths are
+  `effects/layer/<key>`; `createLayer`'s `init` may set them; they keyframe and
+  take expressions like any property. The timeline shows them in the layer's
+  Contents group, not under Effects.
+- The layer's own effect stays first. It cannot be removed, duplicated, copied
+  on its own or moved, and nothing can be added at index 0. Other effects stack
+  after it as on any layer.
+- Rendering is the generator path unchanged. The plugin draws layer pixels
+  (`width × height`, the layer's size) through `layer_to_world`, so the layer's
+  transform, masks, mattes, styles and blend mode apply.
+- A missing or disabled plugin leaves the layer empty (the fill is
+  transparent). The effect is reported on `layerErrors`, as any missing plugin
+  effect is.
+- The same effect still works as an ordinary effect on any layer.
+- MCP: `create_layer { kind: "plugin", layerType }`. `list_capabilities kinds`
+  lists `pluginLayerTypes`.
+
+The `chartlayer` sample (`native/sdk/samples/chartlayer`) is a bar chart whose
+Value 1–6 are animatable layer properties. Its golden renders run as ctest
+`plugin_goldens_chartlayer`.
 
 ## Sequence data
 

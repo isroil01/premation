@@ -535,6 +535,14 @@ export function createSceneFacade(session: AiEngineSession = freeSession()): Sce
       return (r[0] as { layer?: string }).layer ?? '';
     },
 
+    createPluginLayer: async (type, name) => {
+      const compId = activeCompRootId() as string;
+      const trimmed = name.trim();
+      const cmd = { type: 'createLayer', comp: compId, kind: 'generator', generator: type, ...(trimmed ? { name: trimmed } : {}), init: [] } as Command;
+      const r = await session.apply([cmd]);
+      return (r[0] as { layer?: string }).layer ?? '';
+    },
+
     remove: async (id) => {
       // The whole subtree in ONE `deleteLayers` (the doomed set: nothing is
       // re-parented), which is what the tool means by deleting a layer.
