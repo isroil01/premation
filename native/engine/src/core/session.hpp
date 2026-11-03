@@ -382,6 +382,23 @@ class Session {
     /// A prefetch a prefetch worker could not build (it samples a layer's
     /// pixels, which only the main builder draws): the main worker's.
     bool mainOnly = false;
+    /// Play-ahead (schedule_ahead): a frame the viewport WILL show, built early
+    /// by a prefetch worker and held until the clock reaches it. `aheadU` is
+    /// its play position (lastU_'s units), `aheadEpoch` the aheadEpoch_ it was
+    /// scheduled in.
+    bool ahead = false;
+    std::int64_t aheadU = 0;
+    std::uint64_t aheadEpoch = 0;
+    /// The frame was built already (a play-ahead frame): the main worker only
+    /// computes what rides beside it (overlays, onion ghosts).
+    bool prebuilt = false;
+  };
+  /// A play-ahead frame back from its prefetch worker (under buildQueueMu_).
+  struct AheadFrame {
+    BuildTask task;  ///< task.job carries the built frame
+    std::vector<api::LayerError> errors;
+    double ms = 0;
+    bool needsMain = false;  ///< it samples a layer's pixels: play-ahead stops for this play
   };
   struct BuildReport {
     std::string comp;
@@ -403,7 +420,12 @@ class Session {
         // A write announces itself before waiting: the build in flight is of a
         // document about to change, and stops at its next layer (BuildCancelled).
         if (write) s_.editsWaiting_.fetch_add(1, std::memory_order_acq_rel);
-        s_.buildMu_.lock();
+        {
+          // Through the turnstile (buildGate_): no worker takes a shared hold
+          // while this waits, so the workers' overlapping builds never starve it.
+          const std::lock_guard<std::mutex> gate(s_.buildGate_);
+          s_.buildMu_.lock();
+        }
         if (write) s_.editsWaiting_.fetch_sub(1, std::memory_order_acq_rel);
       }
       s_.buildLockWrote_ = s_.buildLockWrote_ || write;
@@ -443,21 +465,72 @@ class Session {
   void complete_job(BuildTask& t, const doc::PCtx& pc, TextQueries* text, RigQueries* rig);
   /// Take the worker's reports: cpuFrameMs, the layer errors, a rebuild for skipped tasks.
   void pump_builds();
-  /// Item 7: the prefetch workers. Each builds idle render-ahead frames (never a
-  /// frame a viewport shows, so their order does not matter) with a frame
-  /// builder of its own — fonts, text measurer, walk cache — and an expression
-  /// cache of its own, under a SHARED hold of the build lock: they build side by
-  /// side, while the main worker (which holds it exclusively, as the core
-  /// thread's BuildLock does) builds nothing. Plugins stay one call at a time
-  /// (plugins::finish_native_frame). A frame that samples a layer's pixels goes
-  /// back to the main worker (BuildTask::mainOnly).
+  /// Item 7: the prefetch workers. Each builds idle render-ahead frames and
+  /// play-ahead frames (schedule_ahead; held, never handed to the sink by the
+  /// worker) with a frame builder of its own — fonts, text measurer, walk cache
+  /// — and an expression cache of its own, under a SHARED hold of the build
+  /// lock: they build side by side, and beside the main worker. Plugins stay one
+  /// call at a time (plugins::finish_native_frame). A frame that samples a
+  /// layer's pixels goes back to the main worker (BuildTask::mainOnly).
   void prefetch_worker(std::size_t index);
   void run_prefetch_build(BuildTask t, std::size_t index);
   /// Whether the main worker builds, or has queued, a frame a viewport will show.
   [[nodiscard]] bool viewport_builds_active() const;
-  /// The build lock: exclusive for the core thread's BuildLock and the main
-  /// worker, shared by the prefetch workers.
+  /// A worker's shared hold of the build lock, taken through the turnstile.
+  [[nodiscard]] std::shared_lock<std::shared_mutex> shared_build_lock();
+  /// Hand a frame a viewport shows to the sink — unless a newer shown frame of
+  /// that viewport went first (the render thread keeps whichever job arrives
+  /// last): frames reach the screen in the order they were asked for. `seq` is
+  /// the frame's buildSeq_. False = dropped.
+  bool present(RenderJob job, std::uint64_t seq);
+  /// The build lock: exclusive for the core thread's BuildLock, shared by the
+  /// build workers (main and prefetch: each has a builder and an expression
+  /// cache of its own; the main builder's other users take BuildLock).
   std::shared_mutex buildMu_;
+  /// The turnstile in front of buildMu_: a BuildLock waits for the lock while
+  /// holding it, a worker passes through it before its shared hold.
+  std::mutex buildGate_;
+  /// present(): per viewport, the seq of the newest shown frame handed to the sink.
+  std::mutex presentMu_;
+  std::map<std::uint32_t, std::uint64_t> presentedSeq_;
+
+  // ── play-ahead (item 7: the frames a viewport shows, on more than one core) ──
+  // While a play is not served from the tiers, the main worker builds the frame
+  // the clock lands on, one at a time (~64 ms on the 657-layer film: 15 fps).
+  // The prefetch workers build the frames after it — the ones the clock will
+  // land on once a build's time has passed — and hold them (aheadReady_); when
+  // the clock reaches one, submit_frame_to presents it instead of queueing a
+  // build. Presentation order is the clock's: only the core thread hands
+  // these to the sink, through present(). A held frame is used only when its
+  // document (revision, writes), view (port, editor view) and frame match the
+  // frame asked for exactly; any command invalidates them all (note_activity).
+  /// From tick() while playing: drop held frames the clock passed, queue the next ones.
+  void schedule_ahead();
+  /// Drop every play-ahead frame, queued or held (a command, a play, a stop).
+  void invalidate_ahead();
+  /// A play-ahead frame (schedule_ahead): frame index `frame` at play position `u`.
+  struct AheadAt {
+    std::int64_t frame = 0;
+    std::int64_t u = 0;
+  };
+  void submit_ahead(const ViewportConfig& port, const std::string& comp, AheadAt at);
+  /// The part of a shown frame's task and a play-ahead frame share: the port as the frame draws it and
+  /// the job's metadata (what the frame IS), read from the transport.
+  /// `fixedTime`: the frame's time (a prefetch's, a play-ahead's); else the held viewport's or the clock's.
+  void fill_task(BuildTask& t, const ViewportConfig& surface, const std::string& comp, std::int64_t frameIndex,
+                 std::optional<api::Time> fixedTime, bool prefetch);
+  /// A shown frame the core thread hands to the sink itself (cached, or built ahead), through present().
+  void present_now(RenderJob job);
+  /// Whether a held play-ahead frame for this viewport and frame is ready (submit_frame's back-pressure).
+  [[nodiscard]] bool ahead_ready(std::uint32_t viewport, std::int64_t frame) const;
+  /// A held frame for `t` (filled in place). Core thread.
+  bool take_ahead(BuildTask& t, std::vector<api::LayerError>& errors, double& ms);
+  void run_ahead_build(BuildTask t, std::size_t index);
+  std::vector<AheadFrame> aheadReady_;  ///< under buildQueueMu_
+  std::uint64_t aheadEpoch_ = 0;        ///< written by the core thread under buildQueueMu_
+  /// Core thread: the next play position to schedule, and whether play-ahead is off for this play (sampleImage).
+  std::int64_t aheadNextU_ = 0;
+  bool aheadOff_ = false;
   /// Core thread only: BuildLock nesting depth, and whether the outermost one wrote.
   std::uint32_t buildLockDepth_ = 0;
   bool buildLockWrote_ = false;
@@ -485,7 +558,8 @@ class Session {
   std::map<std::uint32_t, std::uint64_t> lastFrameSeq_;
   bool buildBusy_ = false;
   bool viewportBusy_ = false;  ///< under buildQueueMu_: the main worker builds a viewport's frame
-  int prefetchBusy_ = 0;       ///< under buildQueueMu_: prefetch workers building
+  int prefetchBusy_ = 0;       ///< under buildQueueMu_: prefetch workers building (play-ahead frames too)
+  int aheadBusy_ = 0;          ///< under buildQueueMu_: play-ahead frames building (any worker)
   bool buildStop_ = false;
   /// The prefetch workers' builders (engine-owned) and their expression caches.
   std::vector<FrameBuilder*> prefetchBuilders_;
@@ -639,6 +713,7 @@ class Session {
     std::uint64_t frames = 0;
     std::uint64_t keyed = 0;
     std::uint64_t cached = 0;
+    std::uint64_t ahead = 0;  ///< presented from a play-ahead build
   } playTally_;
   Clock::time_point cachedPollUntil_{};
   static constexpr std::chrono::seconds kCachedPoll{2};

@@ -200,6 +200,7 @@ Session::~Session() {
 
 void Session::set_prefetch_builders(std::vector<FrameBuilder*> builders) {
   drain_builds();
+  invalidate_ahead();  // held frames came from the old builders
   prefetchBuilders_ = std::move(builders);
   prefetchExprCaches_.clear();
   for (FrameBuilder* b : prefetchBuilders_) {
@@ -215,6 +216,7 @@ void Session::set_prefetch_builders(std::vector<FrameBuilder*> builders) {
 
 void Session::set_frame_builder(FrameBuilder* builder) {
   drain_builds();  // the worker reads frameBuilder_ while it builds
+  invalidate_ahead();
   frameBuilder_ = builder;
   if (frameBuilder_ != nullptr) frameBuilder_->set_cancel_flag(&editsWaiting_);
 }
@@ -1928,8 +1930,10 @@ void Session::start_playback(Clock::time_point now, std::optional<api::Time> fro
     renderDirty_ = false;
     return;
   }
+  invalidate_ahead();
   submit_frame(0);
   renderDirty_ = false;
+  schedule_ahead();
 }
 
 void Session::fill_cache(Clock::time_point now) {
@@ -1993,6 +1997,7 @@ void Session::fill_cache(Clock::time_point now) {
     lastK_ = 0;
     lastU_ = playBaseU_;
     clockDropped_ = 0;
+    invalidate_ahead();
     if (mediaClock_ != nullptr) {
       sync_audio();
       const double fd = doc::flicks_to_seconds(frame_dur());
@@ -2035,6 +2040,8 @@ void Session::note_activity(Clock::time_point now) {
   prefetchOrigin_ = -1;
   prefetchAhead_ = 0;
   prefetchBehind_ = 0;
+  // Play-ahead frames were built for the state before this command: forgotten too.
+  invalidate_ahead();
 }
 
 bool Session::idle_prefetch_armed() const {
@@ -2348,6 +2355,7 @@ void Session::stop_playback() {
       .kv("frames", playTally_.frames)
       .kv("keyed", playTally_.keyed)
       .kv("servedWithoutBuild", playTally_.cached)
+      .kv("builtAhead", playTally_.ahead)
       .kv("indexed", frameKeys_.indexed())
       .kv("indexBytes", frameKeys_.bytes())
       .kv("volatile", frameKeys_.volatile_inputs())
@@ -2481,6 +2489,7 @@ void Session::tick(Clock::time_point now) {
     k = static_cast<std::int64_t>(std::floor(elapsed * fps + 1e-9));
   }
   if (k <= lastK_) {
+    schedule_ahead();  // play-ahead frames that landed free their slots: queue the next
     if (now - lastStats_ >= std::chrono::seconds(1)) emit_stats(now);
     return;
   }
@@ -2547,6 +2556,7 @@ void Session::tick(Clock::time_point now) {
   // The last frame of a play-once always draws: it is what the viewport keeps.
   submit_frame(dropped, !stop);
   renderDirty_ = false;
+  if (!stop) schedule_ahead();
   if (stop) {
     stop_playback();
     emit_transport();
@@ -2675,25 +2685,26 @@ void Session::submit_frame(std::uint32_t clockDropped, bool fromClock) {
       // render thread has not begun — would only see that job superseded: no
       // new build is queued, and the frame is counted as dropped with the
       // pending job. Edits and seeks still replace a pending job: they must show.
-      if (fromClock && (build_pending(id) || sink_.job_pending(id))) sink_.note_dropped(id, 1, clockDropped);
+      // A frame built ahead for this tick goes out even past a queued build (present_now supersedes it).
+      if (fromClock && (sink_.job_pending(id) || (build_pending(id) && !ahead_ready(id, frame_)))) {
+        sink_.note_dropped(id, 1, clockDropped);
+      }
       else submit_frame_to(port, *c, clockDropped, first);
     }
     first = false;
   }
 }
 
-void Session::submit_frame_to(const ViewportConfig& surface, const std::string& c, std::uint32_t clockDropped, bool announce,
-                              std::optional<std::int64_t> prefetchFrame) {
-  BuildTask t;
+void Session::fill_task(BuildTask& t, const ViewportConfig& surface, const std::string& c, std::int64_t frameIndex,
+                        std::optional<api::Time> fixedTime, bool prefetch) {
   // The surface's config as this frame draws it (frame_port: hidden layers, focus, LUT, comp space).
   ViewportConfig& port = t.port;
   port = frame_port(surface, c);
   // A held viewport (the Layer panel's own ruler) renders at its time, not the clock's.
-  const std::int64_t frameIndex = prefetchFrame.value_or(frame_);
-  const api::Time time = prefetchFrame ? frameIndex * frame_dur() : port.time.value_or(time_);
+  const api::Time time = fixedTime ? *fixedTime : port.time.value_or(time_);
   // The job's metadata: what this frame IS (viewport, frame, time, revision,
   // cache scope). Read here, on the core thread, from the transport; the
-  // frame's content is built from the document at this revision (below).
+  // frame's content is built from the document at this revision.
   RenderJob& job = t.job;
   job.viewport = port.viewport;
   job.recordCoverage = port.layer.empty() && !port.time;
@@ -2707,14 +2718,25 @@ void Session::submit_frame_to(const ViewportConfig& surface, const std::string& 
   job.frame = frameIndex;
   job.time = time;
   job.revision = revision_;
-  job.clockDropped = clockDropped;
   job.contentWidth = preview_pixels(port.width, port.resolution);
   job.contentHeight = preview_pixels(port.height, port.resolution);
   // A prefetched frame is stored, so its footage is exact (as a fill's); it is never shown.
-  job.prefetch = prefetchFrame.has_value();
+  job.prefetch = prefetch;
   job.exactMedia = job.prefetch || (playing_ && transportState_ == api::TransportState::caching);
   job.playing = playing_;
   job.transient = gesture_.has_value() && !playing_;
+}
+
+void Session::submit_frame_to(const ViewportConfig& surface, const std::string& c, std::uint32_t clockDropped, bool announce,
+                              std::optional<std::int64_t> prefetchFrame) {
+  BuildTask t;
+  const std::int64_t frameIndex = prefetchFrame.value_or(frame_);
+  fill_task(t, surface, c, frameIndex, prefetchFrame ? std::optional<api::Time>(frameIndex * frame_dur()) : std::nullopt,
+            prefetchFrame.has_value());
+  ViewportConfig& port = t.port;
+  RenderJob& job = t.job;
+  const api::Time time = job.time;
+  job.clockDropped = clockDropped;
   // Cached playback without a build (core/frame_keys.hpp): the frame's
   // pre-build key, and — when the sink has seen that key built and a tier may
   // still hold the frame — the job goes out with the content key alone. A
@@ -2774,7 +2796,7 @@ void Session::submit_frame_to(const ViewportConfig& surface, const std::string& 
     // no trip through the build worker. (Overlay geometry and onion ghosts
     // still want the builder's measurer: those go through the worker below,
     // which skips the frame build itself.)
-    sink_.submit(std::move(t.job));
+    present_now(std::move(t.job));
     return;
   }
   // D2w: the engine's own scene builder (scene/snapshot_build.cpp) — the
@@ -2783,8 +2805,213 @@ void Session::submit_frame_to(const ViewportConfig& surface, const std::string& 
   // as layerErrors, never as a blank frame.
   t.mediaBase = media_base();
   t.view = view_;
+  // Play-ahead: a prefetch worker built this frame already (schedule_ahead).
+  std::vector<api::LayerError> aheadErrors;
+  double aheadMs = 0;
+  if (!job.prefetch && playing_ && !job.cachedKey && take_ahead(t, aheadErrors, aheadMs)) {
+    ++playTally_.ahead;
+    buildMs_ = buildMs_ <= 0 ? aheadMs : buildMs_ + (aheadMs - buildMs_) * 0.2;
+    builtMs_ = builtMs_ <= 0 ? aheadMs : builtMs_ + (aheadMs - builtMs_) * 0.2;
+    if (t.announce) announce_layer_errors(c, std::move(aheadErrors));
+    if (t.overlays.empty() && !port.onion) {
+      present_now(std::move(t.job));
+      return;
+    }
+    // Overlays or onion ghosts beside it: the main worker computes those, and builds nothing.
+    t.prebuilt = true;
+    t.announce = false;
+  }
   enqueue_build(std::move(t));
 }
+
+void Session::present_now(RenderJob job) {
+  // A shown frame the core thread hands over itself (cached, or built ahead):
+  // a task queued for the viewport and not started is older — dropped as superseded.
+  const std::uint32_t viewport = job.viewport;
+  std::optional<BuildTask> superseded;
+  {
+    const std::lock_guard<std::mutex> lock(buildQueueMu_);
+    const auto it = std::ranges::find_if(buildQueue_, [viewport](const BuildTask& q) {
+      return q.job.viewport == viewport && !q.job.prefetch && !q.ahead;
+    });
+    if (it != buildQueue_.end()) {
+      superseded = std::move(*it);
+      buildQueue_.erase(it);
+    }
+  }
+  if (superseded) sink_.note_dropped(viewport, superseded->playing ? 1U : 0U, superseded->job.clockDropped);
+  const std::uint64_t seq = ++buildSeq_;
+  lastFrameSeq_[viewport] = seq;
+  (void)present(std::move(job), seq);
+}
+
+bool Session::present(RenderJob job, std::uint64_t seq) {
+  const std::lock_guard<std::mutex> lock(presentMu_);
+  std::uint64_t& newest = presentedSeq_[job.viewport];
+  if (seq < newest) {
+    // A newer frame of this viewport reached the sink first (the core thread
+    // presented one built ahead, or from the tiers, while this was building):
+    // shown after it, this one would step the picture back. Counted as superseded.
+    sink_.note_dropped(job.viewport, job.playing ? 1U : 0U, job.clockDropped);
+    return false;
+  }
+  newest = seq;
+  sink_.submit(std::move(job));
+  return true;
+}
+
+// ── play-ahead ──────────────────────────────────────────────────────────────
+
+void Session::invalidate_ahead() {
+  std::vector<AheadFrame> dropped;  // released outside the lock
+  {
+    const std::lock_guard<std::mutex> lock(buildQueueMu_);
+    ++aheadEpoch_;
+    std::erase_if(buildQueue_, [](const BuildTask& q) { return q.ahead; });
+    dropped.swap(aheadReady_);
+  }
+  aheadNextU_ = 0;
+  aheadOff_ = false;
+}
+
+void Session::schedule_ahead() {
+  if (!playing_ || transportState_ == api::TransportState::caching || frameBuilder_ == nullptr || prefetchBuilders_.empty() ||
+      aheadOff_ || gesture_) {
+    return;
+  }
+  // Forward at normal speed only: the frames after this one are the ones the clock lands on.
+  if (rate_ != 1.0 || loop_ == api::LoopMode::ping_pong) return;
+  const std::optional<std::string> c = active_comp();
+  if (!c) return;
+  const ViewportConfig* view = nullptr;
+  for (const auto& [id, port] : surfaces_) {
+    if (port.open && port.layer.empty() && !port.time) {
+      view = &port;
+      break;
+    }
+  }
+  if (view == nullptr) return;
+  const Range r = play_range();
+  const std::int64_t span = r.last - r.first + 1;
+  if (span <= 0) return;
+  // Where each frame goes: a task queued now behind `pending` others starts
+  // when a builder frees (one per builder, the main one helping when it has no
+  // frame of its own) and takes a build's time; it is aimed at the frame the
+  // clock will be on when it is done, and one more. While the builders keep up
+  // with the clock that is every frame; when they cannot, the frames they can
+  // build, spread evenly â€” not a run of frames the clock passes before they land.
+  // The window: one build in flight per builder and one queued behind it.
+  const double frameMs = static_cast<double>(frame_dur()) / static_cast<double>(doc::kFlicksPerSecond) * 1000.0;
+  const std::size_t builders = prefetchBuilders_.size() + 1;
+  const std::size_t cap = 2 * builders;
+  const auto aim = [&](std::size_t pending) {
+    const double doneMs = (static_cast<double>(pending / builders) + 1.0) * builtMs_;
+    return lastU_ + static_cast<std::int64_t>(std::clamp(std::ceil(doneMs / std::max(1.0, frameMs)) + 1.0, 1.0, 240.0));
+  };
+  // Beyond this a held or queued frame belongs to an earlier pass (a restarted play, a loop's wrap).
+  const std::int64_t last = aim(cap) + static_cast<std::int64_t>(cap);
+  std::size_t inflight = 0;
+  std::size_t pending = 0;
+  bool needsMain = false;
+  std::vector<AheadFrame> passed;  // released outside the lock
+  {
+    const std::lock_guard<std::mutex> lock(buildQueueMu_);
+    // Frames the clock passed (or that a restarted play left far ahead) are dropped, queued or held.
+    const auto outside = [&](const BuildTask& q) { return q.aheadEpoch != aheadEpoch_ || q.aheadU <= lastU_ || q.aheadU > last; };
+    std::erase_if(buildQueue_, [&](const BuildTask& q) { return q.ahead && outside(q); });
+    for (auto it = aheadReady_.begin(); it != aheadReady_.end();) {
+      needsMain = needsMain || it->needsMain;
+      if (it->needsMain || outside(it->task)) {
+        passed.push_back(std::move(*it));
+        it = aheadReady_.erase(it);
+      } else {
+        ++it;
+      }
+    }
+    pending = static_cast<std::size_t>(aheadBusy_) +
+              static_cast<std::size_t>(std::ranges::count_if(buildQueue_, [](const BuildTask& q) { return q.ahead; }));
+    inflight = aheadReady_.size() + pending;
+  }
+  if (needsMain) {
+    // A frame of this comp samples a layer's pixels (sampleImage): only the main builder draws those.
+    aheadOff_ = true;
+    return;
+  }
+  if (aheadNextU_ <= lastU_ || aheadNextU_ > last) aheadNextU_ = lastU_ + 1;
+  sync_frame_keys();
+  const bool keyed = frameKeys_.indexed() && !frameKeys_.volatile_inputs();
+  std::optional<std::uint64_t> scope;
+  while (inflight < cap) {
+    const std::int64_t u = std::max(aheadNextU_, aim(pending));
+    if ((loop_ == api::LoopMode::once && u >= span) || u > last) break;
+    aheadNextU_ = u + 1;
+    const std::int64_t f = r.first + mod_pos(u, span);
+    if (keyed) {
+      // A frame a tier holds is presented from it (submit_frame_to): nothing to build.
+      if (!scope) scope = cache_scope(frame_port(*view, *c), *c);
+      const std::uint64_t docKey = frameKeys_.key(f);
+      if (docKey != 0 && sink_.cached_frame(render::prebuild_key(*scope, docKey))) continue;
+    }
+    submit_ahead(*view, *c, AheadAt{f, u});
+    ++inflight;
+    ++pending;
+  }
+}
+
+void Session::submit_ahead(const ViewportConfig& surface, const std::string& c, AheadAt at) {
+  BuildTask t;
+  fill_task(t, surface, c, at.frame, at.frame * frame_dur(), false);
+  t.comp = c;
+  t.time = t.job.time;
+  t.clockTime = t.job.time;  // the clock's time when it reaches this frame
+  t.playing = playing_;
+  t.activeComp = active_comp();
+  t.mediaBase = media_base();
+  t.view = view_;
+  t.ahead = true;
+  t.aheadU = at.u;
+  t.aheadEpoch = aheadEpoch_;
+  enqueue_build(std::move(t));
+}
+
+bool Session::take_ahead(BuildTask& t, std::vector<api::LayerError>& errors, double& ms) {
+  AheadFrame held;
+  {
+    const std::lock_guard<std::mutex> lock(buildQueueMu_);
+    const std::uint64_t writes = docWrites_.load(std::memory_order_acquire);
+    // The frame asked for, exactly: the same document, view and frame.
+    const auto it = std::ranges::find_if(aheadReady_, [&](const AheadFrame& a) {
+      const BuildTask& h = a.task;
+      return !a.needsMain && h.aheadEpoch == aheadEpoch_ && h.writes == writes && h.job.viewport == t.job.viewport &&
+             h.job.frame == t.job.frame && h.job.time == t.job.time && h.job.revision == t.job.revision &&
+             h.job.cacheScope == t.job.cacheScope && h.job.contentWidth == t.job.contentWidth &&
+             h.job.contentHeight == t.job.contentHeight && h.job.exactMedia == t.job.exactMedia && h.playing == t.playing &&
+             h.comp == t.comp && h.port == t.port && h.view.tabComp == t.view.tabComp && h.view.tabTime == t.view.tabTime &&
+             h.mediaBase == t.mediaBase;
+    });
+    if (it == aheadReady_.end()) return false;
+    held = std::move(*it);
+    aheadReady_.erase(it);
+  }
+  t.job.built = std::move(held.task.job.built);
+  t.job.scene = std::move(held.task.job.scene);
+  t.job.buildMs = held.task.job.buildMs;
+  errors = std::move(held.errors);
+  ms = held.ms;
+  // As run_build: a frame built from an input that may still change on its own is never learned.
+  if (std::ranges::any_of(errors, [](const api::LayerError& e) { return e.stage == "plugin" || e.stage == "snapshot"; })) {
+    t.job.prebuildKey.reset();
+  }
+  return true;
+}
+
+bool Session::ahead_ready(std::uint32_t viewport, std::int64_t frame) const {
+  const std::lock_guard<std::mutex> lock(buildQueueMu_);
+  return std::ranges::any_of(aheadReady_, [&](const AheadFrame& a) {
+    return !a.needsMain && a.task.aheadEpoch == aheadEpoch_ && a.task.job.viewport == viewport && a.task.job.frame == frame;
+  });
+}
+
 
 // ── the build worker ────────────────────────────────────────────────────────
 
@@ -2792,7 +3019,8 @@ void Session::enqueue_build(BuildTask task) {
   const std::uint32_t viewport = task.job.viewport;
   task.writes = docWrites_.load(std::memory_order_acquire);
   task.seq = ++buildSeq_;
-  if (!task.job.prefetch) lastFrameSeq_[viewport] = task.seq;
+  const bool shown = !task.job.prefetch && !task.ahead;
+  if (shown) lastFrameSeq_[viewport] = task.seq;
   // Frame-pipeline trace (debug level, PREMATION_LOG_LEVEL=debug): where a
   // frame's time goes between an edit and its pixels — one atomic load when off.
   PREMATION_LOG(debug, "ft_enqueue").kv("rev", static_cast<std::uint64_t>(task.job.revision)).kv("vp", viewport);
@@ -2808,7 +3036,8 @@ void Session::enqueue_build(BuildTask task) {
     // An idle prefetch (RenderJob::prefetch) never replaces a frame the viewport
     // will show; a frame for the viewport drops a queued prefetch (the user is
     // back: idle_prefetch starts over after the quiet period) — not a drop of playback.
-    if (!task.job.prefetch) {
+    // A play-ahead frame (BuildTask::ahead) replaces nothing and is replaced by nothing.
+    if (shown) {
       for (auto it = buildQueue_.begin(); it != buildQueue_.end(); ++it) {
         if (it->job.viewport == viewport && it->job.prefetch) {
           buildQueue_.erase(it);
@@ -2816,7 +3045,7 @@ void Session::enqueue_build(BuildTask task) {
         }
       }
       for (auto it = buildQueue_.begin(); it != buildQueue_.end(); ++it) {
-        if (it->job.viewport == viewport) {
+        if (it->job.viewport == viewport && !it->ahead) {
           superseded = std::move(*it);
           buildQueue_.erase(it);
           break;
@@ -2834,7 +3063,7 @@ void Session::enqueue_build(BuildTask task) {
 bool Session::build_pending(std::uint32_t viewport) const {
   const std::lock_guard<std::mutex> lock(buildQueueMu_);
   return std::any_of(buildQueue_.begin(), buildQueue_.end(),
-                     [viewport](const BuildTask& t) { return t.job.viewport == viewport && !t.job.prefetch; });
+                     [viewport](const BuildTask& t) { return t.job.viewport == viewport && !t.job.prefetch && !t.ahead; });
 }
 
 bool Session::builds_active() const {
@@ -2844,7 +3073,15 @@ bool Session::builds_active() const {
 
 bool Session::viewport_builds_active() const {
   const std::lock_guard<std::mutex> lock(buildQueueMu_);
-  return viewportBusy_ || std::ranges::any_of(buildQueue_, [](const BuildTask& t) { return !t.job.prefetch || t.mainOnly; });
+  return viewportBusy_ ||
+         std::ranges::any_of(buildQueue_, [](const BuildTask& t) { return (!t.job.prefetch && !t.ahead) || t.mainOnly; });
+}
+
+std::shared_lock<std::shared_mutex> Session::shared_build_lock() {
+  // Through the turnstile: a BuildLock waiting for the lock holds buildGate_,
+  // so no new shared hold starts until it has had its turn.
+  const std::lock_guard<std::mutex> gate(buildGate_);
+  return std::shared_lock<std::shared_mutex>(buildMu_);
 }
 
 void Session::build_worker() {
@@ -2855,19 +3092,24 @@ void Session::build_worker() {
       std::unique_lock<std::mutex> lock(buildQueueMu_);
       buildCv_.wait(lock, [this] { return buildStop_ || !buildQueue_.empty(); });
       if (buildStop_) return;
-      // A frame a viewport shows first; a prefetch when there is none.
-      auto it = std::ranges::find_if(buildQueue_, [](const BuildTask& t) { return !t.job.prefetch || t.mainOnly; });
+      // A frame a viewport shows first; a prefetch when there is none; then a play-ahead frame.
+      auto it = std::ranges::find_if(buildQueue_, [](const BuildTask& t) { return (!t.job.prefetch && !t.ahead) || t.mainOnly; });
+      if (it == buildQueue_.end()) it = std::ranges::find_if(buildQueue_, [](const BuildTask& t) { return !t.ahead; });
       if (it == buildQueue_.end()) it = buildQueue_.begin();
       task = std::move(*it);
       buildQueue_.erase(it);
       buildBusy_ = true;
-      viewportBusy_ = !task.job.prefetch;
+      viewportBusy_ = !task.job.prefetch && !task.ahead;
+      if (task.ahead) ++aheadBusy_;
     }
-    run_build(std::move(task));
+    const bool ahead = task.ahead;
+    if (ahead) run_ahead_build(std::move(task), prefetchBuilders_.size());
+    else run_build(std::move(task));
     {
       const std::lock_guard<std::mutex> lock(buildQueueMu_);
       buildBusy_ = false;
       viewportBusy_ = false;
+      if (ahead) --aheadBusy_;
     }
     buildCv_.notify_all();  // drain_builds
   }
@@ -2875,22 +3117,28 @@ void Session::build_worker() {
 
 void Session::prefetch_worker(std::size_t index) {
   tlBuildWorker = true;
-  const auto mine = [](const BuildTask& t) { return t.job.prefetch && !t.mainOnly; };
+  const auto mine = [](const BuildTask& t) { return t.ahead || (t.job.prefetch && !t.mainOnly); };
   for (;;) {
     BuildTask task;
     {
       std::unique_lock<std::mutex> lock(buildQueueMu_);
       buildCv_.wait(lock, [&] { return buildStop_ || std::ranges::any_of(buildQueue_, mine); });
       if (buildStop_) return;
-      const auto it = std::ranges::find_if(buildQueue_, mine);
+      // A frame the viewport will show (play-ahead) before one it may (idle render-ahead).
+      auto it = std::ranges::find_if(buildQueue_, [](const BuildTask& t) { return t.ahead; });
+      if (it == buildQueue_.end()) it = std::ranges::find_if(buildQueue_, mine);
       task = std::move(*it);
       buildQueue_.erase(it);
       ++prefetchBusy_;
+      if (task.ahead) ++aheadBusy_;
     }
-    run_prefetch_build(std::move(task), index);
+    const bool ahead = task.ahead;
+    if (ahead) run_ahead_build(std::move(task), index);
+    else run_prefetch_build(std::move(task), index);
     {
       const std::lock_guard<std::mutex> lock(buildQueueMu_);
       --prefetchBusy_;
+      if (ahead) --aheadBusy_;
     }
     buildCv_.notify_all();  // drain_builds
   }
@@ -2906,7 +3154,7 @@ void Session::run_prefetch_build(BuildTask t, std::size_t index) {
   if (editsWaiting_.load(std::memory_order_acquire) != 0) {
     report.skipped = true;  // an edit is waiting: not ahead of it (run_build)
   } else {
-    const std::shared_lock<std::shared_mutex> lock(buildMu_);
+    const std::shared_lock<std::shared_mutex> lock = shared_build_lock();
     if (docWrites_.load(std::memory_order_acquire) != t.writes) {
       report.skipped = true;
     } else {
@@ -2966,7 +3214,8 @@ void Session::run_build(BuildTask t) {
     // skipped without the lock (the core thread queues a fresh one, below).
     report.skipped = true;
   } else {
-    const std::lock_guard<std::shared_mutex> lock(buildMu_);
+    // A shared hold: the prefetch workers build beside this one (their own builders and caches).
+    const std::shared_lock<std::shared_mutex> lock = shared_build_lock();
     // Frame-pipeline trace: how long the build waited for the lock, and a skip.
     PREMATION_LOG(debug, "ft_build").kv("rev", static_cast<std::uint64_t>(t.job.revision))
         .kv("lockMs", std::chrono::duration<double, std::milli>(Clock::now() - ftWait0).count())
@@ -2982,9 +3231,10 @@ void Session::run_build(BuildTask t) {
         const auto t0 = Clock::now();
         frameBuilder_->set_media_base(t.mediaBase);
         const doc::DocExprEnv env(doc_, t.view, buildExprCache_);
-        if (t.job.cachedKey) {
-          // A cached frame (RenderJob::cachedKey): no build; only what rides
-          // beside it (overlay geometry, onion ghosts) is computed here.
+        if (t.job.cachedKey || t.prebuilt) {
+          // A cached frame (RenderJob::cachedKey) or one built ahead
+          // (BuildTask::prebuilt): no build; only what rides beside it
+          // (overlay geometry, onion ghosts) is computed here.
           report.cached = true;
         } else {
           t.job.built = frameBuilder_->build(doc_, t.view, env, buildExprCache_, t.comp, t.time, t.port, t.playing, report.errors);
@@ -3025,17 +3275,60 @@ void Session::run_build(BuildTask t) {
       }
     }
   }
-  if (submit) sink_.submit(std::move(t.job));
-  else sink_.note_dropped(t.job.viewport, t.playing ? 1U : 0U, t.job.clockDropped);
+  if (!submit) sink_.note_dropped(t.job.viewport, t.playing ? 1U : 0U, t.job.clockDropped);
+  else if (t.job.prefetch) sink_.submit(std::move(t.job));
+  else (void)present(std::move(t.job), t.seq);
   const std::lock_guard<std::mutex> lock(buildQueueMu_);
   buildReports_.push_back(std::move(report));
+}
+
+void Session::run_ahead_build(BuildTask t, std::size_t index) {
+  // index == prefetchBuilders_.size(): the main worker, with the main builder.
+  const bool onMain = index >= prefetchBuilders_.size();
+  FrameBuilder& builder = onMain ? *frameBuilder_ : *prefetchBuilders_[index];
+  doc::ExprCache& cache = onMain ? buildExprCache_ : *prefetchExprCaches_[index];
+  AheadFrame out;
+  bool keep = false;
+  // As run_prefetch_build: never ahead of a waiting edit, never of a document that moved on.
+  if (editsWaiting_.load(std::memory_order_acquire) == 0) {
+    const std::shared_lock<std::shared_mutex> lock = shared_build_lock();
+    if (docWrites_.load(std::memory_order_acquire) == t.writes) {
+      try {
+        const auto t0 = Clock::now();
+        builder.set_media_base(t.mediaBase);
+        const doc::DocExprEnv env(doc_, t.view, cache);
+        t.job.built = builder.build(doc_, t.view, env, cache, t.comp, t.time, t.port, t.playing, out.errors);
+        t.job.buildMs = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+        out.ms = t.job.buildMs;
+        // What complete_job would draw without a builder's frame (C2's quads).
+        if (!t.job.built) doc::build_frame_scene(doc::PCtx{doc_, t.view, env, cache}, t.comp, t.time, t.job.scene);
+        keep = true;
+      } catch (const NeedsMainBuilder&) {
+        out.needsMain = true;
+        keep = true;
+      } catch (const BuildCancelled&) {
+        // An edit is on its way: it invalidates every play-ahead frame anyway.
+      } catch (const std::exception& e) {
+        PREMATION_LOG(error, "frame_build_failed").kv("error", std::string(e.what()));
+        out.errors.push_back(api::LayerError{"", "snapshot", std::string("frame build failed: ") + e.what(), std::nullopt});
+        keep = true;
+      }
+    }
+  }
+  const std::lock_guard<std::mutex> lock(buildQueueMu_);
+  // A frame of an older play (or of the document before a command) is dropped
+  // here, after the lock: `t` is released when this returns.
+  if (keep && t.aheadEpoch == aheadEpoch_) {
+    out.task = std::move(t);
+    aheadReady_.push_back(std::move(out));
+  }
 }
 
 void Session::complete_job(BuildTask& t, const doc::PCtx& pc, TextQueries* text, RigQueries* rig) {
   RenderJob& job = t.job;
   // The scene's quad vector changes hands (→ render thread) once per frame:
   // one small allocation per frame, deliberately, so the threads never share a buffer.
-  if (!job.built && !job.cachedKey) doc::build_frame_scene(pc, t.comp, t.time, job.scene);
+  if (!job.built && !job.cachedKey && !t.prebuilt) doc::build_frame_scene(pc, t.comp, t.time, job.scene);
   for (const doc::OverlaySubscription& o : t.overlays) {
     job.geometrySubscribed = true;
     job.geometry = doc::overlay_geometry(pc, text, o, t.clockTime);
