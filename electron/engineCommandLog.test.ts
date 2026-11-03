@@ -100,6 +100,20 @@ describe('EngineCommandLog', () => {
     ]);
   });
 
+  it('keeps one entry for a run of one view control (a scrub), the newest', () => {
+    const log = new EngineCommandLog();
+    log.record(req({ type: 'newProject' } as Command), ok(1), 1);
+    for (let f = 0; f < 200; f++) log.record(req({ type: 'seek', time: f * 1000, mode: 'scrub' } as Command), ok(1), 1);
+    log.record(req({ type: 'setLoop', mode: 'loop' } as Command), ok(1), 1);
+    log.record(req({ type: 'seek', time: 5, mode: 'exact' } as Command), ok(1), 1);
+    const newest = req({ type: 'seek', time: 7, mode: 'exact' } as Command);
+    log.record(newest, ok(1), 1);
+    expect(log.length).toBe(4);
+    const last = log.plan().filter((e) => e.commandId === CMD.seek);
+    expect(last).toHaveLength(1);
+    expect(last[0]!.bytes).toEqual(newest);
+  });
+
   it('records nothing when switched off', () => {
     const log = new EngineCommandLog(false);
     log.record(req({ type: 'newProject' } as Command), ok(1), 1);

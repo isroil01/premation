@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <chrono>
 #include <set>
+#include <thread>
 
 #include "core/catalog_data.hpp"
 #include "core/frame_keys.hpp"
@@ -1956,6 +1957,97 @@ TEST_CASE("idle render-ahead on prefetch workers: the range fills with frames bu
   // An edit still lands (the workers stop at their next layer), and its frame draws.
   REQUIRE(is_ok(set_prop(h, layer, "transform/position", vec2(999, 0), 2 * kSec)));
   CHECK(none_cached(h, 50, 70));
+  h.session.set_prefetch_builders({});
+  h.session.set_frame_builder(nullptr);
+}
+
+namespace {
+/// A prefetch builder that holds its build until released or cancelled (its cancel flag raised).
+class HeldPrefetchBuilder final : public FrameBuilder {
+ public:
+  std::shared_ptr<BuiltFrame> build(const doc::Document& /*d*/, const doc::EditorView& /*view*/, const doc::ExprEnv& /*expr*/,
+                                    doc::ExprCache& /*cache*/, std::string_view /*comp*/, api::Time /*time*/,
+                                    const ViewportConfig& /*viewport*/, bool /*playing*/,
+                                    std::vector<api::LayerError>& /*errors*/) override {
+    started.fetch_add(1, std::memory_order_acq_rel);
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!open.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < until) {
+      if (cancel_ != nullptr && cancel_->load(std::memory_order_acquire) != 0) {
+        cancelled.fetch_add(1, std::memory_order_acq_rel);
+        throw BuildCancelled{};
+      }
+      std::this_thread::sleep_for(std::chrono::microseconds(200));
+    }
+    return nullptr;
+  }
+  void set_cancel_flag(const std::atomic<std::uint32_t>* flag) noexcept override { cancel_ = flag; }
+  std::atomic<int> started{0};
+  std::atomic<int> cancelled{0};
+  std::atomic<bool> open{false};
+
+ private:
+  const std::atomic<std::uint32_t>* cancel_ = nullptr;
+};
+}  // namespace
+
+TEST_CASE("a scrub's frame does not wait for the idle render-ahead build in flight: the prefetch gives way",
+          "[session][cache][prefetch]") {
+  Harness h(64);
+  CountingBuilder builder;
+  HeldPrefetchBuilder held;
+  h.session.set_frame_builder(&builder);
+  h.session.set_prefetch_builders({&held});
+  (void)h.hello();
+  const auto comp = make_comp(h, 30);
+  const api::LayerId layer = make_layer(h, comp);
+  api::AddKeyframes a;
+  for (int k = 0; k <= 10; ++k) {
+    api::KeyframeInsert ins;
+    ins.prop = {layer, "transform/position"};
+    ins.time = static_cast<api::Time>(k) * (kSec / 5);
+    ins.value = vec2(10.0 * k, 0);
+    ins.easing = api::Easing::linear;
+    a.keys.push_back(std::move(ins));
+  }
+  REQUIRE(is_ok(h.run(cmd(a))));
+  api::SetActiveComposition active;
+  active.comp = comp;
+  REQUIRE(is_ok(h.run(cmd(active))));
+  h.sink.contentKeyOf = [](const RenderJob& j) { return std::optional<std::uint64_t>(0x1000 + static_cast<std::uint64_t>(j.frame)); };
+  api::SetViewport v;
+  v.viewport = 1;
+  v.width = 640;
+  v.height = 360;
+  v.device_pixel_ratio = 1.0;
+  REQUIRE(is_ok(h.run(cmd(v))));
+  REQUIRE(is_ok(h.run(cmd(api::Seek{40 * kFrame30, api::SeekMode::exact}))));
+  h.release_all();
+  // Past the quiet period: the prefetch worker's build is in flight, and held.
+  h.drainBuilds = false;
+  for (int i = 0; i < 2000 && held.started.load() == 0; ++i) {
+    h.advance(std::chrono::milliseconds(1));
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  REQUIRE(held.started.load() > 0);
+  const std::size_t before = h.sink.submitted();
+
+  // The scrub: its frame builds at once — the held prefetch stops at its next layer —
+  // instead of waiting for it (10 s here; a whole heavy frame in the app).
+  const auto t0 = std::chrono::steady_clock::now();
+  REQUIRE(is_ok(h.run(cmd(api::Seek{70 * kFrame30, api::SeekMode::scrub}))));
+  for (int i = 0; i < 2000 && h.sink.submitted() == before; ++i) {
+    h.advance(std::chrono::microseconds(100));
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  CHECK(h.sink.submitted() > before);
+  CHECK(std::chrono::steady_clock::now() - t0 < std::chrono::seconds(2));
+  CHECK(held.cancelled.load() >= 1);
+  held.open.store(true, std::memory_order_release);
+  h.drainBuilds = true;
+  h.session.drain_builds();
+  const std::vector<api::FrameReady> ready = h.frames_ready();
+  REQUIRE_FALSE(ready.empty());
+  CHECK(ready.back().frame == 70);
   h.session.set_prefetch_builders({});
   h.session.set_frame_builder(nullptr);
 }

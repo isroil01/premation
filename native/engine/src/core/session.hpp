@@ -402,9 +402,15 @@ class Session {
       if (s_.buildLockDepth_++ == 0) {
         // A write announces itself before waiting: the build in flight is of a
         // document about to change, and stops at its next layer (BuildCancelled).
-        if (write) s_.editsWaiting_.fetch_add(1, std::memory_order_acq_rel);
+        if (write) {
+          s_.editsWaiting_.fetch_add(1, std::memory_order_acq_rel);
+          s_.prefetchYield_.fetch_add(1, std::memory_order_acq_rel);
+        }
         s_.buildMu_.lock();
-        if (write) s_.editsWaiting_.fetch_sub(1, std::memory_order_acq_rel);
+        if (write) {
+          s_.prefetchYield_.fetch_sub(1, std::memory_order_acq_rel);
+          s_.editsWaiting_.fetch_sub(1, std::memory_order_acq_rel);
+        }
       }
       s_.buildLockWrote_ = s_.buildLockWrote_ || write;
     }
@@ -468,6 +474,23 @@ class Session {
   /// make the edit wait for the whole frame, and the worker skips a queued task
   /// while it is non-zero rather than take the lock ahead of the edit.
   std::atomic<std::uint32_t> editsWaiting_{0};
+  /// What an idle prefetch build gives way to — the prefetch builders' cancel
+  /// flag, and the main builder's while it builds a prefetch: the edits waiting
+  /// (counted with editsWaiting_) plus one while a paused viewport frame (a
+  /// seek, a scrub step, an edit's redraw — yields_prefetch) is queued or
+  /// waiting for the lock. A prefetch holds the lock shared and the viewport's
+  /// frame needs it alone: without this a scrub that starts after the idle
+  /// quiet period waited for every render-ahead build in flight.
+  std::atomic<std::uint32_t> prefetchYield_{0};
+  /// Under buildQueueMu_: prefetchYield_ holds the paused viewport frame's one.
+  bool shownYield_ = false;
+  /// Under buildQueueMu_: the main worker took a paused viewport frame and is waiting for the lock.
+  bool shownLocking_ = false;
+  /// A task a prefetch gives way to: a frame a viewport shows, not one paced by the
+  /// play clock (render-ahead while playing is built beside those on purpose).
+  [[nodiscard]] static bool yields_prefetch(const BuildTask& t) noexcept { return !t.job.prefetch && !t.job.playing; }
+  /// Under buildQueueMu_: prefetchYield_'s paused-frame part after the queue or shownLocking_ changed.
+  void sync_shown_yield_locked();
   /// The worker's expression cache (anim.hpp ExprCache memoises compiled sources; the
   /// core thread's `exprCache_` is written by its own queries). Under buildMu_.
   doc::ExprCache buildExprCache_;

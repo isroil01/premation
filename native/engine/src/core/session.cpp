@@ -203,7 +203,7 @@ void Session::set_prefetch_builders(std::vector<FrameBuilder*> builders) {
   prefetchBuilders_ = std::move(builders);
   prefetchExprCaches_.clear();
   for (FrameBuilder* b : prefetchBuilders_) {
-    b->set_cancel_flag(&editsWaiting_);
+    b->set_cancel_flag(&prefetchYield_);  // an edit, or a paused viewport frame, stops it at its next layer
     auto cache = std::make_unique<doc::ExprCache>();
     // sampleImage draws through the main builder: such a frame is the main worker's.
     cache->pixelProbe = [](const doc::DocExprEnv&, std::string_view, double, bool, std::string&) -> std::shared_ptr<const doc::LayerPixels> {
@@ -2824,11 +2824,20 @@ void Session::enqueue_build(BuildTask task) {
       }
     }
     buildQueue_.push_back(std::move(task));
+    sync_shown_yield_locked();
   }
   buildCv_.notify_all();
   // Counted as the render thread counts a job superseded before it started: a
   // frame of playback lost (an edit's is not), its clock drops carried over.
   if (superseded) sink_.note_dropped(viewport, superseded->playing ? 1U : 0U, superseded->job.clockDropped);
+}
+
+void Session::sync_shown_yield_locked() {
+  const bool want = shownLocking_ || std::ranges::any_of(buildQueue_, [](const BuildTask& t) { return yields_prefetch(t); });
+  if (want == shownYield_) return;
+  shownYield_ = want;
+  if (want) prefetchYield_.fetch_add(1, std::memory_order_acq_rel);
+  else prefetchYield_.fetch_sub(1, std::memory_order_acq_rel);
 }
 
 bool Session::build_pending(std::uint32_t viewport) const {
@@ -2862,6 +2871,9 @@ void Session::build_worker() {
       buildQueue_.erase(it);
       buildBusy_ = true;
       viewportBusy_ = !task.job.prefetch;
+      // Still owed the prefetches' way until run_build holds the lock.
+      shownLocking_ = yields_prefetch(task);
+      sync_shown_yield_locked();
     }
     run_build(std::move(task));
     {
@@ -2903,8 +2915,8 @@ void Session::run_prefetch_build(BuildTask t, std::size_t index) {
   report.seq = t.seq;
   bool submit = false;
   bool toMain = false;
-  if (editsWaiting_.load(std::memory_order_acquire) != 0) {
-    report.skipped = true;  // an edit is waiting: not ahead of it (run_build)
+  if (prefetchYield_.load(std::memory_order_acquire) != 0) {
+    report.skipped = true;  // an edit or a paused viewport frame is waiting: not ahead of it
   } else {
     const std::shared_lock<std::shared_mutex> lock(buildMu_);
     if (docWrites_.load(std::memory_order_acquire) != t.writes) {
@@ -2960,13 +2972,24 @@ void Session::run_build(BuildTask t) {
   report.seq = t.seq;
   bool submit = false;
   const auto ftWait0 = Clock::now();
-  if (editsWaiting_.load(std::memory_order_acquire) != 0) {
+  // A paused viewport frame no longer holds the prefetches back once it has the lock (or is skipped).
+  const auto lockTaken = [this] {
+    const std::lock_guard<std::mutex> lock(buildQueueMu_);
+    shownLocking_ = false;
+    sync_shown_yield_locked();
+  };
+  // A prefetch on this worker gives way as the prefetch workers' builds do (prefetchYield_).
+  const std::atomic<std::uint32_t>& cancel = t.job.prefetch ? prefetchYield_ : editsWaiting_;
+  if (cancel.load(std::memory_order_acquire) != 0) {
     // An edit is waiting for the lock: taking it first would make the edit
-    // wait for a frame of the document it is about to change. The task is
-    // skipped without the lock (the core thread queues a fresh one, below).
+    // wait for a frame of the document it is about to change (a prefetch: or
+    // a paused viewport frame is waiting). The task is skipped without the
+    // lock (the core thread queues a fresh one, below).
+    lockTaken();
     report.skipped = true;
   } else {
     const std::lock_guard<std::shared_mutex> lock(buildMu_);
+    lockTaken();
     // Frame-pipeline trace: how long the build waited for the lock, and a skip.
     PREMATION_LOG(debug, "ft_build").kv("rev", static_cast<std::uint64_t>(t.job.revision))
         .kv("lockMs", std::chrono::duration<double, std::milli>(Clock::now() - ftWait0).count())
@@ -2987,6 +3010,20 @@ void Session::run_build(BuildTask t) {
           // beside it (overlay geometry, onion ghosts) is computed here.
           report.cached = true;
         } else {
+          if (t.job.prefetch) frameBuilder_->set_cancel_flag(&prefetchYield_);
+          // The main builder watches the edits again after it, however it ends.
+          struct CancelFlagReset {
+            CancelFlagReset(FrameBuilder* b, const std::atomic<std::uint32_t>* flag) : b_(b), flag_(flag) {}
+            ~CancelFlagReset() { b_->set_cancel_flag(flag_); }
+            CancelFlagReset(const CancelFlagReset&) = delete;
+            CancelFlagReset& operator=(const CancelFlagReset&) = delete;
+            CancelFlagReset(CancelFlagReset&&) = delete;
+            CancelFlagReset& operator=(CancelFlagReset&&) = delete;
+
+           private:
+            FrameBuilder* b_;
+            const std::atomic<std::uint32_t>* flag_;
+          } const cancelReset{frameBuilder_, &editsWaiting_};
           t.job.built = frameBuilder_->build(doc_, t.view, env, buildExprCache_, t.comp, t.time, t.port, t.playing, report.errors);
           t.job.buildMs = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
           // A frame built from an input that may still change on its own (a

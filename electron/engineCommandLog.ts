@@ -99,13 +99,19 @@ export class EngineCommandLog {
     if (id === CMD.setViewport || id === CMD.closeViewport) key = `viewport:${req.firstVarint ?? 0}`;
     else if (id !== undefined && LAST_ONLY.has(id)) key = `cmd:${id}`;
     const jobId = id === CMD.startJob ? startJobIdFromResponse(response) ?? undefined : undefined;
-    this.entries.push({
+    const entry: LoggedRequest = {
       bytes: Uint8Array.from(request),
       revisionAfter,
       ...(id !== undefined ? { commandId: id } : {}),
       key,
       ...(jobId ? { jobId } : {}),
-    });
+    };
+    // A run of one view control (a scrub's seeks, a splitter drag's setViewport)
+    // keeps only its newest: plan() replays nothing else of it, and every pointer
+    // step of a scrub was one more entry for the rest of the session.
+    const prev = this.entries[this.entries.length - 1];
+    if (key && prev?.key === key) this.entries[this.entries.length - 1] = entry;
+    else this.entries.push(entry);
   }
 
   /**
