@@ -1959,3 +1959,72 @@ TEST_CASE("idle render-ahead on prefetch workers: the range fills with frames bu
   h.session.set_prefetch_builders({});
   h.session.set_frame_builder(nullptr);
 }
+
+TEST_CASE("play-ahead on prefetch workers: the frames a play shows are built beside the main worker, in order",
+          "[session][prefetch][playahead]") {
+  Harness h(64);
+  CountingBuilder builder;
+  AtomicCountingBuilder extraA;
+  AtomicCountingBuilder extraB;
+  h.session.set_frame_builder(&builder);
+  h.session.set_prefetch_builders({&extraA, &extraB});
+  (void)h.hello();
+  const auto comp = make_comp(h, 30);
+  const api::LayerId layer = make_layer(h, comp);
+  api::SetActiveComposition active;
+  active.comp = comp;
+  REQUIRE(is_ok(h.run(cmd(active))));
+  api::SetViewport v;
+  v.viewport = 1;
+  v.width = 640;
+  v.height = 360;
+  v.device_pixel_ratio = 1.0;
+  REQUIRE(is_ok(h.run(cmd(v))));
+  REQUIRE(is_ok(h.run(cmd(api::SetLoop{api::LoopMode::once}))));
+  h.release_all();
+  const std::size_t mark = h.frames_ready().size();
+  const int mainBefore = builder.built;
+  api::Play play;
+  play.rate = 1;
+  play.range = api::PlayRange::custom;
+  play.custom = api::TimeRange{0, 60 * kFrame30};
+  REQUIRE(is_ok(h.run(cmd(play))));
+  const auto tick = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::nanoseconds(kFrame30 * 1'000'000'000LL / kSec));
+  for (int i = 0; i < 30; ++i) {
+    h.release_all();
+    h.advance(tick);
+  }
+  REQUIRE(h.session.playing());
+  // Every frame of the play, once each, in frame order.
+  const auto ready = h.frames_ready();
+  std::vector<std::int64_t> frames;
+  for (std::size_t i = mark; i < ready.size(); ++i) frames.push_back(ready[i].frame);
+  REQUIRE(frames.size() >= 28);
+  for (std::size_t i = 1; i < frames.size(); ++i) CHECK(frames[i] == frames[i - 1] + 1);
+  // Built ahead: the prefetch workers built most of them; the main worker the first
+  // (nothing was ahead yet) and, while it had no frame of its own, a share of the rest.
+  CHECK(extraA.built.load() + extraB.built.load() > 0);
+  CHECK(builder.built - mainBefore < static_cast<int>(frames.size()));
+
+  // An edit mid-play: every frame built ahead of it is forgotten, and none is shown after it.
+  REQUIRE(is_ok(set_prop(h, layer, "transform/position", vec2(999, 0), 0)));
+  const api::Revision edited = h.session.revision();
+  const std::size_t mark2 = h.frames_ready().size();
+  for (int i = 0; i < 10; ++i) {
+    h.release_all();
+    h.advance(tick);
+  }
+  const auto after = h.frames_ready();
+  REQUIRE(after.size() > mark2);
+  std::int64_t last = frames.back();
+  REQUIRE(after.size() > mark2 + 1);
+  for (std::size_t i = mark2; i < after.size(); ++i) {
+    // (The first may be the job the sink held when the edit came: built before it.)
+    if (i > mark2) CHECK(after[i].revision >= edited);
+    CHECK(after[i].frame > last);
+    last = after[i].frame;
+  }
+  REQUIRE(is_ok(h.run(cmd(api::Pause{}))));
+  h.session.set_prefetch_builders({});
+  h.session.set_frame_builder(nullptr);
+}
