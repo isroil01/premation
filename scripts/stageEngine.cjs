@@ -57,11 +57,17 @@ function presetsFor(platform, arch) {
 
 /** The files to stage from `dir` ({ f, required }). Linux adds whatever .so files sit beside the engine. */
 function filesFor(platform, dir) {
-  if (platform === 'win32') return ['premation-engine.exe', 'dxcompiler.dll', 'dxil.dll', 'DirectML.dll', 'pdfium.dll'].map((f) => ({ f, required: true }));
-  if (platform === 'darwin') return ['premation-engine', 'premation-host-bridge.node', 'libpdfium.dylib'].map((f) => ({ f, required: true }));
+  // SDK 1.4 (X): premation-plugin-host runs third-party plugins out of process; an engine built
+  // without it runs them in process, so it is not required.
+  if (platform === 'win32') {
+    return [...['premation-engine.exe', 'dxcompiler.dll', 'dxil.dll', 'DirectML.dll', 'pdfium.dll'].map((f) => ({ f, required: true })), { f: 'premation-plugin-host.exe', required: false }];
+  }
+  if (platform === 'darwin') {
+    return [...['premation-engine', 'premation-host-bridge.node', 'libpdfium.dylib'].map((f) => ({ f, required: true })), { f: 'premation-plugin-host', required: false }];
+  }
   const libs = existsSync(dir) ? readdirSync(dir).filter((f) => /\.so(\.\d+)*$/.test(f)) : [];
   // The host bridge is optional on Linux: without it the viewport takes the route-A copy.
-  return [{ f: 'premation-engine', required: true }, { f: 'premation-host-bridge.node', required: false }, ...libs.map((f) => ({ f, required: false }))];
+  return [{ f: 'premation-engine', required: true }, { f: 'premation-host-bridge.node', required: false }, { f: 'premation-plugin-host', required: false }, ...libs.map((f) => ({ f, required: false }))];
 }
 
 class EngineMissingError extends Error {}

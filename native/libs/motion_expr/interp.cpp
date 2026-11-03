@@ -1127,10 +1127,28 @@ Value Interp::global(const Node& n) {
       if (own_text_.is_undefined()) own_text_ = text_group(Value::null());
       return own_text_;
     case Global::kPlugin:
-      // No plugin expression functions in the native engine (plan §10: the
-      // JavaScript plugin system is not ported), which is exactly the
-      // TypeScript's default: a frozen empty object.
-      if (plugin_.is_undefined()) plugin_ = plain({});
+      // SDK 1.4 (E1): { "<plugin id>": { <name>: fn, … } } of the native plugins' expression
+      // functions (the JavaScript plugin system is not ported; with no native ones this is the
+      // TypeScript's default, an empty object). Built once per evaluation.
+      if (plugin_.is_undefined()) {
+        plugin_ = plain({});
+        for (const PluginFunction& pf : plugin_functions()) {
+          Obj* root = plugin_.o;
+          const Str id = utf8_to_utf16(pf.plugin);
+          Obj* group = nullptr;
+          for (Prop& p : root->props) {
+            if (p.name != nullptr && *p.name == id && p.value.is_object()) group = p.value.o;
+          }
+          if (group == nullptr) {
+            const Value g = plain({});
+            group = g.o;
+            root->props.push_back({.key = KeyId::kUnknown, .value = g, .lazy = Lazy::kNone, .name = arena_.str(id)});
+          }
+          const Value qualified = str(utf8_to_utf16(pf.plugin + "\n" + pf.name));
+          group->props.push_back({.key = KeyId::kUnknown, .value = bound_fn(Fn::kPluginFn, qualified), .lazy = Lazy::kNone,
+                                  .name = arena_.str(utf8_to_utf16(pf.name))});
+        }
+      }
       return plugin_;
     case Global::kLookAt:
       return fn_value(Fn::kLookAt);
@@ -2004,6 +2022,31 @@ Value Interp::call(const Value& fn, const Value& this_arg, Args args) {
 
 Value Interp::call_api(const Obj& f, Args a) {
   switch (f.fn) {
+    case Fn::kPluginFn: {
+      // SDK 1.4 (E1): numbers in (arrays flattened), numbers out; an error throws like any call.
+      std::vector<double> in;
+      for (const Value& v : a.span()) {
+        const Value u = unwrap_prop(v);
+        if (u.is_object() && u.o != nullptr && u.o->kind == ObjKind::kArray) {
+          for (const Value& e : u.o->elems) in.push_back(to_number(e));
+        } else {
+          in.push_back(to_number(u));
+        }
+      }
+      const std::string qualified = f.bound.is_string() && f.bound.s != nullptr ? utf16_to_utf8(*f.bound.s) : std::string();
+      const std::size_t cut = qualified.find('\n');
+      std::vector<double> out;
+      std::string error;
+      if (cut == std::string::npos ||
+          !call_plugin_function(std::string_view(qualified).substr(0, cut), std::string_view(qualified).substr(cut + 1), in, out, error)) {
+        throw_eval(utf8_to_utf16("plugin function failed: " + error));
+      }
+      if (out.size() == 1) return Value::number(out[0]);
+      std::vector<Value> elems;
+      elems.reserve(out.size());
+      for (const double d : out) elems.push_back(Value::number(d));
+      return array(std::move(elems));
+    }
     case Fn::kCtrl: {
       Host* const host = ctx_.host;
       if (host == nullptr || !host->has_ctrl()) return Value::number(0);

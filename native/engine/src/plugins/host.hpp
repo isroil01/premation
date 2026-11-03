@@ -49,6 +49,7 @@ class CrashJournal;
 class DynamicLibrary;
 class WorkerPool;
 class Contrib;  // P7: commands, importers, output modules, panels (contrib.hpp)
+struct TexelImage;  // cpu_render.hpp
 
 /// One declared parameter (the host's copy of a PrParamDef from PARAMS_SETUP).
 struct ParamSpec {
@@ -84,8 +85,64 @@ struct EffectSpec {
   std::vector<ParamSpec> params;
   PrHandle globalData = 0;
   bool ready = false;
+  /// SDK 1.4 (C): the manifest's channels for this effect.
+  std::vector<std::string> publishes;
+  std::vector<std::string> reads;
   [[nodiscard]] bool has(std::uint32_t flag) const noexcept { return (outFlags & flag) != 0; }
 };
+
+/// SDK 1.4 (M): one input tensor of ml_run (the plugin's memory, read only).
+struct MlTensorIn {
+  std::string name;
+  const float* data = nullptr;
+  std::size_t count = 0;
+  std::vector<std::int64_t> shape;
+};
+
+/// SDK 1.4 (X): a running premation-plugin-host — one per out-of-process plugin (oop_wire.hpp
+/// frames). The engine's ChildProcess implements it (export/plugin_host_channel.hpp).
+class OopChannel {
+ public:
+  OopChannel() = default;
+  OopChannel(const OopChannel&) = delete;
+  OopChannel& operator=(const OopChannel&) = delete;
+  OopChannel(OopChannel&&) = delete;
+  OopChannel& operator=(OopChannel&&) = delete;
+  virtual ~OopChannel() = default;
+  /// One request (oop::Kind) and its reply. False + `error` when the child died, did not answer
+  /// within `timeoutMs` (it is then killed), or answered something else.
+  virtual bool call(std::uint32_t kind, std::span<const std::uint8_t> payload, std::vector<std::uint8_t>& reply, std::uint32_t timeoutMs,
+                    std::string& error) = 0;
+  [[nodiscard]] virtual bool alive() const = 0;
+};
+using OopSpawnFn = std::function<std::unique_ptr<OopChannel>(const std::filesystem::path& bundle, std::string& error)>;
+
+/// SDK 1.4 (D): a mesh an effect added to the comp's 3D scene (layer px), as the host copied it.
+struct ContribMesh {
+  std::vector<float> positions;  ///< xyz
+  std::vector<float> normals;    ///< xyz (computed when the plugin gave none)
+  std::vector<float> uvs;        ///< uv
+  std::vector<std::uint32_t> indices;
+  std::array<double, 16> transform{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+  std::array<double, 4> color{1, 1, 1, 1};
+  double metallic = 0, roughness = 0.5;
+  bool castsShadows = true, acceptsShadows = true;
+};
+
+/// SDK 1.4 (D): a light an effect added (layer px).
+struct ContribLight {
+  std::int32_t type = 2;  ///< PrLightType
+  std::array<double, 3> color{1, 1, 1};
+  double intensity = 1;
+  std::array<double, 3> position{};
+  std::array<double, 3> direction{};
+  double coneAngle = 0, coneFeather = 0, falloffDistance = 0, shadowDarkness = 0, shadowDiffusion = 0;
+  std::int32_t falloff = 0;
+  bool castsShadows = false;
+};
+
+/// SDK 1.4 (C): one frame's published channels, by name.
+using ChannelValues = std::map<std::string, std::vector<double>, std::less<>>;
 
 /// `locked`: needs an entitlement (manifest `entitlement`) with no valid token — never loaded.
 enum class PluginStatus : std::uint8_t { loaded, disabled, failed, quarantined, revoked, locked };
@@ -224,6 +281,8 @@ struct RenderInputs {
   std::vector<TimeSample> samples;
   /// SDK 1.4 (T): a STATEFUL effect's state after this frame's SIM_STEP (get_sim_state); absent = none.
   std::optional<std::vector<std::uint8_t>> simState;
+  /// SDK 1.4 (C): the frame's channels this effect reads (scene_finish.cpp: `ch.<name>`).
+  ChannelValues channels;
 };
 
 /// SDK 1.4 (T): the state of a STATEFUL effect instance at one of its layer frames.
@@ -386,6 +445,13 @@ struct HostOptions {
   /// Milliseconds since the epoch, for the token's expiry (tests pin it).
   /// Read at load only — never during rendering.
   std::function<std::int64_t()> nowMs;
+  /// SDK 1.4 (X): start a premation-plugin-host for a bundle (null = every plugin runs in process).
+  OopSpawnFn spawnOutOfProcess;
+  /// SDK 1.4 (X): which plugins run out of process, by id (null = none). A plugin that needs the
+  /// engine's document or GPU (Impl::out_of_process_refusal) runs in process whatever this says.
+  std::function<bool(std::string_view pluginId)> runOutOfProcess;
+  /// SDK 1.4 (X): how long an out-of-process render may take before its process is ended, ms.
+  std::uint32_t outOfProcessTimeoutMs = 10000;
 };
 
 /// `--revoked <file>`: `{"revoked":[{"id":"…","reason":"…"}]}` → id → reason.
@@ -416,7 +482,20 @@ class PluginHost {
   /// flat sequence data. The old module stays mapped (pinned): code of it may still be on a stack.
   /// A failed reload keeps the old module loaded and says why in `why`. False = not reloaded.
   bool reload(std::string_view pluginId, std::string& why);
+  /// SDK 1.4 (E1/E2): offer the loaded, enabled plugins' expression functions to expressions
+  /// (motion::expr::set_plugin_functions). Done after every scan, reload and enable / disable by
+  /// the engine's host (attachToDocument); a test host calls it itself.
+  void publish_expression_functions();
+  /// One call of a plugin expression function, crash-guarded and under the watchdog. False +
+  /// `error` when there is no such function or it failed (a fault disables it for the session).
+  bool call_expression(std::string_view pluginId, std::string_view name, std::span<const double> args, std::vector<double>& out,
+                       std::string& error);
   [[nodiscard]] const EffectSpec* effect(std::string_view matchName) const;
+  /// SDK 1.4 (X): `matchName`'s plugin runs in a premation-plugin-host.
+  [[nodiscard]] bool out_of_process(std::string_view matchName) const;
+  /// SDK 1.4 (X): one CPU render in the plugin's own process (run_native_cpu routes here). A child
+  /// that died or hung is started again on the next call, up to kOopMaxRestarts in a session.
+  CallResult render_out_of_process(const RenderInputs& in, const TexelImage& input, TexelImage& out);
 
   // ── document side (the core thread) ──
   /// SEQUENCE_SETUP → FLATTEN → SETDOWN: a new instance's flat sequence data.
@@ -445,6 +524,18 @@ class PluginHost {
   // ── render side (any thread) ──
   /// SMART_PRE_RENDER. `info` (SDK 1.2): the times checked out and the result rect.
   CallResult pre_render(const RenderInputs& in, std::vector<CheckoutRequest>& out, PreRenderInfo* info = nullptr);
+  /// SDK 1.4 (C): PR_CMD_PUBLISH_CHANNELS — the channels the instance publishes this frame
+  /// (`in.channels`: the ones it reads, published before it). Crash-guarded like a render.
+  CallResult publish_channels(const RenderInputs& in, ChannelValues& out);
+  /// SDK 1.4 (D): PR_CMD_SCENE_CONTRIBUTE — the meshes and lights the instance adds this frame.
+  CallResult scene_contribute(const RenderInputs& in, std::vector<ContribMesh>& meshes, std::vector<ContribLight>& lights);
+  /// SDK 1.4 (M): a model of `pluginId`'s bundle ("models/<name>.onnx") as the plugin's model id.
+  PrErr ml_load(std::string_view pluginId, std::string_view bundlePath, std::uint32_t& id, std::string& why);
+  /// SDK 1.4 (M): run model `id` of `pluginId` (ml.hpp tensors). False + `why`.
+  bool ml_run(std::string_view pluginId, std::uint32_t id, std::span<const struct MlTensorIn> inputs, std::vector<std::vector<float>>& outData,
+              std::vector<std::vector<std::int64_t>>& outShapes, std::vector<std::string>& outNames, std::string& why);
+  /// SDK 1.4 (M): where model `id` runs ("dml", "cpu", …); "" when there is no such model.
+  [[nodiscard]] std::string ml_provider(std::string_view pluginId, std::uint32_t id) const;
   /// SMART_RENDER (or FRAME_SETUP / RENDER / FRAME_SETDOWN for non-smart
   /// effects), into `io`'s worlds of `format`.
   CallResult render_cpu(const RenderInputs& in, CheckoutSource& io, PrPixelFormat format);

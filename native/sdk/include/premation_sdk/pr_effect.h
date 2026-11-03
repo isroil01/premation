@@ -92,7 +92,9 @@ typedef int32_t PrCmd;
 #define PR_CMD_DRAW_PARAM_UI 21 /* SDK 1.3 */
 #define PR_CMD_PARAM_UI_DRAG 22 /* SDK 1.3 */
 #define PR_CMD_SIM_STEP 23 /* SDK 1.4: one simulation step (PR_OUT_FLAG_STATEFUL, PrSimStepExtra) */
-#define PR_CMD_COUNT 24
+#define PR_CMD_PUBLISH_CHANNELS 24 /* SDK 1.4 (C): publish this frame's channels (PR_OUT_FLAG_PUBLISHES) */
+#define PR_CMD_SCENE_CONTRIBUTE 25 /* SDK 1.4 (D): add meshes / lights to the comp's 3D scene (PR_OUT_FLAG_SCENE_CONTRIBUTE) */
+#define PR_CMD_COUNT 26
 
 /* ── out flags (GLOBAL_SETUP) ─────────────────────────────────────────────── */
 #define PR_OUT_FLAG_DEEP_COLOR_AWARE (1u << 0)     /* processes 16-bit worlds */
@@ -132,6 +134,14 @@ typedef int32_t PrCmd;
  * (PrHostSuite.get_sim_state in SMART_RENDER / SMART_RENDER_GPU). Scrubbing back reuses kept
  * states; an edit re-steps from the first frame whose inputs changed. The plugin never caches. */
 #define PR_OUT_FLAG_STATEFUL (1u << 18)
+/* SDK 1.4 (C): the effect publishes named channels each frame (PR_CMD_PUBLISH_CHANNELS, publish_channel)
+ * that other instances read (read_channel). The manifest lists each effect's "publishes" / "reads". */
+#define PR_OUT_FLAG_PUBLISHES (1u << 19)
+/* SDK 1.4 (D): on a 3D layer, PR_CMD_SCENE_CONTRIBUTE each frame adds meshes and lights to the
+ * comp's 3D render (scene_add_mesh / scene_add_light, pr_scene.h); the host draws them. */
+#define PR_OUT_FLAG_SCENE_CONTRIBUTE (1u << 20)
+/** SDK 1.4 (C): the most numbers one channel carries. */
+#define PR_MAX_CHANNEL_VALUES 4096
 
 typedef int32_t PrQuality;
 #define PR_QUALITY_DRAFT 0
@@ -324,6 +334,18 @@ typedef struct PrEffectEntry {
   PrEffectMainFn main;
 } PrEffectEntry;
 
+/** SDK 1.4 (E1/E2): a pure function the plugin offers to expressions (`plugin["<id>"].<name>(…)`)
+ *  and, when the manifest lists it under `interpolators`, as a keyframe interpolator
+ *  (args: [t, v0, v1] → [value], t 0..1 through the segment). Numbers in (`args`, arrays
+ *  flattened), up to `*out_count` numbers out (capacity in, count out; 1 = a number, more = an
+ *  array). No host, no state, no I/O: called from any thread, under the watchdog. */
+typedef PrErr(PR_CALL* PrExprFn)(const double* args, uint32_t arg_count, double* out, uint32_t* out_count);
+typedef struct PrExprEntry {
+  const char* name; /* the manifest's expressionFunctions[].name */
+  PrExprFn fn;
+} PrExprEntry;
+#define PR_EXPR_MAX_OUT 16
+
 typedef struct PrPluginInfo {
   uint32_t struct_size;
   uint32_t sdk_version;  /* PR_SDK_VERSION the module was built with */
@@ -344,6 +366,17 @@ typedef struct PrPluginInfo {
 
 typedef const PrPluginInfo*(PR_CALL* PrPluginInfoFn)(void);
 #define PR_PLUGIN_INFO_SYMBOL "PremationPluginInfo"
+
+/* SDK 1.4 (E1/E2): a module with expression functions also exports
+ *   const PrExprTable* PremationPluginExpressions(void);
+ * (a separate symbol, so PrPluginInfo — and every plugin initialising it — is unchanged). */
+typedef struct PrExprTable {
+  uint32_t struct_size;
+  uint32_t count;
+  const PrExprEntry* entries;
+} PrExprTable;
+typedef const PrExprTable*(PR_CALL* PrExprTableFn)(void);
+#define PR_EXPR_TABLE_SYMBOL "PremationPluginExpressions"
 
 #ifdef __cplusplus
 }

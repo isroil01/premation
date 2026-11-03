@@ -1101,6 +1101,7 @@ function encS_Keyframe(w: Writer, v: T.Keyframe): void {
   { const a = v.spatialOut; if (a.length) { w.byte(82); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
   w.byte(88); w.u32(v.label);
   { const a = v.dims; for (let i = 0; i < a.length; i++) { w.byte(98); { const s = w.beginLd(); encS_KeyframeDim(w, a[i]!); w.endLd(s); } } }
+  if (v.interpolator !== undefined) { w.byte(106); w.str(v.interpolator); }
 }
 function decS_Keyframe(r: Reader, end: number, o: any): T.Keyframe {
   const l_spatialIn: number[] = [];
@@ -1123,6 +1124,7 @@ function decS_Keyframe(r: Reader, end: number, o: any): T.Keyframe {
   let v_roving: boolean | undefined;
   let v_spatialInterp: T.SpatialInterp | undefined;
   let v_label: number | undefined;
+  let v_interpolator: string | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -1138,6 +1140,7 @@ function decS_Keyframe(r: Reader, end: number, o: any): T.Keyframe {
       case 82: { const e = r.ldEnd(); while (r.pos < e) l_spatialOut.push(r.f64()); r.expectAt(e); break; }
       case 88: v_label = r.u32(); h_label = true; break;
       case 98: l_dims.push(decS_KeyframeDim(r, r.ldEnd(), {})); break;
+      case 106: v_interpolator = r.str(); break;
       default: r.skip(key);
     }
   }
@@ -1162,6 +1165,7 @@ function decS_Keyframe(r: Reader, end: number, o: any): T.Keyframe {
   o.spatialOut = l_spatialOut;
   o.label = v_label;
   o.dims = l_dims;
+  if (v_interpolator !== undefined) o.interpolator = v_interpolator;
   return o;
 }
 function encS_PropRef(w: Writer, v: T.PropRef): void {
@@ -5984,6 +5988,7 @@ function encS_KeyframeInsert(w: Writer, v: T.KeyframeInsert): void {
   if (v.spatialInterp !== undefined) { w.byte(56); w.varint(enc_SpatialInterp(v.spatialInterp)); }
   { const a = v.spatialIn; if (a.length) { w.byte(66); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
   { const a = v.spatialOut; if (a.length) { w.byte(74); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  if (v.interpolator !== undefined) { w.byte(82); w.str(v.interpolator); }
 }
 function decS_KeyframeInsert(r: Reader, end: number, o: any): T.KeyframeInsert {
   const l_spatialIn: number[] = [];
@@ -5997,6 +6002,7 @@ function decS_KeyframeInsert(r: Reader, end: number, o: any): T.KeyframeInsert {
   let v_bezier: T.CubicBezier | undefined;
   let v_roving: boolean | undefined;
   let v_spatialInterp: T.SpatialInterp | undefined;
+  let v_interpolator: string | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -6009,6 +6015,7 @@ function decS_KeyframeInsert(r: Reader, end: number, o: any): T.KeyframeInsert {
       case 56: v_spatialInterp = dec_SpatialInterp(r.varint()); break;
       case 66: { const e = r.ldEnd(); while (r.pos < e) l_spatialIn.push(r.f64()); r.expectAt(e); break; }
       case 74: { const e = r.ldEnd(); while (r.pos < e) l_spatialOut.push(r.f64()); r.expectAt(e); break; }
+      case 82: v_interpolator = r.str(); break;
       default: r.skip(key);
     }
   }
@@ -6024,6 +6031,7 @@ function decS_KeyframeInsert(r: Reader, end: number, o: any): T.KeyframeInsert {
   if (v_spatialInterp !== undefined) o.spatialInterp = v_spatialInterp;
   o.spatialIn = l_spatialIn;
   o.spatialOut = l_spatialOut;
+  if (v_interpolator !== undefined) o.interpolator = v_interpolator;
   return o;
 }
 function encS_KeyframePatch(w: Writer, v: T.KeyframePatch): void {
@@ -6041,6 +6049,7 @@ function encS_KeyframePatch(w: Writer, v: T.KeyframePatch): void {
   if (v.clearSpatial !== undefined) { w.byte(96); w.bool(v.clearSpatial); }
   if (v.label !== undefined) { w.byte(104); w.u32(v.label); }
   if (v.dim !== undefined) { w.byte(112); w.u32(v.dim); }
+  if (v.interpolator !== undefined) { w.byte(122); w.str(v.interpolator); }
 }
 function decS_KeyframePatch(r: Reader, end: number, o: any): T.KeyframePatch {
   const l_spatialIn: number[] = [];
@@ -6058,6 +6067,7 @@ function decS_KeyframePatch(r: Reader, end: number, o: any): T.KeyframePatch {
   let v_clearSpatial: boolean | undefined;
   let v_label: number | undefined;
   let v_dim: number | undefined;
+  let v_interpolator: string | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -6075,6 +6085,7 @@ function decS_KeyframePatch(r: Reader, end: number, o: any): T.KeyframePatch {
       case 96: v_clearSpatial = r.bool(); break;
       case 104: v_label = r.u32(); break;
       case 112: v_dim = r.u32(); break;
+      case 122: v_interpolator = r.str(); break;
       default: r.skip(key);
     }
   }
@@ -6094,6 +6105,7 @@ function decS_KeyframePatch(r: Reader, end: number, o: any): T.KeyframePatch {
   if (v_clearSpatial !== undefined) o.clearSpatial = v_clearSpatial;
   if (v_label !== undefined) o.label = v_label;
   if (v_dim !== undefined) o.dim = v_dim;
+  if (v_interpolator !== undefined) o.interpolator = v_interpolator;
   return o;
 }
 function encS_AddKeyframes(w: Writer, v: T.AddKeyframes): void {
@@ -13615,6 +13627,8 @@ function encS_PluginInfo(w: Writer, v: T.PluginInfo): void {
   if (v.icon !== undefined) { w.varint(130); w.str(v.icon); }
   if (v.panelTitle !== undefined) { w.varint(138); w.str(v.panelTitle); }
   { const a = v.layerTypes; for (let i = 0; i < a.length; i++) { w.varint(146); { const s = w.beginLd(); encS_PluginLayerTypeInfo(w, a[i]!); w.endLd(s); } } }
+  { const a = v.interpolators; for (let i = 0; i < a.length; i++) { w.varint(154); w.str(a[i]!); } }
+  { const a = v.tools; for (let i = 0; i < a.length; i++) { w.varint(162); { const s = w.beginLd(); encS_PluginToolInfo(w, a[i]!); w.endLd(s); } } }
 }
 function decS_PluginInfo(r: Reader, end: number, o: any): T.PluginInfo {
   const l_effects: string[] = [];
@@ -13624,6 +13638,8 @@ function decS_PluginInfo(r: Reader, end: number, o: any): T.PluginInfo {
   const l_panels: T.PluginPanelInfo[] = [];
   const l_presets: T.PluginPresetInfo[] = [];
   const l_layerTypes: T.PluginLayerTypeInfo[] = [];
+  const l_interpolators: string[] = [];
+  const l_tools: T.PluginToolInfo[] = [];
   let h_id = false;
   let h_name = false;
   let h_version = false;
@@ -13665,6 +13681,8 @@ function decS_PluginInfo(r: Reader, end: number, o: any): T.PluginInfo {
       case 130: v_icon = r.str(); break;
       case 138: v_panelTitle = r.str(); break;
       case 146: l_layerTypes.push(decS_PluginLayerTypeInfo(r, r.ldEnd(), {})); break;
+      case 154: l_interpolators.push(r.str()); break;
+      case 162: l_tools.push(decS_PluginToolInfo(r, r.ldEnd(), {})); break;
       default: r.skip(key);
     }
   }
@@ -13696,6 +13714,44 @@ function decS_PluginInfo(r: Reader, end: number, o: any): T.PluginInfo {
   if (v_icon !== undefined) o.icon = v_icon;
   if (v_panelTitle !== undefined) o.panelTitle = v_panelTitle;
   o.layerTypes = l_layerTypes;
+  o.interpolators = l_interpolators;
+  o.tools = l_tools;
+  return o;
+}
+function encS_PluginToolInfo(w: Writer, v: T.PluginToolInfo): void {
+  w.byte(10); w.str(v.id);
+  w.byte(18); w.str(v.name);
+  w.byte(26); w.str(v.command);
+  w.byte(34); w.str(v.shortcut);
+}
+function decS_PluginToolInfo(r: Reader, end: number, o: any): T.PluginToolInfo {
+  let h_id = false;
+  let h_name = false;
+  let h_command = false;
+  let h_shortcut = false;
+  let v_id: string | undefined;
+  let v_name: string | undefined;
+  let v_command: string | undefined;
+  let v_shortcut: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_id = r.str(); h_id = true; break;
+      case 18: v_name = r.str(); h_name = true; break;
+      case 26: v_command = r.str(); h_command = true; break;
+      case 34: v_shortcut = r.str(); h_shortcut = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_id) throw new DecodeError('PluginToolInfo.id: missing', 'missingField');
+  if (!h_name) throw new DecodeError('PluginToolInfo.name: missing', 'missingField');
+  if (!h_command) throw new DecodeError('PluginToolInfo.command: missing', 'missingField');
+  if (!h_shortcut) throw new DecodeError('PluginToolInfo.shortcut: missing', 'missingField');
+  o.id = v_id;
+  o.name = v_name;
+  o.command = v_command;
+  o.shortcut = v_shortcut;
   return o;
 }
 function encS_PluginLayerTypeInfo(w: Writer, v: T.PluginLayerTypeInfo): void {
@@ -20973,6 +21029,7 @@ export const codecs = {
   ParamUiDrawing: mk<T.ParamUiDrawing>(encS_ParamUiDrawing, (r, e) => decS_ParamUiDrawing(r, e, {})),
   ParamUiItem: mk<T.ParamUiItem>(encS_ParamUiItem, (r, e) => decS_ParamUiItem(r, e, {})),
   PluginInfo: mk<T.PluginInfo>(encS_PluginInfo, (r, e) => decS_PluginInfo(r, e, {})),
+  PluginToolInfo: mk<T.PluginToolInfo>(encS_PluginToolInfo, (r, e) => decS_PluginToolInfo(r, e, {})),
   PluginLayerTypeInfo: mk<T.PluginLayerTypeInfo>(encS_PluginLayerTypeInfo, (r, e) => decS_PluginLayerTypeInfo(r, e, {})),
   PluginList: mk<T.PluginList>(encS_PluginList, (r, e) => decS_PluginList(r, e, {})),
   PluginPresetInfo: mk<T.PluginPresetInfo>(encS_PluginPresetInfo, (r, e) => decS_PluginPresetInfo(r, e, {})),

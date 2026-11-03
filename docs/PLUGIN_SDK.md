@@ -960,6 +960,216 @@ The `bounce` sample (`native/sdk/samples/bounce`) is a ball under keyframeable
 Gravity and Bounciness. `engine_plugins_tests [sim]` and
 `engine_plugins_scene_tests [sim]` hold it to the rules above.
 
+## Expression functions and interpolators (SDK 1.4)
+
+A plugin can add pure functions to the expression language. List them in the
+manifest and export a table of entry points:
+
+```json
+"expressionFunctions": [ { "name": "smoothstep" }, { "name": "springy" } ],
+"interpolators": [ "springy" ]
+```
+
+```c
+static PrErr PR_CALL smoothstep(const double* args, uint32_t n, double* out, uint32_t* out_count);
+static const PrExprEntry kEntries[] = { { "smoothstep", smoothstep }, { "springy", springy } };
+static const PrExprTable kTable = { sizeof(PrExprTable), 2, kEntries };
+extern "C" PR_EXPORT const PrExprTable* PR_CALL PremationPluginExpressions(void) { return &kTable; }
+```
+
+- **Calling them.** An expression reaches them as
+  `plugin["<plugin id>"].<name>(…)`. Numbers and arrays go in, with arrays
+  flattened into the argument list. Up to `PR_EXPR_MAX_OUT` (16) numbers come
+  back: one number is a number, and more than one is an array. Strings are not
+  passed.
+- **Pure.** A function gets no host suite and no document access. Give the
+  same answer for the same arguments; a frame must stay a function of the
+  document.
+- **Guarded.** Every call runs crash-guarded under the watchdog, like a
+  render. A function that faults is disabled for the session and its
+  expression reports an error; the engine carries on. A manifest function the
+  binary does not export fails the plugin at load.
+- **Interpolators.** A function listed in `interpolators` is called as
+  `(t, v0, v1) → value`, with `t` running 0..1 through a keyframe segment.
+  Right-click a keyframe ▸ Keyframe Interpolation ▸ Plugin Interpolator to ease
+  the segment after it. The key saves `"interp": "<plugin id>:<name>"` and the
+  engine API spells it `Keyframe.interpolator`. When the plugin is missing or
+  the call fails, the segment eases with the key's own easing.
+
+The `mathfns` sample (`native/sdk/samples/mathfns`) and
+`engine_plugins_tests [exprfn]` hold both to these rules.
+
+### Keyframed curves and gradients (SDK 1.4)
+
+A `PR_PARAM_CURVE` or `PR_PARAM_GRADIENT` param with `PR_PARAM_FLAG_ANIMATE_VALUE`
+keyframes as one value: one stopwatch, one key per time holding the whole
+curve or stop list.
+
+- **Blending.** Between two keys of the same shape (the same point or stop
+  count), every number is blended with the key's own easing. Keys of
+  different shapes hold until the next key.
+- **The plugin's blend.** A key may name one of the plugin's interpolators,
+  as for a number. The interpolator is then called with
+  `(t, a…, b…)`, where `a` and `b` are the two keys' numbers flattened and
+  `*out_count` is their length on entry. It returns the blended value's
+  numbers. The `mathfns` sample's `smoothblend` blends with a smoothstep.
+- **Storage.** The track is the layer's data track
+  `effect.<effect id>.<param key>`, of kind `numbers`. The engine API keys it
+  at `effects/<effect id>/<param key>` with a JSON value, like any other path.
+
+The `grademap` sample's Tone Curve and Gradient opt in.
+`engine_plugins_tests [compound]` and
+`engine_plugins_scene_tests [compound]` cover the API and the frame.
+
+## Published channels (SDK 1.4)
+
+Instances can talk to each other. A controller publishes named values each
+frame, and any number of readers on any layer pick them up. Each effect
+declares its channels in the manifest:
+
+```json
+{ "matchName": "com.example.fx.controller", "publishes": [ "pulse" ] },
+{ "matchName": "com.example.fx.follower", "reads": [ "pulse" ] }
+```
+
+- **Publishing.** An effect with `PR_OUT_FLAG_PUBLISHES` gets
+  `PR_CMD_PUBLISH_CHANNELS` once per frame, before any instance renders. It
+  calls `publish_channel(host, name, values, count)` for its declared
+  channels, with up to `PR_MAX_CHANNEL_VALUES` (4096) finite numbers each.
+  Params and time are that frame's.
+- **Reading.** `read_channel(host, name, out, capacity, &count)` works in
+  `PUBLISH_CHANNELS`, `SMART_PRE_RENDER`, `SMART_RENDER(_GPU)` and `RENDER`,
+  for declared reads only. It returns `PR_ERR_NOT_FOUND` when nothing
+  published the channel this frame, so draw your default then.
+- **Order.** The host runs a frame's publishers in the order the
+  declarations give, so a publisher that reads another's channel runs after
+  it. Publishers in a cycle publish nothing and report it on `layerErrors`.
+  A channel two instances publish in one frame keeps the first and reports
+  the second.
+- **Determinism.** Publishing runs on the document side, and the values
+  travel with each reader's frame entry. A frame stays a function of the
+  document. `SIM_STEP` does not see channels.
+
+The `channels` sample (`native/sdk/samples/channels`) has a Controller, a
+Follower, and a Ping/Pong pair that forms a cycle on purpose.
+`engine_plugins_scene_tests [channels]` holds them to these rules.
+
+## Viewer tools (SDK 1.4)
+
+A plugin can put a tool on the toolbar. While the tool is active, drags in
+the viewer go to the plugin. A tool is backed by one of the plugin's
+commands:
+
+```json
+"commands": [ { "id": "scatter", "name": "Scatter Brush" } ],
+"tools": [ { "id": "scatter", "name": "Scatter Brush", "command": "scatter", "shortcut": "Shift+S" } ]
+```
+
+- **Choosing the tool.** Plugins ▸ Tools lists it, and it is a command
+  (`plugin.tool.<plugin id>:<tool id>`) in the palette and in Customize. The
+  manifest's `shortcut` is the default unless another command already uses
+  that key.
+- **A drag.** The viewer collects the drag in composition pixels, every
+  coalesced pointer sample, and draws it as a trail. Escape drops it. On
+  release the tool's command runs with these args:
+  `{ "tool", "stroke": [[x, y], …], "shift", "alt", "ctrl" }`, along with the
+  comp, the selected layers and the playhead.
+- **One undo entry.** Everything the command edits for one drag is one undo
+  entry, named after the command, as for any command.
+
+The `scatter` sample stamps an ellipse layer every 48 px along the stroke.
+Shift halves the spacing and Alt doubles the size. `engine_plugins_tests
+[tools]` covers it.
+
+## Machine learning: the ML suite (SDK 1.4)
+
+An effect can run an ONNX model through the host (`pr_ml.h`, appended to
+`PrHostSuite`). Models run on the engine's own ONNX Runtime build: DirectML on
+Windows, Core ML on macOS, and the CPU elsewhere or when the GPU provider
+cannot run the model.
+
+```c
+uint32_t model;
+if (in->host->ml_load(in->host_ref, "models/style.onnx", &model) == PR_ERR_NONE) {
+  PrTensor input = { sizeof(PrTensor), NULL, planes, count, {1, 3, h, w}, 4 };
+  PrTensor output = { sizeof(PrTensor) };
+  in->host->ml_run(in->host_ref, model, &input, 1, &output, 1);  /* output.data: host memory */
+}
+```
+
+- **Models ship in the bundle**, under `models/`, so the bundle's signature
+  covers them. `ml_load` takes only `models/<name>.onnx` (no `..`, no
+  absolute path). The host never downloads a model.
+- **Shared sessions.** All of a plugin's instances get the same id for a
+  file, and all plugins share one runtime environment. A file opens once per
+  process, keyed by its content hash.
+- **Tensors.** Inputs are float32. The host fills each output's `data`,
+  `count`, `shape` and `rank`, and that memory lasts until the selector
+  returns. An output with no name is the model's output in that position.
+- **Guarded.** A run is part of the selector, so it is crash-guarded and
+  under the watchdog. A failed run returns `PR_ERR_INTERNAL` with the reason
+  in the log. Keep a CPU path: an older host has no ML suite, and a build
+  without ONNX Runtime answers `PR_ERR_UNSUPPORTED`. `ml_provider` reports
+  where the model runs.
+
+The `mlstyle` sample grades the picture with a 1x1 convolution
+(`models/style.onnx`, written by `tools/make_model.py`). Its CPU Only switch
+runs the same matrix itself. `engine_plugins_tests [ml]` checks that the two
+agree within one 8-bit level.
+
+## Plugins out of process (SDK 1.4)
+
+A third-party effect plugin runs in its own process, `premation-plugin-host`.
+A crash, `abort()`, heap corruption or a hang there never ends the engine.
+
+- **Who runs where.** The engine flag `--plugin-isolation` takes `auto` (the
+  default), `off` or `all`. With `auto`, first-party plugins (`com.premation.*`)
+  run in the engine and everything else runs out of process. An engine
+  installed without `premation-plugin-host` runs everything in process.
+- **What stays in process.** A plugin stays in the engine when it has
+  commands, importers, output modules, layer types or expression functions.
+  So does any effect that needs the engine's document or GPU at render time:
+  sequence data, checkouts at other times, overlays, scene depth, a
+  simulation, published channels, LAYER params, buttons, custom UI or
+  supervised params. The log says why (`plugin_in_process`).
+- **The same SDK.** In its process the plugin runs inside an ordinary
+  `PluginHost`, with the same guard, watchdog and worker pool. It renders on
+  the CPU path; its GPU path is used only in process. Its input is the layer
+  at the frame's time.
+- **Faults.** When the process dies or does not answer within 10 s, it is
+  ended, that frame's effect passes through and the failure is reported on
+  `layerErrors`. The next render starts the process again. After three
+  restarts the plugin is off until the next session.
+
+`engine_plugins_tests [oop]` runs `ripple` in a real `premation-plugin-host`.
+It checks for the same pixels as in process, then injects an `abort()` and a
+hang, and checks the restart and the session limit.
+
+## Geometry in the 3D scene (SDK 1.4)
+
+An effect on a 3D layer can add meshes and lights to the comp's own 3D
+render, instead of rendering its own 3D world and compositing it. Declare
+`PR_OUT_FLAG_SCENE_CONTRIBUTE`. Then, in `PR_CMD_SCENE_CONTRIBUTE` each frame,
+call `scene_add_mesh` (a `PrSceneMesh`) and `scene_add_light` (a `PrLight`).
+
+- **Layer space.** Positions, the mesh transform and light positions are in
+  the layer's pixels: (0, 0) is the top-left, y points down, z points away
+  from the camera. The host places everything with the layer's 3D transform.
+- **Meshes.** Each mesh has float positions and optional normals (without
+  them the host computes flat ones) and optional UVs, plus u32 triangles. Up
+  to 64 meshes and 2^20 vertices per mesh are allowed. The material has a base
+  colour, metallic, roughness and shadow switches. The host draws each mesh
+  right after its layer on the depth-tested 3D path: sorted and intersecting
+  with the comp's other 3D layers, lit by its lights, casting and receiving
+  shadows, and in the camera's depth of field.
+- **Lights.** Up to 8 lights per frame join the comp's lights.
+- **Limits.** This works only on a 3D layer of the composition itself; a 2D
+  or nested layer reports it on `layerErrors`. Motion vectors (D2) and custom
+  shading (D3) are not in yet, so a contributed mesh is not motion-blurred.
+
+The `meshgen` sample (Mesh Cube) adds a lit cube and a point light.
+`engine_plugins_scene_tests [scene3d]` checks where they land in the frame.
+
 ## Sequence data
 
 Per-instance state lives **in the document**, not only in the process:

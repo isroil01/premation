@@ -41,7 +41,7 @@ import { useUIStore } from '@stores/uiStore';
 import { t } from '@core/i18n';
 import { easePatch, keyIdsAt, trackRef, valueCommands } from '@layout/Inspector/inspectorEdits';
 import { reorderCommands } from '@layout/Workspace/layerMenuEdits';
-import { easeKeyframes, easeKindOnKeys, setRovingOnKeys } from '@layout/Timeline/keyframeEdits';
+import { easeKeyframes, easeKindOnKeys, setInterpolatorOnKeys, setRovingOnKeys } from '@layout/Timeline/keyframeEdits';
 import { rippleDeleteLayers } from '@layout/Timeline/timelineEdits';
 import { withUserPresetBody } from '@core/animation/animationPresets';
 
@@ -350,6 +350,11 @@ export function setKeyInterpolationEdit(uiIds: string | ReadonlyArray<string>, k
 /** Rove Across Time on one timeline key: the engine re-times the roving run for constant speed. */
 export function setKeyRovingEdit(uiIds: string | ReadonlyArray<string>, roving: boolean): Promise<void> {
   return setRovingOnKeys(typeof uiIds === 'string' ? [uiIds] : [...uiIds], roving);
+}
+
+/** SDK 1.4 (E2): a plugin interpolator on timeline keys ("" clears it). */
+export function setKeyInterpolatorEdit(uiIds: string | ReadonlyArray<string>, interpolator: string): Promise<void> {
+  return setInterpolatorOnKeys(typeof uiIds === 'string' ? [uiIds] : [...uiIds], interpolator);
 }
 
 // ── The clip context menu ─────────────────────────────────────────────

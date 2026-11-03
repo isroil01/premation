@@ -89,6 +89,8 @@ enum class Fn : std::uint8_t {
   kCross, kLength, kNormalize, kCompLayer, kMarkerKey, kMarkerNearestKey,
   // cameras and lights (camera program D6)
   kLookAt, kToCompVec, kFromCompToSurface,
+  // SDK 1.4 (E1): a native plugin's expression function (`plugin["<id>"].<name>`), bound to its name
+  kPluginFn,
   // AE-style rigs: layer.effect("Name"), the effect object (callable), its .param()
   kEffect, kEffectParam, kEffectParamMethod,
   // AE globals and property objects (2026-10-21): conversions, smooth / temporalWiggle,

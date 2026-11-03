@@ -610,3 +610,56 @@ TEST_CASE("P7b plugin footage with sound: READ_AUDIO through the audio decoders'
   host.contrib().shutdown();
   CHECK_FALSE(audio::ExternalAudio::claims(path));
 }
+
+TEST_CASE("SDK 1.4 U: a viewer tool runs its command with the stroke; the whole drag is ONE undo entry", "[plugins][contrib][tools]") {
+  pl::PluginHost host(attached());
+  host.scan();
+  Harness h;
+  (void)h.hello();
+  const auto plugins = query<api::PluginList>(h, qry(api::ListPlugins{})).plugins;
+  const auto pi = std::ranges::find_if(plugins, [](const api::PluginInfo& p) { return p.id == "com.premation.samples.scatter"; });
+  REQUIRE(pi != plugins.end());
+  REQUIRE(pi->tools.size() == 1);
+  CHECK(pi->tools[0].id == "com.premation.samples.scatter:scatter");
+  CHECK(pi->tools[0].command == "scatter");
+  CHECK(pi->tools[0].shortcut == "Shift+S");
+
+  const api::ItemId c = comp(h);
+  const auto layers_in = [&]() { return query<api::CompositionDetails>(h, qry(api::GetComposition{c})).layers.size(); };
+  const std::size_t before = layers_in();
+  const auto hist0 = query<api::HistoryState>(h, qry(api::GetHistory{}));
+  // A 200 px stroke at 48 px spacing: 5 stamps (0, 48, 96, 144, 192), what PluginToolOverlay sends.
+  api::RunPluginCommand run;
+  run.plugin = "com.premation.samples.scatter";
+  run.command = "scatter";
+  run.comp = c;
+  run.time = 0;
+  run.args = R"({"tool":"scatter","stroke":[[10,90],[110,90],[210,90]],"shift":false,"alt":false,"ctrl":false})";
+  const auto r = h.run(cmd(run));
+  REQUIRE(is_ok(r));
+  CHECK(result_as<api::PluginCommandResult>(r).message == "scattered 5 layers");
+  CHECK(layers_in() == before + 5);
+  const auto hist1 = query<api::HistoryState>(h, qry(api::GetHistory{}));
+  REQUIRE(hist1.position == hist0.position + 1);
+  CHECK(hist1.entries.at(hist1.position - 1).label == "Scatter Brush");
+  // Shift halves the spacing; the same stroke is the same layers (no clock, no RNG).
+  run.args = R"({"tool":"scatter","stroke":[[10,90],[110,90],[210,90]],"shift":true})";
+  REQUIRE(is_ok(h.run(cmd(run))));
+  CHECK(layers_in() == before + 5 + 9);
+  REQUIRE(is_ok(h.run(cmd(api::Undo{}))));
+  REQUIRE(is_ok(h.run(cmd(api::Undo{}))));
+  CHECK(layers_in() == before);
+  // A press with no stroke changes nothing.
+  run.args = R"({"tool":"scatter","stroke":[]})";
+  CHECK_FALSE(is_ok(h.run(cmd(run))));
+}
+
+TEST_CASE("SDK 1.4 U: a manifest tool must name one of its commands", "[plugins][contrib][tools]") {
+  const std::string_view platform = "windows";
+  std::string error;
+  const std::string base = R"({"manifestVersion":1,"id":"com.x.t","name":"T","version":"1.0.0","vendor":"X","sdk":{"major":1,"minor":4},)"
+                           R"("binary":{"windows":"t.dll"},"commands":[{"id":"go","name":"Go"}],)";
+  CHECK(pl::parse_manifest(base + R"("tools":[{"id":"brush","name":"Brush","command":"go"}]})", platform, error).has_value());
+  CHECK_FALSE(pl::parse_manifest(base + R"("tools":[{"id":"brush","name":"Brush","command":"nope"}]})", platform, error).has_value());
+  CHECK(error.find("nope") != std::string::npos);
+}

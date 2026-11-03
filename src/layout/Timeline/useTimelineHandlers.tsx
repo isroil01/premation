@@ -12,6 +12,7 @@
  * `tracksRef` is the host's latest row list (row reorder anchors to it).
  */
 
+import { pluginInterpolators } from '@core/nativePlugins/pluginContrib';
 import { useMemo, useRef, useCallback } from 'react';
 import { useSelectionStore } from '@stores/selectionStore';
 import { useUIStore } from '@stores/uiStore';
@@ -52,6 +53,7 @@ import {
   propertyValueCommands,
   setKeyInterpolationEdit,
   setKeyRovingEdit,
+  setKeyInterpolatorEdit,
   soloExclusiveEdit,
   toggleAudioMuteEdit,
   toggleLayerFlagEdit,
@@ -533,6 +535,30 @@ export function useTimelineHandlers(tracksRef: MutableRefObject<ReadonlyArray<Ti
               void setKeyRovingEdit(easeTargets, !isRoving);
             },
           },
+          // SDK 1.4 (E2): the segment after the key eased by a plugin's interpolator.
+          ...(pluginInterpolators().length > 0
+            ? [
+                { id: 'interp-plugin-sep', separator: true },
+                {
+                  id: 'interp-plugin',
+                  label: t('timeline.keyframeMenu.pluginInterpolator', 'Plugin Interpolator'),
+                  children: [
+                    {
+                      id: 'interp-plugin-none',
+                      label: t('timeline.keyframeMenu.pluginInterpolatorNone', 'None'),
+                      icon: !currentKf.interpolator ? ('check' as const) : undefined,
+                      onSelect: () => { void setKeyInterpolatorEdit(easeTargets, ''); },
+                    },
+                    ...pluginInterpolators().map((ip) => ({
+                      id: `interp-plugin-${ip.id}`,
+                      label: ip.label,
+                      icon: currentKf.interpolator === ip.id ? ('check' as const) : undefined,
+                      onSelect: () => { void setKeyInterpolatorEdit(easeTargets, ip.id); },
+                    })),
+                  ],
+                },
+              ]
+            : []),
         ],
       },
       ...(hasPositionKeys(documentMirror(), hit.sel.layer)

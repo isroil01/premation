@@ -487,6 +487,25 @@ class Expression {
 /// noise phase the engine passes as `prop_seed`.
 [[nodiscard]] double string_seed(std::u16string_view s) noexcept;
 
+// ── Native plugin expression functions (SDK 1.4, E1) ────────────────────────
+//
+// `plugin` in an expression is { "<plugin id>": { <name>: function, … }, … } of what the engine's
+// plugin host registered. A call flattens its arguments to numbers (arrays element by element)
+// and returns a number (one result) or an array. Process-wide; the host replaces the set when a
+// plugin loads, reloads or goes.
+
+struct PluginFunction {
+  std::string plugin;  ///< the plugin id
+  std::string name;    ///< the function's name
+};
+/// Call "<plugin id>.<name>" with `args`; false + `error` when it fails (unknown, a fault, …).
+using PluginCallFn = bool (*)(void* user, std::string_view plugin, std::string_view name, std::span<const double> args,
+                              std::vector<double>& out, std::string& error);
+void set_plugin_functions(std::vector<PluginFunction> list, PluginCallFn call, void* user);
+[[nodiscard]] std::vector<PluginFunction> plugin_functions();
+bool call_plugin_function(std::string_view plugin, std::string_view name, std::span<const double> args, std::vector<double>& out,
+                          std::string& error);
+
 // ── UTF-8 ⇄ UTF-16 (the C ABI speaks UTF-8; the language speaks UTF-16) ────
 
 [[nodiscard]] std::u16string utf8_to_utf16(std::string_view s);

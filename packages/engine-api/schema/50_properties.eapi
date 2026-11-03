@@ -68,6 +68,8 @@ struct KeyframeInsert {
   spatialInterp?: SpatialInterp = 7;
   spatialIn: f64[] = 8;
   spatialOut: f64[] = 9;
+  /// SDK 1.4 (E2): ease the segment after this key with a plugin interpolator "<pluginId>:<name>" (PluginInfo.interpolators).
+  interpolator?: string = 10;
 }
 
 /// Only present fields change. `time` moves this one key (moveKeyframes moves many by a delta); a key moved onto
@@ -89,6 +91,8 @@ struct KeyframePatch {
   clearSpatial?: bool = 12;
   label?: u32 = 13;
   dim?: u32 = 14;
+  /// SDK 1.4 (E2): a plugin interpolator for the segment after this key; "" = none.
+  interpolator?: string = 15;
 }
 
 /// Add keyframes (replacing any at the same time on the same property — the replaced key keeps its id). Returns ids in input order.

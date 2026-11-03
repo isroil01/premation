@@ -88,6 +88,36 @@ typedef struct PrLight {
 /** The most distinct times one instance may check out per frame. */
 #define PR_MAX_TIME_SAMPLES 1024
 
+/* ── SDK 1.4 (D): geometry a plugin adds to the comp's 3D scene ────────────
+ * In PR_CMD_SCENE_CONTRIBUTE (PR_OUT_FLAG_SCENE_CONTRIBUTE, on a 3D layer) the effect calls
+ * scene_add_mesh / scene_add_light. Everything is in the LAYER's pixels — (0, 0) its top-left,
+ * y down, z away from the camera — and the host places it with the layer's 3D transform. The host
+ * draws the meshes in its 3D pass like any 3D layer: depth-tested against the comp's other 3D
+ * layers, lit by its lights, casting and receiving shadows, with the camera's depth of field. */
+typedef struct PrSceneMaterial {
+  uint32_t struct_size;
+  double base_color[4]; /* straight RGBA 0..1 (document sRGB) */
+  double metallic;      /* 0..1 */
+  double roughness;     /* 0..1 */
+  int32_t casts_shadows;
+  int32_t accepts_shadows;
+} PrSceneMaterial;
+
+typedef struct PrSceneMesh {
+  uint32_t struct_size;
+  const float* positions;  /* xyz per vertex, layer px */
+  const float* normals;    /* xyz per vertex; NULL = flat, from the triangles */
+  const float* uvs;        /* uv per vertex; NULL = 0 */
+  uint32_t vertex_count;   /* ≤ PR_MAX_SCENE_VERTICES */
+  const uint32_t* indices; /* triangles (3 per), each < vertex_count */
+  uint32_t index_count;
+  double transform[16];    /* mesh → layer px, column-major (identity = already in layer px) */
+  PrSceneMaterial material;
+} PrSceneMesh;
+
+#define PR_MAX_SCENE_MESHES 64
+#define PR_MAX_SCENE_VERTICES (1u << 20)
+
 #ifdef __cplusplus
 }
 #endif

@@ -17,6 +17,9 @@
 #include "asset_image.hpp"
 #include "fxstate.hpp"
 #include "journal.hpp"
+#include "expr.hpp"  // SDK 1.4 (E1): motion::expr::set_plugin_functions
+#include "ml.hpp"    // SDK 1.4 (M): the ML suite's runtime
+#include "oop_wire.hpp"  // SDK 1.4 (X): premation-plugin-host messages
 #include "json.hpp"
 #include "log.hpp"
 #include "manifest.hpp"
@@ -76,6 +79,15 @@ struct PrHost {
   std::uint32_t overlaySpace = PR_OVERLAY_SPACE_LAYER;
   /// SDK 1.2 — DRAW_OVERLAY / OVERLAY_DRAG carry the comp camera & co. (the scene callbacks answer).
   bool overlayScene = false;
+  /// SDK 1.4 (M) — ml_run's outputs, alive until the selector returns.
+  std::vector<std::vector<float>> mlOut;
+  std::vector<std::vector<std::int64_t>> mlShapes;
+  std::vector<std::string> mlNames;
+  /// SDK 1.4 (D) — SCENE_CONTRIBUTE: where scene_add_mesh / scene_add_light write.
+  std::vector<premation::plugins::ContribMesh>* meshes = nullptr;
+  std::vector<premation::plugins::ContribLight>* lights = nullptr;
+  /// SDK 1.4 (C) — PUBLISH_CHANNELS: where publish_channel writes.
+  premation::plugins::ChannelValues* published = nullptr;
   /// SDK 1.1 — the render selector's inputs and effect (get_comp_camera, …).
   const premation::plugins::RenderInputs* inputs = nullptr;
   /// SDK 1.1 — get_asset_bytes: each FILE param's bytes, read once per call (iterate workers may ask too).
@@ -182,6 +194,17 @@ struct Plugin {
   /// The module's PremationPluginInfo (alive while `lib` is mapped): a failed reload binds the P7
   /// entry points back to it.
   const PrPluginInfo* info = nullptr;
+  /// SDK 1.4 (E1/E2): the module's expression functions by name.
+  std::map<std::string, PrExprFn, std::less<>> exprFns;
+  /// SDK 1.4 (M): the models its instances loaded (id = index + 1), by bundle path.
+  std::mutex mlMutex;
+  std::vector<std::shared_ptr<ml::Model>> models;
+  std::map<std::string, std::uint32_t, std::less<>> modelIds;
+  /// SDK 1.4 (X): the plugin runs in a premation-plugin-host (its module is never loaded here).
+  bool outOfProcess = false;
+  std::mutex oopMutex;
+  std::unique_ptr<OopChannel> oop;
+  std::uint32_t oopRestarts = 0;
   PluginStatus status = PluginStatus::failed;
   std::string error;
   /// SDK 1.2: the presets the bundle ships (manifest `presets`, presets/*.json).
@@ -416,8 +439,78 @@ struct PluginHost::Impl {
   }
 
   /// One selector call, fully guarded: journal slot, watchdog slot, fault guard.
+  /// SDK 1.4 (X): what keeps an effect in process — the engine's document or GPU at render time.
+  static std::string out_of_process_refusal(const EffectSpec& e) {
+    constexpr std::uint32_t kNeedsEngine = PR_OUT_FLAG_SEQUENCE_DATA | PR_OUT_FLAG_WIDE_TIME_INPUT | PR_OUT_FLAG_SEND_UPDATE_PARAMS_UI |
+                                           PR_OUT_FLAG_CUSTOM_OVERLAY | PR_OUT_FLAG_SAMPLES_TIME | PR_OUT_FLAG_USES_SCENE_DEPTH |
+                                           PR_OUT_FLAG_STATEFUL | PR_OUT_FLAG_PUBLISHES | PR_OUT_FLAG_SCENE_CONTRIBUTE;
+    if ((e.outFlags & kNeedsEngine) != 0) return "sequence data, other times, overlays, scene depth, a simulation or channels";
+    for (const ParamSpec& s : e.params) {
+      if (s.type == PR_PARAM_LAYER) return "another layer (a LAYER param)";
+      if (s.type == PR_PARAM_BUTTON || s.type == PR_PARAM_CUSTOM_UI || (s.flags & PR_PARAM_FLAG_SUPERVISE) != 0) return "Effect Controls callbacks";
+    }
+    return {};
+  }
+
+  /// SDK 1.4 (X): an effect plugin the options send out of process (commands, importers, output
+  /// modules, layer types and expression functions run on the engine's document side).
+  [[nodiscard]] bool wants_out_of_process(const Plugin& p) const {
+    if (!options.spawnOutOfProcess || !options.runOutOfProcess || !options.runOutOfProcess(p.manifest.id)) return false;
+    const Manifest& mf = p.manifest;
+    return !mf.effects.empty() && mf.commands.empty() && mf.importers.empty() && mf.outputModules.empty() && mf.layerTypes.empty() &&
+           mf.expressionFunctions.empty();
+  }
+
+  /// SDK 1.4 (X): start the plugin's premation-plugin-host and take its effects from there. False
+  /// (+ why, logged) when it cannot run out of process: the caller loads it here instead.
+  bool load_out_of_process(Plugin& p, std::string& why) {
+    const std::string& id = p.manifest.id;
+    const auto refuse = [&](std::string w) {
+      why = std::move(w);
+      PREMATION_LOG(warn, "plugin_in_process").kv("plugin", id).kv("why", why);
+      return false;
+    };
+    std::unique_ptr<OopChannel> ch = options.spawnOutOfProcess(p.dir, why);
+    if (!ch) return refuse("its process did not start: " + why);
+    std::vector<std::uint8_t> reply;
+    if (!ch->call(static_cast<std::uint32_t>(oop::Kind::describe), {}, reply, 30000, why)) return refuse(why);
+    std::vector<EffectSpec> specs;
+    if (!oop::specs_from_json(std::string_view(reinterpret_cast<const char*>(reply.data()), reply.size()), specs, why)) {  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+      return refuse(why);
+    }
+    for (const EffectSpec& s : specs) {
+      if (std::string need = out_of_process_refusal(s); !need.empty()) return refuse(s.matchName + " needs " + need);
+    }
+    std::vector<std::unique_ptr<EffectSpec>> described;
+    for (const ManifestEffect& me : p.manifest.effects) {
+      const auto it = std::ranges::find_if(specs, [&](const EffectSpec& s) { return s.matchName == me.matchName; });
+      if (it == specs.end()) return refuse("its process has no effect '" + me.matchName + "'");
+      auto e = std::make_unique<EffectSpec>(std::move(*it));
+      e->name = me.name;
+      e->category = me.category;
+      e->publishes = me.publishes;
+      e->reads = me.reads;
+      e->pluginId = id;
+      e->main = nullptr;  // never called here (invoke refuses a null entry)
+      e->ready = true;
+      described.push_back(std::move(e));
+    }
+    p.effects = std::move(described);
+    p.oop = std::move(ch);
+    p.outOfProcess = true;
+    p.status = PluginStatus::loaded;
+    PREMATION_LOG(info, "plugin_out_of_process").kv("plugin", id).kv("effects", p.effects.size());
+    return true;
+  }
+
   CallResult invoke(const std::string& pluginId, PrEffectMainFn fn, PrCmd cmd, const PrInData* in, PrOutData* out,
                     PrParamDef* const* params, PrWorld* output, void* extra) {
+    if (fn == nullptr) {  // SDK 1.4 (X): an out-of-process effect has no entry point here
+      CallResult none;
+      none.skipped = true;
+      none.message = "the plugin runs out of process";
+      return none;
+    }
     Frame f;
     f.fn = fn;
     f.cmd = cmd;
@@ -506,6 +599,9 @@ struct PluginHost::Impl {
   /// options.shadowDir and return the copy to load ('' + `err` on failure). Core thread only.
   fs::path shadow_copy(const Plugin& p, std::string& err);
   std::uint64_t shadowGeneration = 0;
+  // SDK 1.4 (E1): expression functions that faulted ("<id>.<name>"), and whether this host published.
+  std::set<std::string, std::less<>> exprCrashed;
+  bool exprPublished = false;
   std::set<std::string, std::less<>> shadowCleaned;
   /// Why a bundle requiring an entitlement may not load ('' when it may, or needs none).
   [[nodiscard]] std::string entitlement_lock(const Manifest& man) const;
@@ -593,7 +689,9 @@ PrErr PR_CALL cb_add_param(PrHost* h, const PrParamDef* def) {
     if (def->struct_size < offsetof(PrParamDef, file_missing) + sizeof(def->file_missing)) {
       return fail_with("param '" + s.name + "': a STRING / CURVE / GRADIENT / FILE param needs SDK 1.1");
     }
-    s.flags |= PR_PARAM_FLAG_CANNOT_ANIMATE;
+    // SDK 1.4 (E3): a curve or gradient may keyframe as one value; everything else stays static.
+    const bool compound = (s.flags & PR_PARAM_FLAG_ANIMATE_VALUE) != 0 && (s.type == PR_PARAM_CURVE || s.type == PR_PARAM_GRADIENT);
+    if (!compound) s.flags |= PR_PARAM_FLAG_CANNOT_ANIMATE;
     if (def->text != nullptr) s.text = def->text;
     if (def->file_types != nullptr) s.fileTypes = def->file_types;
     // Defaults through the document's own reading (clamped, sorted, bounded).
@@ -1093,6 +1191,160 @@ PrErr PR_CALL cb_get_sim_state(PrHost* h, const void** data, std::uint32_t* size
   return PR_ERR_NONE;
 }
 
+// SDK 1.4 (C): published channels.
+PrErr PR_CALL cb_publish_channel(PrHost* h, const char* name, const double* values, std::uint32_t count) {
+  if (h == nullptr || h->cmd != PR_CMD_PUBLISH_CHANNELS || h->published == nullptr || h->effect == nullptr) return PR_ERR_INVALID_CALLBACK;
+  if (name == nullptr || values == nullptr || count == 0 || count > PR_MAX_CHANNEL_VALUES) return PR_ERR_INVALID_PARAM;
+  const std::string_view n(name, strnlen(name, 65));
+  if (std::ranges::find(h->effect->publishes, n) == h->effect->publishes.end()) return PR_ERR_INVALID_PARAM;
+  std::vector<double> v(values, values + count);  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic): the SDK's array
+  if (!std::ranges::all_of(v, [](double x) { return std::isfinite(x); })) return PR_ERR_INVALID_PARAM;
+  (*h->published)[std::string(n)] = std::move(v);
+  return PR_ERR_NONE;
+}
+
+PrErr PR_CALL cb_read_channel(PrHost* h, const char* name, double* out, std::uint32_t capacity, std::uint32_t* count) {
+  if (h == nullptr || h->inputs == nullptr || h->effect == nullptr) return PR_ERR_INVALID_CALLBACK;
+  if (h->cmd != PR_CMD_PUBLISH_CHANNELS && h->cmd != PR_CMD_SMART_PRE_RENDER && h->cmd != PR_CMD_SMART_RENDER &&
+      h->cmd != PR_CMD_SMART_RENDER_GPU && h->cmd != PR_CMD_RENDER) {
+    return PR_ERR_INVALID_CALLBACK;
+  }
+  if (name == nullptr || count == nullptr || (out == nullptr && capacity > 0)) return PR_ERR_INVALID_PARAM;
+  const std::string_view n(name, strnlen(name, 65));
+  if (std::ranges::find(h->effect->reads, n) == h->effect->reads.end()) return PR_ERR_INVALID_PARAM;
+  const auto it = h->inputs->channels.find(n);
+  if (it == h->inputs->channels.end()) {
+    *count = 0;
+    return PR_ERR_NOT_FOUND;
+  }
+  *count = static_cast<std::uint32_t>(it->second.size());
+  std::copy_n(it->second.begin(), std::min<std::size_t>(capacity, it->second.size()), out);
+  return PR_ERR_NONE;
+}
+
+// SDK 1.4 (D): geometry and lights for the comp's 3D scene.
+PrErr PR_CALL cb_scene_add_mesh(PrHost* h, const PrSceneMesh* m) {
+  if (h == nullptr || h->cmd != PR_CMD_SCENE_CONTRIBUTE || h->meshes == nullptr) return PR_ERR_INVALID_CALLBACK;
+  if (m == nullptr || m->struct_size < sizeof(PrSceneMesh) || m->positions == nullptr || m->indices == nullptr) return PR_ERR_INVALID_PARAM;
+  if (m->vertex_count == 0 || m->vertex_count > PR_MAX_SCENE_VERTICES || m->index_count == 0 || m->index_count % 3 != 0 ||
+      m->index_count > 3 * PR_MAX_SCENE_VERTICES || h->meshes->size() >= PR_MAX_SCENE_MESHES) {
+    return PR_ERR_INVALID_PARAM;
+  }
+  ContribMesh c;
+  const std::size_t n = m->vertex_count;
+  c.positions.assign(m->positions, m->positions + (3 * n));  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic): the SDK's arrays
+  c.indices.assign(m->indices, m->indices + m->index_count);  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+  if (!std::ranges::all_of(c.positions, [](float v) { return std::isfinite(v); })) return PR_ERR_INVALID_PARAM;
+  if (!std::ranges::all_of(c.indices, [n](std::uint32_t i) { return i < n; })) return PR_ERR_INVALID_PARAM;
+  if (m->normals != nullptr) {
+    c.normals.assign(m->normals, m->normals + (3 * n));  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+  } else {
+    // Flat: each vertex takes the sum of its triangles' normals.
+    c.normals.assign(3 * n, 0.0F);
+    for (std::size_t t = 0; t + 2 < c.indices.size(); t += 3) {
+      const std::uint32_t a = c.indices[t], b = c.indices[t + 1], d = c.indices[t + 2];
+      const std::array<float, 3> e1{c.positions[3 * b] - c.positions[3 * a], c.positions[3 * b + 1] - c.positions[3 * a + 1],
+                                    c.positions[3 * b + 2] - c.positions[3 * a + 2]};
+      const std::array<float, 3> e2{c.positions[3 * d] - c.positions[3 * a], c.positions[3 * d + 1] - c.positions[3 * a + 1],
+                                    c.positions[3 * d + 2] - c.positions[3 * a + 2]};
+      const std::array<float, 3> nn{e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]};
+      for (const std::uint32_t v : {a, b, d}) {
+        for (std::size_t k = 0; k < 3; ++k) c.normals[3 * v + k] += nn[k];
+      }
+    }
+  }
+  if (m->uvs != nullptr) c.uvs.assign(m->uvs, m->uvs + (2 * n));  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+  else c.uvs.assign(2 * n, 0.0F);
+  std::ranges::copy(m->transform, c.transform.begin());
+  if (m->material.struct_size >= sizeof(PrSceneMaterial)) {
+    std::ranges::copy(m->material.base_color, c.color.begin());
+    c.metallic = std::clamp(m->material.metallic, 0.0, 1.0);
+    c.roughness = std::clamp(m->material.roughness, 0.0, 1.0);
+    c.castsShadows = m->material.casts_shadows != 0;
+    c.acceptsShadows = m->material.accepts_shadows != 0;
+  }
+  h->meshes->push_back(std::move(c));
+  return PR_ERR_NONE;
+}
+
+PrErr PR_CALL cb_scene_add_light(PrHost* h, const PrLight* l) {
+  if (h == nullptr || h->cmd != PR_CMD_SCENE_CONTRIBUTE || h->lights == nullptr) return PR_ERR_INVALID_CALLBACK;
+  if (l == nullptr || l->struct_size < sizeof(PrLight) || h->lights->size() >= 8) return PR_ERR_INVALID_PARAM;
+  ContribLight c;
+  c.type = l->type;
+  std::ranges::copy(l->color, c.color.begin());
+  c.intensity = l->intensity;
+  std::ranges::copy(l->position, c.position.begin());
+  std::ranges::copy(l->direction, c.direction.begin());
+  c.coneAngle = l->cone_angle;
+  c.coneFeather = l->cone_feather;
+  c.falloff = l->falloff;
+  c.falloffDistance = l->falloff_distance;
+  c.castsShadows = l->casts_shadows != 0;
+  c.shadowDarkness = l->shadow_darkness;
+  c.shadowDiffusion = l->shadow_diffusion;
+  h->lights->push_back(c);
+  return PR_ERR_NONE;
+}
+
+// SDK 1.4 (M): the ML suite.
+PrErr PR_CALL cb_ml_load(PrHost* h, const char* path, std::uint32_t* out) {
+  if (h == nullptr || h->host == nullptr || h->effect == nullptr) return PR_ERR_INVALID_CALLBACK;
+  if (path == nullptr || out == nullptr) return PR_ERR_INVALID_PARAM;
+  std::string why;
+  const PrErr e = h->host->ml_load(h->effect->pluginId, std::string_view(path, strnlen(path, 512)), *out, why);
+  if (e != PR_ERR_NONE) {
+    PREMATION_LOG(warn, "plugin_ml").kv("plugin", h->effect->pluginId).kv("why", why);
+  }
+  return e;
+}
+
+PrErr PR_CALL cb_ml_run(PrHost* h, std::uint32_t model, const PrTensor* inputs, std::uint32_t inputCount, PrTensor* outputs, std::uint32_t outputCount) {
+  if (h == nullptr || h->host == nullptr || h->effect == nullptr || !h->renderSelector) return PR_ERR_INVALID_CALLBACK;
+  if ((inputs == nullptr && inputCount > 0) || (outputs == nullptr && outputCount > 0) || inputCount > 64 || outputCount > 64) {
+    return PR_ERR_INVALID_PARAM;
+  }
+  std::vector<MlTensorIn> in;
+  for (std::uint32_t i = 0; i < inputCount; ++i) {
+    const PrTensor& t = inputs[i];  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic): the SDK's array
+    if (t.struct_size < sizeof(PrTensor) || t.rank > PR_TENSOR_MAX_RANK || (t.data == nullptr && t.count > 0)) return PR_ERR_INVALID_PARAM;
+    MlTensorIn x;
+    x.name = t.name != nullptr ? std::string(t.name, strnlen(t.name, 256)) : std::string();
+    x.data = t.data;
+    x.count = static_cast<std::size_t>(t.count);
+    x.shape.assign(std::begin(t.shape), std::begin(t.shape) + t.rank);
+    in.push_back(std::move(x));
+  }
+  h->mlNames.assign(outputCount, std::string());
+  for (std::uint32_t i = 0; i < outputCount; ++i) {
+    const PrTensor& t = outputs[i];  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+    if (t.struct_size < sizeof(PrTensor)) return PR_ERR_INVALID_PARAM;
+    if (t.name != nullptr) h->mlNames[i] = std::string(t.name, strnlen(t.name, 256));
+  }
+  std::string why;
+  if (!h->host->ml_run(h->effect->pluginId, model, in, h->mlOut, h->mlShapes, h->mlNames, why)) {
+    PREMATION_LOG(warn, "plugin_ml").kv("plugin", h->effect->pluginId).kv("why", why);
+    return PR_ERR_INTERNAL;
+  }
+  for (std::uint32_t i = 0; i < outputCount && i < h->mlOut.size(); ++i) {
+    PrTensor& t = outputs[i];  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+    t.data = h->mlOut[i].data();
+    t.count = h->mlOut[i].size();
+    t.rank = static_cast<std::uint32_t>(std::min<std::size_t>(h->mlShapes[i].size(), PR_TENSOR_MAX_RANK));
+    for (std::uint32_t k = 0; k < t.rank; ++k) t.shape[k] = h->mlShapes[i][k];  // NOLINT(cppcoreguidelines-pro-bounds-constant-array-index)
+  }
+  return PR_ERR_NONE;
+}
+
+PrErr PR_CALL cb_ml_provider(PrHost* h, std::uint32_t model, char* out, std::uint32_t capacity) {
+  if (h == nullptr || h->host == nullptr || h->effect == nullptr) return PR_ERR_INVALID_CALLBACK;
+  if (out == nullptr || capacity == 0) return PR_ERR_INVALID_PARAM;
+  const std::string p = h->host->ml_provider(h->effect->pluginId, model);
+  if (p.empty()) return PR_ERR_NOT_FOUND;
+  std::snprintf(out, capacity, "%s", p.c_str());
+  return PR_ERR_NONE;
+}
+
 PrErr PR_CALL cb_ui_text(PrHost* h, double x, double y, const char* utf8, double size, std::uint32_t align, const float* rgba) {
   if (h == nullptr || h->cmd != PR_CMD_DRAW_PARAM_UI) return PR_ERR_INVALID_CALLBACK;
   if (utf8 == nullptr || !std::isfinite(size)) return PR_ERR_INVALID_PARAM;
@@ -1294,6 +1546,13 @@ PluginHost::PluginHost(HostOptions options) : impl_(std::make_unique<Impl>(*this
   s.ui_fill = &cb_ui_fill;  // SDK 1.3: Effect Controls boxes
   s.ui_text = &cb_ui_text;
   s.get_sim_state = &cb_get_sim_state;  // SDK 1.4
+  s.publish_channel = &cb_publish_channel;  // SDK 1.4 (C)
+  s.read_channel = &cb_read_channel;
+  s.ml_load = &cb_ml_load;  // SDK 1.4 (M)
+  s.ml_run = &cb_ml_run;
+  s.ml_provider = &cb_ml_provider;
+  s.scene_add_mesh = &cb_scene_add_mesh;  // SDK 1.4 (D)
+  s.scene_add_light = &cb_scene_add_light;
 
   int threads = m.options.threads;
   if (threads <= 0) threads = std::clamp(static_cast<int>(std::thread::hardware_concurrency()) - 1, 0, 16);
@@ -1356,6 +1615,7 @@ PluginHost::PluginHost(HostOptions options) : impl_(std::make_unique<Impl>(*this
 
 PluginHost::~PluginHost() {
   Impl& m = *impl_;
+  if (m.exprPublished) motion::expr::set_plugin_functions({}, nullptr, nullptr);  // SDK 1.4: no calls into a gone host
   contrib_->shutdown();  // P7: CLOSE open importer files while the modules are set up
   if (m.options.attachToDocument) {
     PluginHost* self = this;
@@ -1447,6 +1707,7 @@ std::vector<PluginRecord> PluginHost::scan() {
     bundles.insert(bundles.end(), found.begin(), found.end());
   }
   for (const fs::path& b : bundles) m.load_bundle(b);
+  if (m.options.attachToDocument) publish_expression_functions();  // SDK 1.4 (E1)
   return plugins();
 }
 
@@ -1560,6 +1821,8 @@ Plugin* PluginHost::Impl::load_bundle(const fs::path& dir, Plugin* replacing, st
   } else if (std::string why; !sdk_compatible(p->manifest.sdkMajor, p->manifest.sdkMinor, why)) {
     p->status = PluginStatus::failed;
     p->error = why;
+  } else if (std::string oopWhy; wants_out_of_process(*p) && load_out_of_process(*p, oopWhy)) {
+    // SDK 1.4 (X): described by its premation-plugin-host; no code of it runs in this process.
   } else {
     p->binary = dir / p->manifest.binary;
     const fs::path loadFrom = options.shadowDir.empty() ? p->binary : shadow_copy(*p, err);
@@ -1600,6 +1863,26 @@ Plugin* PluginHost::Impl::load_bundle(const fs::path& dir, Plugin* replacing, st
         } else {
           p->status = PluginStatus::loaded;
           p->info = info;
+          // SDK 1.4 (E1): each manifest expression function needs its entry point.
+          if (auto table_fn = reinterpret_cast<PrExprTableFn>(p->lib->symbol(PR_EXPR_TABLE_SYMBOL)); table_fn != nullptr) {  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast): the exported entry
+            struct TableCall {
+              PrExprTableFn fn;
+              const PrExprTable* out;
+            } tc{table_fn, nullptr};
+            const Fault tf = guarded_call([](void* c) { auto* x = static_cast<TableCall*>(c); x->out = x->fn(); }, &tc);
+            if (!tf && tc.out != nullptr && tc.out->struct_size >= sizeof(PrExprTable)) {
+              for (std::uint32_t i = 0; i < tc.out->count && tc.out->entries != nullptr; ++i) {
+                const PrExprEntry& x = tc.out->entries[i];  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+                if (x.name != nullptr && x.fn != nullptr) p->exprFns[x.name] = x.fn;
+              }
+            }
+          }
+          for (const std::string& fnName : p->manifest.expressionFunctions) {
+            if (!p->exprFns.contains(fnName)) {
+              p->status = PluginStatus::failed;
+              p->error = "the binary has no entry point for expression function '" + fnName + "'";
+            }
+          }
           for (const ManifestEffect& me : p->manifest.effects) {
             PrEffectMainFn main = nullptr;
             for (std::uint32_t i = 0; i < info->effect_count && info->effects != nullptr; ++i) {
@@ -1615,6 +1898,8 @@ Plugin* PluginHost::Impl::load_bundle(const fs::path& dir, Plugin* replacing, st
             e->matchName = me.matchName;
             e->name = me.name;
             e->category = me.category;
+            e->publishes = me.publishes;  // SDK 1.4 (C)
+            e->reads = me.reads;
             e->pluginId = id;
             e->main = main;
             p->effects.push_back(std::move(e));
@@ -1632,7 +1917,7 @@ Plugin* PluginHost::Impl::load_bundle(const fs::path& dir, Plugin* replacing, st
   if (raw->status == PluginStatus::loaded) {
     const std::scoped_lock serial(raw->serial);
     for (auto& e : raw->effects) {
-      if (!setup_effect(*raw, *e)) {
+      if (!raw->outOfProcess && !setup_effect(*raw, *e)) {
         raw->status = PluginStatus::failed;
         break;
       }
@@ -1729,6 +2014,83 @@ Plugin* PluginHost::Impl::swap_in(std::unique_ptr<Plugin> fresh, Plugin& old, st
   return raw;
 }
 
+namespace {
+/// The watchdog / journal's name for an expression-function call (journal_ffi.cpp command_name).
+constexpr std::int32_t kExpressionCmd = 1030;
+bool expr_trampoline(void* user, std::string_view plugin, std::string_view name, std::span<const double> args, std::vector<double>& out,
+                     std::string& error) {
+  return static_cast<PluginHost*>(user)->call_expression(plugin, name, args, out, error);
+}
+}  // namespace
+
+void PluginHost::publish_expression_functions() {
+  Impl& m = *impl_;
+  std::vector<motion::expr::PluginFunction> list;
+  {
+    const std::shared_lock lock(m.pluginsMutex);
+    for (const auto& p : m.plugins) {
+      if (p->status != PluginStatus::loaded || p->userDisabled) continue;
+      for (const auto& [name, fn] : p->exprFns) {
+        if (!m.exprCrashed.contains(p->manifest.id + "." + name)) list.push_back({p->manifest.id, name});
+      }
+    }
+  }
+  motion::expr::set_plugin_functions(std::move(list), &expr_trampoline, this);
+  m.exprPublished = true;
+}
+
+bool PluginHost::call_expression(std::string_view pluginId, std::string_view name, std::span<const double> args,
+                                 std::vector<double>& out, std::string& error) {
+  Impl& m = *impl_;
+  PrExprFn fn = nullptr;
+  std::string id(pluginId);
+  {
+    const std::shared_lock lock(m.pluginsMutex);
+    for (const auto& p : m.plugins) {
+      if (p->manifest.id != pluginId || p->status != PluginStatus::loaded || p->userDisabled) continue;
+      if (const auto it = p->exprFns.find(name); it != p->exprFns.end()) fn = it->second;
+    }
+  }
+  const std::string key = id + "." + std::string(name);
+  if (fn == nullptr || m.exprCrashed.contains(key)) {
+    error = "no expression function '" + key + "'";
+    return false;
+  }
+  struct Call {
+    PrExprFn fn;
+    const double* args;
+    std::uint32_t count;
+    double* out;
+    std::uint32_t outCount;
+    PrErr result = PR_ERR_NONE;
+  };
+  // Room for PR_EXPR_MAX_OUT numbers, or for as many as the caller sized `out` to (E3: a compound
+  // value's interpolator returns the whole value).
+  std::vector<double> buf(std::clamp<std::size_t>(out.size(), PR_EXPR_MAX_OUT, 65536), 0.0);
+  Call call{fn, args.data(), static_cast<std::uint32_t>(std::min<std::size_t>(args.size(), 131072)), buf.data(),
+            static_cast<std::uint32_t>(buf.size()), PR_ERR_NONE};
+  const int ws = m.watchdog ? m.watchdog->enter(id, kExpressionCmd) : -1;
+  const Fault f = guarded_call(
+      [](void* c) {
+        auto* x = static_cast<Call*>(c);
+        x->result = x->fn(x->args, x->count, x->out, &x->outCount);
+      },
+      &call);
+  if (m.watchdog) (void)m.watchdog->leave(ws);
+  if (f) {
+    m.exprCrashed.insert(key);  // never called again this session; the next publish drops it
+    PREMATION_LOG(error, "plugin_fault").kv("plugin", id).kv("what", std::string(to_string(f.kind)) + " in expression function " + key);
+    error = std::string(to_string(f.kind)) + " in " + key;
+    return false;
+  }
+  if (call.result != PR_ERR_NONE) {
+    error = key + " returned error " + std::to_string(call.result);
+    return false;
+  }
+  out.assign(buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(std::min<std::size_t>(call.outCount, buf.size())));
+  return true;
+}
+
 bool PluginHost::reload(std::string_view pluginId, std::string& why) {
   Impl& m = *impl_;
   Plugin* p = nullptr;
@@ -1752,7 +2114,9 @@ bool PluginHost::reload(std::string_view pluginId, std::string& why) {
   }
   // A reload is the author trying again: a quarantine from the last build does not hold the new one.
   if (m.journal) m.journal->release(pluginId);
-  return m.load_bundle(p->dir, p, &why) != nullptr;
+  const bool ok = m.load_bundle(p->dir, p, &why) != nullptr;
+  if (ok && (m.options.attachToDocument || m.exprPublished)) publish_expression_functions();  // SDK 1.4 (E1)
+  return ok;
 }
 
 bool PluginHost::Impl::setup_effect(Plugin& p, EffectSpec& e) {
@@ -1997,6 +2361,18 @@ std::vector<PluginRecord> PluginHost::plugins() const {
 
 bool PluginHost::set_enabled(std::string_view pluginId, bool enabled) {
   Impl& m = *impl_;
+  // SDK 1.4 (E1): whatever path this takes, expressions see the new set of functions after it.
+  struct Republish {
+    PluginHost* host;
+    explicit Republish(PluginHost* h) : host(h) {}
+    Republish(const Republish&) = delete;
+    Republish(Republish&&) = delete;
+    Republish& operator=(Republish&&) = delete;
+    Republish& operator=(const Republish&) = delete;
+    ~Republish() {
+      if (host != nullptr) host->publish_expression_functions();
+    }
+  } republish(m.options.attachToDocument || m.exprPublished ? this : nullptr);
   Plugin* p = nullptr;
   {
     const std::shared_lock lock(m.pluginsMutex);
@@ -2425,6 +2801,159 @@ CallResult PluginHost::Impl::call_render(Plugin& p, EffectSpec& e, const RenderI
   return r;
 }
 
+CallResult PluginHost::publish_channels(const RenderInputs& in, ChannelValues& out) {
+  Impl& m = *impl_;
+  CallResult r;
+  EffectSpec* e = nullptr;
+  Plugin* p = nullptr;
+  out.clear();
+  if (!resolve(*this, m, in, e, p, r)) return r;
+  if (!e->has(PR_OUT_FLAG_PUBLISHES)) {
+    r.ok = true;
+    return r;
+  }
+  const InstanceLease lease = m.instance_for(in, *e, *p, r);
+  if (!lease) {
+    if (r.fault) m.on_fault(*p, e, &in, r);
+    return r;
+  }
+  const RenderLock lock(*p, *e);
+  PrHost ctx;
+  ctx.host = this;
+  ctx.published = &out;
+  r = m.call_render(*p, *e, in, ctx, PR_CMD_PUBLISH_CHANNELS, nullptr, nullptr, lease.sequence());
+  if (!r.ok) out.clear();
+  return r;
+}
+
+CallResult PluginHost::scene_contribute(const RenderInputs& in, std::vector<ContribMesh>& meshes, std::vector<ContribLight>& lights) {
+  Impl& m = *impl_;
+  CallResult r;
+  EffectSpec* e = nullptr;
+  Plugin* p = nullptr;
+  meshes.clear();
+  lights.clear();
+  if (!resolve(*this, m, in, e, p, r)) return r;
+  if (!e->has(PR_OUT_FLAG_SCENE_CONTRIBUTE) || p->outOfProcess) {
+    r.ok = true;
+    return r;
+  }
+  const InstanceLease lease = m.instance_for(in, *e, *p, r);
+  if (!lease) {
+    if (r.fault) m.on_fault(*p, e, &in, r);
+    return r;
+  }
+  const RenderLock lock(*p, *e);
+  PrHost ctx;
+  ctx.host = this;
+  ctx.meshes = &meshes;
+  ctx.lights = &lights;
+  r = m.call_render(*p, *e, in, ctx, PR_CMD_SCENE_CONTRIBUTE, nullptr, nullptr, lease.sequence());
+  if (!r.ok) {
+    meshes.clear();
+    lights.clear();
+  }
+  return r;
+}
+
+PrErr PluginHost::ml_load(std::string_view pluginId, std::string_view bundlePath, std::uint32_t& id, std::string& why) {
+  // Only a model the bundle ships: models/<name>.onnx, no way out of the folder.
+  const bool shaped = bundlePath.starts_with("models/") && bundlePath.ends_with(".onnx") && bundlePath.size() > 12 &&
+                      bundlePath.find("..") == std::string_view::npos && bundlePath.find('\\') == std::string_view::npos &&
+                      bundlePath.find(':') == std::string_view::npos;
+  if (!shaped) {
+    why = "'" + std::string(bundlePath) + "' is not a models/<name>.onnx path in the bundle";
+    return PR_ERR_INVALID_PARAM;
+  }
+  Plugin* p = nullptr;
+  {
+    const std::shared_lock lock(impl_->pluginsMutex);
+    for (const auto& q : impl_->plugins) {
+      if (q->manifest.id == pluginId && q->status == PluginStatus::loaded) p = q.get();
+    }
+  }
+  if (p == nullptr) {
+    why = "no loaded plugin '" + std::string(pluginId) + "'";
+    return PR_ERR_NOT_FOUND;
+  }
+  const std::scoped_lock lock(p->mlMutex);
+  if (const auto it = p->modelIds.find(bundlePath); it != p->modelIds.end()) {
+    id = it->second;
+    return PR_ERR_NONE;
+  }
+  if (!ml::runtime_available()) {
+    why = "this engine build has no ONNX Runtime";
+    return PR_ERR_UNSUPPORTED;
+  }
+  const fs::path file = p->dir / fs::path(std::u8string(reinterpret_cast<const char8_t*>(bundlePath.data()), bundlePath.size()));  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+  std::error_code ec;
+  if (!fs::is_regular_file(file, ec)) {
+    why = "the bundle has no " + std::string(bundlePath);
+    return PR_ERR_NOT_FOUND;
+  }
+  std::shared_ptr<ml::Model> m = ml::load(file, why);
+  if (m == nullptr) return PR_ERR_INTERNAL;
+  p->models.push_back(std::move(m));
+  id = static_cast<std::uint32_t>(p->models.size());
+  p->modelIds.emplace(std::string(bundlePath), id);
+  PREMATION_LOG(info, "plugin_ml_model").kv("plugin", std::string(pluginId)).kv("model", std::string(bundlePath)).kv("provider", p->models.back()->provider());
+  return PR_ERR_NONE;
+}
+
+bool PluginHost::ml_run(std::string_view pluginId, std::uint32_t id, std::span<const MlTensorIn> inputs, std::vector<std::vector<float>>& outData,
+                        std::vector<std::vector<std::int64_t>>& outShapes, std::vector<std::string>& outNames, std::string& why) {
+  const auto model_of = [this](std::string_view plugin, std::uint32_t mid) -> std::shared_ptr<ml::Model> {
+    const std::shared_lock lock(impl_->pluginsMutex);
+    for (const auto& q : impl_->plugins) {
+      if (q->manifest.id != plugin) continue;
+      const std::scoped_lock ml(q->mlMutex);
+      if (mid >= 1 && mid <= q->models.size()) return q->models[mid - 1];
+    }
+    return nullptr;
+  };
+  const std::shared_ptr<ml::Model> model = model_of(pluginId, id);
+  if (model == nullptr) {
+    why = "no model " + std::to_string(id) + " (ml_load it first)";
+    return false;
+  }
+  std::vector<ml::Tensor> in;
+  in.reserve(inputs.size());
+  for (const MlTensorIn& t : inputs) {
+    ml::Tensor x;
+    x.name = t.name;
+    x.shape = t.shape;
+    x.data.assign(t.data, t.data + t.count);  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic): the plugin's tensor
+    in.push_back(std::move(x));
+  }
+  std::vector<ml::Tensor> out;
+  for (const std::string& n : outNames) out.push_back(ml::Tensor{n, {}, {}});
+  if (!model->run(in, out, why)) return false;
+  ml::note_run();
+  outData.clear();
+  outShapes.clear();
+  outNames.clear();
+  for (ml::Tensor& t : out) {
+    outNames.push_back(t.name);
+    outShapes.push_back(std::move(t.shape));
+    outData.push_back(std::move(t.data));
+  }
+  return true;
+}
+
+std::string PluginHost::ml_provider(std::string_view pluginId, std::uint32_t id) const {
+  const auto model_of = [this](std::string_view plugin, std::uint32_t mid) -> std::shared_ptr<ml::Model> {
+    const std::shared_lock lock(impl_->pluginsMutex);
+    for (const auto& q : impl_->plugins) {
+      if (q->manifest.id != plugin) continue;
+      const std::scoped_lock ml(q->mlMutex);
+      if (mid >= 1 && mid <= q->models.size()) return q->models[mid - 1];
+    }
+    return nullptr;
+  };
+  const std::shared_ptr<ml::Model> model = model_of(pluginId, id);
+  return model != nullptr ? model->provider() : std::string();
+}
+
 CallResult PluginHost::pre_render(const RenderInputs& in, std::vector<CheckoutRequest>& out, PreRenderInfo* info) {
   Impl& m = *impl_;
   CallResult r;
@@ -2436,6 +2965,11 @@ CallResult PluginHost::pre_render(const RenderInputs& in, std::vector<CheckoutRe
     info->request = info->result = PrRect{0, 0, in.worldW, in.worldH};
   }
   if (!resolve(*this, m, in, e, p, r)) return r;
+  if (p->outOfProcess) {  // SDK 1.4 (X): its input at the frame's time; the child pre-renders for itself
+    if (!e->has(PR_OUT_FLAG_GENERATOR)) out.push_back({0, 0, in.layerTime});
+    r.ok = true;
+    return r;
+  }
   if (!e->has(PR_OUT_FLAG_SMART_RENDER)) {
     // A non-smart effect reads its input at the current time, nothing else.
     if (!e->has(PR_OUT_FLAG_GENERATOR)) out.push_back({0, 0, in.layerTime});
@@ -2465,6 +2999,60 @@ CallResult PluginHost::pre_render(const RenderInputs& in, std::vector<CheckoutRe
     info->result = x.result_rect;
   }
   if (x.pre_render_data != 0) m.handles.dispose(x.pre_render_data);  // G1: pre-render data is per call (see PLUGIN_SDK.md)
+  return r;
+}
+
+bool PluginHost::out_of_process(std::string_view matchName) const {
+  const std::shared_lock lock(impl_->pluginsMutex);
+  const auto it = impl_->effects.find(std::string(matchName));
+  if (it == impl_->effects.end()) return false;
+  const Plugin* p = impl_->plugin_of(it->second);
+  return p != nullptr && p->outOfProcess;
+}
+
+namespace {
+constexpr std::uint32_t kOopMaxRestarts = 3;
+}  // namespace
+
+CallResult PluginHost::render_out_of_process(const RenderInputs& in, const TexelImage& input, TexelImage& out) {
+  Impl& m = *impl_;
+  CallResult r;
+  EffectSpec* e = nullptr;
+  Plugin* p = nullptr;
+  if (!resolve(*this, m, in, e, p, r)) return r;
+  const std::scoped_lock lock(p->oopMutex);
+  std::string why;
+  if (!p->oop || !p->oop->alive()) {
+    if (p->oopRestarts >= kOopMaxRestarts) {
+      r.message = "its process ended " + std::to_string(p->oopRestarts) + " times; the plugin is off until the next session";
+      return r;
+    }
+    ++p->oopRestarts;
+    p->oop = m.options.spawnOutOfProcess ? m.options.spawnOutOfProcess(p->dir, why) : nullptr;
+    std::vector<std::uint8_t> described;
+    if (!p->oop || !p->oop->call(static_cast<std::uint32_t>(oop::Kind::describe), {}, described, 30000, why)) {
+      r.message = "its process did not start again: " + why;
+      return r;
+    }
+    PREMATION_LOG(warn, "plugin_process_restarted").kv("plugin", p->manifest.id).kv("restarts", p->oopRestarts);
+  }
+  oop::RenderRequest req;
+  req.in = in;
+  req.input = input;
+  std::vector<std::uint8_t> reply;
+  if (!p->oop->call(static_cast<std::uint32_t>(oop::Kind::render), oop::encode(req), reply, m.options.outOfProcessTimeoutMs, why)) {
+    PREMATION_LOG(error, "plugin_process_fault").kv("plugin", p->manifest.id).kv("why", why);
+    r.message = why;
+    return r;
+  }
+  oop::RenderReply rep;
+  if (!oop::decode(reply, rep)) {
+    r.message = "its process answered something unreadable";
+    return r;
+  }
+  r.ok = rep.ok;
+  r.message = rep.message;
+  out = std::move(rep.output);
   return r;
 }
 
@@ -3287,6 +3875,10 @@ std::vector<api::PluginInfo> PluginHost::plugin_infos() const {
         if (p->manifest.id != i.id) continue;
         for (const ManifestLayerType& lt : p->manifest.layerTypes) {
           i.layer_types.push_back(api::PluginLayerTypeInfo{p->manifest.id + ":" + lt.id, lt.name, lt.effect, lt.category});
+        }
+        for (const std::string& ip : p->manifest.interpolators) i.interpolators.push_back(p->manifest.id + ":" + ip);
+        for (const ManifestTool& t : p->manifest.tools) {  // SDK 1.4 (U)
+          i.tools.push_back(api::PluginToolInfo{p->manifest.id + ":" + t.id, t.name, t.command, t.shortcut});
         }
       }
     }

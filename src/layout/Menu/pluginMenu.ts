@@ -14,7 +14,7 @@
  * its edits are ONE undo entry.
  */
 
-import { asCommandId, type CommandId } from '@app-types/common';
+import { asCommandId, type CommandId, type KeyChord } from '@app-types/common';
 import { t } from '@core/i18n';
 import { getCommandRegistry } from '@core/commands/Command';
 import { getShortcutManager } from '@core/commands/ShortcutManager';
@@ -25,6 +25,7 @@ import {
   pluginLayerTypes,
   pluginName,
   pluginPanels,
+  pluginTools,
   runPluginCommand,
   subscribePluginContrib,
 } from '@core/nativePlugins/pluginContrib';
@@ -97,12 +98,44 @@ export function withPluginLayerTypes(groups: ReadonlyArray<MenuGroupModel>): Men
   );
 }
 
-/** The Plugins group, or null when no loaded plugin offers a command or a panel. */
+export function pluginToolCommandId(toolId: string): string {
+  return `plugin.tool.${toolId}`;
+}
+
+/** "Shift+S" → a chord; null when it does not parse. */
+export function parseToolShortcut(s: string): KeyChord | null {
+  const parts = s.split('+').map((p) => p.trim()).filter(Boolean);
+  const key = parts.pop();
+  if (!key) return null;
+  const mods = new Set(parts.map((p) => p.toLowerCase()));
+  for (const m of mods) if (!['shift', 'ctrl', 'alt', 'meta'].includes(m)) return null;
+  return {
+    key: key.length === 1 ? key.toLowerCase() : key,
+    ...(mods.has('shift') ? { shift: true } : {}),
+    ...(mods.has('ctrl') ? { ctrl: true } : {}),
+    ...(mods.has('alt') ? { alt: true } : {}),
+    ...(mods.has('meta') ? { meta: true } : {}),
+  };
+}
+
+function sameChord(a: KeyChord, b: KeyChord): boolean {
+  return a.key.toLowerCase() === b.key.toLowerCase() && !!a.shift === !!b.shift && !!a.ctrl === !!b.ctrl && !!a.alt === !!b.alt && !!a.meta === !!b.meta;
+}
+
+/** The Plugins group, or null when no loaded plugin offers a command, a tool or a panel. */
 export function buildPluginMenuGroup(): MenuGroupModel | null {
   const commands = pluginCommands();
   const panels = pluginPanels();
-  if (commands.length === 0 && panels.length === 0) return null;
+  const tools = pluginTools();
+  if (commands.length === 0 && panels.length === 0 && tools.length === 0) return null;
   const items: MenuItemModel[] = [];
+  // SDK 1.4 (U): the viewer tools, each also a command (palette, shortcut).
+  if (tools.length > 0) {
+    items.push({
+      label: t('menuBar.plugins.tools', 'Tools'),
+      children: tools.map((tl) => ({ commandId: pluginToolCommandId(tl.id), label: tl.name })),
+    });
+  }
   // One submenu per `menu` name (the plugin's own name when it gives none), in first-seen order.
   const groups = new Map<string, PluginCommandInfo[]>();
   for (const c of commands) {
@@ -148,6 +181,24 @@ export function syncPluginCommands(): void {
         void runPluginCommandFromEditor(c);
       },
     });
+    registered.push(id);
+  }
+  // SDK 1.4 (U): each viewer tool; its manifest shortcut is the default unless a command has it already.
+  const taken = registry.all().flatMap((c) => (c.shortcut ? [c.shortcut] : []));
+  for (const tl of pluginTools()) {
+    const id = asCommandId(pluginToolCommandId(tl.id));
+    const chord = tl.shortcut ? parseToolShortcut(tl.shortcut) : null;
+    const free = chord !== null && !taken.some((c) => sameChord(c, chord));
+    registry.register({
+      id,
+      label: `Plugins: ${tl.name}`,
+      description: `The ${tl.name} tool (${pluginName(tl.plugin)}): drag in the viewer.`,
+      icon: 'plugin',
+      ...(free && chord ? { shortcut: chord } : {}),
+      enabled: () => true,
+      execute: () => useUIStore.getState().setPluginTool({ id: tl.id, plugin: tl.plugin, tool: tl.tool, command: tl.command, name: tl.name }),
+    });
+    if (free && chord) taken.push(chord);
     registered.push(id);
   }
   getShortcutManager().rehydrateFromRegistry();

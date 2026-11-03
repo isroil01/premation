@@ -109,6 +109,8 @@ struct Key {
   std::optional<double> si;
   std::optional<double> so;
   std::optional<api::SpatialInterp> spatial;  ///< never `legacy` (absent means legacy)
+  /// SDK 1.4 (E2): the segment after this key is eased by a plugin interpolator "<pluginId>:<name>".
+  std::optional<std::string> interp;
   friend bool operator==(const Key&, const Key&) = default;
 };
 
@@ -121,11 +123,13 @@ struct DataKey {
   std::optional<double> label;
   std::optional<Json> so;  ///< spatial tangents per point (Array<{x,y} | null>)
   std::optional<Json> si;
+  /// SDK 1.4 (E3): a plugin interpolator "<pluginId>:<name>" for the segment after this key.
+  std::optional<std::string> interp;
   friend bool operator==(const DataKey&, const DataKey&) = default;
 };
 
 struct DataTrack {
-  std::string kind;  ///< 'text' | 'points' | 'gradientStops' | 'number'
+  std::string kind;  ///< 'text' | 'points' | 'gradientStops' | 'number' | 'numbers' (E3: nested number arrays)
   std::vector<DataKey> keys;
   friend bool operator==(const DataTrack&, const DataTrack&) = default;
 };

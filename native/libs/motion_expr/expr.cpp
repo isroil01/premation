@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -250,6 +251,52 @@ double string_seed(std::u16string_view s) noexcept {
     h = static_cast<std::int32_t>(static_cast<std::uint32_t>(static_cast<std::uint64_t>(v) & 0xffffffffULL));
   }
   return static_cast<double>(static_cast<std::uint32_t>(h) % 10007U);
+}
+
+// ── Native plugin expression functions (SDK 1.4, E1) ────────────────────────
+
+namespace {
+struct PluginRegistry {
+  std::mutex mutex;
+  std::vector<PluginFunction> list;
+  PluginCallFn call = nullptr;
+  void* user = nullptr;
+};
+PluginRegistry& plugin_registry() {
+  static PluginRegistry r;  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables): the process-wide set
+  return r;
+}
+}  // namespace
+
+void set_plugin_functions(std::vector<PluginFunction> list, PluginCallFn call, void* user) {
+  PluginRegistry& r = plugin_registry();
+  const std::scoped_lock lock(r.mutex);
+  r.list = std::move(list);
+  r.call = call;
+  r.user = user;
+}
+
+std::vector<PluginFunction> plugin_functions() {
+  PluginRegistry& r = plugin_registry();
+  const std::scoped_lock lock(r.mutex);
+  return r.list;
+}
+
+bool call_plugin_function(std::string_view plugin, std::string_view name, std::span<const double> args, std::vector<double>& out,
+                          std::string& error) {
+  PluginRegistry& r = plugin_registry();
+  PluginCallFn call = nullptr;
+  void* user = nullptr;
+  {
+    const std::scoped_lock lock(r.mutex);
+    call = r.call;
+    user = r.user;
+  }
+  if (call == nullptr) {
+    error = "no plugin host";
+    return false;
+  }
+  return call(user, plugin, name, args, out, error);
 }
 
 std::u16string utf8_to_utf16(std::string_view s) {

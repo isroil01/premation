@@ -19,6 +19,7 @@
 #include "pr_gpu.h"
 #include "pr_params.h"
 #include "pr_scene.h"
+#include "pr_ml.h"
 #include "pr_types.h"
 #include "pr_world.h"
 
@@ -236,6 +237,39 @@ typedef struct PrHostSuite {
    * after this frame's PR_CMD_SIM_STEP (host-owned, valid for the call). PR_ERR_NOT_FOUND when the
    * frame has none (a step failed); PR_ERR_INVALID_CALLBACK elsewhere. */
   PrErr(PR_CALL* get_sim_state)(PrHost* host, const void** data, uint32_t* size);
+
+  /* ── SDK 1.4, published channels (appended after get_sim_state; check struct_size >=
+   *    offsetof(PrHostSuite, read_channel) + sizeof(void*)) ──
+   * publish_channel: in PR_CMD_PUBLISH_CHANNELS only — this frame's value of a channel the
+   *   manifest lists under the effect's "publishes" (1..PR_MAX_CHANNEL_VALUES finite numbers;
+   *   copied). A channel two instances publish in one frame is an error on the second.
+   * read_channel: in PUBLISH_CHANNELS, SMART_PRE_RENDER, SMART_RENDER(_GPU) and RENDER — a channel
+   *   the manifest lists under "reads": up to `capacity` numbers into `out`, the channel's length in
+   *   `*count`. PR_ERR_NOT_FOUND when no instance published it this frame. The host runs the frame's
+   *   publishers in the order these declarations give and refuses a cycle (layerErrors). */
+  PrErr(PR_CALL* publish_channel)(PrHost* host, const char* name, const double* values, uint32_t count);
+  PrErr(PR_CALL* read_channel)(PrHost* host, const char* name, double* out, uint32_t capacity, uint32_t* count);
+
+  /* ── SDK 1.4, the ML suite (pr_ml.h; appended after read_channel; check struct_size >=
+   *    offsetof(PrHostSuite, ml_provider) + sizeof(void*)) ──
+   * ml_load: a model the bundle ships ("models/<name>.onnx"); any selector of an effect. The same
+   *   file is the same id for the plugin's every instance. PR_ERR_NOT_FOUND: no such file;
+   *   PR_ERR_UNSUPPORTED: no runtime in this build; PR_ERR_INVALID_PARAM: a path outside models/.
+   * ml_run: the render selectors only. Inputs are float32 tensors; each output's data / count /
+   *   shape / rank is filled by the host (memory valid until the selector returns). Outputs named
+   *   NULL are the model's outputs in order. PR_ERR_INTERNAL: the run failed (its reason in the log).
+   * ml_provider: where the model runs ("dml", "coreml", "cuda", "cpu"), NUL-terminated. */
+  PrErr(PR_CALL* ml_load)(PrHost* host, const char* bundle_path, uint32_t* out_model);
+  PrErr(PR_CALL* ml_run)(PrHost* host, uint32_t model, const PrTensor* inputs, uint32_t input_count, PrTensor* outputs, uint32_t output_count);
+  PrErr(PR_CALL* ml_provider)(PrHost* host, uint32_t model, char* out, uint32_t capacity);
+
+  /* ── SDK 1.4, the 3D scene (pr_scene.h; appended after ml_provider; check struct_size >=
+   *    offsetof(PrHostSuite, scene_add_light) + sizeof(void*)) ──
+   * PR_CMD_SCENE_CONTRIBUTE only. scene_add_mesh copies the mesh (≤ PR_MAX_SCENE_MESHES per
+   * frame); scene_add_light adds a light (a PrLight with its position and direction in LAYER px,
+   * ≤ 8 per frame). PR_ERR_INVALID_PARAM: a malformed mesh (an index out of range, a NaN). */
+  PrErr(PR_CALL* scene_add_mesh)(PrHost* host, const PrSceneMesh* mesh);
+  PrErr(PR_CALL* scene_add_light)(PrHost* host, const PrLight* light);
 } PrHostSuite;
 
 /* SDK 1.3: ui_text's `align`. */

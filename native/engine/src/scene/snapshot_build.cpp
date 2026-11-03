@@ -847,6 +847,23 @@ std::vector<Json> Walk::effects_of(const doc::Node& n, const Values& a, std::opt
     for (Json& e : layer_styles_to_effects(styles, comp_.globalLightAngle, comp_.globalLightAltitude, animated)) own.push_back(std::move(e));
   }
   if (own.empty()) return {};
+  // SDK 1.4 (E3): a native plugin's curve / gradient keyframed as one value (a data track of the whole value).
+  {
+    for (Json& e : own) {
+      const std::string id = e.at("id").is_string() ? e.at("id").str() : "";
+      const doc::EffectDef* def = id.empty() ? nullptr : doc::registry().effect(e.at("type").is_string() ? e.at("type").str() : "");
+      if (def == nullptr) continue;
+      for (const doc::EffectParamDef& p : def->params) {
+        if (p.type != "curve" && p.type != "gradient") continue;
+        const doc::DataTrack* tr = doc::anim_data_track(d_, sid(n.id), doc::compound_param_track(id, p.key));
+        if (tr == nullptr || tr->kind != "numbers") continue;
+        if (auto v = doc::sample_data_track(*tr, layerTime.value_or(t_))) {
+          if (!e.at("params").is_object()) e.set("params", Json::object());
+          e.find_mut("params")->set(p.key, std::move(*v));
+        }
+      }
+    }
+  }
   std::vector<Json> resolved = resolve_effect_params(own, a, layerTime);
   {  // path / paint effects' resolved geometry (effect_handoff.cpp)
     std::vector<std::string> notes;

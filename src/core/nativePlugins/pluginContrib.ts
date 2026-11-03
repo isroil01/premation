@@ -232,6 +232,42 @@ export function pluginLayerTypes(): readonly (PluginLayerTypeInfo & { plugin: st
   return plugins.filter(loaded).flatMap((p) => (p.layerTypes ?? []).map((lt) => ({ ...lt, plugin: p.id })));
 }
 
+/**
+ * SDK 1.4 (E2): every keyframe interpolator a loaded plugin offers, "<pluginId>:<name>", with a
+ * label ("<name> (<plugin name>)") for the keyframe menu's Plugin Interpolator submenu.
+ */
+export function pluginInterpolators(): readonly { id: string; label: string }[] {
+  return plugins
+    .filter(loaded)
+    .flatMap((p) => (p.interpolators ?? []).map((id) => ({ id, label: `${id.slice(id.lastIndexOf(':') + 1)} (${p.name})` })));
+}
+
+/** SDK 1.4 (U): a viewer tool a loaded plugin offers — its drags run `command` with the stroke. */
+export interface PluginTool {
+  /** "<pluginId>:<toolId>" */
+  id: string;
+  plugin: string;
+  tool: string;
+  name: string;
+  command: string;
+  /** The manifest's default shortcut ("Shift+S"; "" = none). */
+  shortcut: string;
+}
+
+/** SDK 1.4 (U): every viewer tool of the loaded plugins, in load order. */
+export function pluginTools(): readonly PluginTool[] {
+  return plugins.filter(loaded).flatMap((p) =>
+    (p.tools ?? []).map((tl) => ({
+      id: tl.id,
+      plugin: p.id,
+      tool: tl.id.slice(tl.id.lastIndexOf(':') + 1),
+      name: tl.name,
+      command: tl.command,
+      shortcut: tl.shortcut,
+    })),
+  );
+}
+
 export type PluginLayerOutcome = { ok: true; layer: string } | { ok: false; error: string };
 
 /**

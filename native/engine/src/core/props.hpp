@@ -196,6 +196,8 @@ struct KeyAt {
   double label = 0;
   /// Per-dimension temporal fields when the dimensions differ (Keyframe.dims); empty = uniform.
   std::vector<KeyDimAt> dims;
+  /// SDK 1.4 (E2): a plugin interpolator for the segment after this key ("" = none).
+  std::string interp;
 };
 
 [[nodiscard]] std::string fallback_key_id(std::string_view layer, std::string_view member, double t);
@@ -227,6 +229,8 @@ struct KeyWrite {
   std::optional<bool> continuous;
   std::optional<bool> roving;
   std::optional<api::SpatialInterp> spatialInterp;
+  /// SDK 1.4 (E2): nullopt = keep; "" = clear; "<pluginId>:<name>" = set.
+  std::optional<std::string> interp;
   /// nullopt = keep; empty vector inside = clear (TS null); values = set.
   std::optional<std::optional<std::vector<double>>> spatialIn;
   std::optional<std::optional<std::vector<double>>> spatialOut;

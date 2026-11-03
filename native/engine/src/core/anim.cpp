@@ -1,6 +1,7 @@
 #include "anim.hpp"
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cmath>
 #include <cstdint>
@@ -12,9 +13,11 @@
 #include <limits>
 #include <set>
 #include <span>
+#include <string>
 #include <utility>
 
 #include "eval.hpp"
+#include "expr.hpp"  // SDK 1.4 (E2): plugin interpolators
 #include "jsmath.hpp"
 #include "motion/motion_eval.h"
 #include "ptree.hpp"
@@ -180,6 +183,25 @@ std::optional<TimeSpan> anim_time_span(const Document& d, std::string_view node)
 
 std::optional<double> sample_keys(const std::vector<Key>& keys, double t) {
   if (keys.empty()) return std::nullopt;
+  // SDK 1.4 (E2): a segment whose first key names a plugin interpolator ("<pluginId>:<name>") is
+  // eased by it — (t 0..1 through the segment, v0, v1) → value. A failed call eases as usual.
+  if (keys.size() > 1 && t > keys.front().t && t < keys.back().t) {
+    const auto next = std::ranges::upper_bound(keys, t, {}, &Key::t);
+    const Key& a = *std::prev(next);
+    if (a.interp && next != keys.end() && next->t > a.t) {
+      const std::size_t colon = a.interp->rfind(':');
+      if (colon != std::string::npos) {
+        const std::array<double, 3> args{(t - a.t) / (next->t - a.t), a.value, next->value};
+        std::vector<double> out;
+        std::string error;
+        if (motion::expr::call_plugin_function(std::string_view(*a.interp).substr(0, colon), std::string_view(*a.interp).substr(colon + 1),
+                                               args, out, error) &&
+            out.size() == 1 && std::isfinite(out[0])) {
+          return out[0];
+        }
+      }
+    }
+  }
   // No copy and no allocation: the sampler reads keys through KeySource.
   return motion::eval::sample(KeySource{std::span<const Key>(keys)}, t);
 }
@@ -429,6 +451,64 @@ Json lerp_points(Json a, Json b, double u, const Json* so, const Json* si) {
   return out;
 }
 
+// SDK 1.4 (E3): nested arrays of numbers (a plugin curve's points, a gradient's stops).
+bool same_shape(const Json& a, const Json& b) {
+  if (a.is_number() && b.is_number()) return true;
+  if (!a.is_array() || !b.is_array() || a.arr().size() != b.arr().size()) return false;
+  for (std::size_t i = 0; i < a.arr().size(); ++i) {
+    if (!same_shape(a.arr()[i], b.arr()[i])) return false;
+  }
+  return true;
+}
+
+void flatten_numbers(const Json& j, std::vector<double>& out) {
+  if (j.is_number()) {
+    out.push_back(j.num());
+  } else if (j.is_array()) {
+    for (const Json& e : j.arr()) flatten_numbers(e, out);
+  }
+}
+
+Json refill_numbers(const Json& shape, std::span<const double> v, std::size_t& i) {
+  if (shape.is_number()) return Json::number(i < v.size() ? v[i++] : shape.num());
+  Json out = Json::array();
+  for (const Json& e : shape.arr()) out.arr_mut().push_back(refill_numbers(e, v, i));
+  return out;
+}
+
+Json blend_numbers(const DataKey& a, const DataKey& b, double raw, double u) {
+  if (!same_shape(a.value, b.value)) return u < 1 ? a.value : b.value;
+  std::vector<double> fa;
+  std::vector<double> fb;
+  flatten_numbers(a.value, fa);
+  flatten_numbers(b.value, fb);
+  std::vector<double> mixed(fa.size());
+  bool done = false;
+  if (a.interp) {
+    // The plugin blends the whole value: (t, a..., b...) -> the value's numbers. A failed call blends as usual.
+    const std::size_t colon = a.interp->rfind(':');
+    std::vector<double> args;
+    args.reserve(1 + (fa.size() * 2));
+    args.push_back(raw);
+    args.insert(args.end(), fa.begin(), fa.end());
+    args.insert(args.end(), fb.begin(), fb.end());
+    std::vector<double> out(fa.size());
+    std::string error;
+    if (colon != std::string::npos &&
+        motion::expr::call_plugin_function(std::string_view(*a.interp).substr(0, colon), std::string_view(*a.interp).substr(colon + 1),
+                                           args, out, error) &&
+        out.size() == fa.size() && std::ranges::all_of(out, [](double x) { return std::isfinite(x); })) {
+      mixed = std::move(out);
+      done = true;
+    }
+  }
+  if (!done) {
+    for (std::size_t i = 0; i < fa.size(); ++i) mixed[i] = lerp(fa[i], fb[i], u);
+  }
+  std::size_t at = 0;
+  return refill_numbers(a.value, mixed, at);
+}
+
 Json lerp_stops(const Json& a, const Json& b, double u) {
   const auto& A = a.arr();
   const auto& B = b.arr();
@@ -465,6 +545,7 @@ std::optional<Json> sample_data_track(const DataTrack& tr, double t) {
   if (a.easing && (*a.easing == api::Easing::hold || *a.easing == api::Easing::step)) return a.value;
   const double u = ease_segment(a, raw);
   if (tr.kind == "number") return Json::number(lerp(a.value.num(), b.value.num(), u));
+  if (tr.kind == "numbers") return blend_numbers(a, b, raw, u);
   if (tr.kind == "points") {
     return lerp_points(a.value, b.value, u, a.so ? &*a.so : nullptr, b.si ? &*b.si : nullptr);
   }

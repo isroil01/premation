@@ -35,6 +35,8 @@ What AE plugins cannot do, and what this program adds:
 
 ## 1. Owner decisions this program needs
 
+**Decided 2026-11-03: Q1, Q2, Q3, Q4 and Q5 are all approved by the owner** (nothing pushed until told).
+
 Settled decisions are not reopened: the JS/WGSL plugin system is not ported
 (G2), the C++ engine is the only engine (docs/TS_ENGINE_REMOVAL.md). These are
 new, and each blocks only its own rows:
@@ -88,21 +90,25 @@ as 1.4 additions if they can stay appended, otherwise they wait for **2.0**
 
 ### D — plugins inside the 3D scene (needs Q1)
 
-- [ ] D1 **Contribute selector.** `PR_SEL_SCENE_CONTRIBUTE` (layer types and
+- [~] D1 **Contribute selector.** `PR_SEL_SCENE_CONTRIBUTE` (layer types and
   3D effects): the plugin hands the host meshes (positions, normals, UVs,
   indices; GPU buffers or CPU arrays), PBR materials using the engine's
   material model, and lights. The host owns drawing them in the 3D pass
   (`scene/frame_build.cpp`, `lights3d.cpp`): they cast and receive shadows,
   depth-sort and intersect with native 3D layers, get DOF and motion blur.
+  *Status 2026-11-04: PR_CMD_SCENE_CONTRIBUTE (`meshgen` sample), scene_add_mesh / scene_add_light, meshes on the extruded-mesh 3D path; top-level 3D layers only; GPU drawing not checked by a golden yet.*
 - [ ] D2 **Motion vectors.** The plugin gives the previous-sample transform
   per mesh (or the host checks out the contribution at shutter samples via
   `checkout_time`) so comp motion blur is exact.
+  *Status 2026-11-04: open: contributed meshes are not motion-blurred.*
 - [ ] D3 **Custom shading (opt-in).** A plugin may supply a WGSL material
   function the host links into its forward pass, inside the GPU error scope;
   on failure the mesh draws with a default material and `layerErrors`.
+  *Status 2026-11-04: open.*
 - [ ] D4 **Proof: `model3d` moves from "renders its own world" to D1**, and
   a golden scene where a model shadows a native 3D text layer and is
   intersected by it.
+  *Status 2026-11-04: open: `meshgen` (Mesh Cube) is the proof sample; `model3d` still renders its own world.*
 
 ### T — simulations and their cache
 
@@ -131,66 +137,82 @@ as 1.4 additions if they can stay appended, otherwise they wait for **2.0**
 
 ### M — ML inference suite (needs Q5)
 
-- [ ] M1 **`pr_ml.h`.** `ml_load(host, asset or bundle path, &model)`,
+- [x] M1 **`pr_ml.h`.** `ml_load(host, asset or bundle path, &model)`,
   `ml_run(model, inputs, outputs)` with tensors as CPU arrays or GPU textures;
   the session runs on the engine's ORT build (DirectML on Windows, CoreML on
   macOS), one shared environment, sessions cached per model hash.
-- [ ] M2 **Budgets.** Model memory counts against the GPU memory pressure
+  *Status 2026-11-04: 65254c04: CPU float32 tensors only; GPU-texture tensors are open.*
+- [~] M2 **Budgets.** Model memory counts against the GPU memory pressure
   relief and shows per plugin in the layer profiler; a run past the render
   deadline drops to the plugin's CPU path or passes through, `layerErrors`.
-- [ ] M3 **Packaging.** `.onnx` files live in the bundle (`models/`), are
+  *Status 2026-11-04: 65254c04: sessions / bytes / runs counted (ml::stats); not yet tied to GPU memory pressure or the layer profiler.*
+- [x] M3 **Packaging.** `.onnx` files live in the bundle (`models/`), are
   covered by the signature, and are never downloaded at run time.
-- [ ] M4 **Proof: `mlstyle` sample** (a small style-transfer net) + a CPU-path
+  *Status 2026-11-04: 65254c04.*
+- [x] M4 **Proof: `mlstyle` sample** (a small style-transfer net) + a CPU-path
   golden; the GPU path is checked against it with a tolerance.
+  *Status 2026-11-04: 65254c04: a 1x1-conv grade rather than a style-transfer net; matches the CPU path within one 8-bit level on DirectML.*
 
 ### X — plugins out of process (needs Q2)
 
-- [ ] X1 **`premation-plugin-host`.** One process per plugin (or per
+- [x] X1 **`premation-plugin-host`.** One process per plugin (or per
   publisher), started by the engine; the selector calls go over a shared-memory
   ring; GPU textures cross via the shared-texture code the viewport already
   uses (`shared_texture_ffi*.cpp`). The plugin sees the same SDK; nothing
   changes for authors.
-- [ ] X2 **Policy.** Signed Premation plugins may run in process (today's
+  *Status 2026-11-04: 65254c04: stdin/stdout pipes (not a shared-memory ring); CPU renders only, the input layer at the frame time.*
+- [~] X2 **Policy.** Signed Premation plugins may run in process (today's
   path); third-party plugins run out of process by default; a user can pin
   either per plugin. A host crash or hang restarts that host only: its
   instances pass through for that frame, `layerErrors`, quarantine after
   repeat faults. The engine never ends because of a plugin.
+  *Status 2026-11-04: 65254c04: `--plugin-isolation auto|off|all` (auto = third-party out, com.premation.* in); no per-plugin pin in the UI yet; restarts capped at 3 per session.*
 - [ ] X3 **Cost.** `npm run bench` before/after with `grade` and `particles`
   in and out of process; the per-frame overhead is quoted and stays under a
   budget the owner sets.
-- [ ] X4 **Tests.** The existing crash suite (`abort`, heap corruption, hang)
+  *Status 2026-11-04: open: per-frame cost not benched.*
+- [~] X4 **Tests.** The existing crash suite (`abort`, heap corruption, hang)
   re-runs with the plugin out of process and asserts the engine survives.
+  *Status 2026-11-04: 65254c04: abort() and a hang re-run out of process ([oop]); heap corruption not separately.*
 
 ### U — viewer tools
 
-- [ ] U1 **Manifest `tools`.** A toolbar tool with an icon and shortcut; while
+- [~] U1 **Manifest `tools`.** A toolbar tool with an icon and shortcut; while
   active it receives pointer, wheel and key events in comp space (camera and
   layer transforms available, as in `DRAW_OVERLAY`) and draws an overlay.
-- [ ] U2 Edits go through `PR_CMD`-style transactions: one drag = one undo
+  *Status 2026-11-04: 142860a3: manifest tools, Plugins > Tools, palette command + manifest shortcut; the host draws the stroke trail (no plugin-drawn overlay, no wheel / key forwarding).*
+- [x] U2 Edits go through `PR_CMD`-style transactions: one drag = one undo
   entry.
-- [ ] U3 **Proof: a scatter-brush tool** that stamps shape layers along a
+  *Status 2026-11-04: 142860a3.*
+- [x] U3 **Proof: a scatter-brush tool** that stamps shape layers along a
   stroke.
+  *Status 2026-11-04: 142860a3: `scatter` (ellipse layers along the stroke).*
 
 ### E — expressions, interpolators, property types
 
-- [ ] E1 **Expression functions.** Manifest `expressionFunctions`; the
+- [x] E1 **Expression functions.** Manifest `expressionFunctions`; the
   expression engine (`core/docexpr.cpp`) calls a pure C function with numbers,
   arrays and strings; no document access; same watchdog as renders.
-- [ ] E2 **Interpolators.** A keyframe's ease may name a plugin interpolator
+  *Status 2026-11-04: 142860a3: numbers and arrays (no strings).*
+- [x] E2 **Interpolators.** A keyframe's ease may name a plugin interpolator
   (`(t, params) → value`), shown in the graph editor; a missing plugin falls
   back to linear and records it.
-- [ ] E3 **Property types.** A plugin param may declare a compound type
+  *Status 2026-11-04: 142860a3: timeline key menu; a missing plugin falls back to the key's own easing (not yet recorded on layerErrors, not drawn in the graph editor).*
+- [x] E3 **Property types.** A plugin param may declare a compound type
   (e.g. a curve, a colour ramp with positions) the timeline keyframes as one
   value, interpolated by the plugin.
+  *Status 2026-11-04: 142860a3: CURVE / GRADIENT with PR_PARAM_FLAG_ANIMATE_VALUE; Effect Controls stopwatch not live-checked.*
 
 ### C — plugins talking to each other
 
-- [ ] C1 **Published channels.** An instance may publish named values per
+- [x] C1 **Published channels.** An instance may publish named values per
   frame (numbers, arrays, a small blob); other instances (any plugin that
   declares the channel) read them in `SMART_PRE_RENDER`. The host orders
   evaluation by these edges and rejects cycles with `layerErrors`.
-- [ ] C2 **Proof:** a controller layer type (L) drives emitters on other
+  *Status 2026-11-04: 142860a3: SIM_STEP does not see channels.*
+- [~] C2 **Proof:** a controller layer type (L) drives emitters on other
   layers (T).
+  *Status 2026-11-04: 142860a3: controller → follower effects (`channels`), not yet a layer type driving simulations.*
 
 ### O — OpenFX hosting (needs Q3)
 
@@ -198,19 +220,25 @@ as 1.4 additions if they can stay appended, otherwise they wait for **2.0**
   property suites mapped onto Premation params (curves, choices, groups,
   pages), Generator / Filter / General contexts, the OpenGL render suite
   skipped, CUDA / Metal / OpenCL suites out of scope at first (CPU path).
+  *Status 2026-11-04: blocked: needs the OpenFX headers and test plugins fetched (owner approval to download).*
 - [ ] O2 OFX plugins run **out of process only** (X1), with the same journal
   and quarantine.
+  *Status 2026-11-04: blocked (O1).*
 - [ ] O3 Projects store OFX effects by plugin identifier + version; a missing
   plugin passes through as today.
+  *Status 2026-11-04: blocked (O1).*
 - [ ] O4 Test against the open OFX sample plugins; record which commercial
   packs load (tested on the owner's box only, no redistribution).
+  *Status 2026-11-04: blocked (O1).*
 
 ### A — audio plugins (needs Q4)
 
 - [ ] A1 CLAP first (MIT), VST3 second. Effects on audio layers in the
   playback mixer and the export mix (`audio/`), out of process (X1).
+  *Status 2026-11-04: blocked: needs the CLAP (and VST3) SDK fetched (owner approval to download).*
 - [ ] A2 Plugin params are keyframeable layer properties; the plugin's own
   editor window opens from Effect Controls.
+  *Status 2026-11-04: blocked (A1).*
 
 ### W — authoring
 

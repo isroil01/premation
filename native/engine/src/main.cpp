@@ -225,6 +225,9 @@ int run(int argc, char** argv) {
       std::uint32_t ms = 0;
       ok = parse_u32(v, ms);
       o.pluginWatchdogMs = static_cast<int>(std::min<std::uint32_t>(ms, 3'600'000U));
+    } else if (k == "--plugin-isolation") {
+      o.pluginIsolation = std::string(v);
+      ok = v == "auto" || v == "off" || v == "all";
     } else if (k == "--sim-cache-dir") {
       o.pluginSimDir = std::string(v);
       ok = !v.empty();
