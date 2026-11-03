@@ -217,6 +217,7 @@ jobs:
             ${{ steps.engine.outputs.engine-dir }}/premation-engine.exe
             ${{ steps.engine.outputs.engine-dir }}/premation-host-bridge.node
             ${{ steps.engine.outputs.engine-dir }}/*.dll
+            ${{ steps.engine.outputs.engine-dir }}/*.dylib
             ${{ steps.engine.outputs.engine-dir }}/*.so
             ${{ steps.engine.outputs.engine-dir }}/*.so.*
           if-no-files-found: error
@@ -370,6 +371,8 @@ jobs:
           lipo -archs native/build/macos-clang-engine-x64/engine/premation-engine | grep -qx x86_64
           lipo -archs native/build/macos-clang-engine/engine/premation-host-bridge.node | grep -qx arm64
           lipo -archs native/build/macos-clang-engine-x64/engine/premation-host-bridge.node | grep -qx x86_64
+          lipo -archs native/build/macos-clang-engine/engine/libpdfium.dylib | grep -qx arm64
+          lipo -archs native/build/macos-clang-engine-x64/engine/libpdfium.dylib | grep -qx x86_64
           echo "engines: arm64 + x86_64 OK"
 
       # better-sqlite3 is an OPTIONAL dependency so a contributor without a
@@ -501,7 +504,7 @@ jobs:
           # macOS runs bash 3.2, which has no globstar: `find` there.
           if [ "$RUNNER_OS" = "Windows" ]; then
             shopt -s globstar nullglob
-            for f in premation-engine.exe dxcompiler.dll dxil.dll; do
+            for f in premation-engine.exe dxcompiler.dll dxil.dll pdfium.dll; do
               ls release/**/win-unpacked/resources/engine/$f >/dev/null || { echo "::error::$f missing from win-unpacked/resources/engine"; exit 1; }
             done
           elif [ "$RUNNER_OS" = "Linux" ]; then
@@ -515,7 +518,7 @@ jobs:
             found=0
             while IFS= read -r app; do
               found=1
-              for f in premation-engine premation-host-bridge.node; do
+              for f in premation-engine premation-host-bridge.node libpdfium.dylib; do
                 test -f "$app/Contents/Resources/engine/$f" || { echo "::error::$f missing from $app"; exit 1; }
               done
               codesign --verify --strict --verbose=2 "$app/Contents/Resources/engine/premation-engine" || [ "${{ needs.verify.outputs.signMac }}" != "true" ]

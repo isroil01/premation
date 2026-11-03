@@ -151,6 +151,8 @@ runs:
         test -f "$dir/$exe" || { echo "::error::$dir/$exe was not built"; exit 1; }
         if [ "$RUNNER_OS" = "macOS" ]; then
           test -f "$dir/premation-host-bridge.node" || { echo "::error::$dir/premation-host-bridge.node was not built (the macOS viewport needs it)"; exit 1; }
+          # The engine links it through @executable_path: without it the engine cannot start.
+          test -f "$dir/libpdfium.dylib" || { echo "::error::$dir/libpdfium.dylib is not beside the engine (PDFium not found by CMake?)"; exit 1; }
         fi
         if [ "$RUNNER_OS" = "Linux" ]; then
           # Optional there (the route-A copy works without it), but CI should build it.
