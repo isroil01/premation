@@ -90,6 +90,11 @@ runs:
         dir="${RUNNER_TEMP}/vcpkg-bincache"
         mkdir -p "$dir"
         echo "dir=$dir" >> "$GITHUB_OUTPUT"
+        # The toolchain is part of vcpkg's package ABI: a runner image with a new
+        # compiler restores an exact-key cache it can use none of (and never
+        # re-saves it), so the compiler versions go in the key.
+        cc=$( (clang-cl --version 2>/dev/null || clang++ --version) | head -1)
+        echo "toolchain=$(echo "$cc ${VCToolsVersion:-}" | sha256sum | cut -c1-12)" >> "$GITHUB_OUTPUT"
         # Every later step (and vcpkg run by CMake's manifest install) reads and writes it.
         echo "VCPKG_BINARY_SOURCES=clear;files,$dir,readwrite" >> "$GITHUB_ENV"
 
@@ -98,7 +103,7 @@ runs:
       uses: actions/cache/restore@v4
       with:
         path: ${{ steps.bincache.outputs.dir }}
-        key: vcpkg-engine-${{ runner.os }}-${{ inputs.triplet }}-${{ inputs.vcpkg-commit }}-${{ hashFiles('native/vcpkg.json', 'native/vcpkg-configuration.json', 'native/vcpkg-overlays/**') }}
+        key: vcpkg-engine-${{ runner.os }}-${{ inputs.triplet }}-${{ inputs.vcpkg-commit }}-${{ steps.bincache.outputs.toolchain }}-${{ hashFiles('native/vcpkg.json', 'native/vcpkg-configuration.json', 'native/vcpkg-overlays/**') }}
         restore-keys: |
           vcpkg-engine-${{ runner.os }}-${{ inputs.triplet }}-${{ inputs.vcpkg-commit }}-
           vcpkg-engine-${{ runner.os }}-${{ inputs.triplet }}-
@@ -124,7 +129,7 @@ runs:
       uses: actions/cache/save@v4
       with:
         path: ${{ steps.bincache.outputs.dir }}
-        key: vcpkg-engine-${{ runner.os }}-${{ inputs.triplet }}-${{ inputs.vcpkg-commit }}-${{ hashFiles('native/vcpkg.json', 'native/vcpkg-configuration.json', 'native/vcpkg-overlays/**') }}
+        key: vcpkg-engine-${{ runner.os }}-${{ inputs.triplet }}-${{ inputs.vcpkg-commit }}-${{ steps.bincache.outputs.toolchain }}-${{ hashFiles('native/vcpkg.json', 'native/vcpkg-configuration.json', 'native/vcpkg-overlays/**') }}
 
     - name: Build
       shell: bash

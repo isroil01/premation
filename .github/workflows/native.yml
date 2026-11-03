@@ -141,7 +141,8 @@ jobs:
   engine:
     name: engine · ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 240
+    # A cold vcpkg cache (new toolchain on the runner image) is ~3.5 h on Windows.
+    timeout-minutes: 330
     strategy:
       fail-fast: false
       matrix:
