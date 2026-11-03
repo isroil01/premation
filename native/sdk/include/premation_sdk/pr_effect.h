@@ -91,7 +91,8 @@ typedef int32_t PrCmd;
 #define PR_CMD_LIST_ASSET_FILES 20 /* SDK 1.2 */
 #define PR_CMD_DRAW_PARAM_UI 21 /* SDK 1.3 */
 #define PR_CMD_PARAM_UI_DRAG 22 /* SDK 1.3 */
-#define PR_CMD_COUNT 23
+#define PR_CMD_SIM_STEP 23 /* SDK 1.4: one simulation step (PR_OUT_FLAG_STATEFUL, PrSimStepExtra) */
+#define PR_CMD_COUNT 24
 
 /* ── out flags (GLOBAL_SETUP) ─────────────────────────────────────────────── */
 #define PR_OUT_FLAG_DEEP_COLOR_AWARE (1u << 0)     /* processes 16-bit worlds */
@@ -125,6 +126,12 @@ typedef int32_t PrCmd;
  * Element 3D's "Composite with scene depth". Only an effect that declares it (and then asks) pays
  * for the depth pass. */
 #define PR_OUT_FLAG_USES_SCENE_DEPTH (1u << 17)
+/* SDK 1.4: a SIMULATION — frame N needs the state after frame N-1 (particles with forces, cloth,
+ * a bouncing body). The host calls PR_CMD_SIM_STEP once per layer frame, in order from the layer's
+ * frame 0 (state_in NULL), and keeps the states: a frame renders with the state after its own step
+ * (PrHostSuite.get_sim_state in SMART_RENDER / SMART_RENDER_GPU). Scrubbing back reuses kept
+ * states; an edit re-steps from the first frame whose inputs changed. The plugin never caches. */
+#define PR_OUT_FLAG_STATEFUL (1u << 18)
 
 typedef int32_t PrQuality;
 #define PR_QUALITY_DRAFT 0
@@ -193,6 +200,24 @@ typedef struct PrOutData {
   PrHandle sequence_data;
   char return_msg[PR_MAX_MESSAGE]; /* ABOUT text, or why a call failed; NUL-terminated */
 } PrOutData;
+
+/** SDK 1.4, PR_CMD_SIM_STEP's `extra`. Params are this step's (the layer frame's) values; in_data's
+ *  current_time is the step's layer time. Deterministic: the same document gives the same states on
+ *  every machine and in export — use `seed` for randomness, never a clock or an unseeded RNG. */
+typedef struct PrSimStepExtra {
+  uint32_t struct_size;
+  /** The state after the previous step (host-owned bytes, valid for this call); NULL at frame 0. */
+  const void* state_in;
+  uint32_t state_in_size;
+  /** Layer frame index (0 = the layer's first frame) and its seconds per frame. */
+  int64_t frame;
+  double dt;
+  /** Per instance, stable for the life of the effect: a seed for the plugin's own RNG. */
+  uint32_t seed;
+  /** Set by the plugin: the new state, a handle it made with handle_new (the host disposes it).
+   *  0 = the state did not change (state_in is kept). */
+  PrHandle state_out;
+} PrSimStepExtra;
 
 typedef struct PrPreRenderExtra {
   uint32_t struct_size;

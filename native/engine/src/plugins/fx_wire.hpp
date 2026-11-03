@@ -42,6 +42,9 @@
 //   s<i>.dp.cam.view, s<i>.dp.cam.proj  PR_SAMPLE_SCENE_DEPTH: the comp camera at sample i (absent = the frame's)
 //   s<i>.dp.ids, s<i>.dp.m           its 3D layers' renderable ids (text, one per line) and models (16 each)
 //
+// SDK 1.4 (T, scene_finish.cpp writes it):
+//   simState                         text   a STATEFUL effect's state after this layer frame's SIM_STEP (base64)
+//
 // So a frame stays a pure function of the document: a plugin instance's state
 // travels with the frame, never from a cache only this process has.
 #pragma once

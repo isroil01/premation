@@ -348,6 +348,27 @@ struct PluginHost::Impl {
   mutable std::mutex failuresMutex;
   std::map<std::string, InstanceFailure> failures;  ///< instance → why it is disabled
 
+  // ── SDK 1.4 (T) simulations ──
+  struct SimMemo {
+    std::uint64_t inputsKey = 0;
+    std::int64_t step = 0;
+    /// chain[k]: a hash of every input of frames 0..k — what state k is a function of.
+    std::vector<std::uint64_t> chain;
+  };
+  struct SimKept {
+    std::uint64_t chain = 0;
+    std::vector<std::uint8_t> bytes;
+    std::uint64_t lastUse = 0;
+  };
+  mutable std::mutex simMutex;
+  std::map<std::string, SimMemo, std::less<>> simMemo;                // instance → its frames' input chain
+  std::map<std::pair<std::string, std::int64_t>, SimKept> simKept;  // (instance, frame) → state
+  std::size_t simBytes = 0;
+  std::size_t simBudget = std::size_t{256} << 20U;
+  std::uint64_t simClock = 0;
+  SimStats simStats;
+  void sim_evict();
+
   std::mutex gpuMutex;
   std::map<std::pair<const EffectSpec*, std::uint32_t>, PrHandle> gpuData;
   std::map<std::pair<const EffectSpec*, std::uint32_t>, std::string> gpuFailed;
@@ -1047,6 +1068,16 @@ PrErr PR_CALL cb_ui_fill(PrHost* h, const double* xy, std::uint32_t count, const
   return overlay_push(h, std::move(i));
 }
 
+// SDK 1.4 (T): a STATEFUL effect's state for this frame, during its render selectors.
+PrErr PR_CALL cb_get_sim_state(PrHost* h, const void** data, std::uint32_t* size) {
+  if (h == nullptr || data == nullptr || size == nullptr || h->inputs == nullptr) return PR_ERR_INVALID_CALLBACK;
+  if (h->cmd != PR_CMD_SMART_RENDER && h->cmd != PR_CMD_SMART_RENDER_GPU) return PR_ERR_INVALID_CALLBACK;
+  if (!h->inputs->simState) return PR_ERR_NOT_FOUND;
+  *data = h->inputs->simState->data();
+  *size = static_cast<std::uint32_t>(h->inputs->simState->size());
+  return PR_ERR_NONE;
+}
+
 PrErr PR_CALL cb_ui_text(PrHost* h, double x, double y, const char* utf8, double size, std::uint32_t align, const float* rgba) {
   if (h == nullptr || h->cmd != PR_CMD_DRAW_PARAM_UI) return PR_ERR_INVALID_CALLBACK;
   if (utf8 == nullptr || !std::isfinite(size)) return PR_ERR_INVALID_PARAM;
@@ -1247,6 +1278,7 @@ PluginHost::PluginHost(HostOptions options) : impl_(std::make_unique<Impl>(*this
   s.checkout_scene_depth_at = &cb_checkout_scene_depth_at;
   s.ui_fill = &cb_ui_fill;  // SDK 1.3: Effect Controls boxes
   s.ui_text = &cb_ui_text;
+  s.get_sim_state = &cb_get_sim_state;  // SDK 1.4
 
   int threads = m.options.threads;
   if (threads <= 0) threads = std::clamp(static_cast<int>(std::thread::hardware_concurrency()) - 1, 0, 16);
@@ -2364,7 +2396,11 @@ CallResult PluginHost::Impl::call_render(Plugin& p, EffectSpec& e, const RenderI
     r.fault = ctx.iterateFault;
     r.message = std::string(to_string(ctx.iterateFault.kind)) + " in " + std::string(command_name(cmd)) + " (a worker job)";
   }
-  for (const PrHandle h : ctx.scoped) handles.dispose(h);
+  // SDK 1.4: a SIM_STEP's new state outlives the call (sim_state reads it, then disposes it).
+  const PrHandle keep = cmd == PR_CMD_SIM_STEP && extra != nullptr ? static_cast<const PrSimStepExtra*>(extra)->state_out : 0;
+  for (const PrHandle h : ctx.scoped) {
+    if (h != keep) handles.dispose(h);
+  }
   ctx.scoped.clear();
   if (r.fault) on_fault(p, &e, &in, r);
   return r;
@@ -2564,6 +2600,171 @@ CallResult PluginHost::render_gpu(const RenderInputs& in, CheckoutSource& io, co
   r = m.call_render(*p, *e, in, ctx, PR_CMD_SMART_RENDER_GPU, nullptr, &x, lease.sequence());
   if (px.pre_render_data != 0) m.handles.dispose(px.pre_render_data);
   return r;
+}
+
+namespace {
+
+constexpr std::size_t kMaxSimStateBytes = std::size_t{64} << 20U;
+
+std::uint64_t mix64(std::uint64_t h, std::uint64_t v) {
+  h ^= v + 0x9e3779b97f4a7c15ULL + (h << 6U) + (h >> 2U);
+  return h;
+}
+std::uint64_t mix_bytes(std::uint64_t h, const void* data, std::size_t n) {
+  const auto* b = static_cast<const std::uint8_t*>(data);
+  for (std::size_t i = 0; i < n; ++i) h = (h ^ b[i]) * 1099511628211ULL;  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+  return h;
+}
+std::uint64_t mix_str(std::uint64_t h, std::string_view s) { return mix_bytes(mix64(h, s.size()), s.data(), s.size()); }
+template <class T>
+std::uint64_t mix_vec(std::uint64_t h, const std::vector<T>& v) {
+  return mix_bytes(mix64(h, v.size()), v.data(), v.size() * sizeof(T));
+}
+
+/// What one frame's step reads: every param value and the instance's sequence data.
+std::uint64_t inputs_hash(const RenderInputs& in) {
+  std::uint64_t h = 14695981039346656037ULL;
+  for (const ParamValue& v : in.values) {
+    h = mix_bytes(h, v.v.data(), sizeof(double) * v.v.size());
+    h = mix_str(h, v.layer);
+    h = mix_vec(h, v.path);
+    h = mix64(h, v.pathClosed ? 1 : 0);
+    h = mix_vec(h, v.arb);
+    h = mix_str(h, v.text);
+    h = mix_vec(h, v.curve);
+    h = mix_vec(h, v.gradient);
+    h = mix_str(h, v.fileItem);
+  }
+  h = mix_vec(h, in.sequence);
+  return mix64(h, static_cast<std::uint64_t>(in.layerW) << 32U | static_cast<std::uint32_t>(in.layerH));
+}
+
+}  // namespace
+
+void PluginHost::Impl::sim_evict() {
+  while (simBytes > simBudget && !simKept.empty()) {
+    auto oldest = simKept.begin();
+    for (auto it = simKept.begin(); it != simKept.end(); ++it) {
+      if (it->second.lastUse < oldest->second.lastUse) oldest = it;
+    }
+    simBytes -= oldest->second.bytes.size();
+    simKept.erase(oldest);
+  }
+}
+
+std::optional<std::vector<std::uint8_t>> PluginHost::sim_state(const SimRequest& q, std::string& why) {
+  Impl& m = *impl_;
+  CallResult r;
+  EffectSpec* e = nullptr;
+  Plugin* p = nullptr;
+  if (!resolve(*this, m, q.base, e, p, r)) {
+    why = r.message;
+    return std::nullopt;
+  }
+  if (!e->has(PR_OUT_FLAG_STATEFUL)) {
+    why = "not a simulation (PR_OUT_FLAG_STATEFUL)";
+    return std::nullopt;
+  }
+  if (!q.inputsAt || q.step <= 0) {
+    why = "no frame step";
+    return std::nullopt;
+  }
+  const std::string& instance = q.base.instance;
+  const std::int64_t frame = std::max<std::int64_t>(0, q.frame);
+  // One simulation steps at a time: a step reads the state the one before it made.
+  const std::scoped_lock lock(m.simMutex);
+  Impl::SimMemo& memo = m.simMemo[instance];
+  if (q.inputsKey == 0 || memo.inputsKey != q.inputsKey || memo.step != q.step) {
+    memo.chain.clear();
+    memo.inputsKey = q.inputsKey;
+    memo.step = q.step;
+  }
+  const auto seed = static_cast<std::uint32_t>(mix_str(14695981039346656037ULL, instance));
+  while (static_cast<std::int64_t>(memo.chain.size()) <= frame) {
+    const auto k = static_cast<std::int64_t>(memo.chain.size());
+    const std::uint64_t prev = k == 0 ? mix64(seed, static_cast<std::uint64_t>(q.step)) : memo.chain.back();
+    memo.chain.push_back(mix64(prev, inputs_hash(q.inputsAt(k))));
+  }
+  // The newest kept state whose inputs, and every earlier frame's, are still the same.
+  std::int64_t from = frame;
+  for (; from >= 0; --from) {
+    const auto it = m.simKept.find({instance, from});
+    if (it != m.simKept.end() && it->second.chain == memo.chain[static_cast<std::size_t>(from)]) break;
+  }
+  std::vector<std::uint8_t> state;
+  if (from >= 0) {
+    Impl::SimKept& kept = m.simKept.at({instance, from});
+    kept.lastUse = ++m.simClock;
+    state = kept.bytes;
+    if (from == frame) {
+      ++m.simStats.cacheHits;
+      return state;
+    }
+  }
+  for (std::int64_t k = from + 1; k <= frame; ++k) {
+    RenderInputs in = q.inputsAt(k);
+    in.layerTime = k * q.step;
+    const InstanceLease lease = m.instance_for(in, *e, *p, r);
+    if (!lease) {
+      if (r.fault) m.on_fault(*p, e, &in, r);
+      why = r.message;
+      return std::nullopt;
+    }
+    PrSimStepExtra x{};
+    x.struct_size = sizeof(PrSimStepExtra);
+    x.state_in = k == 0 ? nullptr : state.data();
+    x.state_in_size = k == 0 ? 0 : static_cast<std::uint32_t>(state.size());
+    x.frame = k;
+    x.dt = static_cast<double>(q.step) / static_cast<double>(PR_TIME_SCALE);
+    x.seed = seed;
+    PrHost ctx;
+    ctx.host = this;
+    {
+      const RenderLock rl(*p, *e);
+      r = m.call_render(*p, *e, in, ctx, PR_CMD_SIM_STEP, nullptr, &x, lease.sequence());
+    }
+    if (!r.ok) {
+      if (x.state_out != 0) m.handles.dispose(x.state_out);
+      why = r.message;
+      return std::nullopt;
+    }
+    if (x.state_out != 0) {
+      std::vector<std::uint8_t> out = m.handles.bytes(x.state_out);
+      m.handles.dispose(x.state_out);
+      if (out.size() > kMaxSimStateBytes) {
+        why = "the simulation state is over 64 MB";
+        return std::nullopt;
+      }
+      state = std::move(out);
+    } else if (k == 0) {
+      state.clear();
+    }
+    ++m.simStats.steps;
+    Impl::SimKept& kept = m.simKept[{instance, k}];
+    m.simBytes -= kept.bytes.size();
+    kept.chain = memo.chain[static_cast<std::size_t>(k)];
+    kept.bytes = state;
+    kept.lastUse = ++m.simClock;
+    m.simBytes += kept.bytes.size();
+  }
+  m.sim_evict();
+  m.simStats.bytes = m.simBytes;
+  return state;
+}
+
+SimStats PluginHost::sim_stats() const {
+  const Impl& m = *impl_;
+  const std::scoped_lock lock(m.simMutex);
+  SimStats s = m.simStats;
+  s.bytes = m.simBytes;
+  return s;
+}
+
+void PluginHost::set_sim_budget(std::size_t bytes) {
+  Impl& m = *impl_;
+  const std::scoped_lock lock(m.simMutex);
+  m.simBudget = bytes;
+  m.sim_evict();
 }
 
 void PluginHost::gpu_device_gone(std::uint32_t deviceIndex) {

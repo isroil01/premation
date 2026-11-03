@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -29,6 +30,7 @@
 #include "host.hpp"
 #include "json.hpp"
 #include "model.hpp"
+#include "native_effects.hpp"
 #include "native_scene.hpp"
 #include "scene_eval.hpp"
 #include "scene_finish.hpp"
@@ -231,6 +233,53 @@ TEST_CASE("SDK 1.4 L2: a plugin layer type's layer reaches the frame with its ow
   REQUIRE(slot >= 0);
   CHECK(in.values.at(static_cast<std::size_t>(slot)).v[0] == 25);
   CHECK(f.plugin_errors(0.5).empty());
+}
+
+TEST_CASE("SDK 1.4 T: a simulation's state travels with the frame; the document's keyframes drive its steps",
+          "[plugins][finish][sim]") {
+  Json document = scene_json();
+  Json* node = find_node(document, "solid");
+  REQUIRE(node != nullptr);
+  Json bounce = Json::object();
+  bounce.set("id", Json::string("fx"));
+  bounce.set("type", Json::string("com.premation.samples.bounce"));
+  bounce.set("params", Json::object());
+  Json::Array effects;
+  effects.push_back(std::move(bounce));
+  fx_props(*node).set("effects", Json::array(std::move(effects)));
+
+  struct S {
+    double x, y, vx, vy;
+  };
+  const auto state_at = [](Fixture& f, double t) {
+    const Fixture::Built b = f.frame(t);
+    const auto it = std::ranges::find_if(b.entry.params, [](const api::RenderEffectParam& p) { return p.name == "simState"; });
+    REQUIRE(it != b.entry.params.end());
+    const auto bytes = doc::native_unbase64(it->text);
+    REQUIRE(bytes.has_value());
+    REQUIRE(bytes->size() >= sizeof(S));
+    S s{};
+    std::memcpy(&s, bytes->data(), sizeof(S));
+    return s;
+  };
+
+  Json keyed = document;  // the same, with Gravity keyed 900 → -900 from 1 s to 1.1 s
+  {
+    Fixture f(std::move(document));
+    const S late = state_at(f, 2.0);
+    const auto steps = f.host->sim_stats().steps;
+    const S early = state_at(f, 0.5);  // scrubbing back: kept, no step
+    CHECK(f.host->sim_stats().steps == steps);
+    CHECK(early.y != late.y);
+    CHECK(f.plugin_errors(2.0).empty());
+
+    add_track(keyed, "solid", "effect.fx.p1", keys({{1.0, 900}, {1.1, -900}}));
+    Fixture g(std::move(keyed));
+    const S gEarly = state_at(g, 0.5);
+    const S gLate = state_at(g, 2.0);
+    CHECK(gEarly.y == early.y);  // before the keyframes nothing changed
+    CHECK(gLate.y != late.y);    // after them, gravity points up
+  }
 }
 
 TEST_CASE("SDK 1.2 S1: checkout_time samples are evaluated off the document", "[plugins][finish]") {

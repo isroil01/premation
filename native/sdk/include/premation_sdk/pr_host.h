@@ -229,6 +229,13 @@ typedef struct PrHostSuite {
    *   (_CENTER) or end (_RIGHT), `size` px (6..48), in the editor's UI font. */
   PrErr(PR_CALL* ui_fill)(PrHost* host, const double* xy, uint32_t point_count, const float* rgba);
   PrErr(PR_CALL* ui_text)(PrHost* host, double x, double y, const char* utf8, double size, uint32_t align, const float* rgba);
+
+  /* ── SDK 1.4, simulations (appended after ui_text; check struct_size >= offsetof(PrHostSuite,
+   *    get_sim_state) + sizeof(void*)) ──
+   * get_sim_state: in SMART_RENDER / SMART_RENDER_GPU of a PR_OUT_FLAG_STATEFUL effect, the state
+   * after this frame's PR_CMD_SIM_STEP (host-owned, valid for the call). PR_ERR_NOT_FOUND when the
+   * frame has none (a step failed); PR_ERR_INVALID_CALLBACK elsewhere. */
+  PrErr(PR_CALL* get_sim_state)(PrHost* host, const void** data, uint32_t* size);
 } PrHostSuite;
 
 /* SDK 1.3: ui_text's `align`. */

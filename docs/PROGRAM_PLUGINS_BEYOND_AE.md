@@ -4,7 +4,7 @@ Owner ask (2026-11-03): how far can the plugin system go, so authors can build
 plugins much deeper than today and use them inside the editor. Builds on
 docs/PLUGIN_PLATFORM_PLAN.md (P1–P7), docs/PROGRAM_DEEP_PLUGINS.md (SDK 1.2,
 Element 3D class, closed 2026-10-13) and docs/PLUGIN_SDK.md (SDK 1.3: custom
-UI in Effect Controls). Status: **in progress** (W1, W3, W4 1d712106; W2 28cc8e40; L built 2026-11-03, uncommitted). Everything stays
+UI in Effect Controls). Status: **in progress** (W1, W3, W4 1d712106; W2 28cc8e40; L f3fabaf9; T built 2026-11-03, uncommitted). Everything stays
 local on `native-core` until the owner says push.
 
 ## 0. Where we stand, and what "beyond AE" means
@@ -108,24 +108,25 @@ as 1.4 additions if they can stay appended, otherwise they wait for **2.0**
 
 ### T — simulations and their cache
 
-- [ ] T1 **`PR_OUT_FLAG_STATEFUL`.** The plugin declares that frame N needs
-  its state after frame N−1. Selectors `SIM_STEP` (state in, state out, dt,
-  params at the step's time) and `SIM_RENDER` (state → pixels or D1
-  contribution). State is opaque bytes the plugin flattens.
-- [ ] T2 **Host sim cache.** The host steps from the nearest cached state,
-  keeps states in RAM (LRU next to `render/frame_cache.cpp`) and on disk
-  (`render/disk_cache.cpp`), keyed by everything upstream of the step; any
-  param edit before frame N invalidates from N on. Scrubbing backwards never
-  re-simulates from 0 when a state is cached. The Cache & Memory panel shows
-  sim caches.
-- [ ] T3 **Determinism.** The host passes a seed per instance; the same
-  document gives the same state on every machine and in export. A test runs a
-  sim forwards, scrubs back, renders again and compares bytes.
-- [ ] T4 **Watchdog.** `SIM_STEP` is a render selector (no progress
-  extension); a cold cache is filled on the prefetch workers, not on the
-  shown frame.
-- [ ] T5 **Proof: `particles` gains a stateful mode** (forces, collisions with
-  D1 meshes) + golden frames at 0, 60, 120 and after a backwards scrub.
+- [x] T1 **`PR_OUT_FLAG_STATEFUL`.** (2026-11-03, uncommitted) `PR_CMD_SIM_STEP`
+  (23) with `PrSimStepExtra` (state_in, frame, dt, seed, state_out);
+  rendering reads the frame's state through `get_sim_state` (appended to
+  PrHostSuite). One SIM_STEP selector instead of SIM_STEP + SIM_RENDER: the
+  ordinary render selectors draw from the state.
+- [~] T2 **Host sim cache.** RAM only: `PluginHost::sim_state` keeps every state
+  keyed by a hash chain of all earlier frames' inputs (an edit at k re-steps
+  from k), LRU under a budget (256 MB). Not yet: disk cache, Cache & Memory
+  panel.
+- [x] T3 **Determinism.** Per-instance seed; the state is computed on the
+  document side and travels with the frame (`simState`); two hosts walking
+  vs jumping produce identical bytes (test).
+- [ ] T4 **Watchdog / prefetch.** SIM_STEP runs under the render watchdog per
+  call; a cold catch-up still runs on the frame being built, not ahead on
+  the prefetch workers.
+- [~] T5 **Proof:** the `bounce` sample (a new sample, not a stateful mode of
+  `particles`) + `engine_plugins_tests [sim]` (cold = walked, scrub back =
+  0 steps, edit at k, budget) and `engine_plugins_scene_tests [sim]`
+  (document keyframes drive steps). No golden image yet.
 
 ### M — ML inference suite (needs Q5)
 

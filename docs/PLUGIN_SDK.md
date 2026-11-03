@@ -9,7 +9,7 @@ so an AE plugin author can find their way around.
 | | |
 |---|---|
 | Headers | `native/sdk/include/premation_sdk/` (C, versioned ABI; `premation_sdk.h` includes all) |
-| Samples | `native/sdk/samples/` — `ripple` (CPU), `rings` (generator + sequence data + button), `checkout` (Layer Displace, Time Echo), `grade` (GPU), `particles` (SDK 1.1: comp camera, lights, layer transforms; SDK 1.2: trails and its own motion blur through `checkout_time`, comp space, presets, a layer-time button); SDK 1.2 plugins that are not effects: `distribute` (a command), `ppmio` (an importer), `ppmseq` (an output module), `statspanel` (a panel + a command); `fxkit` (two effects written once in WGSL, see "Writing effects in WGSL: fxkit"); SDK 1.4: `chartlayer` (a plugin layer type, see "Layer types") |
+| Samples | `native/sdk/samples/` — `ripple` (CPU), `rings` (generator + sequence data + button), `checkout` (Layer Displace, Time Echo), `grade` (GPU), `particles` (SDK 1.1: comp camera, lights, layer transforms; SDK 1.2: trails and its own motion blur through `checkout_time`, comp space, presets, a layer-time button); SDK 1.2 plugins that are not effects: `distribute` (a command), `ppmio` (an importer), `ppmseq` (an output module), `statspanel` (a panel + a command); `fxkit` (two effects written once in WGSL, see "Writing effects in WGSL: fxkit"); SDK 1.4: `chartlayer` (a plugin layer type, see "Layer types"), `bounce` (a simulation, see "Simulations") |
 | Host | `native/engine/src/plugins/` (runs inside `premation-engine`) |
 | Tool | `premation-plugins` — list, render, crash-check a plugin folder without an editor |
 | Next | `docs/PROGRAM_PLUGINS_BEYOND_AE.md` — proposed SDK 1.4 / 2.0: layer types, plugins in the 3D scene, simulations, ML, out-of-process host (not built) |
@@ -912,6 +912,47 @@ no new entry point:
 The `chartlayer` sample (`native/sdk/samples/chartlayer`) is a bar chart whose
 Value 1–6 are animatable layer properties. Its golden renders run as ctest
 `plugin_goldens_chartlayer`.
+
+## Simulations (SDK 1.4)
+
+An effect whose frame N needs frame N-1, such as particles with forces, cloth,
+fluids or a bouncing body, declares `PR_OUT_FLAG_STATEFUL`. It keeps no cache
+of its own: the host owns the stepping and the states.
+
+- **`PR_CMD_SIM_STEP`** is called once per layer frame, in order from the
+  layer's frame 0. Its `PrSimStepExtra` carries:
+  - `state_in`: the previous state's bytes, `NULL` at frame 0;
+  - `frame`, `dt`, and `seed` (per instance and stable; use it for randomness,
+    never a clock);
+  - `state_out`: the new state, a `handle_new` handle that the host takes.
+    Leave it at 0 to keep `state_in` unchanged.
+
+  Params and `current_time` are that step's frame's values. States are plain
+  bytes of up to 64 MB.
+- **`get_sim_state`** (appended to `PrHostSuite`) hands `SMART_RENDER` /
+  `SMART_RENDER_GPU` the state after this frame's step. `PR_ERR_NOT_FOUND`
+  means a step failed: render empty, never stale.
+- **Kept states.** The host keeps every state it makes, up to a RAM budget
+  (256 MB by default, least recently used first). Each state is keyed by a hash
+  of every input of frames 0..N: params, sequence data and layer size.
+  Scrubbing back steps nothing, and playing on steps once per frame. Editing a
+  keyframe at frame k keeps every state before k and steps again from k.
+- **Expressions.** When one of the effect's params has an expression, every
+  frame's inputs are evaluated again on each request. The answer stays exact
+  but costs more.
+- **Determinism.** The state is computed on the document side
+  (`scene_finish.cpp`) and travels with the frame as `simState`. A frame is
+  therefore a function of the document: the same pixels in the viewer, the
+  render queue and on another machine.
+- **Failures.** A step that faults disables the instance as a render fault
+  does. A failed step is reported on `layerErrors` as `simulation: …`.
+- **Not yet:** states are not written to the disk cache, a cold catch-up runs
+  on the frame being built (not ahead on the prefetch workers), and the Cache &
+  Memory panel does not show simulation states.
+
+The `bounce` sample (`native/sdk/samples/bounce`) is a ball under keyframeable
+Gravity and Bounciness. `engine_plugins_tests [sim]` and
+`engine_plugins_scene_tests [sim]` hold it to the rules above.
 
 ## Sequence data
 

@@ -33,6 +33,49 @@
 namespace premation::plugins {
 namespace {
 
+/// SDK 1.4 (T): what makes a simulation's per-frame inputs what they are — the effect's record
+/// (static params), every keyframe and data track of its params and the sequence data. 0 when one
+/// of its params has an expression: that may read anything, so every frame is re-evaluated.
+std::uint64_t sim_inputs_key(const doc::Document& d, const doc::Node& node, std::string_view effectId, std::string_view sequence) {
+  std::uint64_t h = 14695981039346656037ULL;
+  const auto mix = [&h](std::string_view s) {
+    for (const char c : s) h = (h ^ static_cast<unsigned char>(c)) * 1099511628211ULL;
+    h = (h ^ 0xffU) * 1099511628211ULL;
+  };
+  const auto mixd = [&mix](double v) { mix(std::string_view(reinterpret_cast<const char*>(&v), sizeof v)); };  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast): hashing the bits
+  for (const js::Json& e : doc::read_node_effects(node)) {
+    if (e.at("id").is_string() && e.at("id").str() == effectId) mix(js::stringify(e));
+  }
+  mix(sequence);
+  const std::string prefix = "effect." + std::string(effectId) + ".";
+  if (const doc::NodeAnim* a = d.anim(node.id)) {
+    for (const auto& [prop, ex] : a->exprs) {
+      if (prop.starts_with(prefix) && ex.enabled && !ex.src.empty()) return 0;
+    }
+    for (const auto& [prop, keys] : a->tracks) {
+      if (!prop.starts_with(prefix)) continue;
+      mix(prop);
+      for (const doc::Key& k : keys) {
+        mixd(k.t);
+        mixd(k.value);
+        mixd(k.easing ? static_cast<double>(*k.easing) : -1);
+        if (k.bezier) for (const double b : *k.bezier) mixd(b);
+        mixd(k.continuous.value_or(false) ? 1 : 0);
+      }
+    }
+    for (const auto& [prop, track] : a->data) {
+      if (!prop.starts_with(prefix)) continue;
+      mix(prop);
+      for (const doc::DataKey& k : track.keys) {
+        mixd(k.t);
+        mix(js::stringify(k.value));
+        mixd(k.easing ? static_cast<double>(*k.easing) : -1);
+      }
+    }
+  }
+  return h == 0 ? 1 : h;
+}
+
 constexpr double kFlicks = PR_TIME_SCALE;
 /// The largest reach a plugin's result_rect may add to its layer (the engine's texture limit).
 constexpr double kMaxReachPx = 16384;
@@ -279,6 +322,22 @@ class Sampler {
   /// The frame's LAYER-param matrices in the SDK's contract (layer px → world): what
   /// encode_native_scene wrote from the renderables (their unit quads) is replaced where the
   /// document places the layer.
+  /// SDK 1.4 (T): the effect's inputs at layer time `layerFlicks` — the frame's entry with its
+  /// animatable params evaluated at that time (what a SIM_STEP of that frame reads).
+  RenderInputs inputs_at(const EffectSpec& spec, const api::RenderEffect& frameEntry, const std::string& docLayer,
+                         const std::string& effectId, std::int64_t layerFlicks) {
+    api::RenderEffect copy = frameEntry;
+    for (api::RenderEffectParam& v : params_at(docLayer, effectId, static_cast<double>(layerFlicks) / kFlicks, frameEntry)) {
+      const auto it = std::ranges::find_if(copy.params, [&](const api::RenderEffectParam& q) { return q.name == v.name; });
+      if (it != copy.params.end()) *it = std::move(v);
+      else copy.params.push_back(std::move(v));
+    }
+    RenderInputs in;
+    decode_native_fx(copy, spec, in);
+    in.layerTime = layerFlicks;
+    return in;
+  }
+
   void layer_matrices(api::RenderEffect& e, const EffectSpec& spec) {
     for (const ParamSpec& s : spec.params) {
       if (s.type != PR_PARAM_LAYER) continue;
@@ -561,6 +620,22 @@ void finish_native_frame(const scene::BuildContext& c, std::string_view comp, do
         if (spec->has(PR_OUT_FLAG_USES_LIGHTS)) lights = sampler.frame_lights_if_missing();
         encode_native_scene(e, *spec, frame.file.scene, cam && *cam ? &**cam : nullptr, lights ? &*lights : nullptr);
         if (spec->has(PR_OUT_FLAG_USES_LAYER_TRANSFORMS)) sampler.layer_matrices(e, *spec);
+      }
+      // SDK 1.4 (T): a simulation's state after this layer frame's step (the host keeps the states,
+      // so playing on or scrubbing back steps little or not at all); it travels with the frame.
+      if (spec->has(PR_OUT_FLAG_STATEFUL) && node != nullptr) {
+        SimRequest q;
+        decode_native_fx(e, *spec, q.base);
+        q.step = step;
+        q.frame = step > 0 ? std::max<std::int64_t>(0, (lt + step / 2) / step) : 0;
+        q.inputsKey = sim_inputs_key(c.d, *node, effectId, text_of(e, "sequence"));
+        q.inputsAt = [&](std::int64_t k) { return sampler.inputs_at(*spec, e, docLayer, effectId, k * step); };
+        std::string why;
+        if (std::optional<std::vector<std::uint8_t>> st = host->sim_state(q, why)) {
+          set_text(e, "simState", doc::native_base64(*st));
+        } else if (reported.insert(instance + "#sim").second) {
+          frame.errors.push_back(scene::LayerError{layerId, "", "plugin", "simulation: " + why});
+        }
       }
       if (blurOn && spec->has(PR_OUT_FLAG_USES_SHUTTER)) blursItself = true;
       if (!spec->has(PR_OUT_FLAG_SMART_RENDER)) continue;
