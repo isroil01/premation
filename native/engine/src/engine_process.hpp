@@ -67,6 +67,9 @@ struct EngineOptions {
   std::string pluginShadow;
   /// SDK 1.4 (T2): where plugin simulation states evicted from RAM are kept (`--sim-cache-dir`); empty = RAM only.
   std::string pluginSimDir;
+  /// SDK 1.4 (X) `--plugin-isolation auto|off|all`: auto runs third-party effect plugins in a
+  /// premation-plugin-host (first-party com.premation.* in process); off = all in process.
+  std::string pluginIsolation = "auto";
   /// `--plugin-watchdog <ms>`: how long a plugin call may run before it is a hang (0 = never: a
   /// debugger stopped in a selector); negative = the host's default (10 s).
   int pluginWatchdogMs = -1;

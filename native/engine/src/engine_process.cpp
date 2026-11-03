@@ -29,6 +29,10 @@
 #include "io/pipe_ffi.hpp"
 #include "os_ffi.hpp"
 #include "plugins/host.hpp"
+#if !defined(PREMATION_ENGINE_HEADLESS) && __has_include("plugin_host_channel.hpp")
+#include "plugin_host_channel.hpp"  // SDK 1.4 (X): plugins out of process
+#define PREMATION_PLUGIN_ISOLATION 1
+#endif
 #include "raster/font_catalog.hpp"
 #include "premation/protocol/framing.hpp"
 
@@ -350,6 +354,28 @@ int run_engine(const EngineOptions& options) {
       ho.disabled = options.pluginDisabled;
       ho.shadowDir = options.pluginShadow;
       ho.simDiskDir = options.pluginSimDir;
+#ifdef PREMATION_PLUGIN_ISOLATION
+      // SDK 1.4 (X): third-party effect plugins run in a premation-plugin-host beside this exe;
+      // without it (an old install) everything runs in process.
+      if (options.pluginIsolation != "off") {
+        const std::string selfUtf8 = os::executable_path();
+        const std::filesystem::path self(std::u8string(reinterpret_cast<const char8_t*>(selfUtf8.data()), selfUtf8.size()));  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+#ifdef _WIN32
+        const std::filesystem::path hostExe = self.parent_path() / "premation-plugin-host.exe";
+#else
+        const std::filesystem::path hostExe = self.parent_path() / "premation-plugin-host";
+#endif
+        std::error_code ec;
+        if (std::filesystem::is_regular_file(hostExe, ec)) {
+          const std::filesystem::path log = std::filesystem::temp_directory_path(ec) / "premation-plugin-host.log";
+          ho.spawnOutOfProcess = [hostExe, log](const std::filesystem::path& bundle, std::string& error) {
+            return exporter::spawn_plugin_host(hostExe, bundle, log, error);
+          };
+          const bool all = options.pluginIsolation == "all";
+          ho.runOutOfProcess = [all](std::string_view id) { return all || !id.starts_with("com.premation."); };
+        }
+      }
+#endif
       if (options.pluginWatchdogMs >= 0) ho.watchdog = std::chrono::milliseconds(options.pluginWatchdogMs);
       if (!options.pluginRevoked.empty()) ho.revoked = plugins::read_revoked_file(options.pluginRevoked);
       ho.entitlement = options.pluginEntitlement;

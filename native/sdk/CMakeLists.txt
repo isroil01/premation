@@ -96,6 +96,11 @@ function(premation_sample_plugin name)
   foreach(_f IN LISTS _ui)
     configure_file(${CMAKE_CURRENT_SOURCE_DIR}/samples/${name}/ui/${_f} ${_dir}/ui/${_f} COPYONLY)
   endforeach()
+  # SDK 1.4 (M): a sample's models/*.onnx ship as the bundle's models/.
+  file(GLOB _models RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}/samples/${name}/models ${CMAKE_CURRENT_SOURCE_DIR}/samples/${name}/models/*.onnx)
+  foreach(_f IN LISTS _models)
+    configure_file(${CMAKE_CURRENT_SOURCE_DIR}/samples/${name}/models/${_f} ${_dir}/models/${_f} COPYONLY)
+  endforeach()
   # SDK 1.2: a sample's presets/*.json ship as the bundle's presets/.
   file(GLOB _presets RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}/samples/${name}/presets ${CMAKE_CURRENT_SOURCE_DIR}/samples/${name}/presets/*.json)
   foreach(_f IN LISTS _presets)
@@ -113,7 +118,8 @@ premation_sample_plugin(ppmio samples/ppmio/ppmio.cpp)              # SDK 1.2: a
 premation_sample_plugin(ppmseq samples/ppmseq/ppmseq.cpp)           # SDK 1.2: an output module (a .ppm sequence)
 premation_sample_plugin(mathfns samples/mathfns/mathfns.cpp)  # SDK 1.4: expression functions + an interpolator (E1/E2)
 premation_sample_plugin(channels samples/channels/channels.cpp)
-premation_sample_plugin(scatter samples/scatter/scatter.cpp)  # SDK 1.4 (U): a VIEWER TOOL (manifest `tools`) run by a command  # SDK 1.4 (C): PUBLISHED CHANNELS (publish_channel / read_channel)
+premation_sample_plugin(scatter samples/scatter/scatter.cpp)
+premation_sample_plugin(mlstyle samples/mlstyle/mlstyle.cpp)  # SDK 1.4 (M): an ONNX model run through the ML suite (pr_ml.h)  # SDK 1.4 (U): a VIEWER TOOL (manifest `tools`) run by a command  # SDK 1.4 (C): PUBLISHED CHANNELS (publish_channel / read_channel)
 premation_sample_plugin(bounce samples/bounce/bounce.cpp)  # SDK 1.4: a SIMULATION (PR_OUT_FLAG_STATEFUL, SIM_STEP, get_sim_state)
 premation_sample_plugin(chartlayer samples/chartlayer/chartlayer.cpp)  # SDK 1.4: a plugin LAYER TYPE (manifest layerTypes) drawn by a generator
 premation_sample_plugin(statspanel samples/statspanel/statspanel.cpp)  # SDK 1.2: a panel without an effect (+ a command)

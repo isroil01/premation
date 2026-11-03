@@ -536,8 +536,19 @@ add_library(engine_plugins STATIC
   src/plugins/asset_image.cpp  # SDK 1.2: FILE params' images (linear premultiplied float) and sibling files
   src/plugins/presets.cpp  # SDK 1.2: presets a bundle ships (manifest `presets`, presets/*.json)
   src/plugins/scene_eval.cpp  # SDK 1.2: the comp camera / lights / layer matrices off the document (samples, overlays)
+  src/plugins/ml_ort_ffi.cpp  # SDK 1.4 (M): the ML suite on the engine's ONNX Runtime (a stub without it)
+  src/plugins/oop_wire.cpp  # SDK 1.4 (X): premation-plugin-host messages
 )
 target_include_directories(engine_plugins PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/plugins ${CMAKE_CURRENT_SOURCE_DIR}/../sdk/include)
+# SDK 1.4 (M): plugins' models run on the same ONNX Runtime build as the engine's own jobs.
+find_package(onnxruntime CONFIG QUIET)
+if(onnxruntime_FOUND)
+  target_link_libraries(engine_plugins PRIVATE onnxruntime::onnxruntime)
+endif()
+if(MSVC)
+  # ort_providers_ffi.hpp reads PREMATION_ORT_PROVIDER with getenv.
+  set_source_files_properties(src/plugins/ml_ort_ffi.cpp PROPERTIES COMPILE_DEFINITIONS _CRT_SECURE_NO_WARNINGS)
+endif()
 target_link_libraries(engine_plugins PUBLIC engine_core Threads::Threads PRIVATE ${CMAKE_DL_LIBS} motion::options)
 # scene_eval.cpp reads the comp's lights through the scene readers (lights3d.cpp, readers.cpp).
 target_link_libraries(engine_plugins PUBLIC engine_scene_core)
@@ -654,6 +665,10 @@ if(MOTION_BUILD_TESTS)
   add_test(NAME engine_scene_core_tests COMMAND engine_scene_core_tests --reporter compact)
 endif()
 
+# premation-plugin-host (SDK 1.4, X): one plugin bundle out of process, driven over stdin / stdout.
+add_executable(premation-plugin-host src/plugin_host_main.cpp src/plugin_host_io_ffi.cpp)
+target_link_libraries(premation-plugin-host PRIVATE engine_plugins motion::options)
+
 # premation-plugins: list / render / crash-check plugins without an editor (tools/premation_plugins.cpp).
 add_executable(premation-plugins tools/premation_plugins.cpp)
 target_link_libraries(premation-plugins PRIVATE engine_plugins motion::options)
@@ -685,12 +700,13 @@ if(MOTION_BUILD_TESTS)
   # 8/16/32 bpc, sequence data, checkouts, the journal, crash isolation.
   add_executable(engine_plugins_tests tests/test_plugin_host.cpp tests/test_plugin_session.cpp tests/test_plugin_entitlement.cpp tests/test_plugin_scene.cpp
                                       tests/test_plugin_params.cpp tests/test_plugin_contrib.cpp)
-  target_link_libraries(engine_plugins_tests PRIVATE engine_plugins motion::options Catch2::Catch2WithMain)
+  target_link_libraries(engine_plugins_tests PRIVATE engine_plugins engine_export_core motion::options Catch2::Catch2WithMain)
   target_include_directories(engine_plugins_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
   target_compile_definitions(engine_plugins_tests PRIVATE
     PREMATION_PLUGIN_BUNDLES="${PREMATION_PLUGIN_BUNDLES}"
-    PREMATION_PLUGINS_TOOL="$<TARGET_FILE:premation-plugins>")
-  add_dependencies(engine_plugins_tests premation-plugins ripple rings checkout particles grademap distribute ppmio ppmseq statspanel chartlayer bounce mathfns scatter)
+    PREMATION_PLUGINS_TOOL="$<TARGET_FILE:premation-plugins>"
+    PREMATION_PLUGIN_HOST_EXE="$<TARGET_FILE:premation-plugin-host>")
+  add_dependencies(engine_plugins_tests premation-plugins ripple rings checkout particles grademap distribute ppmio ppmseq statspanel chartlayer bounce mathfns scatter mlstyle premation-plugin-host)
   add_test(NAME engine_plugins_tests COMMAND engine_plugins_tests --reporter compact)
   target_sources(engine_plugins_tests PRIVATE tests/test_plugin_sdk12.cpp)  # SDK 1.2: times, shutter, assets, presets
   target_sources(engine_plugins_tests PRIVATE tests/test_plugin_param_ui.cpp)  # SDK 1.3: Effect Controls boxes
@@ -719,7 +735,7 @@ if(MOTION_BUILD_TESTS)
   endforeach()
   target_sources(engine_plugins_tests PRIVATE tests/test_plugin_reload.cpp)
   target_sources(engine_plugins_tests PRIVATE tests/test_plugin_sim.cpp)  # SDK 1.4 (T): simulations and their kept states
-  target_sources(engine_plugins_tests PRIVATE tests/test_plugin_exprfn.cpp)  # SDK 1.4 (E): expression functions, interpolators
+  target_sources(engine_plugins_tests PRIVATE tests/test_plugin_exprfn.cpp tests/test_plugin_ml.cpp tests/test_plugin_oop.cpp)  # SDK 1.4 (E): expression functions, interpolators
   target_compile_definitions(engine_plugins_tests PRIVATE
     RELOAD_PROBE_V1="$<TARGET_FILE:reload_probe_v1>"
     RELOAD_PROBE_V2="$<TARGET_FILE:reload_probe_v2>")
@@ -1343,11 +1359,12 @@ endif()
 add_library(engine_export_core STATIC
   src/export/project_open.cpp
   src/export/child_process_ffi.cpp
+  src/export/plugin_host_channel.cpp  # SDK 1.4 (X): a premation-plugin-host as the plugin host's channel
   src/export/png_write.cpp
   src/export/jpeg_write.cpp
   src/export/zip_write.cpp)
 target_include_directories(engine_export_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/export)
-target_link_libraries(engine_export_core PUBLIC engine_core PRIVATE motion::options)
+target_link_libraries(engine_export_core PUBLIC engine_core engine_plugins PRIVATE motion::options)
 if(WIN32)
   target_compile_definitions(engine_export_core PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
   target_link_libraries(engine_export_core PRIVATE windowscodecs ole32)
@@ -1473,7 +1490,9 @@ if(FFMPEG_FOUND AND TARGET engine_audio)
     target_link_libraries(engine_jobs PRIVATE engine_scene)
     target_compile_definitions(engine_jobs PRIVATE PREMATION_JOBS_HAVE_SCENE=1)  # the particle bake (particle_port.hpp)
   endif()
-  find_package(onnxruntime CONFIG QUIET)
+  if(NOT TARGET onnxruntime::onnxruntime)  # engine_plugins found it already (SDK 1.4 M)
+    find_package(onnxruntime CONFIG QUIET)
+  endif()
   if(onnxruntime_FOUND)
     target_link_libraries(engine_jobs PRIVATE onnxruntime::onnxruntime)
     target_compile_definitions(engine_jobs PRIVATE PREMATION_HAVE_ONNXRUNTIME=1)

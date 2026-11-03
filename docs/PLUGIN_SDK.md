@@ -1081,6 +1081,70 @@ The `scatter` sample stamps an ellipse layer every 48 px along the stroke.
 Shift halves the spacing and Alt doubles the size. `engine_plugins_tests
 [tools]` covers it.
 
+## Machine learning: the ML suite (SDK 1.4)
+
+An effect can run an ONNX model through the host (`pr_ml.h`, appended to
+`PrHostSuite`). Models run on the engine's own ONNX Runtime build: DirectML on
+Windows, Core ML on macOS, and the CPU elsewhere or when the GPU provider
+cannot run the model.
+
+```c
+uint32_t model;
+if (in->host->ml_load(in->host_ref, "models/style.onnx", &model) == PR_ERR_NONE) {
+  PrTensor input = { sizeof(PrTensor), NULL, planes, count, {1, 3, h, w}, 4 };
+  PrTensor output = { sizeof(PrTensor) };
+  in->host->ml_run(in->host_ref, model, &input, 1, &output, 1);  /* output.data: host memory */
+}
+```
+
+- **Models ship in the bundle**, under `models/`, so the bundle's signature
+  covers them. `ml_load` takes only `models/<name>.onnx` (no `..`, no
+  absolute path). The host never downloads a model.
+- **Shared sessions.** All of a plugin's instances get the same id for a
+  file, and all plugins share one runtime environment. A file opens once per
+  process, keyed by its content hash.
+- **Tensors.** Inputs are float32. The host fills each output's `data`,
+  `count`, `shape` and `rank`, and that memory lasts until the selector
+  returns. An output with no name is the model's output in that position.
+- **Guarded.** A run is part of the selector, so it is crash-guarded and
+  under the watchdog. A failed run returns `PR_ERR_INTERNAL` with the reason
+  in the log. Keep a CPU path: an older host has no ML suite, and a build
+  without ONNX Runtime answers `PR_ERR_UNSUPPORTED`. `ml_provider` reports
+  where the model runs.
+
+The `mlstyle` sample grades the picture with a 1x1 convolution
+(`models/style.onnx`, written by `tools/make_model.py`). Its CPU Only switch
+runs the same matrix itself. `engine_plugins_tests [ml]` checks that the two
+agree within one 8-bit level.
+
+## Plugins out of process (SDK 1.4)
+
+A third-party effect plugin runs in its own process, `premation-plugin-host`.
+A crash, `abort()`, heap corruption or a hang there never ends the engine.
+
+- **Who runs where.** The engine flag `--plugin-isolation` takes `auto` (the
+  default), `off` or `all`. With `auto`, first-party plugins (`com.premation.*`)
+  run in the engine and everything else runs out of process. An engine
+  installed without `premation-plugin-host` runs everything in process.
+- **What stays in process.** A plugin stays in the engine when it has
+  commands, importers, output modules, layer types or expression functions.
+  So does any effect that needs the engine's document or GPU at render time:
+  sequence data, checkouts at other times, overlays, scene depth, a
+  simulation, published channels, LAYER params, buttons, custom UI or
+  supervised params. The log says why (`plugin_in_process`).
+- **The same SDK.** In its process the plugin runs inside an ordinary
+  `PluginHost`, with the same guard, watchdog and worker pool. It renders on
+  the CPU path; its GPU path is used only in process. Its input is the layer
+  at the frame's time.
+- **Faults.** When the process dies or does not answer within 10 s, it is
+  ended, that frame's effect passes through and the failure is reported on
+  `layerErrors`. The next render starts the process again. After three
+  restarts the plugin is off until the next session.
+
+`engine_plugins_tests [oop]` runs `ripple` in a real `premation-plugin-host`.
+It checks for the same pixels as in process, then injects an `abort()` and a
+hang, and checks the restart and the session limit.
+
 ## Sequence data
 
 Per-instance state lives **in the document**, not only in the process:

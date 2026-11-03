@@ -21,6 +21,7 @@
 #include "pr_gpu.h"
 #include "pr_host.h"
 #include "pr_io.h"
+#include "pr_ml.h"
 #include "pr_params.h"
 #include "pr_scene.h"
 #include "pr_types.h"

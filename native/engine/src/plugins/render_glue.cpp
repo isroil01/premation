@@ -315,7 +315,7 @@ bool RenderGlue::apply(rg::PassContext& ctx, const Call& call) {
   }
 
   // ── GPU: the effect records into the engine's own device ──
-  if (gpuEnabled_ && spec->has(PR_OUT_FLAG_GPU_RENDER)) {
+  if (gpuEnabled_ && spec->has(PR_OUT_FLAG_GPU_RENDER) && !host->out_of_process(matchName)) {  // X: the child has no GPU
     std::vector<CheckoutRequest> reqs;
     const CallResult pre = host->pre_render(in, reqs);
     if (pre.fault) return decline("native-plugin-crash", matchName + ": " + pre.message);

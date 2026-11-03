@@ -103,6 +103,8 @@ int param_slot(const EffectSpec& spec, std::uint32_t id) noexcept {
 
 CallResult run_native_cpu(PluginHost& host, const RenderInputs& in, const TexelImage& input, const CheckoutImageFn& checkout,
                           TexelImage& out, const TexelCheckouts::DepthFn& depth, const TexelCheckouts::DepthAtFn& depthAt) {
+  // SDK 1.4 (X): an out-of-process plugin renders in its own process, on this input.
+  if (host.out_of_process(in.matchName)) return host.render_out_of_process(in, input, out);
   CallResult r;
   const EffectSpec* spec = host.effect(in.matchName);
   if (spec == nullptr) {

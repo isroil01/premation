@@ -19,6 +19,7 @@
 #include "pr_gpu.h"
 #include "pr_params.h"
 #include "pr_scene.h"
+#include "pr_ml.h"
 #include "pr_types.h"
 #include "pr_world.h"
 
@@ -248,6 +249,19 @@ typedef struct PrHostSuite {
    *   publishers in the order these declarations give and refuses a cycle (layerErrors). */
   PrErr(PR_CALL* publish_channel)(PrHost* host, const char* name, const double* values, uint32_t count);
   PrErr(PR_CALL* read_channel)(PrHost* host, const char* name, double* out, uint32_t capacity, uint32_t* count);
+
+  /* ── SDK 1.4, the ML suite (pr_ml.h; appended after read_channel; check struct_size >=
+   *    offsetof(PrHostSuite, ml_provider) + sizeof(void*)) ──
+   * ml_load: a model the bundle ships ("models/<name>.onnx"); any selector of an effect. The same
+   *   file is the same id for the plugin's every instance. PR_ERR_NOT_FOUND: no such file;
+   *   PR_ERR_UNSUPPORTED: no runtime in this build; PR_ERR_INVALID_PARAM: a path outside models/.
+   * ml_run: the render selectors only. Inputs are float32 tensors; each output's data / count /
+   *   shape / rank is filled by the host (memory valid until the selector returns). Outputs named
+   *   NULL are the model's outputs in order. PR_ERR_INTERNAL: the run failed (its reason in the log).
+   * ml_provider: where the model runs ("dml", "coreml", "cuda", "cpu"), NUL-terminated. */
+  PrErr(PR_CALL* ml_load)(PrHost* host, const char* bundle_path, uint32_t* out_model);
+  PrErr(PR_CALL* ml_run)(PrHost* host, uint32_t model, const PrTensor* inputs, uint32_t input_count, PrTensor* outputs, uint32_t output_count);
+  PrErr(PR_CALL* ml_provider)(PrHost* host, uint32_t model, char* out, uint32_t capacity);
 } PrHostSuite;
 
 /* SDK 1.3: ui_text's `align`. */

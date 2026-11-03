@@ -18,6 +18,8 @@
 #include "fxstate.hpp"
 #include "journal.hpp"
 #include "expr.hpp"  // SDK 1.4 (E1): motion::expr::set_plugin_functions
+#include "ml.hpp"    // SDK 1.4 (M): the ML suite's runtime
+#include "oop_wire.hpp"  // SDK 1.4 (X): premation-plugin-host messages
 #include "json.hpp"
 #include "log.hpp"
 #include "manifest.hpp"
@@ -77,6 +79,10 @@ struct PrHost {
   std::uint32_t overlaySpace = PR_OVERLAY_SPACE_LAYER;
   /// SDK 1.2 — DRAW_OVERLAY / OVERLAY_DRAG carry the comp camera & co. (the scene callbacks answer).
   bool overlayScene = false;
+  /// SDK 1.4 (M) — ml_run's outputs, alive until the selector returns.
+  std::vector<std::vector<float>> mlOut;
+  std::vector<std::vector<std::int64_t>> mlShapes;
+  std::vector<std::string> mlNames;
   /// SDK 1.4 (C) — PUBLISH_CHANNELS: where publish_channel writes.
   premation::plugins::ChannelValues* published = nullptr;
   /// SDK 1.1 — the render selector's inputs and effect (get_comp_camera, …).
@@ -187,6 +193,15 @@ struct Plugin {
   const PrPluginInfo* info = nullptr;
   /// SDK 1.4 (E1/E2): the module's expression functions by name.
   std::map<std::string, PrExprFn, std::less<>> exprFns;
+  /// SDK 1.4 (M): the models its instances loaded (id = index + 1), by bundle path.
+  std::mutex mlMutex;
+  std::vector<std::shared_ptr<ml::Model>> models;
+  std::map<std::string, std::uint32_t, std::less<>> modelIds;
+  /// SDK 1.4 (X): the plugin runs in a premation-plugin-host (its module is never loaded here).
+  bool outOfProcess = false;
+  std::mutex oopMutex;
+  std::unique_ptr<OopChannel> oop;
+  std::uint32_t oopRestarts = 0;
   PluginStatus status = PluginStatus::failed;
   std::string error;
   /// SDK 1.2: the presets the bundle ships (manifest `presets`, presets/*.json).
@@ -421,8 +436,78 @@ struct PluginHost::Impl {
   }
 
   /// One selector call, fully guarded: journal slot, watchdog slot, fault guard.
+  /// SDK 1.4 (X): what keeps an effect in process — the engine's document or GPU at render time.
+  static std::string out_of_process_refusal(const EffectSpec& e) {
+    constexpr std::uint32_t kNeedsEngine = PR_OUT_FLAG_SEQUENCE_DATA | PR_OUT_FLAG_WIDE_TIME_INPUT | PR_OUT_FLAG_SEND_UPDATE_PARAMS_UI |
+                                           PR_OUT_FLAG_CUSTOM_OVERLAY | PR_OUT_FLAG_SAMPLES_TIME | PR_OUT_FLAG_USES_SCENE_DEPTH |
+                                           PR_OUT_FLAG_STATEFUL | PR_OUT_FLAG_PUBLISHES;
+    if ((e.outFlags & kNeedsEngine) != 0) return "sequence data, other times, overlays, scene depth, a simulation or channels";
+    for (const ParamSpec& s : e.params) {
+      if (s.type == PR_PARAM_LAYER) return "another layer (a LAYER param)";
+      if (s.type == PR_PARAM_BUTTON || s.type == PR_PARAM_CUSTOM_UI || (s.flags & PR_PARAM_FLAG_SUPERVISE) != 0) return "Effect Controls callbacks";
+    }
+    return {};
+  }
+
+  /// SDK 1.4 (X): an effect plugin the options send out of process (commands, importers, output
+  /// modules, layer types and expression functions run on the engine's document side).
+  [[nodiscard]] bool wants_out_of_process(const Plugin& p) const {
+    if (!options.spawnOutOfProcess || !options.runOutOfProcess || !options.runOutOfProcess(p.manifest.id)) return false;
+    const Manifest& mf = p.manifest;
+    return !mf.effects.empty() && mf.commands.empty() && mf.importers.empty() && mf.outputModules.empty() && mf.layerTypes.empty() &&
+           mf.expressionFunctions.empty();
+  }
+
+  /// SDK 1.4 (X): start the plugin's premation-plugin-host and take its effects from there. False
+  /// (+ why, logged) when it cannot run out of process: the caller loads it here instead.
+  bool load_out_of_process(Plugin& p, std::string& why) {
+    const std::string& id = p.manifest.id;
+    const auto refuse = [&](std::string w) {
+      why = std::move(w);
+      PREMATION_LOG(warn, "plugin_in_process").kv("plugin", id).kv("why", why);
+      return false;
+    };
+    std::unique_ptr<OopChannel> ch = options.spawnOutOfProcess(p.dir, why);
+    if (!ch) return refuse("its process did not start: " + why);
+    std::vector<std::uint8_t> reply;
+    if (!ch->call(static_cast<std::uint32_t>(oop::Kind::describe), {}, reply, 30000, why)) return refuse(why);
+    std::vector<EffectSpec> specs;
+    if (!oop::specs_from_json(std::string_view(reinterpret_cast<const char*>(reply.data()), reply.size()), specs, why)) {  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+      return refuse(why);
+    }
+    for (const EffectSpec& s : specs) {
+      if (std::string need = out_of_process_refusal(s); !need.empty()) return refuse(s.matchName + " needs " + need);
+    }
+    std::vector<std::unique_ptr<EffectSpec>> described;
+    for (const ManifestEffect& me : p.manifest.effects) {
+      const auto it = std::ranges::find_if(specs, [&](const EffectSpec& s) { return s.matchName == me.matchName; });
+      if (it == specs.end()) return refuse("its process has no effect '" + me.matchName + "'");
+      auto e = std::make_unique<EffectSpec>(std::move(*it));
+      e->name = me.name;
+      e->category = me.category;
+      e->publishes = me.publishes;
+      e->reads = me.reads;
+      e->pluginId = id;
+      e->main = nullptr;  // never called here (invoke refuses a null entry)
+      e->ready = true;
+      described.push_back(std::move(e));
+    }
+    p.effects = std::move(described);
+    p.oop = std::move(ch);
+    p.outOfProcess = true;
+    p.status = PluginStatus::loaded;
+    PREMATION_LOG(info, "plugin_out_of_process").kv("plugin", id).kv("effects", p.effects.size());
+    return true;
+  }
+
   CallResult invoke(const std::string& pluginId, PrEffectMainFn fn, PrCmd cmd, const PrInData* in, PrOutData* out,
                     PrParamDef* const* params, PrWorld* output, void* extra) {
+    if (fn == nullptr) {  // SDK 1.4 (X): an out-of-process effect has no entry point here
+      CallResult none;
+      none.skipped = true;
+      none.message = "the plugin runs out of process";
+      return none;
+    }
     Frame f;
     f.fn = fn;
     f.cmd = cmd;
@@ -1134,6 +1219,64 @@ PrErr PR_CALL cb_read_channel(PrHost* h, const char* name, double* out, std::uin
   return PR_ERR_NONE;
 }
 
+// SDK 1.4 (M): the ML suite.
+PrErr PR_CALL cb_ml_load(PrHost* h, const char* path, std::uint32_t* out) {
+  if (h == nullptr || h->host == nullptr || h->effect == nullptr) return PR_ERR_INVALID_CALLBACK;
+  if (path == nullptr || out == nullptr) return PR_ERR_INVALID_PARAM;
+  std::string why;
+  const PrErr e = h->host->ml_load(h->effect->pluginId, std::string_view(path, strnlen(path, 512)), *out, why);
+  if (e != PR_ERR_NONE) {
+    PREMATION_LOG(warn, "plugin_ml").kv("plugin", h->effect->pluginId).kv("why", why);
+  }
+  return e;
+}
+
+PrErr PR_CALL cb_ml_run(PrHost* h, std::uint32_t model, const PrTensor* inputs, std::uint32_t inputCount, PrTensor* outputs, std::uint32_t outputCount) {
+  if (h == nullptr || h->host == nullptr || h->effect == nullptr || !h->renderSelector) return PR_ERR_INVALID_CALLBACK;
+  if ((inputs == nullptr && inputCount > 0) || (outputs == nullptr && outputCount > 0) || inputCount > 64 || outputCount > 64) {
+    return PR_ERR_INVALID_PARAM;
+  }
+  std::vector<MlTensorIn> in;
+  for (std::uint32_t i = 0; i < inputCount; ++i) {
+    const PrTensor& t = inputs[i];  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic): the SDK's array
+    if (t.struct_size < sizeof(PrTensor) || t.rank > PR_TENSOR_MAX_RANK || (t.data == nullptr && t.count > 0)) return PR_ERR_INVALID_PARAM;
+    MlTensorIn x;
+    x.name = t.name != nullptr ? std::string(t.name, strnlen(t.name, 256)) : std::string();
+    x.data = t.data;
+    x.count = static_cast<std::size_t>(t.count);
+    x.shape.assign(std::begin(t.shape), std::begin(t.shape) + t.rank);
+    in.push_back(std::move(x));
+  }
+  h->mlNames.assign(outputCount, std::string());
+  for (std::uint32_t i = 0; i < outputCount; ++i) {
+    const PrTensor& t = outputs[i];  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+    if (t.struct_size < sizeof(PrTensor)) return PR_ERR_INVALID_PARAM;
+    if (t.name != nullptr) h->mlNames[i] = std::string(t.name, strnlen(t.name, 256));
+  }
+  std::string why;
+  if (!h->host->ml_run(h->effect->pluginId, model, in, h->mlOut, h->mlShapes, h->mlNames, why)) {
+    PREMATION_LOG(warn, "plugin_ml").kv("plugin", h->effect->pluginId).kv("why", why);
+    return PR_ERR_INTERNAL;
+  }
+  for (std::uint32_t i = 0; i < outputCount && i < h->mlOut.size(); ++i) {
+    PrTensor& t = outputs[i];  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+    t.data = h->mlOut[i].data();
+    t.count = h->mlOut[i].size();
+    t.rank = static_cast<std::uint32_t>(std::min<std::size_t>(h->mlShapes[i].size(), PR_TENSOR_MAX_RANK));
+    for (std::uint32_t k = 0; k < t.rank; ++k) t.shape[k] = h->mlShapes[i][k];  // NOLINT(cppcoreguidelines-pro-bounds-constant-array-index)
+  }
+  return PR_ERR_NONE;
+}
+
+PrErr PR_CALL cb_ml_provider(PrHost* h, std::uint32_t model, char* out, std::uint32_t capacity) {
+  if (h == nullptr || h->host == nullptr || h->effect == nullptr) return PR_ERR_INVALID_CALLBACK;
+  if (out == nullptr || capacity == 0) return PR_ERR_INVALID_PARAM;
+  const std::string p = h->host->ml_provider(h->effect->pluginId, model);
+  if (p.empty()) return PR_ERR_NOT_FOUND;
+  std::snprintf(out, capacity, "%s", p.c_str());
+  return PR_ERR_NONE;
+}
+
 PrErr PR_CALL cb_ui_text(PrHost* h, double x, double y, const char* utf8, double size, std::uint32_t align, const float* rgba) {
   if (h == nullptr || h->cmd != PR_CMD_DRAW_PARAM_UI) return PR_ERR_INVALID_CALLBACK;
   if (utf8 == nullptr || !std::isfinite(size)) return PR_ERR_INVALID_PARAM;
@@ -1337,6 +1480,9 @@ PluginHost::PluginHost(HostOptions options) : impl_(std::make_unique<Impl>(*this
   s.get_sim_state = &cb_get_sim_state;  // SDK 1.4
   s.publish_channel = &cb_publish_channel;  // SDK 1.4 (C)
   s.read_channel = &cb_read_channel;
+  s.ml_load = &cb_ml_load;  // SDK 1.4 (M)
+  s.ml_run = &cb_ml_run;
+  s.ml_provider = &cb_ml_provider;
 
   int threads = m.options.threads;
   if (threads <= 0) threads = std::clamp(static_cast<int>(std::thread::hardware_concurrency()) - 1, 0, 16);
@@ -1605,6 +1751,8 @@ Plugin* PluginHost::Impl::load_bundle(const fs::path& dir, Plugin* replacing, st
   } else if (std::string why; !sdk_compatible(p->manifest.sdkMajor, p->manifest.sdkMinor, why)) {
     p->status = PluginStatus::failed;
     p->error = why;
+  } else if (std::string oopWhy; wants_out_of_process(*p) && load_out_of_process(*p, oopWhy)) {
+    // SDK 1.4 (X): described by its premation-plugin-host; no code of it runs in this process.
   } else {
     p->binary = dir / p->manifest.binary;
     const fs::path loadFrom = options.shadowDir.empty() ? p->binary : shadow_copy(*p, err);
@@ -1699,7 +1847,7 @@ Plugin* PluginHost::Impl::load_bundle(const fs::path& dir, Plugin* replacing, st
   if (raw->status == PluginStatus::loaded) {
     const std::scoped_lock serial(raw->serial);
     for (auto& e : raw->effects) {
-      if (!setup_effect(*raw, *e)) {
+      if (!raw->outOfProcess && !setup_effect(*raw, *e)) {
         raw->status = PluginStatus::failed;
         break;
       }
@@ -2608,6 +2756,104 @@ CallResult PluginHost::publish_channels(const RenderInputs& in, ChannelValues& o
   return r;
 }
 
+PrErr PluginHost::ml_load(std::string_view pluginId, std::string_view bundlePath, std::uint32_t& id, std::string& why) {
+  // Only a model the bundle ships: models/<name>.onnx, no way out of the folder.
+  const bool shaped = bundlePath.starts_with("models/") && bundlePath.ends_with(".onnx") && bundlePath.size() > 12 &&
+                      bundlePath.find("..") == std::string_view::npos && bundlePath.find('\\') == std::string_view::npos &&
+                      bundlePath.find(':') == std::string_view::npos;
+  if (!shaped) {
+    why = "'" + std::string(bundlePath) + "' is not a models/<name>.onnx path in the bundle";
+    return PR_ERR_INVALID_PARAM;
+  }
+  Plugin* p = nullptr;
+  {
+    const std::shared_lock lock(impl_->pluginsMutex);
+    for (const auto& q : impl_->plugins) {
+      if (q->manifest.id == pluginId && q->status == PluginStatus::loaded) p = q.get();
+    }
+  }
+  if (p == nullptr) {
+    why = "no loaded plugin '" + std::string(pluginId) + "'";
+    return PR_ERR_NOT_FOUND;
+  }
+  const std::scoped_lock lock(p->mlMutex);
+  if (const auto it = p->modelIds.find(bundlePath); it != p->modelIds.end()) {
+    id = it->second;
+    return PR_ERR_NONE;
+  }
+  if (!ml::runtime_available()) {
+    why = "this engine build has no ONNX Runtime";
+    return PR_ERR_UNSUPPORTED;
+  }
+  const fs::path file = p->dir / fs::path(std::u8string(reinterpret_cast<const char8_t*>(bundlePath.data()), bundlePath.size()));  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+  std::error_code ec;
+  if (!fs::is_regular_file(file, ec)) {
+    why = "the bundle has no " + std::string(bundlePath);
+    return PR_ERR_NOT_FOUND;
+  }
+  std::shared_ptr<ml::Model> m = ml::load(file, why);
+  if (m == nullptr) return PR_ERR_INTERNAL;
+  p->models.push_back(std::move(m));
+  id = static_cast<std::uint32_t>(p->models.size());
+  p->modelIds.emplace(std::string(bundlePath), id);
+  PREMATION_LOG(info, "plugin_ml_model").kv("plugin", std::string(pluginId)).kv("model", std::string(bundlePath)).kv("provider", p->models.back()->provider());
+  return PR_ERR_NONE;
+}
+
+bool PluginHost::ml_run(std::string_view pluginId, std::uint32_t id, std::span<const MlTensorIn> inputs, std::vector<std::vector<float>>& outData,
+                        std::vector<std::vector<std::int64_t>>& outShapes, std::vector<std::string>& outNames, std::string& why) {
+  const auto model_of = [this](std::string_view plugin, std::uint32_t mid) -> std::shared_ptr<ml::Model> {
+    const std::shared_lock lock(impl_->pluginsMutex);
+    for (const auto& q : impl_->plugins) {
+      if (q->manifest.id != plugin) continue;
+      const std::scoped_lock ml(q->mlMutex);
+      if (mid >= 1 && mid <= q->models.size()) return q->models[mid - 1];
+    }
+    return nullptr;
+  };
+  const std::shared_ptr<ml::Model> model = model_of(pluginId, id);
+  if (model == nullptr) {
+    why = "no model " + std::to_string(id) + " (ml_load it first)";
+    return false;
+  }
+  std::vector<ml::Tensor> in;
+  in.reserve(inputs.size());
+  for (const MlTensorIn& t : inputs) {
+    ml::Tensor x;
+    x.name = t.name;
+    x.shape = t.shape;
+    x.data.assign(t.data, t.data + t.count);  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic): the plugin's tensor
+    in.push_back(std::move(x));
+  }
+  std::vector<ml::Tensor> out;
+  for (const std::string& n : outNames) out.push_back(ml::Tensor{n, {}, {}});
+  if (!model->run(in, out, why)) return false;
+  ml::note_run();
+  outData.clear();
+  outShapes.clear();
+  outNames.clear();
+  for (ml::Tensor& t : out) {
+    outNames.push_back(t.name);
+    outShapes.push_back(std::move(t.shape));
+    outData.push_back(std::move(t.data));
+  }
+  return true;
+}
+
+std::string PluginHost::ml_provider(std::string_view pluginId, std::uint32_t id) const {
+  const auto model_of = [this](std::string_view plugin, std::uint32_t mid) -> std::shared_ptr<ml::Model> {
+    const std::shared_lock lock(impl_->pluginsMutex);
+    for (const auto& q : impl_->plugins) {
+      if (q->manifest.id != plugin) continue;
+      const std::scoped_lock ml(q->mlMutex);
+      if (mid >= 1 && mid <= q->models.size()) return q->models[mid - 1];
+    }
+    return nullptr;
+  };
+  const std::shared_ptr<ml::Model> model = model_of(pluginId, id);
+  return model != nullptr ? model->provider() : std::string();
+}
+
 CallResult PluginHost::pre_render(const RenderInputs& in, std::vector<CheckoutRequest>& out, PreRenderInfo* info) {
   Impl& m = *impl_;
   CallResult r;
@@ -2619,6 +2865,11 @@ CallResult PluginHost::pre_render(const RenderInputs& in, std::vector<CheckoutRe
     info->request = info->result = PrRect{0, 0, in.worldW, in.worldH};
   }
   if (!resolve(*this, m, in, e, p, r)) return r;
+  if (p->outOfProcess) {  // SDK 1.4 (X): its input at the frame's time; the child pre-renders for itself
+    if (!e->has(PR_OUT_FLAG_GENERATOR)) out.push_back({0, 0, in.layerTime});
+    r.ok = true;
+    return r;
+  }
   if (!e->has(PR_OUT_FLAG_SMART_RENDER)) {
     // A non-smart effect reads its input at the current time, nothing else.
     if (!e->has(PR_OUT_FLAG_GENERATOR)) out.push_back({0, 0, in.layerTime});
@@ -2648,6 +2899,60 @@ CallResult PluginHost::pre_render(const RenderInputs& in, std::vector<CheckoutRe
     info->result = x.result_rect;
   }
   if (x.pre_render_data != 0) m.handles.dispose(x.pre_render_data);  // G1: pre-render data is per call (see PLUGIN_SDK.md)
+  return r;
+}
+
+bool PluginHost::out_of_process(std::string_view matchName) const {
+  const std::shared_lock lock(impl_->pluginsMutex);
+  const auto it = impl_->effects.find(std::string(matchName));
+  if (it == impl_->effects.end()) return false;
+  const Plugin* p = impl_->plugin_of(it->second);
+  return p != nullptr && p->outOfProcess;
+}
+
+namespace {
+constexpr std::uint32_t kOopMaxRestarts = 3;
+}  // namespace
+
+CallResult PluginHost::render_out_of_process(const RenderInputs& in, const TexelImage& input, TexelImage& out) {
+  Impl& m = *impl_;
+  CallResult r;
+  EffectSpec* e = nullptr;
+  Plugin* p = nullptr;
+  if (!resolve(*this, m, in, e, p, r)) return r;
+  const std::scoped_lock lock(p->oopMutex);
+  std::string why;
+  if (!p->oop || !p->oop->alive()) {
+    if (p->oopRestarts >= kOopMaxRestarts) {
+      r.message = "its process ended " + std::to_string(p->oopRestarts) + " times; the plugin is off until the next session";
+      return r;
+    }
+    ++p->oopRestarts;
+    p->oop = m.options.spawnOutOfProcess ? m.options.spawnOutOfProcess(p->dir, why) : nullptr;
+    std::vector<std::uint8_t> described;
+    if (!p->oop || !p->oop->call(static_cast<std::uint32_t>(oop::Kind::describe), {}, described, 30000, why)) {
+      r.message = "its process did not start again: " + why;
+      return r;
+    }
+    PREMATION_LOG(warn, "plugin_process_restarted").kv("plugin", p->manifest.id).kv("restarts", p->oopRestarts);
+  }
+  oop::RenderRequest req;
+  req.in = in;
+  req.input = input;
+  std::vector<std::uint8_t> reply;
+  if (!p->oop->call(static_cast<std::uint32_t>(oop::Kind::render), oop::encode(req), reply, m.options.outOfProcessTimeoutMs, why)) {
+    PREMATION_LOG(error, "plugin_process_fault").kv("plugin", p->manifest.id).kv("why", why);
+    r.message = why;
+    return r;
+  }
+  oop::RenderReply rep;
+  if (!oop::decode(reply, rep)) {
+    r.message = "its process answered something unreadable";
+    return r;
+  }
+  r.ok = rep.ok;
+  r.message = rep.message;
+  out = std::move(rep.output);
   return r;
 }
 
