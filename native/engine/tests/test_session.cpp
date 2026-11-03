@@ -2053,8 +2053,14 @@ TEST_CASE("idle render-ahead: a prefetch that gave way to a paused viewport fram
   // The quiet period; then the first prefetch (frame 41) is held in the builder.
   builder.close();
   h.drainBuilds = false;
-  for (int i = 0; i < 400 && !builder.entered(); ++i) h.advance(std::chrono::milliseconds(1));
-  REQUIRE(builder.entered());
+  // Real time too: the prefetch runs on the worker thread, which a loaded machine may not have scheduled yet.
+  for (int i = 0; i < 2000 && !builder.entered(); ++i) {
+    h.advance(std::chrono::milliseconds(1));
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  const bool held = builder.entered();
+  if (!held) builder.open();  // a failed wait never leaves the worker parked (the suite would hang)
+  REQUIRE(held);
   // A built frame for the viewport is wanted, with no command: it is queued
   // behind the prefetch, which gives way when it goes on.
   h.sink.want_build(1);
