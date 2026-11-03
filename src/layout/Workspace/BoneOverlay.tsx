@@ -33,6 +33,7 @@ import {
 } from '@core/rig/weightPaint';
 import { useRigVertexSelection, selectRigVertex } from '@stores/rigVertexStore';
 import { useRigSelectionStore } from '@stores/rigSelectionStore';
+import { useRigTarget } from '@hooks/useRigTarget';
 import { RigPoseButtons } from '@layout/Inspector/RigPoseButtons';
 import { t } from '@core/i18n';
 
@@ -157,7 +158,8 @@ export function BoneOverlay({ host }: { host?: TrackPointHost } = {}): JSX.Eleme
   const boneWeightMode = useUIStore((s) => s.boneWeightMode);
   const brushRadius = useUIStore((s) => s.boneBrushRadius);
   const setBrushRadius = useUIStore((s) => s.setBoneBrushRadius);
-  const selectedNodeId = useSelectionStore((s) => s.ids[0]);
+  // A picked PART of a character edits the character's rig (its bone selected).
+  const selectedNodeId = useRigTarget(useSelectionStore((s) => s.ids[0])) ?? undefined;
   const rigSelectionNodeId = useRigSelectionStore((s) => s.nodeId);
   const rigSelectedBoneId = useRigSelectionStore((s) => s.boneId);
   const rigSelectedControllerId = useRigSelectionStore((s) => s.controllerId);

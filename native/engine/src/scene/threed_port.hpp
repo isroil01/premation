@@ -54,6 +54,9 @@ class Scene3DHost {
   /// `srcId(id)`: the node whose animation a walked id samples (a comp-instance
   /// clone samples its source node's tracks).
   [[nodiscard]] virtual std::string anim_id3d(const std::string& id) const { return id; }
+  /// Character rig: the bone link `id` composes under its character (core/bone_link.hpp), nullopt when it is
+  /// not a bound part.
+  virtual std::optional<motion::xf::Mat2D> link3d(const std::string& /*id*/) { return std::nullopt; }
 };
 
 /// One 3D layer's resolved state (the `is3D` locals of the layer walk).
@@ -175,6 +178,8 @@ class Scene3D {
  private:
   [[nodiscard]] motion::xf::Projected project(motion::xf::Vec3 p) const;
   std::optional<motion::xf::Mat4> parent_world_3d(const std::string& id);
+  /// parent_world_3d without `id`'s own bone link (what parent3dCache_ holds, per parent).
+  std::optional<motion::xf::Mat4> parent_world_3d_of_parent(const std::string& id);
   std::optional<motion::xf::Mat4> parent_world_matrix(const std::string& id);
   motion::xf::Vec3 to_world_point(const std::string& id, motion::xf::Vec3 p);
   motion::xf::Vec3 node_world_position(const doc::Node& n);

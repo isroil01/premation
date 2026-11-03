@@ -4,6 +4,8 @@
 #include <limits>
 #include <vector>
 
+#include "anim.hpp"
+#include "bone_link.hpp"
 #include "scene.hpp"
 
 namespace premation::scene {
@@ -99,9 +101,22 @@ xf::Mat2D RawWorld::world_matrix(const std::string& nodeId) {
     const std::string& id = path[static_cast<std::size_t>(i)];
     const auto l = local(id);
     const xf::Mat2D lm = l ? xf::local_matrix(*l) : xf::Mat2D{};
+    const bool root = i == static_cast<std::ptrdiff_t>(path.size()) - 1;
     if (cycleFrom >= 0 && i >= cycleFrom) world = lm;
-    else if (i == static_cast<std::ptrdiff_t>(path.size()) - 1) world = above ? xf::multiply(*above, lm) : lm;
-    else world = xf::multiply(world, lm);
+    else if (root && !above) world = lm;
+    else {
+      // A part bound to a bone of its character rides the bone's link (bone_link.hpp), raw comp time.
+      const xf::Mat2D parentWorld = root ? *above : world;
+      std::optional<xf::Mat2D> link;
+      if (const doc::Node* n = d_.node(id); n != nullptr && doc::bound_bone(d_, *n) != nullptr) {
+        RigSampler s;
+        const std::string gid = *n->parent;
+        s.sample = [this, gid](std::string_view p, double t) { return doc::anim_sample(d_, expr_, cache_, gid, p, t); };
+        s.sampleData = [](std::string_view, double) -> std::optional<Json> { return std::nullopt; };
+        link = doc::bone_link(*d_.node(gid), *doc::bound_bone(d_, *n), t_, s);
+      }
+      world = xf::multiply(link ? xf::multiply(parentWorld, *link) : parentWorld, lm);
+    }
     world_[id] = world;
   }
   return world;

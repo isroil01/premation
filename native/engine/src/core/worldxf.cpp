@@ -9,6 +9,7 @@
 #include <set>
 #include <vector>
 
+#include "bone_link.hpp"
 #include "readmodel.hpp"
 #include "scene.hpp"
 #include "timeline.hpp"
@@ -103,9 +104,11 @@ std::optional<motion::xf::Local2D> local_at(const SpaceCtx& c, std::string_view 
 }
 
 /// `worldMatrixOf(node, localOf, parentOf)`: world = parentWorld · local up the
-/// chain; a node ON a parent cycle is a root.
-template <class LocalOf>
-motion::xf::Mat2D world_matrix_of(const Document& d, std::string_view node, const LocalOf& localOf) {
+/// chain; a node ON a parent cycle is a root. A part bound to a bone of its
+/// character composes the bone's link between the two (bone_link.hpp).
+template <class LocalOf, class LinkOf>
+motion::xf::Mat2D world_matrix_of(const Document& d, std::string_view node, const LocalOf& localOf,
+                                  const LinkOf& linkOf) {
   using motion::xf::Mat2D;
   const Mat2D identity{1, 0, 0, 1, 0, 0};
   std::vector<std::string> path;
@@ -132,6 +135,7 @@ motion::xf::Mat2D world_matrix_of(const Document& d, std::string_view node, cons
     const Mat2D lm = local ? motion::xf::local_matrix(*local) : identity;
     if (cycleFrom != std::string::npos && k >= cycleFrom) world = lm;
     else if (k == path.size() - 1) world = lm;
+    else if (const std::optional<Mat2D> link = linkOf(path[k])) world = motion::xf::multiply(motion::xf::multiply(world, *link), lm);
     else world = motion::xf::multiply(world, lm);
   }
   return world;
@@ -143,7 +147,12 @@ motion::xf::Mat2D world_matrix_of(const Document& d, std::string_view node, cons
 /// static geometry left a 3D layer under a keyed 2D null where the null was
 /// authored while the frame drew it where the null had moved.
 motion::xf::Mat2D world_2d_animated(const SpaceCtx& c, std::string_view node, double seconds) {
-  return world_matrix_of(c.d, node, [&c, seconds](const std::string& id) { return local_at(c, id, seconds); });
+  return world_matrix_of(
+      c.d, node, [&c, seconds](const std::string& id) { return local_at(c, id, seconds); },
+      [&c, seconds](const std::string& id) -> std::optional<motion::xf::Mat2D> {
+        const Node* n = c.d.node(id);
+        return n != nullptr ? bone_link_at(c.d, c.view, c.expr, c.cache, *n, seconds) : std::nullopt;
+      });
 }
 
 /// threeD.ts `readNode3D` / anchor.ts `readNodeAnchor`: a Transform number, else 0.
@@ -179,7 +188,14 @@ std::optional<motion::xf::Node3DTransform> resolve_node_3d(const SpaceCtx& c, co
   return v;
 }
 
-/// liveWorld3d.ts `parentWorldMatrixAt(node, seconds)` (+ nodeMatrix `parentWorld3d`).
+/// The bone link `n` composes under its character, lifted to 3D (bone_link.hpp); nullopt when not bound.
+std::optional<motion::xf::Mat4> link_3d_at(const SpaceCtx& c, const Node& n, double seconds) {
+  const auto link = bone_link_at(c.d, c.view, c.expr, c.cache, n, seconds);
+  return link ? std::optional<motion::xf::Mat4>(motion::xf::from_mat2d(*link)) : std::nullopt;
+}
+
+/// liveWorld3d.ts `parentWorldMatrixAt(node, seconds)` (+ nodeMatrix `parentWorld3d`). A part of a character
+/// (bound to a bone) sits in its bone's space: the link follows the group's world, 3D or not.
 std::optional<motion::xf::Mat4> parent_world_matrix_at(const SpaceCtx& c, std::string_view node, double seconds) {
   const Node* n = c.d.node(node);
   if (n == nullptr || !n->parent) return std::nullopt;
@@ -193,23 +209,30 @@ std::optional<motion::xf::Mat4> parent_world_matrix_at(const SpaceCtx& c, std::s
     chain.push_back(p);
     if (is_3d_enabled(*p)) any3d = true;
   }
+  const auto withOwnLink = [&](motion::xf::Mat4 parent) {
+    const auto link = link_3d_at(c, *n, seconds);
+    return link ? motion::xf::multiply(parent, *link) : parent;
+  };
   if (any3d) {
     std::optional<motion::xf::Mat4> acc;
     for (std::size_t k = chain.size(); k-- > 0;) {
       const Node& a = *chain[k];
       if (!is_3d_enabled(a)) {
-        acc = motion::xf::from_mat2d(world_2d_animated(c, a.id, seconds));
+        acc = motion::xf::from_mat2d(world_2d_animated(c, a.id, seconds));  // the 2D walk composes a's link
         continue;
       }
       const auto local = resolve_node_3d(c, a, seconds);
       if (!local) continue;
+      if (acc) {
+        if (const auto link = link_3d_at(c, a, seconds)) acc = motion::xf::multiply(*acc, *link);
+      }
       const motion::xf::Mat4 own = motion::xf::compose_node_3d(*local);
       acc = acc ? motion::xf::multiply(*acc, own) : own;
     }
-    if (acc) return acc;
+    if (acc) return withOwnLink(*acc);
   }
   // Pure-2D chain: the parent's own world affine, lifted (z untouched, AE's rule).
-  return motion::xf::from_mat2d(world_2d_animated(c, parentId, seconds));
+  return withOwnLink(motion::xf::from_mat2d(world_2d_animated(c, parentId, seconds)));
 }
 
 /// `toWorldPointAt(node, seconds, p)`: a point in the node's PARENT space → world.
@@ -531,6 +554,8 @@ motion::xf::Mat2D world_2d_at(const PCtx& c, std::string_view node, double secon
     const Mat2D lm = local ? motion::xf::local_matrix(*local) : identity;
     if (cycleFrom != std::string::npos && k >= cycleFrom) world = lm;
     else if (k == path.size() - 1) world = lm;
+    else if (const auto link = bone_link_at(c.d, c.view, c.expr, c.cache, *c.d.node(path[k]), seconds))
+      world = motion::xf::multiply(motion::xf::multiply(world, *link), lm);
     else world = motion::xf::multiply(world, lm);
   }
   return world;

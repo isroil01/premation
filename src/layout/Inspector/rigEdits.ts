@@ -330,6 +330,17 @@ export function ikChainLengthCommands(nodeId: string, boneId: string, n: number)
   return [set(nodeId, rigPaths.ikProp(boneId, 'chainLength'), values.scalar(Math.max(1, Math.min(8, Math.round(n)))))];
 }
 
+/** IK limb Stretch: the most the two-bone limb may lengthen to reach its goal (ratio; 0 = never). */
+export function ikStretchCommands(nodeId: string, boneId: string, ratio: number): Command[] {
+  const v = ratio <= 1 ? 0 : Math.min(4, ratio);
+  return [set(nodeId, rigPaths.ikProp(boneId, 'stretch'), values.scalar(v))];
+}
+
+/** IK limb Softness: px over which the limb eases into full reach (0 = the joint snaps straight). */
+export function ikSoftnessCommands(nodeId: string, boneId: string, px: number): Command[] {
+  return [set(nodeId, rigPaths.ikProp(boneId, 'softness'), values.scalar(Math.max(0, Math.min(500, px))))];
+}
+
 /** The goal's position at the playhead (a key when it is keyframed). */
 export function ikTargetCommands(nodeId: string, boneId: string, target: { x: number; y: number }, seconds: number, autoKey = rigAutoKey()): Command[] {
   return rigValueCommands(nodeId, rigPaths.ikProp(boneId, 'target'), values.vec2(target.x, target.y), seconds, autoKey);

@@ -28,7 +28,8 @@ export const rigPaths = {
   boneProp: (boneId: string, prop: 'position' | 'rotation' | 'scale' | 'parent' | 'length' | 'influenceRadius' | 'restPosition' | 'restRotation' | 'restScale'): string =>
     `skeleton/bones/${boneId}/${prop}`,
   ik: (boneId: string): string => `skeleton/bones/${boneId}/ik`,
-  ikProp: (boneId: string, prop: 'target' | 'pole' | 'mode' | 'chainLength'): string => `skeleton/bones/${boneId}/ik/${prop}`,
+  ikProp: (boneId: string, prop: 'target' | 'pole' | 'mode' | 'chainLength' | 'stretch' | 'softness'): string =>
+    `skeleton/bones/${boneId}/ik/${prop}`,
   skeletonMesh: (field: 'density' | 'expansion' | 'mode'): string => `skeleton/mesh/${field}`,
   weightPaint: 'skeleton/weightPaint',
   controllers: 'skeleton/controllers',

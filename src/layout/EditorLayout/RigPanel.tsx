@@ -32,12 +32,14 @@ import { PuppetControls } from '@layout/Inspector/PuppetControls';
 import { renderInspector } from '@layout/Inspector/InspectorContent';
 import styles from './panels.module.css';
 import { t } from '@core/i18n';
+import { useRigTarget } from '@hooks/useRigTarget';
 
 const NO_BONES: readonly string[] = [];
 
 export function RigPanel(): JSX.Element {
   const selected = useSelectionStore((s) => s.ids);
-  const primary = selected[0] ?? null;
+  // A picked PART of a character shows the character's rig (its bone selected).
+  const primary = useRigTarget(selected[0] ?? null);
   const [query, setQuery] = useState('');
 
   return (

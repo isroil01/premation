@@ -24,6 +24,8 @@ import { engine } from '@core/engine/engineInstance';
 import { edit, reportEngineError } from '@core/engine/uiEdits';
 import { compTime, propRefForTrack } from '@core/engine/propRefs';
 import { useSelectionStore } from '@stores/selectionStore';
+import { useRigSelectionStore } from '@stores/rigSelectionStore';
+import { useUIStore } from '@stores/uiStore';
 import { documentMirror } from '@stores/documentMirror';
 import { canBe3DLayer } from '@core/mirror/layerKinds';
 import { childOrderOf } from '@core/mirror/layerTree';
@@ -262,6 +264,38 @@ export async function arrangeLayersEdit(ids: readonly string[], action: StackAct
  * to different compositions (a layer cannot move between compositions).
  */
 export async function groupSelectedLayersEdit(): Promise<boolean> {
+  return groupSelectionUnder('Group Layers', (layers) => ({ type: 'groupLayers', layers, name: 'Group' }));
+}
+
+/**
+ * Rig Character: the selected layers become one character (`createCharacter`:
+ * a group with a bone per layer, IK legs and controllers, each layer bound to
+ * its bone), gathered like Group Selection. The character is selected and the
+ * Bone tool armed in Pose mode, ready to animate. False for layers of
+ * different compositions.
+ */
+export async function rigCharacterEdit(name: string): Promise<boolean> {
+  return groupSelectionUnder(
+    'Rig Character',
+    (layers) => ({ type: 'createCharacter', layers, name }),
+    (character) => {
+      useRigSelectionStore.getState().selectBone(character, null);
+      const ui = useUIStore.getState();
+      ui.setActiveTool('bone');
+      ui.setBoneRigMode('pose');
+    },
+  );
+}
+
+/**
+ * Gathers the selection under the first layer's parent (keeping world poses),
+ * then runs `wrap` on it in the same batch and selects the layer it returns.
+ */
+async function groupSelectionUnder(
+  label: string,
+  wrap: (layers: string[]) => Command,
+  then?: (layer: string) => void,
+): Promise<boolean> {
   const m = documentMirror();
   const layers = useSelectionStore.getState().ids.filter((id) => m.layer(id) !== undefined);
   if (layers.length === 0) return true;
@@ -279,11 +313,14 @@ export async function groupSelectedLayersEdit(): Promise<boolean> {
   if (moved.length > 0) {
     cmds.push({ type: 'setParent', layers: moved, ...(target !== comp ? { parent: target } : {}), keepWorldTransform: true });
   }
-  cmds.push({ type: 'groupLayers', layers, name: 'Group' });
-  const res = await edit('Group Layers', cmds);
+  cmds.push(wrap(layers));
+  const res = await edit(label, cmds);
   if (res.ok) {
     const group = (res.value[res.value.length - 1] as { layer?: string } | undefined)?.layer;
-    if (group) useSelectionStore.getState().set([group]);
+    if (group) {
+      useSelectionStore.getState().set([group]);
+      then?.(group);
+    }
   }
   return true;
 }

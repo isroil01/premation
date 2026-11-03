@@ -260,9 +260,54 @@ export async function readSkeleton(ctx: ToolContext, layer: string): Promise<Ske
 
 // ── rig_character ──────────────────────────────────────────────────────
 
+/**
+ * rig_character with `layerIds`: a character made of SEPARATE layers (docs/CHARACTER_RIG.md). One
+ * `createCharacter`: the layers grouped into a character, a bone per layer (anatomy read from the layer
+ * names), legs in IK, every layer bound to its bone, nothing moved. Layers under different parents are first
+ * gathered under the first one's parent, keeping their world pose (Group Selection's rule).
+ */
+async function rigPartsCharacter(ctx: ToolContext, a: Record<string, unknown>): Promise<{ ok: boolean; text: string }> {
+  const ids = (a.layerIds as unknown[]).map((v) => resolveAlias(ctx, String(v ?? '')));
+  for (const id of ids) {
+    if (!(await ctx.scene.has(id))) return { ok: false, text: `No layer '${id}' (describe_scene).` };
+  }
+  const m = documentMirror();
+  const comps = new Set(ids.map((id) => m.layer(id)?.comp));
+  if (comps.size !== 1) return { ok: false, text: 'The parts of one character must be layers of one composition.' };
+  const parentOf = (id: string): string | undefined => m.layer(id)?.parent ?? undefined;
+  const target = parentOf(ids[0]!);
+  const moved = ids.filter((id) => parentOf(id) !== target);
+  const cmds: Command[] = [];
+  if (moved.length) cmds.push({ type: 'setParent', layers: moved, ...(target ? { parent: target } : {}), keepWorldTransform: true } as Command);
+  const name = typeof a.name === 'string' && a.name.trim() ? a.name.trim() : 'Character';
+  cmds.push({ type: 'createCharacter', layers: ids, name } as Command);
+  const results = await ctx.engine.apply(cmds);
+  const character = (results[results.length - 1] as { layer?: string } | undefined)?.layer;
+  if (!character) return { ok: false, text: 'The character could not be built.' };
+  const pose = await ctx.engine.query({ type: 'getRigPose', layer: character, time: 0, points: [] } as never) as {
+    bones?: { id: string; rotation: number }[];
+    ik?: { bone: string }[];
+  };
+  // Straight from the engine: the mirror can be an event behind the transaction.
+  const infos = await ctx.engine.query({ type: 'getLayers', layers: ids } as never) as { layers?: { id: string; name: string; parentBone?: string }[] };
+  const parts = (infos.layers ?? []).map((l) => `${l.name || l.id} → ${l.parentBone ?? '(none)'}`);
+  const ik = (pose.ik ?? []).map((g) => g.bone);
+  return {
+    ok: true,
+    text:
+      `Character '${name}' (${character}): ${pose.bones?.length ?? 0} bones, each part following its bone (bind pose = as drawn, nothing moved).\n` +
+      `Parts → bones: ${parts.join('; ')}.\n` +
+      (ik.length ? `IK goals (animate ikTarget.<bone>.x / .y, CHARACTER space): ${ik.join(', ')}.\n` : 'No IK goals (no tagged two-bone leg).\n') +
+      `Rest rotations (radians): ${(pose.bones ?? []).map((b) => `${b.id} ${b.rotation.toFixed(3)}`).join(', ')}.\n` +
+      'Animate with pose_skeleton / set_keyframes on the CHARACTER layer (bone.<id>.rotation in degrees through the API); ' +
+      'render_rig_view on the character shows the bones.',
+  };
+}
+
 
 export async function rigCharacter(ctx: ToolContext, rawArgs: unknown): Promise<{ ok: boolean; text: string }> {
   const a = obj(rawArgs);
+  if (Array.isArray(a.layerIds) && a.layerIds.length > 0) return rigPartsCharacter(ctx, a);
   const layer = resolveAlias(ctx, String(a.layerId ?? ''));
   if (!(await ctx.scene.has(layer))) return { ok: false, text: `No layer '${layer}' (describe_scene).` };
   const info = documentMirror().layer(layer);

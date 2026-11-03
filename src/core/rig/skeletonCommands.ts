@@ -25,6 +25,10 @@ export interface IKTarget {
   enabled?: boolean;
   /** Bones in the solved chain (target bone + ancestors). Default 2, max 8. */
   chainLength?: number;
+  /** Two-bone limbs: the most the limb may lengthen to reach the goal (ratio; absent / ≤ 1 = never). */
+  stretch?: number;
+  /** Two-bone limbs: px over which the limb eases into full reach (soft IK; absent / 0 = off). */
+  softness?: number;
   /**
    * Pole vector (layer-local) for a two-bone chain: the side the joint bends
    * toward. Bend-side preservation is a good default, but it can only ever KEEP

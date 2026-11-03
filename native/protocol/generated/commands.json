@@ -315,6 +315,16 @@
     "type": "ungroupLayer"
   },
   {
+    "id": 218,
+    "kind": "edit",
+    "type": "bindToBone"
+  },
+  {
+    "id": 219,
+    "kind": "edit",
+    "type": "createCharacter"
+  },
+  {
     "id": 212,
     "kind": "edit",
     "type": "convertLayer"

@@ -1517,6 +1517,28 @@
   white-space: nowrap;
 }
 
+/* Character rig: a character's row says so after its name, and a part's row
+   names the bone it follows. Quiet text, never a second control. */
+.characterTag,
+.boneTag {
+  flex: none;
+  margin-left: 6px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+}
+
+.characterTag {
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.boneTag {
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Inline rename input — appears on double-click, styled to look like the span */
 .trackNameInput {
   flex: 1;

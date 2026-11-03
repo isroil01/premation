@@ -1970,6 +1970,19 @@ export interface UngroupLayer {
   group: LayerId;
 }
 
+/** Character rig — make `layers` parts of `character` (a group layer whose skeleton has bones) that follow `bone`: each part then moves with the bone as if parented to it (pose · bind⁻¹ between the group and the part, so binding at the bind pose moves nothing). Absent `bone` detaches the parts from their bone; they stay in the character and follow the group alone. A layer not yet in the character moves into it. Each layer keeps its world transform at the active tab's playhead (its keyframes re-based, as setParent keepWorldTransform does). Reparenting a part out of its character (setParent, ungroupLayer) or deleting its bone also ends the binding where the part stands. Fails when `character` is not a group with a skeleton, `bone` is not one of its bones, a layer is the character or contains it, or the layers are in another composition. */
+export interface BindToBone {
+  layers: LayerId[];
+  character: LayerId;
+  bone?: string;
+}
+
+/** Character rig — Rig Character: group `layers` (one composition, one parent) into a new character named `name` and rig it, one undo step. Every layer becomes a part bound to its own new bone. A bone runs from the part's anchor point along the part's longer side to its far edge; it hangs from the bone of the part whose box holds that anchor (the largest such part), and the largest part is the root. Layer names tag the anatomy: head, neck, torso / body / chest / hip / pelvis, upper arm / forearm / arm, hand, thigh / shin / leg, foot, tail, with left / right (`L` / `R`, `_l` / `_r`) for sides. A tagged two-bone leg (thigh → shin, or two `leg` parts) gets an IK goal at its tip, arms stay FK, and every limb end gets a controller. The bind pose is the bones as built, so nothing moves. Returns the character. */
+export interface CreateCharacter {
+  layers: LayerId[];
+  name: string;
+}
+
 /** Engine-evaluated conversions (the result depends on fonts, outlines or evaluation, so it cannot be a client macro). */
 export interface ConvertLayer {
   layer: LayerId;
@@ -3791,6 +3804,10 @@ export interface LayerInfo {
   multicamAngle?: number;
   /** SDK 1.4 (L1) — a native plugin layer type's id `<pluginId>:<typeId>` (createLayer kind=generator): the layer is a solid drawn by that type's generator effect (effect id `layer`, its params the layer's own properties). Absent otherwise. Not `generator`, which marks retired JavaScript plugin layers. */
   pluginLayerType?: string;
+  /** Character rig — the bone of its character (the parent group's skeleton) this layer follows (bindToBone): the Layers tree's `↳ bone` tag and the Parent column's bone picker. Absent when the layer follows no bone, or the binding points at a bone the character no longer has. */
+  parentBone?: string;
+  /** Character rig — true for a CHARACTER: a group layer whose skeleton has at least one bone (createCharacter). Absent otherwise. */
+  character?: boolean;
 }
 
 /** B4 — one dimension's own expression on an UNSEPARATED vector (setExpression `member`). */
@@ -6044,6 +6061,8 @@ export type Command =
   | ({ type: 'replaceLayerSource' } & ReplaceLayerSource)
   | ({ type: 'groupLayers' } & GroupLayers)
   | ({ type: 'ungroupLayer' } & UngroupLayer)
+  | ({ type: 'bindToBone' } & BindToBone)
+  | ({ type: 'createCharacter' } & CreateCharacter)
   | ({ type: 'convertLayer' } & ConvertLayer)
   | ({ type: 'pasteLayers' } & PasteLayers)
   | ({ type: 'separateLayer' } & SeparateLayer)
@@ -6226,6 +6245,8 @@ export type CommandResult =
   | ({ type: 'replaceLayerSource' } & Empty)
   | ({ type: 'groupLayers' } & LayerRef)
   | ({ type: 'ungroupLayer' } & LayerList)
+  | ({ type: 'bindToBone' } & Empty)
+  | ({ type: 'createCharacter' } & LayerRef)
   | ({ type: 'convertLayer' } & LayerList)
   | ({ type: 'pasteLayers' } & LayerList)
   | ({ type: 'separateLayer' } & LayerList)
@@ -6574,6 +6595,8 @@ export interface CommandArgs {
   replaceLayerSource: ReplaceLayerSource;
   groupLayers: GroupLayers;
   ungroupLayer: UngroupLayer;
+  bindToBone: BindToBone;
+  createCharacter: CreateCharacter;
   convertLayer: ConvertLayer;
   pasteLayers: PasteLayers;
   separateLayer: SeparateLayer;
@@ -6756,6 +6779,8 @@ export interface CommandResults {
   replaceLayerSource: Empty;
   groupLayers: LayerRef;
   ungroupLayer: LayerList;
+  bindToBone: Empty;
+  createCharacter: LayerRef;
   convertLayer: LayerList;
   pasteLayers: LayerList;
   separateLayer: LayerList;

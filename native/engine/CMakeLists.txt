@@ -272,6 +272,7 @@ if(MOTION_BUILD_TESTS)
     tests/test_b4_round3.cpp
     tests/test_b4_round5_text.cpp
     tests/test_b4_round5_rig.cpp
+    tests/test_bone_link.cpp  # character rig Tier 1: parts follow bones, bindToBone / createCharacter, IK stretch
     tests/test_ptree_rig.cpp  # C2 2026-11-02: puppet pin / bone / IK rows in the static property tree
     tests/test_b4_round5_view.cpp
     tests/test_b4_round5_items.cpp
@@ -459,6 +460,7 @@ set(ENGINE_DOC_SOURCES
   src/core/psd_read.cpp
   src/core/handlers_layers.cpp
   src/core/handlers_layers2.cpp
+  src/core/handlers_character.cpp
   src/core/handlers_convert.cpp
   src/core/handlers_layertime.cpp
   src/core/handlers_markers.cpp
@@ -490,6 +492,8 @@ set(ENGINE_DOC_SOURCES
   src/core/readmodel.cpp
   src/core/scene.cpp
   src/core/scene_build.cpp
+  src/core/skeleton_pose.cpp
+  src/core/bone_link.cpp
   src/core/strokes.cpp
   src/core/timeline.cpp
   src/core/worldxf.cpp

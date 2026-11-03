@@ -5,6 +5,7 @@
 #include <set>
 #include <utility>
 
+#include "bone_link.hpp"
 #include "handlers_native.hpp"
 
 namespace premation::doc {
@@ -60,6 +61,10 @@ motion::xf::Mat2D world_matrix_static(const Document& d, const std::string& node
       world = lm;
     } else if (k == path.size() - 1) {
       world = lm;
+    } else if (const Node* n = d.node(path[k]); n != nullptr) {
+      // A part bound to a bone of its character rides the bone's link (bone_link.hpp).
+      const auto link = bone_link_static(d, *n);
+      world = motion::xf::multiply(link ? motion::xf::multiply(world, *link) : world, lm);
     } else {
       world = motion::xf::multiply(world, lm);
     }
@@ -155,6 +160,10 @@ void sg_set_parent(Document& d, const std::string& childId, const std::optional<
     }
   }
   d.node_mut(childId).parent = newParentId;
+  // A bone binding belongs to the character the part leaves (its world was read through the link above).
+  if (d.node(childId)->fx().at("parentBone").is_string()) {
+    if (Component* fx = d.node_mut(childId).comp_mut("fx"); fx != nullptr) fx->props.erase("parentBone");
+  }
   if (newParentId && d.node(*newParentId) != nullptr) {
     const Node& p = *d.node(*newParentId);
     if (std::find(p.children.begin(), p.children.end(), childId) == p.children.end()) {

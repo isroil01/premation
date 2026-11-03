@@ -5,6 +5,7 @@
 #include <set>
 
 #include "anim.hpp"
+#include "bone_link.hpp"
 #include "catalog_data.hpp"
 #include "fail.hpp"
 #include "fields.hpp"
@@ -1003,6 +1004,19 @@ void remove_rig_group(Document& d, const RigGroupRef& r) {
     auto gone = [&](const Json& x, std::string_view key) {
       return x.is_object() && x.at(key).is_string() && removed.contains(x.at(key).str());
     };
+    // Character rig: a part bound to a removed bone is unbound where it stands (its stored transform takes the
+    // bone's static link), not snapped back to the group's space.
+    for (const std::string& part : sg_child_order(d, r.layer)) {
+      const Node* pn = d.node(part);
+      if (pn == nullptr || !gone(pn->fx(), "parentBone")) continue;
+      const std::optional<motion::xf::Mat2D> link = bone_link_static(d, *pn);
+      const motion::xf::Local2D local = base_local(*pn);
+      if (Component* fx = d.node_mut(part).comp_mut("fx"); fx != nullptr) fx->props.erase("parentBone");
+      if (link) {
+        const motion::xf::Local2D l = motion::xf::matrix_to_local(motion::xf::multiply(*link, motion::xf::local_matrix(local)));
+        sg_set_local_transform(d, part, l.x, l.y, l.rotation, l.scale_x, l.scale_y);
+      }
+    }
     Json next = skel;
     Json::Array bl = raw(skel, "bones");
     std::erase_if(bl, [&](const Json& b) { return gone(b, "id"); });

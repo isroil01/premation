@@ -4,6 +4,7 @@
 #include <set>
 #include <vector>
 
+#include "bone_link.hpp"
 #include "scene.hpp"
 #include "worldxf.hpp"
 
@@ -33,8 +34,10 @@ void compensate_reparent(const PCtx& c, const std::string& child, const std::str
   const Node* node = d.node(child);
   if (node == nullptr) return;
   const double time = c.view.tabTime;
-  const motion::xf::Mat2D parentWorld =
+  motion::xf::Mat2D parentWorld =
       d.node(target) != nullptr ? world_2d_at(c, target, time) : motion::xf::Mat2D{1, 0, 0, 1, 0, 0};
+  // A part bound to a bone of its character sits in the bone's space, not the group's (bone_link.hpp).
+  if (const auto link = bone_link_at(d, c.view, c.expr, c.cache, *node, time)) parentWorld = motion::xf::multiply(parentWorld, *link);
   const motion::xf::Local2D want = motion::xf::local_under_parent(worldBefore, parentWorld);
   const motion::xf::Local2D have = local_transform_at(c, child, time).value_or(base_local_of(*node));
   const double dx = want.x - have.x;
@@ -91,6 +94,19 @@ void set_parent_preserving_world(const PCtx& c, const std::string& child, const 
   if (moves) worldBefore = world_2d_at(c, child, c.view.tabTime);
   sg_set_parent(c.d, child, target, false);
   if (worldBefore) compensate_reparent(c, child, target, *worldBefore);
+}
+
+void bind_to_bone_preserving_world(const PCtx& c, const std::string& child, const std::string& group,
+                                   const std::optional<std::string>& bone) {
+  Document& d = c.d;
+  const motion::xf::Mat2D worldBefore = world_2d_at(c, child, c.view.tabTime);
+  if (d.node(child)->parent != group) sg_set_parent(d, child, group, false);
+  if (bone) {
+    sg_set_fx(d, child, "parentBone", Json::string(*bone));
+  } else if (Component* fx = d.node_mut(child).comp_mut("fx"); fx != nullptr) {
+    fx->props.erase("parentBone");
+  }
+  compensate_reparent(c, child, group, worldBefore);
 }
 
 bool reparent_node(const PCtx& c, const std::string& child, const std::optional<std::string>& newParent,

@@ -18,6 +18,7 @@
 #include "jsmath.hpp"
 #include "json.hpp"
 #include "rig_cache.hpp"
+#include "skeleton_pose.hpp"
 
 namespace premation::scene {
 namespace {
@@ -205,9 +206,6 @@ struct RestMesh {
   }
 };
 
-/// The sampled value when present and finite, else `fallback` (the TS `Number.isFinite(v) ? v : fb`).
-double finite_or(const std::optional<double>& v, double fallback) { return v.has_value() && std::isfinite(*v) ? *v : fallback; }
-
 StoredPin read_pin(const Json& p) {
   StoredPin s;
   s.id = jkey(p.at("id"));
@@ -227,9 +225,7 @@ StoredPin read_pin(const Json& p) {
 
 // ── mesh.ts ────────────────────────────────────────────────────────────────
 
-struct V2 {
-  double x = 0, y = 0;
-};
+using skel::V2;
 using Tri = std::array<std::uint32_t, 3>;
 
 double polygon_area(const std::vector<V2>& poly) {
@@ -1732,242 +1728,35 @@ std::vector<DeformPin> resolve_live_pins(const std::vector<StoredPin>& pins, dou
   return out;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Skeleton (skeleton.ts, mat2d.ts, ik.ts, rigDeform.ts, geodesicWeights.ts …)
-// ═══════════════════════════════════════════════════════════════════════════
+// ── Skeleton: FK / IK / bind pose live in core/skeleton_pose.{hpp,cpp} ──
 
-using Mat2D = std::array<double, 6>;
-constexpr Mat2D kIdentity = {1, 0, 0, 1, 0, 0};
+using skel::Mat2D;
+using skel::kIdentity;
+using skel::Bone;
+using skel::WorldMap;
+using skel::TwoBone;
+using skel::IkTarget;
+using skel::Skeleton;
+using skel::active_ik_targets;
+using skel::angles_from_joints;
+using skel::apply;
+using skel::apply_ik;
+using skel::bone_root;
+using skel::bone_tip;
+using skel::compute_world;
+using skel::constrain;
+using skel::from_trs;
+using skel::ik_blend_of;
+using skel::ik_chain;
+using skel::invert;
+using skel::mul;
+using skel::read_bone;
+using skel::read_skeleton;
+using skel::resolve_ik_goals;
+using skel::resolve_live_bones;
+using skel::solve_fabrik;
+using skel::solve_two_bone;
 
-Mat2D from_trs(double x, double y, double rotation, double scaleX, double scaleY) {
-  const double c = mjs::cos(rotation);
-  const double s = mjs::sin(rotation);
-  return {c * scaleX, s * scaleX, -s * scaleY, c * scaleY, x, y};
-}
-Mat2D mul(const Mat2D& m1, const Mat2D& m2) {
-  const auto [a1, b1, c1, d1, e1, f1] = m1;
-  const auto [a2, b2, c2, d2, e2, f2] = m2;
-  return {a1 * a2 + c1 * b2, b1 * a2 + d1 * b2, a1 * c2 + c1 * d2, b1 * c2 + d1 * d2, a1 * e2 + c1 * f2 + e1, b1 * e2 + d1 * f2 + f1};
-}
-V2 apply(const Mat2D& m, double x, double y) { return {m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]}; }
-Mat2D invert(const Mat2D& m) {
-  const auto [a, b, c, d, e, f] = m;
-  const double det = a * d - b * c;
-  if (std::abs(det) < 1e-12) return kIdentity;
-  const double id = 1 / det;
-  const double na = d * id;
-  const double nb = -b * id;
-  const double nc = -c * id;
-  const double nd = a * id;
-  return {na, nb, nc, nd, -(na * e + nc * f), -(nb * e + nd * f)};
-}
-
-struct Bone {
-  std::string id;
-  std::string parentId;  ///< "" = root (the TS truthiness test)
-  double length = 0, x = 0, y = 0, rotation = 0;
-  std::optional<double> scaleX, scaleY, influenceRadius;
-};
-
-Bone read_bone(const Json& b) {
-  Bone o;
-  o.id = jkey(b.at("id"));
-  if (b.at("parentId").is_string()) o.parentId = b.at("parentId").str();
-  o.length = jn(b.at("length"));
-  o.x = jn(b.at("x"));
-  o.y = jn(b.at("y"));
-  o.rotation = jn(b.at("rotation"));
-  o.scaleX = jopt(b.at("scaleX"));
-  o.scaleY = jopt(b.at("scaleY"));
-  o.influenceRadius = jopt(b.at("influenceRadius"));
-  return o;
-}
-
-using WorldMap = std::unordered_map<std::string, Mat2D>;
-
-/// computeWorldTransforms: parent-first, memoised; a cycle resolves to identity.
-WorldMap compute_world(const std::vector<Bone>& bones) {
-  std::unordered_map<std::string, const Bone*> byId;
-  for (const Bone& b : bones) byId[b.id] = &b;
-  WorldMap world;
-  std::set<std::string> visiting;
-  const auto resolve = [&](const auto& self, const std::string& id) -> Mat2D {
-    if (const auto it = world.find(id); it != world.end()) return it->second;
-    const auto bit = byId.find(id);
-    if (bit == byId.end() || visiting.contains(id)) return kIdentity;
-    const Bone& b = *bit->second;
-    visiting.insert(id);
-    const Mat2D local = from_trs(b.x, b.y, b.rotation, b.scaleX.value_or(1), b.scaleY.value_or(1));
-    const Mat2D m = !b.parentId.empty() ? mul(self(self, b.parentId), local) : local;
-    visiting.erase(id);
-    world[id] = m;
-    return m;
-  };
-  for (const Bone& b : bones) (void)resolve(resolve, b.id);
-  return world;
-}
-
-V2 bone_tip(const Mat2D& w, double length) { return apply(w, length, 0); }
-V2 bone_root(const Mat2D& w) { return apply(w, 0, 0); }
-
-// ── ik.ts ──
-
-struct TwoBone {
-  double angle1, angle2;
-};
-TwoBone solve_two_bone(V2 root, double l1, double l2, V2 target, bool bendPositive) {
-  const double dx = target.x - root.x;
-  const double dy = target.y - root.y;
-  const double rawDist = hypot2(dx, dy);
-  const double reach = l1 + l2;
-  const double minReach = std::abs(l1 - l2);
-  const double dist = jmax(minReach + 1e-6, jmin(rawDist, reach - 1e-6));
-  const double targetAngle = mjs::atan2(dy, dx);
-  const double cosA1 = (l1 * l1 + dist * dist - l2 * l2) / (2 * l1 * dist);
-  const double a1 = mjs::acos(jmax(-1, jmin(1, cosA1)));
-  const double cosA2 = (l1 * l1 + l2 * l2 - dist * dist) / (2 * l1 * l2);
-  const double a2 = mjs::acos(jmax(-1, jmin(1, cosA2)));
-  const double sign = bendPositive ? 1 : -1;
-  const double angle1 = targetAngle - sign * a1;
-  const double angle2 = angle1 + sign * (std::numbers::pi - a2);
-  return {angle1, angle2};
-}
-
-V2 constrain(V2 point, V2 anchor, double len) {
-  const double dx = point.x - anchor.x;
-  const double dy = point.y - anchor.y;
-  double d = hypot2(dx, dy);
-  if (d == 0 || std::isnan(d)) d = 1e-9;  // `|| 1e-9`
-  const double s = len / d;
-  return {anchor.x + dx * s, anchor.y + dy * s};
-}
-
-std::vector<V2> solve_fabrik(const std::vector<V2>& joints, const std::vector<double>& lengths, V2 target) {
-  constexpr int kIterations = 12;
-  constexpr double kTolerance = 0.25;
-  const std::size_t n = joints.size();
-  std::vector<V2> p = joints;
-  if (n < 2) return p;
-  const V2 root = p[0];
-  double total = 0;
-  for (const double l : lengths) total = total + l;
-  const double rootToTarget = hypot2(target.x - root.x, target.y - root.y);
-  if (rootToTarget > total) {
-    for (std::size_t i = 0; i + 1 < n; ++i) p[i + 1] = constrain(target, p[i], lengths[i]);
-    return p;
-  }
-  for (int iter = 0; iter < kIterations; ++iter) {
-    p[n - 1] = target;
-    for (std::size_t i = n - 1; i-- > 0;) p[i] = constrain(p[i], p[i + 1], lengths[i]);
-    p[0] = root;
-    for (std::size_t i = 1; i < n; ++i) p[i] = constrain(p[i], p[i - 1], lengths[i - 1]);
-    const V2 end = p[n - 1];
-    if (hypot2(end.x - target.x, end.y - target.y) < kTolerance) break;
-  }
-  return p;
-}
-
-std::vector<double> angles_from_joints(const std::vector<V2>& joints) {
-  std::vector<double> out;
-  for (std::size_t i = 0; i + 1 < joints.size(); ++i) {
-    out.push_back(mjs::atan2(joints[i + 1].y - joints[i].y, joints[i + 1].x - joints[i].x));
-  }
-  return out;
-}
-
-struct IkTarget {
-  std::string boneId;
-  double x = 0, y = 0;
-  std::optional<double> chainLength;
-  std::optional<V2> pole;
-  /// R4: the IK/FK blend — 1 = the solved pose, 0 = the FK pose, between = a
-  /// linear blend of the chain's local rotations (the `ikMode.<bone>` track).
-  double blend = 1;
-  /// The pole, or nullptr without one.
-  [[nodiscard]] const V2* pole_point() const noexcept { return pole.has_value() ? &*pole : nullptr; }
-};
-
-/// ikChainIds: the target bone and its ancestors, root-first. Indices into `bones` (last id wins).
-std::vector<std::size_t> ik_chain(const std::vector<Bone>& bones, const std::string& targetBoneId, double chainLength) {
-  std::unordered_map<std::string, std::size_t> byId;
-  for (std::size_t i = 0; i < bones.size(); ++i) byId[bones[i].id] = i;
-  const double maxD = jmax(1, jmin(8, std::floor(chainLength)));
-  std::vector<std::size_t> chain;
-  std::set<std::string> seen;
-  auto cur = byId.find(targetBoneId);
-  while (cur != byId.end() && static_cast<double>(chain.size()) < maxD && !seen.contains(bones[cur->second].id)) {
-    const Bone& b = bones[cur->second];
-    seen.insert(b.id);
-    chain.insert(chain.begin(), cur->second);
-    cur = !b.parentId.empty() ? byId.find(b.parentId) : byId.end();
-  }
-  return chain;
-}
-
-std::vector<Bone> apply_ik(const std::vector<Bone>& bones, const std::vector<IkTarget>& targets) {
-  std::vector<Bone> out = bones;
-  if (targets.empty() || out.empty()) return out;
-  std::unordered_map<std::string, std::size_t> byId;
-  for (std::size_t i = 0; i < out.size(); ++i) byId[out[i].id] = i;
-  for (const IkTarget& t : targets) {
-    const auto endIt = byId.find(t.boneId);
-    if (endIt == byId.end()) continue;
-    if (!(t.blend > 0)) continue;
-    const std::vector<std::size_t> chain = ik_chain(out, t.boneId, t.chainLength.value_or(2));
-    if (chain.empty()) continue;
-    const Bone& end = out[endIt->second];
-    const WorldMap world = compute_world(out);
-    std::vector<V2> joints;
-    joints.reserve(chain.size() + 1);
-    for (const std::size_t ci : chain) joints.push_back(bone_root(world.at(out[ci].id)));
-    joints.push_back(bone_tip(world.at(end.id), end.length));
-    std::vector<double> lengths;
-    bool degenerate = false;
-    for (std::size_t i = 0; i + 1 < joints.size(); ++i) {
-      const double l = hypot2(joints[i + 1].x - joints[i].x, joints[i + 1].y - joints[i].y);
-      if (l < 1e-6) degenerate = true;
-      lengths.push_back(l);
-    }
-    if (degenerate) continue;
-    const V2 target{t.x, t.y};
-    const std::vector<double> currentAngles = angles_from_joints(joints);
-    std::vector<double> solved;
-    if (chain.size() == 1) {
-      solved = {mjs::atan2(target.y - joints[0].y, target.x - joints[0].x)};
-    } else if (chain.size() == 2) {
-      const V2 j0 = joints[0];
-      const V2 j1 = joints[1];
-      const V2 j2 = joints[2];
-      bool bendPositive = false;
-      if (const V2* pole = t.pole_point()) {
-        // The elbow lands on the pole's side of the root→target line.
-        // solve_two_bone's bendPositive puts the middle joint where
-        // cross(j1 − j0, target − j0) ≥ 0 (the no-pole branch below keeps the
-        // current bend by the same product), so the pole is measured with the
-        // SAME orientation: cross(pole − j0, target − j0).
-        const double ax = target.x - j0.x;
-        const double ay = target.y - j0.y;
-        bendPositive = (pole->x - j0.x) * ay - (pole->y - j0.y) * ax >= 0;
-      } else {
-        bendPositive = (j1.x - j0.x) * (j2.y - j1.y) - (j1.y - j0.y) * (j2.x - j1.x) >= 0;
-      }
-      const TwoBone sol = solve_two_bone(j0, lengths[0], lengths[1], target, bendPositive);
-      solved = {sol.angle1, sol.angle2};
-    } else {
-      solved = angles_from_joints(solve_fabrik(joints, lengths, target));
-    }
-    // The full IK deltas (relative to the chain above), applied at the blend:
-    // FK + blend · (IK − FK) per local rotation.
-    const double blend = jmin(1, t.blend);
-    double cumulative = 0;
-    for (std::size_t i = 0; i < chain.size(); ++i) {
-      const double delta = solved[i] - (currentAngles[i] + cumulative);
-      out[chain[i]].rotation += blend == 1 ? delta : delta * blend;
-      cumulative += delta;
-    }
-  }
-  return out;
-}
 
 // ── skinning ──
 
@@ -2232,13 +2021,6 @@ std::vector<VertexWeight> apply_weight_paint(const std::vector<VertexWeight>& au
   return normalize_weights(merged);
 }
 
-struct Skeleton {
-  std::vector<Bone> bones;
-  std::vector<Bone> bind;  ///< bindPoseBones(skel)
-  const Json* weightPaint = nullptr;
-  /// R4: `preserveVolume: 'on'` — dual-quaternion blending instead of linear.
-  bool dualQuaternion = false;
-};
 
 constexpr double kFullyBound = 1 - 1e-6;
 
@@ -2354,111 +2136,6 @@ std::vector<float> skin_rig_vertices(const std::vector<std::vector<VertexWeight>
   return out;
 }
 
-Skeleton read_skeleton(const Json& skel) {
-  Skeleton s;
-  for (const Json& b : skel.at("bones").arr()) s.bones.push_back(read_bone(b));
-  // bindPoseBones: structure from the live bone, pose channels from the stored bind.
-  const Json& bind = skel.at("bindPose");
-  if (bind.is_array() && !bind.arr().empty()) {
-    std::unordered_map<std::string, const Json*> byId;
-    for (const Json& b : bind.arr()) byId[jkey(b.at("id"))] = &b;
-    for (const Bone& b : s.bones) {
-      Bone o = b;
-      if (const auto it = byId.find(b.id); it != byId.end()) {
-        const Json& r = *it->second;
-        o.x = jn(r.at("x"));
-        o.y = jn(r.at("y"));
-        o.rotation = jn(r.at("rotation"));
-        if (!r.at("scaleX").is_undefined()) o.scaleX = jopt(r.at("scaleX"));
-        if (!r.at("scaleY").is_undefined()) o.scaleY = jopt(r.at("scaleY"));
-      }
-      s.bind.push_back(std::move(o));
-    }
-  } else {
-    s.bind = s.bones;
-  }
-  if (skel.at("weightPaint").is_object()) s.weightPaint = &skel.at("weightPaint");
-  s.dualQuaternion = skel.at("preserveVolume").is_string() && skel.at("preserveVolume").str() == "on";
-  return s;
-}
-
-/// The IK/FK blend of a goal at `t`: the `ikMode.<bone>` track clamped to 0..1
-/// when it is keyed, else the stored mode ('fk' = 0; anything else = 1).
-double ik_blend_of(const Json& stored, const std::string& boneId, double t, const RigSampler& anim) {
-  const auto sampled = anim.sample("ikMode." + boneId, t);
-  if (sampled && std::isfinite(*sampled)) return jmax(0, jmin(1, *sampled));
-  if (stored.at("ikMode").is_string()) return stored.at("ikMode").str() == "fk" ? 0 : 1;
-  return 1;
-}
-
-/// Every stored IK goal with resolveIkTargets' sampling and its blend (enabled or not).
-std::vector<RigIkOut> resolve_ik_goals(const Json& skel, double t, const RigSampler& anim) {
-  std::vector<RigIkOut> out;
-  const Json& list = skel.at("ikTargets");
-  if (!list.is_array()) return out;
-  const auto num = [](const std::optional<double>& v) { return v && std::isfinite(*v); };
-  for (const Json& tg : list.arr()) {
-    const std::string boneId = jkey(tg.at("boneId"));
-    const auto liveX = anim.sample("ikTarget." + boneId + ".x", t);
-    const auto liveY = anim.sample("ikTarget." + boneId + ".y", t);
-    const auto poleX = anim.sample("ikPole." + boneId + ".x", t);
-    const auto poleY = anim.sample("ikPole." + boneId + ".y", t);
-    RigIkOut r;
-    r.bone = boneId;
-    r.enabled = !(tg.at("enabled").is_bool() && !tg.at("enabled").b());
-    r.x = finite_or(liveX, jn(tg.at("x")));
-    r.y = finite_or(liveY, jn(tg.at("y")));
-    r.chainLength = jopt(tg.at("chainLength"));
-    const Json& storedPole = tg.at("pole");
-    if (num(poleX) || num(poleY)) {
-      r.pole = std::array<double, 2>{finite_or(poleX, storedPole.at("x").is_number() ? storedPole.at("x").num() : 0),
-                                     finite_or(poleY, storedPole.at("y").is_number() ? storedPole.at("y").num() : 0)};
-    } else if (storedPole.is_object()) {
-      r.pole = std::array<double, 2>{jn(storedPole.at("x")), jn(storedPole.at("y"))};
-    }
-    r.blend = ik_blend_of(tg, boneId, t, anim);
-    r.mode = r.blend >= 0.5 ? "ik" : "fk";
-    out.push_back(std::move(r));
-  }
-  return out;
-}
-
-/// resolveActiveIkTargets: the enabled goals with any IK share, as solver targets.
-std::vector<IkTarget> active_ik_targets(const std::vector<RigIkOut>& goals) {
-  std::vector<IkTarget> out;
-  for (const RigIkOut& g : goals) {
-    if (!g.enabled || !(g.blend > 0)) continue;
-    IkTarget t;
-    t.boneId = g.bone;
-    t.x = g.x;
-    t.y = g.y;
-    t.chainLength = g.chainLength;
-    if (g.pole) t.pole = V2{(*g.pole)[0], (*g.pole)[1]};
-    t.blend = g.blend;
-    out.push_back(std::move(t));
-  }
-  return out;
-}
-
-/// resolveLiveBones.
-std::vector<Bone> resolve_live_bones(const std::vector<Bone>& bones, double t, const RigSampler& anim) {
-  std::vector<Bone> out;
-  out.reserve(bones.size());
-  for (const Bone& b : bones) {
-    const auto numberOr = [&](const char* ch, double fb) {
-      const auto v = anim.sample("bone." + b.id + "." + ch, t);
-      return v && std::isfinite(*v) ? *v : fb;
-    };
-    Bone o = b;
-    o.rotation = numberOr("rotation", b.rotation);
-    o.x = numberOr("x", b.x);
-    o.y = numberOr("y", b.y);
-    o.scaleX = numberOr("scaleX", b.scaleX.value_or(1));
-    o.scaleY = numberOr("scaleY", b.scaleY.value_or(1));
-    out.push_back(std::move(o));
-  }
-  return out;
-}
 
 /// The skeleton's binding over `rest` (getSkeletonBinding): bind segments,
 /// geodesic weights, weight paint, seam band — from the cache or computed.
@@ -2874,6 +2551,31 @@ std::optional<std::array<double, 2>> RigModel::rest_from_deformed(double x, doub
   return std::array<double, 2>{r->x, r->y};
 }
 
+namespace {
+
+/// The overlay's bones: the live pose (before IK), the solved one and its world matrix.
+std::vector<RigBoneOut> bones_out(const Skeleton& sk, const std::vector<Bone>& animated, const std::vector<Bone>& posed,
+                                  const WorldMap& poseWorld) {
+  std::vector<RigBoneOut> out;
+  for (std::size_t i = 0; i < sk.bones.size(); ++i) {
+    RigBoneOut o;
+    o.id = sk.bones[i].id;
+    o.x = animated[i].x;
+    o.y = animated[i].y;
+    o.rotation = animated[i].rotation;
+    o.scaleX = animated[i].scaleX.value_or(1);
+    o.scaleY = animated[i].scaleY.value_or(1);
+    o.posedX = posed[i].x;
+    o.posedY = posed[i].y;
+    o.posedRotation = posed[i].rotation;
+    if (const auto it = poseWorld.find(o.id); it != poseWorld.end()) o.world = it->second;
+    out.push_back(std::move(o));
+  }
+  return out;
+}
+
+}  // namespace
+
 std::optional<RigModel> build_rig_model(const RigInputs& in, const RigSampler& anim, bool authoring, bool previewSilhouette,
                                         std::vector<std::string>& warnings) {
   const Json& fx = *in.fx;
@@ -2883,6 +2585,20 @@ std::optional<RigModel> build_rig_model(const RigInputs& in, const RigSampler& a
   const bool hasPins = hasPuppetRig && puppet.at("pins").is_array() && !puppet.at("pins").arr().empty();
   const bool hasSkel = skel.is_object() && skel.at("bones").is_array() && !skel.at("bones").arr().empty();
   if (!authoring && !hasPins && !hasSkel) return std::nullopt;
+
+  if (in.poseOnly) {
+    // A character: bones and goals over an empty rest mesh — its parts are layers that follow the bones.
+    if (!hasSkel) return std::nullopt;
+    auto impl = std::make_unique<RigModel::Impl>();
+    impl->rest = std::make_shared<const RestMesh>();
+    const Skeleton sk = read_skeleton(skel);
+    const std::vector<Bone> animated = resolve_live_bones(sk.bones, in.rigT, anim);
+    std::vector<RigIkOut> ikOut = resolve_ik_goals(skel, in.rigT, anim);
+    const std::vector<Bone> posed = apply_ik(animated, active_ik_targets(ikOut));
+    impl->poseWorld = compute_world(posed);
+    std::vector<RigBoneOut> bonesOut = bones_out(sk, animated, posed, impl->poseWorld);
+    return RigModel(std::move(impl), RigModel::Pose{.pins = {}, .bones = std::move(bonesOut), .ik = std::move(ikOut), .vertices = {}});
+  }
 
   // nodeRestMesh's mesh rig: the puppet's with pins; the authoring preview (or a pinless puppet
   // record) with the puppet's settings over the skeleton's density; else the skeleton's own.
@@ -2941,20 +2657,7 @@ std::optional<RigModel> build_rig_model(const RigInputs& in, const RigSampler& a
     impl->skinned = true;
     impl->dualQuaternion = sk.dualQuaternion;
     vertices = skin_rig_vertices(impl->binding->weights, impl->poseWorld, impl->bindInverse, impl->puppetDeformed, sk.dualQuaternion);
-    for (std::size_t i = 0; i < sk.bones.size(); ++i) {
-      RigBoneOut o;
-      o.id = sk.bones[i].id;
-      o.x = animated[i].x;
-      o.y = animated[i].y;
-      o.rotation = animated[i].rotation;
-      o.scaleX = animated[i].scaleX.value_or(1);
-      o.scaleY = animated[i].scaleY.value_or(1);
-      o.posedX = posed[i].x;
-      o.posedY = posed[i].y;
-      o.posedRotation = posed[i].rotation;
-      if (const auto it = impl->poseWorld.find(o.id); it != impl->poseWorld.end()) o.world = it->second;
-      bonesOut.push_back(std::move(o));
-    }
+    bonesOut = bones_out(sk, animated, posed, impl->poseWorld);
   }
 
   std::vector<RigPinOut> pinsOut;

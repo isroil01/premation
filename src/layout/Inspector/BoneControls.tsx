@@ -49,7 +49,7 @@ import {
 import { useEngineEdit } from './useEngineEdit';
 import {
   addControllerCommands, addPoleCommands, boneFieldCommands, bonePoseCommands, boneRestCommands, chainSwitchCommands,
-  controllerFieldCommands, deleteBoneCommands, deleteControllerCommands, ikChainLengthCommands,
+  controllerFieldCommands, deleteBoneCommands, deleteControllerCommands, ikChainLengthCommands, ikSoftnessCommands, ikStretchCommands,
   ikTargetCommands, ikToggleCommands, removePoleCommands, renameBoneCommands, skeletonMeshCommands,
   weightPaintCommands,
 } from './rigEdits';
@@ -732,6 +732,47 @@ export function BoneControls({ nodeId }: { nodeId: string }): JSX.Element | null
                     aria-label={t('inspector.bone.chainLengthAria', '{name} IK chain length', { name: bone.name || bone.id })}
                   />
                 </div>
+                {/* Two-bone limbs: Stretch lets the limb lengthen to a goal past its
+                    reach (bound parts lengthen with it); Softness eases the last
+                    pixels of the reach so the knee never snaps straight. */}
+                {(ik?.chainLength ?? 2) === 2 && (
+                  <>
+                    <div className={styles.paramRow}>
+                      <span
+                        className={styles.paramLabel}
+                        title={t('inspector.bone.stretchTip', 'How far the limb may lengthen to reach its goal: 1.5 = up to 150 %. 0 = never.')}
+                      >
+                        {t('inspector.bone.stretch', 'Stretch')}
+                      </span>
+                      <ValueField
+                        value={ik?.stretch ?? 0}
+                        min={0}
+                        max={4}
+                        step={0.05}
+                        {...eng.scrub('Set IK Stretch')}
+                        onChange={(v) => eng.send('Set IK Stretch', ikStretchCommands(nodeId, bone.id, v))}
+                        aria-label={t('inspector.bone.stretchAria', '{name} IK stretch', { name: bone.name || bone.id })}
+                      />
+                    </div>
+                    <div className={styles.paramRow}>
+                      <span
+                        className={styles.paramLabel}
+                        title={t('inspector.bone.softnessTip', 'Pixels over which the limb eases into full reach, so the joint never snaps straight. 0 = off.')}
+                      >
+                        {t('inspector.bone.softness', 'Softness')}
+                      </span>
+                      <ValueField
+                        value={ik?.softness ?? 0}
+                        min={0}
+                        max={500}
+                        unit="px"
+                        {...eng.scrub('Set IK Softness')}
+                        onChange={(v) => eng.send('Set IK Softness', ikSoftnessCommands(nodeId, bone.id, v))}
+                        aria-label={t('inspector.bone.softnessAria', '{name} IK softness', { name: bone.name || bone.id })}
+                      />
+                    </div>
+                  </>
+                )}
                 <div className={styles.paramRow}>
                   <RigAnimToggle
                     nodeId={nodeId}

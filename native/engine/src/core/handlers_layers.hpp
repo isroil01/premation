@@ -42,6 +42,13 @@ ResultOf<api::SetLayerSwitches> handle(const api::SetLayerSwitches& c, HCtx& x);
 ResultOf<api::ReplaceLayerSource> handle(const api::ReplaceLayerSource& c, HCtx& x);
 ResultOf<api::GroupLayers> handle(const api::GroupLayers& c, HCtx& x);
 ResultOf<api::UngroupLayer> handle(const api::UngroupLayer& c, HCtx& x);
+// Character rig (handlers_character.cpp).
+ResultOf<api::BindToBone> handle(const api::BindToBone& c, HCtx& x);
+ResultOf<api::CreateCharacter> handle(const api::CreateCharacter& c, HCtx& x);
+/// Detach (keeping world at the playhead, keyframes re-based) every part of character `group` bound to `bone` or
+/// to one of its descendant bones (every bound part when `bone` is empty) — what deleting that bone, or the whole
+/// skeleton, does first.
+void release_bone_parts(const PCtx& c, const std::string& group, const std::string& bone);
 ResultOf<api::PasteLayers> handle(const api::PasteLayers& c, HCtx& x);
 ResultOf<api::DuplicateLayers> handle(const api::DuplicateLayers& c, HCtx& x);
 ResultOf<api::ConvertLayer> handle(const api::ConvertLayer& c, HCtx& x);

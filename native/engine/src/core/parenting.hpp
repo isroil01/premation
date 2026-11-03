@@ -17,6 +17,11 @@ namespace premation::doc {
 [[nodiscard]] bool can_reparent(const Document& d, std::string_view child, const std::optional<std::string>& newParent);
 /// `setParentPreservingWorld(child, target)`.
 void set_parent_preserving_world(const PCtx& c, const std::string& child, const std::string& target);
+/// Character rig: make `child` a part of the character `group` following `bone` (nullopt = no bone: it stays in the
+/// group and follows the group alone), keeping its world transform at the active tab's playhead. The caller has
+/// checked the group, the bone and that the move cannot cycle.
+void bind_to_bone_preserving_world(const PCtx& c, const std::string& child, const std::string& group,
+                                   const std::optional<std::string>& bone);
 /// `reparentNode(child, newParent, {preserveWorld, jump, time})`; false when refused.
 /// `jumpAt` (comp seconds) = Parent & Link JUMP (ignored when un-parenting).
 bool reparent_node(const PCtx& c, const std::string& child, const std::optional<std::string>& newParent, bool preserveWorld,

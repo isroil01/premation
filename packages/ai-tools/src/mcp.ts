@@ -555,13 +555,24 @@ export const MCP_ONLY_TOOL_DEFS: readonly AiToolDef[] = [
       'comes from front-view proportions of the layer — the result lists which); `chains` add any polyline of bones — a ' +
       'tail, ears, a cape, a quadruped\'s legs, an arm on its own — optionally IK, hung from a bone. Each elbow / knee keeps ' +
       'the side it bends to in the joints you give. REPLACES the layer\'s skeleton. Returns bone ids, rest angles and goals ' +
-      'to animate (bone.<id>.rotation, ikTarget.<bone>.x / .y) — or rig_cycle.',
+      'to animate (bone.<id>.rotation, ikTarget.<bone>.x / .y) — or rig_cycle. ' +
+      'A character made of SEPARATE layers (a head, a torso, arms, legs — cut-out style): pass `layerIds` instead of ' +
+      '`layerId`. They become one character (a group with a bone per layer, read from the layer NAMES: head, neck, torso, ' +
+      'upper arm / forearm, hand, thigh / shin, foot, tail, with L / R), each layer following its bone, two-bone legs in IK, ' +
+      'nothing moved; animate the returned character layer. Name the parts anatomically first (update_layer name).',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
-      required: ['layerId'],
       properties: {
-        layerId: { type: 'string' },
+        layerId: { type: 'string', description: 'The ONE layer to rig (a mesh skeleton). Omit when passing layerIds.' },
+        layerIds: {
+          type: 'array',
+          minItems: 1,
+          maxItems: 64,
+          items: { type: 'string' },
+          description: 'The part layers of a cut-out character, one bone each. Excludes layerId / preset / joints / chains.',
+        },
+        name: { type: 'string', description: 'layerIds: the character\'s name (default "Character").' },
         preset: { type: 'string', enum: ['biped', 'none'], default: 'none' },
         joints: {
           type: 'object',

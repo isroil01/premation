@@ -1601,6 +1601,14 @@ ResultOf<api::RemovePropertyGroups> handle(const api::RemovePropertyGroups& c, H
     return (a.has_index() ? a.index : 0) > (b.has_index() ? b.index : 0);
   });
   x.label = "Remove " + plural(refs.size(), "Group");
+  // Character rig: parts bound to a bone about to go leave it where they stand at the playhead, their keyframes
+  // re-based (Detach from Bone), before the bone does.
+  const PCtx pc = x.pc();
+  for (const auto& r : refs) {
+    if (r.kind != GK::rig) continue;
+    if (r.rig->kind == "bone") release_bone_parts(pc, r.layer, r.rig->id);
+    else if (r.rig->kind == "rigRoot" && r.rig->id == "skeleton") release_bone_parts(pc, r.layer, "");
+  }
   for (const auto& r : refs) remove_group(d, r);
   return {};
 }

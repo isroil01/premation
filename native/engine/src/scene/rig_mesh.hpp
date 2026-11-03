@@ -47,6 +47,7 @@
 #include "alpha_mesh.hpp"
 #include "rig_cache.hpp"
 #include "scene_types.hpp"
+#include "skeleton_pose.hpp"
 
 namespace premation::scene {
 
@@ -55,12 +56,6 @@ using rig::RigCacheStats;
 void rig_cache_clear();
 /// The caches' entry / byte / hit / miss totals.
 [[nodiscard]] RigCacheStats rig_cache_stats();
-
-/// The animation reads the rig needs (AnimationEngine.sample / sampleData on the layer's node).
-struct RigSampler {
-  std::function<std::optional<double>(std::string_view path, double t)> sample;
-  std::function<std::optional<Json>(std::string_view path, double t)> sampleData;
-};
 
 /// The layer-side inputs buildSnapshot hands the rig block.
 struct RigInputs {
@@ -72,6 +67,9 @@ struct RigInputs {
   double rigT = 0;                   ///< layer.sourceTime ?? t
   /// An image layer's alpha coverage (rigCoverageMask; null = the bbox grid).
   const rig::CoverageMask* coverage = nullptr;
+  /// A character (a group layer with bones, bone_link.hpp): the skeleton's pose with no mesh — build_rig_model
+  /// answers the bones and IK goals over an empty rest mesh, nothing skinned.
+  bool poseOnly = false;
 };
 
 struct RigResult {
@@ -113,18 +111,6 @@ struct RigBoneOut {
   double posedX = 0, posedY = 0, posedRotation = 0;
   std::optional<std::array<double, 6>> world;
 };
-/// One stored IK goal, live at the time.
-struct RigIkOut {
-  std::string bone;
-  bool enabled = true;
-  double x = 0, y = 0;
-  std::optional<std::array<double, 2>> pole;
-  std::optional<double> chainLength;
-  std::string mode;  ///< 'ik' | 'fk'
-  /// IK weight 0..1 (rig_mesh.cpp reads it into IkTarget::blend; 0 = the goal is skipped).
-  double blend = 1;
-};
-
 /// The rig of one layer resolved at a time, for the overlays and getRigPose:
 /// nodeRestMesh's mesh (rigMeshInputs.ts — `authoring` = the Puppet Pin tool's
 /// pinless preview), the puppet solve, the skeleton pose on top, and the point

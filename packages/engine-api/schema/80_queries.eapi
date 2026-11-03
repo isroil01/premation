@@ -94,6 +94,10 @@ struct LayerInfo {
   multicamAngle?: u32 = 923;
   /// SDK 1.4 (L1) — a native plugin layer type's id `<pluginId>:<typeId>` (createLayer kind=generator): the layer is a solid drawn by that type's generator effect (effect id `layer`, its params the layer's own properties). Absent otherwise. Not `generator`, which marks retired JavaScript plugin layers.
   pluginLayerType?: string = 924;
+  /// Character rig — the bone of its character (the parent group's skeleton) this layer follows (bindToBone): the Layers tree's `↳ bone` tag and the Parent column's bone picker. Absent when the layer follows no bone, or the binding points at a bone the character no longer has.
+  parentBone?: string = 925;
+  /// Character rig — true for a CHARACTER: a group layer whose skeleton has at least one bone (createCharacter). Absent otherwise.
+  character?: bool = 926;
 }
 
 /// B4 — one dimension's own expression on an UNSEPARATED vector (setExpression `member`).

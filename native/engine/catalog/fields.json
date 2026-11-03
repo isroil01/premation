@@ -2396,6 +2396,34 @@
       "max": 8
     },
     {
+      "owner": "ik",
+      "path": "stretch",
+      "label": "Stretch",
+      "matchName": "Premation IK Stretch",
+      "type": "scalar",
+      "codec": "number",
+      "keys": [
+        "stretch"
+      ],
+      "default": 0,
+      "min": 0,
+      "max": 4
+    },
+    {
+      "owner": "ik",
+      "path": "softness",
+      "label": "Softness",
+      "matchName": "Premation IK Softness",
+      "type": "scalar",
+      "codec": "number",
+      "keys": [
+        "softness"
+      ],
+      "default": 0,
+      "min": 0,
+      "max": 500
+    },
+    {
       "owner": "controller",
       "path": "shape",
       "label": "Shape",

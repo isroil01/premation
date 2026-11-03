@@ -48,6 +48,9 @@ native/engine/src/scene/
 │                         pin path) and getRigPose, over RigModel
 └── snapshot_build.cpp    calls build_rig_mesh_for per rigged layer → layer.deformedMesh
 native/engine/src/core/rig.cpp     the property catalog (rigSpecs.ts ⇄ catalog/fields.json)
+native/engine/src/core/skeleton_pose.{hpp,cpp}  bones, FK, IK (+ stretch / softness), read_skeleton,
+                                   live bone / goal sampling — moved out of rig_mesh.cpp 2026-11-03 so
+                                   engine_core can pose a skeleton with no mesh (docs/CHARACTER_RIG.md)
 native/engine/tests/test_rig_cache.cpp     R1–R4 (this program)
 native/engine/tests/test_rig_parity.cpp    frozen deformed-mesh fixtures (rig_parity.json)
 native/engine/tests/test_alpha_mesh_parity.cpp  legacy mask + alpha outline fixtures

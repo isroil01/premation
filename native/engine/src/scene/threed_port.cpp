@@ -207,6 +207,15 @@ std::optional<xf::Node3DTransform> Scene3D::local3d(const std::string& id) {
 }
 
 std::optional<xf::Mat4> Scene3D::parent_world_3d(const std::string& id) {
+  // A part of a character (bound to a bone) sits in its bone's space: the parent's 3D world, then the link.
+  std::optional<xf::Mat4> parent = parent_world_3d_of_parent(id);
+  if (parent) {
+    if (const auto link = h_.link3d(id)) parent = xf::multiply(*parent, xf::from_mat2d(*link));
+  }
+  return parent;
+}
+
+std::optional<xf::Mat4> Scene3D::parent_world_3d_of_parent(const std::string& id) {
   // nodeMatrix.ts `parentWorld3d(id, resolvers, cache)`.
   const auto parentId = h_.parent3d_of(id);
   if (!parentId) return std::nullopt;
@@ -236,6 +245,9 @@ std::optional<xf::Mat4> Scene3D::parent_world_3d(const std::string& id) {
     }
     const auto local = local3d(cid);
     if (!local) continue;
+    if (acc) {
+      if (const auto link = h_.link3d(cid)) acc = xf::multiply(*acc, xf::from_mat2d(*link));
+    }
     const xf::Mat4 own = xf::compose_node_3d(*local);
     acc = acc ? xf::multiply(*acc, own) : own;
   }
@@ -248,7 +260,9 @@ std::optional<xf::Mat4> Scene3D::parent_world_matrix(const std::string& id) {
   const auto parentId = h_.parent3d_of(id);
   if (!parentId) return std::nullopt;
   if (auto p3 = parent_world_3d(id)) return p3;
-  return xf::from_mat2d(xf::local_matrix(h_.world2d(*parentId)));
+  xf::Mat4 m = xf::from_mat2d(xf::local_matrix(h_.world2d(*parentId)));
+  if (const auto link = h_.link3d(id)) m = xf::multiply(m, xf::from_mat2d(*link));
+  return m;
 }
 
 xf::Vec3 Scene3D::to_world_point(const std::string& id, xf::Vec3 p) {

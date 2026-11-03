@@ -21,6 +21,9 @@ import { uiKindOf } from '@core/mirror/layerKinds';
 import { frameBlendOn as layerFrameBlendOn } from '@core/mirror/layerSwitchFacts';
 import { documentMirror } from '@stores/documentMirror';
 import { useMirrorKeys, useMirrorLayer } from '@hooks/useMirror';
+import { useMirrorJson } from '@hooks/useMirrorFields';
+import { boneLabel, characterBones, isCharacter, type CharacterSkeleton } from '@core/mirror/character';
+import { bindToBone } from '@layout/Inspector/characterEdits';
 import type { MenuSelectModifiers } from '@components/Menu';
 import { extraColumnValue, type TimelineExtraColumn } from './timelineColumns';
 import { mirrorStretchPercent } from '@core/mirror/motionAssist';
@@ -242,9 +245,16 @@ export const TrackHeader = memo(function TrackHeader({
   const hasFrameBlend = !!layer && frameBlendSwitchAvailable(track.id);
   const frameBlendOn = hasFrameBlend && layerFrameBlendOn(layer);
 
-  const currentParentName = currentParent
+  // Character rig: a part of a character names the bone it follows, and the
+  // Parent dropdown picks the bone.
+  const inCharacter = isCharacter(parentLayer);
+  const characterSkel = useMirrorJson<CharacterSkeleton>(inCharacter ? currentParent : null, 'layer/skeleton');
+  const boneName = inCharacter && layer?.parentBone ? boneLabel(characterSkel, layer.parentBone) : null;
+
+  const parentName = currentParent
     ? parentLayer?.name || t('timeline.header.parent', 'Parent')
     : t('timeline.header.none', 'None');
+  const currentParentName = boneName ? `${parentName} › ${boneName}` : parentName;
 
   // Option id + label come from the SHARED menu, not a second hardcoded copy of
   // the four labels. This row and the inspector used to each own their own list.
@@ -261,7 +271,28 @@ export const TrackHeader = memo(function TrackHeader({
   // every timeline render (see `Dropdown.items`).
   const parentItems = () => {
     const parentOptions = mirrorEligibleParents(documentMirror(), track.id);
+    // In a character: its bones first (the part follows one), then the plain parents.
+    const boneItems = inCharacter && currentParent
+      ? [
+          {
+            type: 'item' as const,
+            id: '__no_bone__',
+            label: t('character.noBone', 'No Bone (follow the character)'),
+            icon: !layer?.parentBone ? ('check' as const) : undefined,
+            onSelect: () => bindToBone([track.id], currentParent, null),
+          },
+          ...characterBones(characterSkel).map((b) => ({
+            type: 'item' as const,
+            id: `__bone__${b.id}`,
+            label: `${' '.repeat(b.depth)}${b.label}`,
+            icon: b.id === layer?.parentBone ? ('check' as const) : undefined,
+            onSelect: () => bindToBone([track.id], currentParent, b.id),
+          })),
+          { type: 'separator' as const },
+        ]
+      : [];
     return [
+      ...boneItems,
       {
         type: 'item' as const,
         id: '__none__',
@@ -454,6 +485,16 @@ export const TrackHeader = memo(function TrackHeader({
             onDoubleClick={startRename}
           >
             <span className={styles.trackNameText}>{shownName}</span>
+            {isCharacter(layer) && (
+              <span className={styles.characterTag} title={t('character.characterHint', 'A character: its parts follow its bones')}>
+                {t('character.tag', 'Rig')}
+              </span>
+            )}
+            {boneName && (
+              <span className={styles.boneTag} title={t('character.followsBone', 'Follows the bone {bone}', { bone: boneName })}>
+                ↳ {boneName}
+              </span>
+            )}
           </span>
         )}
         {/* Reorder grip: AE has none, so it shows only on the hovered row, at

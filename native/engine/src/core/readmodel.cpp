@@ -7,6 +7,7 @@
 #include <optional>
 #include <utility>
 
+#include "bone_link.hpp"
 #include "catalog_data.hpp"
 #include "docio.hpp"
 #include "fxstate.hpp"
@@ -457,6 +458,9 @@ api::LayerInfo layer_info(const Document& d, std::string_view layer) {
   }
   // SDK 1.4: the plugin layer type this layer is (createLayer kind=generator).
   if (const Json& t = n.fx().at("pluginLayer"); t.is_string() && !t.str().empty()) info.plugin_layer_type = t.str();
+  // Character rig: the bone this part follows, and whether this group is a character.
+  if (const std::string* bone = bound_bone(d, n)) info.parent_bone = *bone;
+  if (character_skeleton(n) != nullptr) info.character = true;
   return info;
 }
 

@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "anim.hpp"
+#include "bone_link.hpp"
 #include "fail.hpp"
 #include "layer_geometry.hpp"
 #include "rig_mesh.hpp"
@@ -70,6 +71,25 @@ Resolved resolve(const doc::Document& d, const doc::EditorView& view, const doc:
   if (n == nullptr || !n->parent) return out;
   const Json& fx = n->fx();
   if (!authoring && !rig_present(fx)) return out;
+  out.rigT = doc::comp_to_keyframe_time(d, view, layer, seconds);
+  const std::string id(layer);
+  RigSampler s;
+  s.sample = [&d, &expr, &cache, &id](std::string_view path, double t) { return doc::anim_sample(d, expr, cache, id, path, t); };
+  s.sampleData = [&d, &id](std::string_view path, double t) -> std::optional<Json> {
+    const doc::DataTrack* tr = doc::anim_data_track(d, id, path);
+    if (tr == nullptr) return std::nullopt;
+    return doc::sample_data_track(*tr, t);
+  };
+  if (doc::character_skeleton(*n) != nullptr) {
+    // A character (a group with bones) has no mesh: its bones pose its part layers (bone_link.hpp).
+    RigInputs in;
+    in.fx = &fx;
+    in.rigT = out.rigT;
+    in.poseOnly = true;
+    std::vector<std::string> warnings;
+    out.model = build_rig_model(in, s, false, false, warnings);
+    return out;
+  }
   std::optional<doc::LayerGeometry> geo;
   try {
     geo = doc::layer_geometry_at(doc::SpaceCtx{d, view, expr, cache}, text, layer, seconds);
@@ -96,16 +116,7 @@ Resolved resolve(const doc::Document& d, const doc::EditorView& view, const doc:
     if (!unreachable.empty()) return out;
   }
   in.coverage = coverage.get();
-  out.rigT = doc::comp_to_keyframe_time(d, view, layer, seconds);
   in.rigT = out.rigT;
-  const std::string id(layer);
-  RigSampler s;
-  s.sample = [&d, &expr, &cache, &id](std::string_view path, double t) { return doc::anim_sample(d, expr, cache, id, path, t); };
-  s.sampleData = [&d, &id](std::string_view path, double t) -> std::optional<Json> {
-    const doc::DataTrack* tr = doc::anim_data_track(d, id, path);
-    if (tr == nullptr) return std::nullopt;
-    return doc::sample_data_track(*tr, t);
-  };
   std::vector<std::string> warnings;  // the overlay draws the mesh as built; the frame's layer errors say what it lacks
   out.model = build_rig_model(in, s, authoring, imageLike, warnings);
   return out;

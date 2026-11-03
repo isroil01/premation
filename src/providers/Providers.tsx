@@ -170,6 +170,7 @@ import {
   deleteSelectedLayersEdit,
   liveMergePathsEdit,
   duplicateSelectedLayersEdit,
+  rigCharacterEdit,
 } from '@layout/Workspace/layerMenuEdits';
 import {
   centreAnchorEdit,
@@ -2092,6 +2093,18 @@ function buildProjectCommands(): ReadonlyArray<Command> {
       enabled: () => useSelectionStore.getState().count() > 0,
       // AE's dialog: name, Leave / Move all attributes, trim to span, open.
       execute: () => openPrecomposeDialog(),
+    },
+    {
+      // Character rig: the selected layers become one character — a bone per
+      // layer, IK legs, controllers — and the Bone tool opens in Pose mode.
+      id: asCommandId('layer.rigCharacter'),
+      label: 'Rig Character',
+      enabled: () => useSelectionStore.getState().count() > 0,
+      execute: () => {
+        void rigCharacterEdit(t('character.defaultName', 'Character')).then((handled) => {
+          if (!handled) notify(t('character.needsOneComp', 'Rig Character needs layers of one composition.'), 'warning');
+        });
+      },
     },
     {
       // The "text behind the person" sandwich (placeBehindSubject.ts): footage

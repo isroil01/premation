@@ -164,3 +164,23 @@ describe('create_skeleton_rig', () => {
     }
   });
 });
+
+describe('rig_character with layerIds (a cut-out character)', () => {
+  it('builds one character from separate layers: a bone per part, IK legs, nothing moved', async () => {
+    await ok('create_layer', { id: 't', kind: 'shape', shape: 'rect', name: 'Torso', width: 140, height: 220, x: 500, y: 300 });
+    await ok('create_layer', { id: 'a', kind: 'shape', shape: 'rect', name: 'Upper Arm L', width: 36, height: 130, x: 410, y: 260 });
+    await ok('create_layer', { id: 'th', kind: 'shape', shape: 'rect', name: 'Thigh R', width: 44, height: 140, x: 535, y: 480 });
+    await ok('create_layer', { id: 'sh', kind: 'shape', shape: 'rect', name: 'Shin R', width: 38, height: 140, x: 535, y: 620 });
+    await settleEdits();
+    const parts = ['Torso', 'Upper Arm L', 'Thigh R', 'Shin R'].map(named);
+    const out = await ok('rig_character', { layerIds: parts, name: 'Pip' });
+    await settleEdits();
+    expect(out).toMatch(/Character 'Pip'/);
+    expect(out).toMatch(/4 bones/);
+    expect(out).toMatch(/Shin R → bone_shin_r/);
+    expect(out).toMatch(/IK goals.*bone_shin_r/);
+    const character = documentMirror().layer(parts[0]!)!.parent!;
+    expect(documentMirror().layer(character)?.character).toBe(true);
+    for (const p of parts) expect(documentMirror().layer(p)?.parentBone).toBeTruthy();
+  });
+});

@@ -16,6 +16,7 @@
 #include <unordered_map>
 #include <utility>
 
+#include "bone_link.hpp"
 #include "canvas.hpp"
 #include "cloner_port.hpp"
 #include "comp_instance.hpp"
@@ -343,6 +344,7 @@ class Walk final : public Scene3DHost {
   [[nodiscard]] std::optional<std::string> parent3d_of(const std::string& id) const override { return parent_of(id); }
   bool live3d(const std::string& id) override { return is_live_at(id); }
   [[nodiscard]] std::string anim_id3d(const std::string& id) const override { return wn_->src(id); }
+  std::optional<xf::Mat2D> link3d(const std::string& id) override { return link_of(id, t_); }
 
  private:
   /// `srcId(id)` (comp_instance.cpp): the node a walked id samples animation and clips from.
@@ -449,6 +451,10 @@ class Walk final : public Scene3DHost {
   std::unordered_map<std::string, std::vector<const Bar*>> clips_;
   std::unordered_map<std::string, bool> live_;
   std::unordered_map<std::string, xf::Mat2D> world_;
+  /// Character rig: the bone link a bound part composes under its character at `tc` (bone_link.hpp), nullopt
+  /// for any other layer. At the frame's own time each character is solved once (charPose_).
+  std::optional<xf::Mat2D> link_of(const std::string& id, double tc);
+  std::unordered_map<std::string, std::optional<doc::CharacterPose>> charPose_;
   std::set<std::string, std::less<>> fullBuild_;
   /// Matte sources of layers that will NOT draw (hidden, soloed out): still
   /// matte-only, never drawn as ordinary layers (AE keeps a matte layer's
@@ -670,12 +676,48 @@ xf::Mat2D Walk::world_matrix(const std::string& nodeId) {
     const std::string& id = path[static_cast<std::size_t>(i)];
     const auto local = local_of(id);
     const xf::Mat2D lm = local ? xf::local_matrix(*local) : xf::Mat2D{};
+    const bool root = i == static_cast<std::ptrdiff_t>(path.size()) - 1;
     if (cycleFrom >= 0 && i >= cycleFrom) world = lm;
-    else if (i == static_cast<std::ptrdiff_t>(path.size()) - 1) world = above ? xf::multiply(*above, lm) : lm;
-    else world = xf::multiply(world, lm);
+    else if (root && !above) world = lm;
+    else {
+      const xf::Mat2D parentWorld = root ? *above : world;
+      const std::optional<xf::Mat2D> link = link_of(id, t_);
+      world = xf::multiply(link ? xf::multiply(parentWorld, *link) : parentWorld, lm);
+    }
     world_[id] = world;
   }
   return world;
+}
+
+std::optional<xf::Mat2D> Walk::link_of(const std::string& id, double tc) {
+  const doc::Node* n = node(id);
+  if (n == nullptr) return std::nullopt;
+  const Json& pb = n->fx().at("parentBone");
+  if (!pb.is_string() || pb.str().empty()) return std::nullopt;
+  const std::optional<std::string> parent = parent_of(id);
+  const doc::Node* group = parent ? node(*parent) : nullptr;
+  if (group == nullptr || doc::character_skeleton(*group) == nullptr) return std::nullopt;
+  const std::string& gid = *parent;
+  const auto solve = [&]() {
+    scene::RigSampler s;
+    s.sample = [this, &gid](std::string_view path, double t) { return anim_sample_of(gid, path, t); };
+    s.sampleData = [](std::string_view, double) -> std::optional<Json> { return std::nullopt; };
+    return doc::character_pose(*group, remap(gid, tc, tc != t_), s);
+  };
+  std::optional<doc::CharacterPose> other;
+  const std::optional<doc::CharacterPose>* pose = nullptr;
+  if (tc == t_) {
+    auto it = charPose_.find(gid);
+    if (it == charPose_.end()) it = charPose_.emplace(gid, solve()).first;
+    pose = &it->second;
+  } else {
+    other = solve();  // a motion-blur sample: not memoised
+    pose = &other;
+  }
+  if (!*pose) return std::nullopt;
+  const auto it = (*pose)->links.find(pb.str());
+  if (it == (*pose)->links.end()) return std::nullopt;
+  return it->second;
 }
 
 const doc::Node* Walk::nearest_precomp_root(const doc::Node& n) const {
@@ -1040,10 +1082,13 @@ xf::Local2D Walk::local_at(const std::string& id, double tc) {
 
 xf::Local2D Walk::world_at(const std::string& id, double tc) {
   xf::Mat2D w = xf::local_matrix(local_at(id, tc));
+  std::string child = id;
   std::optional<std::string> p = parent_of(id);
   for (int depth = 0; p && depth < 64; ++depth) {
     if (node(*p) == nullptr) break;
+    if (const std::optional<xf::Mat2D> link = link_of(child, tc)) w = xf::multiply(*link, w);
     w = xf::multiply(xf::local_matrix(local_at(*p, tc)), w);
+    child = *p;
     p = parent_of(*p);
   }
   return xf::matrix_to_local(w);

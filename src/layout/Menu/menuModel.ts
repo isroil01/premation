@@ -542,6 +542,7 @@ export const APP_MENU: MenuGroupModel[] = [
         ],
       },
       { commandId: 'layer.precompose', label: 'Pre-compose…' },
+      { commandId: 'layer.rigCharacter', label: 'Rig Character' },
       { separator: true },
       {
         // Derive new layers from the selection — nulls from a path's points,

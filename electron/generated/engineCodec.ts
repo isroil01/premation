@@ -4446,6 +4446,54 @@ function decS_UngroupLayer(r: Reader, end: number, o: any): T.UngroupLayer {
   o.group = v_group;
   return o;
 }
+function encS_BindToBone(w: Writer, v: T.BindToBone): void {
+  { const a = v.layers; for (let i = 0; i < a.length; i++) { w.byte(10); w.str(a[i]!); } }
+  w.byte(18); w.str(v.character);
+  if (v.bone !== undefined) { w.byte(26); w.str(v.bone); }
+}
+function decS_BindToBone(r: Reader, end: number, o: any): T.BindToBone {
+  const l_layers: string[] = [];
+  let h_character = false;
+  let v_character: string | undefined;
+  let v_bone: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_layers.push(r.str()); break;
+      case 18: v_character = r.str(); h_character = true; break;
+      case 26: v_bone = r.str(); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_character) throw new DecodeError('BindToBone.character: missing', 'missingField');
+  o.layers = l_layers;
+  o.character = v_character;
+  if (v_bone !== undefined) o.bone = v_bone;
+  return o;
+}
+function encS_CreateCharacter(w: Writer, v: T.CreateCharacter): void {
+  { const a = v.layers; for (let i = 0; i < a.length; i++) { w.byte(10); w.str(a[i]!); } }
+  w.byte(18); w.str(v.name);
+}
+function decS_CreateCharacter(r: Reader, end: number, o: any): T.CreateCharacter {
+  const l_layers: string[] = [];
+  let h_name = false;
+  let v_name: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_layers.push(r.str()); break;
+      case 18: v_name = r.str(); h_name = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_name) throw new DecodeError('CreateCharacter.name: missing', 'missingField');
+  o.layers = l_layers;
+  o.name = v_name;
+  return o;
+}
 function encS_ConvertLayer(w: Writer, v: T.ConvertLayer): void {
   w.byte(10); w.str(v.layer);
   w.byte(16); w.varint(enc_LayerConversion(v.conversion));
@@ -10838,6 +10886,8 @@ function encS_LayerInfo(w: Writer, v: T.LayerInfo): void {
   if (v.caption !== undefined) { w.varint(7376); w.bool(v.caption); }
   if (v.multicamAngle !== undefined) { w.varint(7384); w.u32(v.multicamAngle); }
   if (v.pluginLayerType !== undefined) { w.varint(7394); w.str(v.pluginLayerType); }
+  if (v.parentBone !== undefined) { w.varint(7402); w.str(v.parentBone); }
+  if (v.character !== undefined) { w.varint(7408); w.bool(v.character); }
 }
 function decS_LayerInfo(r: Reader, end: number, o: any): T.LayerInfo {
   const l_children: string[] = [];
@@ -10883,6 +10933,8 @@ function decS_LayerInfo(r: Reader, end: number, o: any): T.LayerInfo {
   let v_caption: boolean | undefined;
   let v_multicamAngle: number | undefined;
   let v_pluginLayerType: string | undefined;
+  let v_parentBone: string | undefined;
+  let v_character: boolean | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -10912,6 +10964,8 @@ function decS_LayerInfo(r: Reader, end: number, o: any): T.LayerInfo {
       case 7376: v_caption = r.bool(); break;
       case 7384: v_multicamAngle = r.u32(); break;
       case 7394: v_pluginLayerType = r.str(); break;
+      case 7402: v_parentBone = r.str(); break;
+      case 7408: v_character = r.bool(); break;
       default: r.skip(key);
     }
   }
@@ -10959,6 +11013,8 @@ function decS_LayerInfo(r: Reader, end: number, o: any): T.LayerInfo {
   if (v_caption !== undefined) o.caption = v_caption;
   if (v_multicamAngle !== undefined) o.multicamAngle = v_multicamAngle;
   if (v_pluginLayerType !== undefined) o.pluginLayerType = v_pluginLayerType;
+  if (v_parentBone !== undefined) o.parentBone = v_parentBone;
+  if (v_character !== undefined) o.character = v_character;
   return o;
 }
 function encS_MemberExpression(w: Writer, v: T.MemberExpression): void {
@@ -19417,6 +19473,8 @@ function encU_Command(w: Writer, v: T.Command): void {
     case 'autoTrace': w.varint(1722); { const s = w.beginLd(); encS_AutoTrace(w, v); w.endLd(s); } return;
     case 'setLayerComment': w.varint(1730); { const s = w.beginLd(); encS_SetLayerComment(w, v); w.endLd(s); } return;
     case 'setPinnedProperties': w.varint(1738); { const s = w.beginLd(); encS_SetPinnedProperties(w, v); w.endLd(s); } return;
+    case 'bindToBone': w.varint(1746); { const s = w.beginLd(); encS_BindToBone(w, v); w.endLd(s); } return;
+    case 'createCharacter': w.varint(1754); { const s = w.beginLd(); encS_CreateCharacter(w, v); w.endLd(s); } return;
     case 'setLayerTiming': w.varint(2402); { const s = w.beginLd(); encS_SetLayerTiming(w, v); w.endLd(s); } return;
     case 'moveLayersInTime': w.varint(2410); { const s = w.beginLd(); encS_MoveLayersInTime(w, v); w.endLd(s); } return;
     case 'trimLayers': w.varint(2418); { const s = w.beginLd(); encS_TrimLayers(w, v); w.endLd(s); } return;
@@ -19604,6 +19662,8 @@ function decU_Command(r: Reader, end: number): T.Command {
       case 1722: out = decS_AutoTrace(r, r.ldEnd(), { type: 'autoTrace' }) as T.Command; break;
       case 1730: out = decS_SetLayerComment(r, r.ldEnd(), { type: 'setLayerComment' }) as T.Command; break;
       case 1738: out = decS_SetPinnedProperties(r, r.ldEnd(), { type: 'setPinnedProperties' }) as T.Command; break;
+      case 1746: out = decS_BindToBone(r, r.ldEnd(), { type: 'bindToBone' }) as T.Command; break;
+      case 1754: out = decS_CreateCharacter(r, r.ldEnd(), { type: 'createCharacter' }) as T.Command; break;
       case 2402: out = decS_SetLayerTiming(r, r.ldEnd(), { type: 'setLayerTiming' }) as T.Command; break;
       case 2410: out = decS_MoveLayersInTime(r, r.ldEnd(), { type: 'moveLayersInTime' }) as T.Command; break;
       case 2418: out = decS_TrimLayers(r, r.ldEnd(), { type: 'trimLayers' }) as T.Command; break;
@@ -19791,6 +19851,8 @@ function encU_CommandResult(w: Writer, v: T.CommandResult): void {
     case 'autoTrace': w.varint(1722); { const s = w.beginLd(); encS_GroupList(w, v); w.endLd(s); } return;
     case 'setLayerComment': w.varint(1730); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'setPinnedProperties': w.varint(1738); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
+    case 'bindToBone': w.varint(1746); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
+    case 'createCharacter': w.varint(1754); { const s = w.beginLd(); encS_LayerRef(w, v); w.endLd(s); } return;
     case 'setLayerTiming': w.varint(2402); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'moveLayersInTime': w.varint(2410); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'trimLayers': w.varint(2418); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
@@ -19978,6 +20040,8 @@ function decU_CommandResult(r: Reader, end: number): T.CommandResult {
       case 1722: out = decS_GroupList(r, r.ldEnd(), { type: 'autoTrace' }) as T.CommandResult; break;
       case 1730: out = decS_Empty(r, r.ldEnd(), { type: 'setLayerComment' }) as T.CommandResult; break;
       case 1738: out = decS_Empty(r, r.ldEnd(), { type: 'setPinnedProperties' }) as T.CommandResult; break;
+      case 1746: out = decS_Empty(r, r.ldEnd(), { type: 'bindToBone' }) as T.CommandResult; break;
+      case 1754: out = decS_LayerRef(r, r.ldEnd(), { type: 'createCharacter' }) as T.CommandResult; break;
       case 2402: out = decS_Empty(r, r.ldEnd(), { type: 'setLayerTiming' }) as T.CommandResult; break;
       case 2410: out = decS_Empty(r, r.ldEnd(), { type: 'moveLayersInTime' }) as T.CommandResult; break;
       case 2418: out = decS_Empty(r, r.ldEnd(), { type: 'trimLayers' }) as T.CommandResult; break;
@@ -20605,6 +20669,8 @@ export const codecs = {
   ReplaceLayerSource: mk<T.ReplaceLayerSource>(encS_ReplaceLayerSource, (r, e) => decS_ReplaceLayerSource(r, e, {})),
   GroupLayers: mk<T.GroupLayers>(encS_GroupLayers, (r, e) => decS_GroupLayers(r, e, {})),
   UngroupLayer: mk<T.UngroupLayer>(encS_UngroupLayer, (r, e) => decS_UngroupLayer(r, e, {})),
+  BindToBone: mk<T.BindToBone>(encS_BindToBone, (r, e) => decS_BindToBone(r, e, {})),
+  CreateCharacter: mk<T.CreateCharacter>(encS_CreateCharacter, (r, e) => decS_CreateCharacter(r, e, {})),
   ConvertLayer: mk<T.ConvertLayer>(encS_ConvertLayer, (r, e) => decS_ConvertLayer(r, e, {})),
   PasteLayers: mk<T.PasteLayers>(encS_PasteLayers, (r, e) => decS_PasteLayers(r, e, {})),
   SeparateLayer: mk<T.SeparateLayer>(encS_SeparateLayer, (r, e) => decS_SeparateLayer(r, e, {})),

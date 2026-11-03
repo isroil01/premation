@@ -38,11 +38,13 @@ import {
   bakeMergePathsEdit,
   duplicateSelectedLayersEdit,
   groupSelectedLayersEdit,
+  rigCharacterEdit,
   liveMergePathsEdit,
   setLabelColorEdit,
   ungroupSelectedEdit,
 } from '@layout/Workspace/layerMenuEdits';
 import { alignLayers, parentLayer, setLayerMatte, setLayersBlend } from '@layout/Inspector/inspectorEdits';
+import { bindToBone } from '@layout/Inspector/characterEdits';
 import { splitSelectedAtPlayhead, unfreezeEdit } from '@layout/Timeline/timelineEdits';
 import { rigLogoForAnimation } from '@core/scene/rigLogo';
 import { masksFromTextEdit } from '@layout/Text/textEdits';
@@ -377,6 +379,19 @@ export function sceneNodeMenuItems(targetId: string, deps: SceneMenuDeps): Conte
       },
     },
     ...(isGroup ? [{ id: 'ungroup', label: t('scene.menu.ungroup', 'Ungroup'), onSelect: () => { void ungroupSelectedEdit(); } }] : []),
+    // Character rig: the selection becomes a character (a bone per layer); a part can leave its bone.
+    {
+      id: 'rig-character',
+      label: t('character.rigCharacterMenu', 'Rig Character'),
+      onSelect: () => {
+        void rigCharacterEdit(t('character.defaultName', 'Character')).then((handled) => {
+          if (!handled) notify(t('character.needsOneComp', 'Rig Character needs layers of one composition.'));
+        });
+      },
+    },
+    ...(layer.parentBone && layer.parent
+      ? [{ id: 'detach-bone', label: t('character.detachFromBone', 'Detach from Bone'), onSelect: () => bindToBone(ids, layer.parent!, null) }]
+      : []),
     { id: 'precompose', label: t('scene.menu.preCompose', 'Pre-compose…'), shortcut: 'Ctrl+Shift+C', onSelect: () => openPrecomposeDialog() },
     ...(isText
       ? [
