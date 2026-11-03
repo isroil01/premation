@@ -1880,3 +1880,26 @@ TEST_CASE("gamma blending: blend modes, track mattes, precomps and adjustment la
   CHECK(near(Px{pa}.at(32, 24, 1), 128));
   CHECK(Px{pa}.at(2, 2, 1) == 0);
 }
+
+TEST_CASE("a sharp-cornered shape rect covers its corner pixels fully, linear and gamma", "[blend][gamma][sdf]") {
+  std::string err;
+  auto renderer = SceneRenderer::create({}, err);
+  if (!renderer) return;
+  // solid_scene's rect (16,12)-(48,36), white over black, drawn as the shape path draws a solid.
+  // Its corner pixels used to come out ~85 % covered (sRGB 238 linear, 220 gamma): the SDF's
+  // gradient was differenced across the max() at the corner's diagonal.
+  for (const bool gammaOn : {false, true}) {
+    auto file = gamma(solid_scene(1, 1, 1), gammaOn);
+    file.scene.renderables[0].sdf = api::RenderSdf{api::RenderSdfShape::rounded, 0, 32, 24};
+    const Frame f = render_ok(*renderer, file);
+    const Px p{f};
+    for (const auto& [x, y] : {std::pair{16U, 12U}, std::pair{47U, 12U}, std::pair{16U, 35U}, std::pair{47U, 35U}, std::pair{46U, 35U}, std::pair{47U, 34U}}) {
+      INFO("gamma " << gammaOn << " at " << x << "," << y);
+      CHECK(p.at(x, y, 1) >= 254);
+    }
+    CHECK(p.at(15, 12, 1) <= 1);  // just outside: the background
+    // A rounded corner still rounds: its corner pixel is mostly outside the arc.
+    file.scene.renderables[0].sdf->radius_px = 8;
+    CHECK(Px{render_ok(*renderer, file)}.at(16, 12, 1) < 128);
+  }
+}

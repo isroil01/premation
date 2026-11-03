@@ -52,7 +52,18 @@ fn shapeAlpha(local : vec2<f32>) -> f32 {
     let p = (local - vec2<f32>(0.5)) * sz;
     let b = sz * 0.5 - r;
     let q = abs(p) - b;
-    return coverage(length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - r);
+    let d = length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - r;
+    // The distance's screen gradient along its own normal, from p's (smooth)
+    // derivatives. Differencing d itself across a 2×2 pixel quad that straddles
+    // the max() at a sharp corner's diagonal measured |∇d| ≈ √2, and the corner
+    // pixels of every square rect — a comp-sized solid's included — came out
+    // ~85 % covered (a grey corner, visible in gamma blending).
+    let outside = max(q, vec2<f32>(0.0));
+    var n = select(vec2<f32>(0.0, 1.0), vec2<f32>(1.0, 0.0), q.x > q.y);
+    if (outside.x > 0.0 || outside.y > 0.0) { n = normalize(outside); }
+    n = n * select(vec2<f32>(-1.0), vec2<f32>(1.0), p >= vec2<f32>(0.0));
+    let gd = vec2<f32>(dot(n, dpdx(p)), dot(n, dpdy(p)));
+    return clamp(0.5 - d / max(length(gd), 1e-8), 0.0, 1.0);
   }
   // A plain rect is its box: covered by the layer edge when that is on.
   return select(1.0, edgeCoverage(local), obj.edge.z > 0.5);
