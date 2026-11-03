@@ -38,10 +38,27 @@ on:
       - 'v*'
   # Manual runs rehearse the build. They produce no release, so a dry run can
   # never publish something half-finished.
+  #
+  # Re-package ONE platform onto a tag's draft without rebuilding the engines
+  # (hours on a cache miss) — after a packaging-only fix:
+  #   gh workflow run release.yml --ref v1.2.3 -f engines_from_run=<run id> -f only=macOS
+  # Run from the TAG (--ref) so it publishes to that draft. The engines come
+  # from <run id>'s artifacts (kept 3 days), and verify refuses unless native/
+  # is identical between that run's commit and this one.
   workflow_dispatch:
+    inputs:
+      engines_from_run:
+        description: 'Reuse the engines built by this release run id (skips the engine builds)'
+        required: false
+        default: ''
+      only:
+        description: 'Build only this platform: Windows, macOS or Linux (empty = all)'
+        required: false
+        default: ''
 
 permissions:
   contents: write
+  actions: read     # download-artifact from an earlier run (engines_from_run)
 
 jobs:
   verify:
@@ -52,6 +69,7 @@ jobs:
       # so the two platforms cannot disagree about what was decided.
       signMac: ${{ steps.signing.outputs.mac }}
       signWin: ${{ steps.signing.outputs.win }}
+      platforms: ${{ steps.platforms.outputs.list }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -78,6 +96,50 @@ jobs:
             exit 1
           fi
           echo "OK: $GITHUB_REF_NAME is on $RELEASE_BRANCH."
+
+      # The `build` matrix (workflow_dispatch `only` keeps one; a tag push builds all).
+      #   signing  which secrets gate the signed path; `none` = always unsigned
+      #   Windows  NSIS → Premation-Setup-Windows.exe
+      #   macOS    BOTH architectures in ONE job, deliberately: two jobs would
+      #            each publish their own latest-mac.yml and the second would
+      #            overwrite the first, leaving one architecture unable to update.
+      #   Linux    AppImage → Premation-Linux-x86_64.AppImage + latest-linux.yml
+      - name: Platforms to package
+        id: platforms
+        env:
+          ONLY: ${{ inputs.only }}
+        run: |
+          set -euo pipefail
+          all='[
+            {"os":"windows-latest","name":"Windows","signing":"win","args":"--win"},
+            {"os":"macos-latest","name":"macOS","signing":"mac","args":"--mac --x64 --arm64"},
+            {"os":"ubuntu-latest","name":"Linux","signing":"none","args":"--linux --x64"}
+          ]'
+          case "${ONLY}" in
+            ''|Windows|macOS|Linux) ;;
+            *) echo "::error::only must be Windows, macOS or Linux (got '$ONLY')"; exit 1 ;;
+          esac
+          list=$(jq -c --arg only "$ONLY" '[.[] | select($only == "" or .name == $only)]' <<<"$all")
+          echo "list=$list" >> "$GITHUB_OUTPUT"
+          echo "packaging: $list"
+
+      # Reused engines must be built from the same native/ sources as this commit.
+      - name: Reused engines match this commit's native/
+        if: ${{ inputs.engines_from_run != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ inputs.engines_from_run }}
+        run: |
+          set -euo pipefail
+          sha=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq .head_sha)
+          echo "engines from run $RUN_ID (commit $sha); packaging $GITHUB_SHA"
+          git fetch --no-tags origin "$sha"
+          if ! git diff --quiet "$sha" "$GITHUB_SHA" -- native/; then
+            echo "::error::native/ changed since run $RUN_ID's commit $sha: its engines are not this commit's. Run the full release."
+            git diff --stat "$sha" "$GITHUB_SHA" -- native/
+            exit 1
+          fi
+          echo "OK: native/ is identical."
 
       - uses: actions/setup-node@v4
         with:
@@ -175,6 +237,7 @@ jobs:
   engine:
     name: Engine ${{ matrix.name }}
     needs: verify
+    if: ${{ inputs.engines_from_run == '' }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 330
     strategy:
@@ -248,7 +311,8 @@ jobs:
   sdk-release:
     name: Attach the plugin SDKs
     needs: [engine, draft]
-    if: startsWith(github.ref, 'refs/tags/v')
+    # A repackage leaves the SDK zips the full run attached.
+    if: ${{ startsWith(github.ref, 'refs/tags/v') && inputs.engines_from_run == '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -288,31 +352,17 @@ jobs:
   build:
     name: Build ${{ matrix.name }}
     # `draft` is skipped on a workflow_dispatch rehearsal; `always()` keeps the
-    # builds running then, while a FAILED draft job still stops them.
+    # builds running then, while a FAILED draft job still stops them. `engine`
+    # is skipped on a repackage (engines_from_run).
     needs: [verify, engine, draft]
-    if: ${{ always() && needs.verify.result == 'success' && needs.engine.result == 'success' && (needs.draft.result == 'success' || needs.draft.result == 'skipped') }}
+    if: ${{ always() && needs.verify.result == 'success' && (needs.engine.result == 'success' || (needs.engine.result == 'skipped' && inputs.engines_from_run != '')) && (needs.draft.result == 'success' || needs.draft.result == 'skipped') }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          # `signing` picks which secrets gate the signed path; `none` means the
-          # platform has no signing step and always takes the unsigned path.
-          - os: windows-latest
-            name: Windows
-            signing: win
-            args: --win            # NSIS → Premation-Setup-Windows.exe
-          - os: macos-latest
-            name: macOS
-            signing: mac
-            # BOTH architectures in ONE job, deliberately: two jobs would each
-            # publish their own latest-mac.yml and the second would overwrite the
-            # first, leaving one architecture unable to update.
-            args: --mac --x64 --arm64
-          - os: ubuntu-latest
-            name: Linux
-            signing: none
-            args: --linux --x64    # AppImage → Premation-Linux-x86_64.AppImage + latest-linux.yml
+        # The platform list (os / name / signing / args) is in verify's
+        # "Platforms to package" step, filtered there by workflow_dispatch `only`.
+        include: ${{ fromJSON(needs.verify.outputs.platforms) }}
 
     steps:
       - uses: actions/checkout@v4
@@ -333,24 +383,36 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: engine-windows-clang-cl-engine
+          # A repackage (engines_from_run) takes the engines that run built.
+          run-id: ${{ inputs.engines_from_run || github.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           path: native/build/windows-clang-cl-engine/engine
       - name: Fetch the macOS engines (arm64 + x64)
         if: matrix.os == 'macos-latest'
         uses: actions/download-artifact@v4
         with:
           name: engine-macos-clang-engine
+          # A repackage (engines_from_run) takes the engines that run built.
+          run-id: ${{ inputs.engines_from_run || github.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           path: native/build/macos-clang-engine/engine
       - name: Fetch the macOS x64 engine
         if: matrix.os == 'macos-latest'
         uses: actions/download-artifact@v4
         with:
           name: engine-macos-clang-engine-x64
+          # A repackage (engines_from_run) takes the engines that run built.
+          run-id: ${{ inputs.engines_from_run || github.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           path: native/build/macos-clang-engine-x64/engine
       - name: Fetch the Linux engine
         if: matrix.os == 'ubuntu-latest'
         uses: actions/download-artifact@v4
         with:
           name: engine-linux-clang-engine
+          # A repackage (engines_from_run) takes the engines that run built.
+          run-id: ${{ inputs.engines_from_run || github.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           path: native/build/linux-clang-engine/engine
       - name: Check the Linux engine
         if: matrix.os == 'ubuntu-latest'
