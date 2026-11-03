@@ -187,7 +187,16 @@ frames look worse than AE is a short list of specific wrong choices, most of the
     57–58 ms, p95 121–133 → 64–68 ms.
   - Main's command log kept one entry per seek for the whole session; a run of one view
     control now keeps only its newest.
-  - Still open: the viewer's per-frame stale/dropped cue.
+  - **Viewer cue (2026-11-03):** a small badge top-left of the stage (`core/perf/frameFreshness.ts`,
+    written by EngineSurface through a ref, no React render). Paused: "Rendering…" when the picture
+    trails the playhead's frame or the last edit's revision by more than 120 ms, so a frame
+    that lands quickly never blinks it. Playing: "Dropped N" for 700 ms after the engine skips
+    frames. Live: quick seeks on a light comp never show it; a grab on the 1500-layer comp shows
+    "Rendering…" for ~40 ms then clears; playing that comp counts drops up ("Dropped 1 … 26").
+  - Live app, 1500-layer comp: a grab is build-bound (~105 ms build + ~30 ms render and
+    delivery), the same on both engines. The engine's idle render-ahead never ran during the
+    pauses: cache coverage stayed at one frame after 8 s idle, with 905 MB of RAM tier in use.
+    That is why the build-lock gain above does not show live yet. Open, separately.
 
 ## Live-frame results (diagnostic comp, deleted afterwards)
 - Sub-pixel translation: smooth (1 px rect at y=60 → two 50 % rows; at y=60.5 → one full row). OK.

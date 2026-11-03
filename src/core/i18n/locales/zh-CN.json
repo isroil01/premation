@@ -8686,6 +8686,8 @@
   "ui.engineSurface.busy.other": "引擎繁忙 · {what} · {time}",
   "ui.engineSurface.busy.query": "引擎繁忙 · 正在响应查询 · {time}",
   "ui.engineSurface.busy.working": "引擎繁忙 · 正在工作 · {time}",
+  "ui.engineSurface.cue.dropped": "丢帧 {n}",
+  "ui.engineSurface.cue.stale": "正在渲染…",
   "ui.engineSurface.restarted": "引擎已重启（{cause}）· 在 {ms} 毫秒内重放了 {n} 个请求",
   "ui.engineSurface.unavailable": "引擎不可用（{reason}）",
   "ui.engineSurface.waiting": "正在等待 C++ 引擎的第一帧…",
