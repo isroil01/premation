@@ -127,7 +127,8 @@ frames look worse than AE is a short list of specific wrong choices, most of the
   step the preset ladder.
 
 ### 12. Viewer colour — major
-- **Partly fixed 2026-11-03:** View ▸ Adjust Exposure applies on the OCIO route. The transparency grid's cell is 16 screen px at the view's zoom (power of two). Not done: 8-bit output surface, gamma-space compositing option.
+- **Partly fixed 2026-11-03:** View ▸ Adjust Exposure applies on the OCIO route. The transparency grid's cell is 16 screen px at the view's zoom (power of two). Not done: 8-bit output surface.
+- **Gamma-space compositing fixed 2026-11-03:** Project Settings' blending choice (`linear_blending`, AE's "Blend Colors Using 1.0 Gamma") reaches the renderer (`RenderView.gammaBlending`): layers composite into their comp in sRGB-encoded values — opacity, AA edges, feathers, mattes, blend modes. New projects start in gamma (AE's default); files saved before it stay linear. Effects inside a layer (blurs) and 3D runs stay linear.
 - Output slots are RGBA8 (`shared_texture_ffi.cpp:88`), canvas has no `colorSpace`, so no HDR or P3
   display; PQ/HLG display transforms are tone-mapped onto 8-bit SDR.
 - `render_graph/passes.cpp:88-91`: exposure is not applied on the OCIO route — View ▸ Adjust
