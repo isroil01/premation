@@ -3,8 +3,19 @@
 Newest first. Each entry is what a person opening the app after an update
 would want to know; the engine-level detail is in `ROADMAP.md`.
 
-## Unreleased
+## 1.1.0 — 2026-11-03
 
+- **Smoother playback on heavy comps.** The frames a play shows are now built
+  on more than one core, so a composition with thousands of layers plays about
+  twice as fast before it is cached.
+- **Scrubbing answers at once.** Dragging the playhead no longer waits for the
+  background render-ahead to finish the frame it was on. The viewer says
+  "Rendering…" while the picture is catching up and "Dropped N" when playback
+  skips frames.
+- **Blend Colors Using 1.0 Gamma.** The Project Settings option now changes
+  how layers mix, as in After Effects: new projects blend in gamma space, and
+  projects saved before keep their linear look. Sharp-cornered shape
+  rectangles also fill their corners fully.
 - **Checkout opens in your browser.** Subscribing and managing your payment
   method now open in your web browser, with your saved cards and wallets, instead
   of replacing the editor with no way back. Premation stays open while you pay,
