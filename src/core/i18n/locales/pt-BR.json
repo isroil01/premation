@@ -8676,6 +8676,8 @@
   "ui.engineSurface.busy.other": "Mecanismo ocupado · {what} · {time}",
   "ui.engineSurface.busy.query": "Mecanismo ocupado · respondendo a uma consulta · {time}",
   "ui.engineSurface.busy.working": "Mecanismo ocupado · trabalhando · {time}",
+  "ui.engineSurface.cue.dropped": "Descartados {n}",
+  "ui.engineSurface.cue.stale": "Renderizando…",
   "ui.engineSurface.restarted": "Mecanismo reiniciado ({cause}) · {n} solicitações reexecutadas em {ms} ms",
   "ui.engineSurface.unavailable": "Mecanismo indisponível ({reason})",
   "ui.engineSurface.waiting": "Aguardando o primeiro quadro do mecanismo C++…",

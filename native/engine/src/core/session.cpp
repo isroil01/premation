@@ -204,7 +204,7 @@ void Session::set_prefetch_builders(std::vector<FrameBuilder*> builders) {
   prefetchBuilders_ = std::move(builders);
   prefetchExprCaches_.clear();
   for (FrameBuilder* b : prefetchBuilders_) {
-    b->set_cancel_flag(&editsWaiting_);
+    b->set_cancel_flag(&prefetchYield_);  // an edit, or a paused viewport frame, stops it at its next layer
     auto cache = std::make_unique<doc::ExprCache>();
     // sampleImage draws through the main builder: such a frame is the main worker's.
     cache->pixelProbe = [](const doc::DocExprEnv&, std::string_view, double, bool, std::string&) -> std::shared_ptr<const doc::LayerPixels> {
@@ -2037,6 +2037,7 @@ void Session::note_activity(Clock::time_point now) {
   prefetchOut_.clear();
   prefetchRefused_ = 0;
   prefetchResting_ = false;
+  prefetchRetry_ = false;
   prefetchOrigin_ = -1;
   prefetchAhead_ = 0;
   prefetchBehind_ = 0;
@@ -2065,20 +2066,29 @@ void Session::idle_prefetch(Clock::time_point now) {
   if (!idle_prefetch_armed()) return;
   if (!deferred_.empty() || !forceBuild_.empty() || renderDirty_) return;
   if (now - lastActivity_ < kIdlePrefetchAfter) return;
-  const RenderCounters counters = sink_.counters();
-  if (prefetchOut_.empty()) prefetchSeenAnswered_ = counters.prefetched;
+  // Answered: by the sink, or skipped on a worker (prefetchSkipped_).
+  const std::uint64_t done = sink_.counters().prefetched + prefetchSkipped_;
+  if (prefetchOut_.empty()) prefetchSeenAnswered_ = done;
   // One prefetch per worker in flight (item 7: the prefetch workers build side
-  // by side); `prefetchOut_` is what went since the sink's answered count was
+  // by side); `prefetchOut_` is what went since the answered count was
   // `prefetchSeenAnswered_` (answers to jobs a move forgot count too: clamped).
-  const std::uint64_t answered = counters.prefetched - prefetchSeenAnswered_;
+  const std::uint64_t answered = done - prefetchSeenAnswered_;
   if (!prefetchOut_.empty() && answered >= prefetchOut_.size()) {
     // All landed. The map knows a key once a tier kept it; refused by every tier
     // (the RAM budget full of this range, VRAM too small) a few rounds in a row,
-    // the prefetcher rests until the next edit or move.
+    // the prefetcher rests until the next edit or move. A round with a skipped
+    // build is no refusal: the scan steps out from the playhead again and builds
+    // what is still missing (frames a tier holds are passed over).
     const bool kept = std::ranges::any_of(prefetchOut_, [this](std::uint64_t k) { return k != 0 && sink_.cached_frame(k).has_value(); });
-    prefetchRefused_ = kept ? 0 : prefetchRefused_ + 1;
+    if (kept) prefetchRefused_ = 0;
+    else if (!prefetchRetry_) ++prefetchRefused_;
+    if (prefetchRetry_) {
+      prefetchAhead_ = 0;
+      prefetchBehind_ = 0;
+      prefetchRetry_ = false;
+    }
     prefetchOut_.clear();
-    prefetchSeenAnswered_ = counters.prefetched;
+    prefetchSeenAnswered_ = done;
     if (prefetchRefused_ >= kIdlePrefetchRefusals) {
       prefetchResting_ = true;
       return;
@@ -3053,11 +3063,20 @@ void Session::enqueue_build(BuildTask task) {
       }
     }
     buildQueue_.push_back(std::move(task));
+    sync_shown_yield_locked();
   }
   buildCv_.notify_all();
   // Counted as the render thread counts a job superseded before it started: a
   // frame of playback lost (an edit's is not), its clock drops carried over.
   if (superseded) sink_.note_dropped(viewport, superseded->playing ? 1U : 0U, superseded->job.clockDropped);
+}
+
+void Session::sync_shown_yield_locked() {
+  const bool want = shownLocking_ || std::ranges::any_of(buildQueue_, [](const BuildTask& t) { return yields_prefetch(t); });
+  if (want == shownYield_) return;
+  shownYield_ = want;
+  if (want) prefetchYield_.fetch_add(1, std::memory_order_acq_rel);
+  else prefetchYield_.fetch_sub(1, std::memory_order_acq_rel);
 }
 
 bool Session::build_pending(std::uint32_t viewport) const {
@@ -3101,6 +3120,9 @@ void Session::build_worker() {
       buildBusy_ = true;
       viewportBusy_ = !task.job.prefetch && !task.ahead;
       if (task.ahead) ++aheadBusy_;
+      // Still owed the prefetches' way until run_build holds the lock.
+      shownLocking_ = yields_prefetch(task);
+      sync_shown_yield_locked();
     }
     const bool ahead = task.ahead;
     if (ahead) run_ahead_build(std::move(task), prefetchBuilders_.size());
@@ -3149,10 +3171,11 @@ void Session::run_prefetch_build(BuildTask t, std::size_t index) {
   report.comp = t.comp;
   report.viewport = t.job.viewport;
   report.seq = t.seq;
+  report.prefetch = true;
   bool submit = false;
   bool toMain = false;
-  if (editsWaiting_.load(std::memory_order_acquire) != 0) {
-    report.skipped = true;  // an edit is waiting: not ahead of it (run_build)
+  if (prefetchYield_.load(std::memory_order_acquire) != 0) {
+    report.skipped = true;  // an edit or a paused viewport frame is waiting: not ahead of it
   } else {
     const std::shared_lock<std::shared_mutex> lock = shared_build_lock();
     if (docWrites_.load(std::memory_order_acquire) != t.writes) {
@@ -3206,16 +3229,28 @@ void Session::run_build(BuildTask t) {
   report.announce = t.announce;
   report.viewport = t.job.viewport;
   report.seq = t.seq;
+  report.prefetch = t.job.prefetch;
   bool submit = false;
   const auto ftWait0 = Clock::now();
-  if (editsWaiting_.load(std::memory_order_acquire) != 0) {
+  // A paused viewport frame no longer holds the prefetches back once it has the lock (or is skipped).
+  const auto lockTaken = [this] {
+    const std::lock_guard<std::mutex> lock(buildQueueMu_);
+    shownLocking_ = false;
+    sync_shown_yield_locked();
+  };
+  // A prefetch on this worker gives way as the prefetch workers' builds do (prefetchYield_).
+  const std::atomic<std::uint32_t>& cancel = t.job.prefetch ? prefetchYield_ : editsWaiting_;
+  if (cancel.load(std::memory_order_acquire) != 0) {
     // An edit is waiting for the lock: taking it first would make the edit
-    // wait for a frame of the document it is about to change. The task is
-    // skipped without the lock (the core thread queues a fresh one, below).
+    // wait for a frame of the document it is about to change (a prefetch: or
+    // a paused viewport frame is waiting). The task is skipped without the
+    // lock (the core thread queues a fresh one, below).
+    lockTaken();
     report.skipped = true;
   } else {
     // A shared hold: the prefetch workers build beside this one (their own builders and caches).
     const std::shared_lock<std::shared_mutex> lock = shared_build_lock();
+    lockTaken();
     // Frame-pipeline trace: how long the build waited for the lock, and a skip.
     PREMATION_LOG(debug, "ft_build").kv("rev", static_cast<std::uint64_t>(t.job.revision))
         .kv("lockMs", std::chrono::duration<double, std::milli>(Clock::now() - ftWait0).count())
@@ -3237,6 +3272,20 @@ void Session::run_build(BuildTask t) {
           // (overlay geometry, onion ghosts) is computed here.
           report.cached = true;
         } else {
+          if (t.job.prefetch) frameBuilder_->set_cancel_flag(&prefetchYield_);
+          // The main builder watches the edits again after it, however it ends.
+          struct CancelFlagReset {
+            CancelFlagReset(FrameBuilder* b, const std::atomic<std::uint32_t>* flag) : b_(b), flag_(flag) {}
+            ~CancelFlagReset() { b_->set_cancel_flag(flag_); }
+            CancelFlagReset(const CancelFlagReset&) = delete;
+            CancelFlagReset& operator=(const CancelFlagReset&) = delete;
+            CancelFlagReset(CancelFlagReset&&) = delete;
+            CancelFlagReset& operator=(CancelFlagReset&&) = delete;
+
+           private:
+            FrameBuilder* b_;
+            const std::atomic<std::uint32_t>* flag_;
+          } const cancelReset{frameBuilder_, &editsWaiting_};
           t.job.built = frameBuilder_->build(doc_, t.view, env, buildExprCache_, t.comp, t.time, t.port, t.playing, report.errors);
           t.job.buildMs = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
           // A frame built from an input that may still change on its own (a
@@ -3346,12 +3395,18 @@ void Session::pump_builds() {
   }
   bool rebuild = false;
   for (BuildReport& r : reports) {
+    if (r.skipped && r.prefetch) {
+      // A skipped prefetch is never shown: no redraw (one went through the
+      // build worker with overlays, and made the next prefetch give way again).
+      // Answered for idle_prefetch, which builds the frame again.
+      ++prefetchSkipped_;
+      prefetchRetry_ = true;
+      continue;
+    }
     if (r.skipped) {
       // Build again only if no frame for this viewport was queued after the
       // skipped task: the edit that made it stale queues its own frame
-      // (flush_render after the command), and that one is the rebuild. A
-      // skipped prefetch (never recorded in lastFrameSeq_) re-requests the
-      // viewport's frame unless a frame was queued since.
+      // (flush_render after the command), and that one is the rebuild.
       const auto last = lastFrameSeq_.find(r.viewport);
       if (last == lastFrameSeq_.end() || last->second <= r.seq) rebuild = true;
       continue;

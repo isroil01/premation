@@ -154,7 +154,7 @@ frames look worse than AE is a short list of specific wrong choices, most of the
   comparison sampler; RGBA transmission map; always pack `RenderShade3D` when any light exists.
 
 ### 14. Blur / vector / text quality — major to minor
-- **Partly fixed 2026-11-03:** Fast Box Blur is a true box × Iterations; Repeat Edge Pixels on footage; adjustment layers honour their blend mode; Luminescent Premul keeps colour past alpha; Alpha Add sums coverage; hardware Multiply keeps the backdrop; shutter up to 720°. Gaussian Blur past σ 16 texels runs on a half / quarter pyramid level; Corner Pin anti-aliases its edges and supersamples where it shrinks; mask feather already has AE's Linear (distance) falloff beside Smooth. Motion blur samples are the layer's WORLD pose at each sample time (parents' motion and transform expressions included). Path operators flatten at the layer's world scale (a segment every 2.5 screen px, not layer px). (Dithering the 8-bit gradient rasters was tried and reverted: a blend like Pin Light turned the ±1 dither into visible speckle — banding waits for float rasters.) Not done: true Bézier output from path operators, float text/shape rasters, scrub latency.
+- **Partly fixed 2026-11-03:** Fast Box Blur is a true box × Iterations; Repeat Edge Pixels on footage; adjustment layers honour their blend mode; Luminescent Premul keeps colour past alpha; Alpha Add sums coverage; hardware Multiply keeps the backdrop; shutter up to 720°. Gaussian Blur past σ 16 texels runs on a half / quarter pyramid level; Corner Pin anti-aliases its edges and supersamples where it shrinks; mask feather already has AE's Linear (distance) falloff beside Smooth. Motion blur samples are the layer's WORLD pose at each sample time (parents' motion and transform expressions included). Path operators flatten at the layer's world scale (a segment every 2.5 screen px, not layer px). (Dithering the 8-bit gradient rasters was tried and reverted: a blend like Pin Light turned the ±1 dither into visible speckle — banding waits for float rasters.) Not done: true Bézier output from path operators, float text/shape rasters (scrub latency: see Scrub path below).
 - `blur.wgsl:160-162`: above σ ≈ 12 taps are spaced > 1 texel with bilinear filling, no pyramid;
   `fast-box-blur` is the same Gaussian, not a box; no Repeat Edge Pixels on gaussian-blur/blur.
 - `scene/path_ops.cpp:188-216`: Trim/Offset/Round Corners/Merge flatten Béziers to 2.5 px
@@ -172,6 +172,31 @@ frames look worse than AE is a short list of specific wrong choices, most of the
   plugin ever picks it.
 - Scrub path: ~40 ms command latency through 7 hops via main's JSON IPC (`VIEWPORT_ROUTE.md:69`);
   no per-frame stale/dropped cue in the viewer (HUD only, off by default).
+  - **Measured 2026-11-03** (`scrubLatency.bench.test.ts`, the page's real transport): the hop
+    count is not the cost. The wire is the binary engine codec (main only peeks bytes), and a
+    seek's round trip is 0.6 ms p50 / 1.2 ms p95, below a 120 Hz pointer step, so the
+    one-in-flight coalescing almost never holds one back. The 40 ms in `VIEWPORT_ROUTE.md`
+    was the C1 prototype's paced engine plus display. A drag's lag is the frame itself: GPU
+    render 6 ms on an idle RTX 4060, 23–26 ms when other GPU work shares it (the same comp,
+    the same adapter), so drag lag p50 swings 9 ↔ 32 ms with the machine, not the code.
+  - **Fixed:** a paused viewport frame (seek, scrub step, edit redraw) waited for every idle
+    render-ahead build in flight. Those builds hold the build lock shared, and the shown frame
+    needs it exclusively. They now give way as they already did for an edit
+    (`Session::prefetchYield_`): they stop at their next layer and start no new build while a
+    shown frame waits. 1500-layer comp, playhead grabbed after an idle pause: p50 78–85 →
+    57–58 ms, p95 121–133 → 64–68 ms.
+  - Main's command log kept one entry per seek for the whole session; a run of one view
+    control now keeps only its newest.
+  - **Viewer cue (2026-11-03):** a small badge top-left of the stage (`core/perf/frameFreshness.ts`,
+    written by EngineSurface through a ref, no React render). Paused: "Rendering…" when the picture
+    trails the playhead's frame or the last edit's revision by more than 120 ms, so a frame
+    that lands quickly never blinks it. Playing: "Dropped N" for 700 ms after the engine skips
+    frames. Live: quick seeks on a light comp never show it; a grab on the 1500-layer comp shows
+    "Rendering…" for ~40 ms then clears; playing that comp counts drops up ("Dropped 1 … 26").
+  - Live app, 1500-layer comp: a grab is build-bound (~105 ms build + ~30 ms render and
+    delivery), the same on both engines. The engine's idle render-ahead never ran during the
+    pauses: cache coverage stayed at one frame after 8 s idle, with 905 MB of RAM tier in use.
+    That is why the build-lock gain above does not show live yet. Open, separately.
 
 ## Live-frame results (diagnostic comp, deleted afterwards)
 - Sub-pixel translation: smooth (1 px rect at y=60 → two 50 % rows; at y=60.5 → one full row). OK.

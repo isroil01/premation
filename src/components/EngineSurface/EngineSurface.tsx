@@ -50,6 +50,10 @@ import { publishFrameGeometry, publishFrameView, setEngineDrivenViewport } from 
 import { captureLiveFrame, needsLiveFrame, useCompareStore } from '@stores/compareStore';
 import { publishFrame } from '@core/engine/frameTap';
 import { notePresented } from '@core/engine/presentedFrames';
+import { FrameFreshness } from '@core/perf/frameFreshness';
+import { getClock, usePlaybackClockStore } from '@stores/playbackClockStore';
+import { useProjectStore } from '@stores/projectStore';
+import { documentMirror } from '@stores/documentMirror';
 import { captureViewportPicture, setViewportPictureRefresh, viewportPictureWanted } from '@core/engine/viewportPicture';
 import { useActiveMirrorComp } from '@hooks/useMirror';
 import { settingsFps } from '@core/mirror/compFacts';
@@ -238,6 +242,8 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
   }, [client]);
   const frameBoxRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  // The stale / dropped-frames cue: written by the effect below, never a React render per frame.
+  const cueRef = useRef<HTMLDivElement>(null);
   const displayMode = useViewportDisplayStore((s) => s.displayMode);
   // Viewport mode: a status line until the first frame lands (never a blank
   // stage with no explanation). One React render when it changes.
@@ -287,6 +293,51 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
     let fpsSince = performance.now();
     let sawFirst = false;
     const slowTimer = setTimeout(() => { if (!sawFirst && !disposed) setWaitingLong(true); }, 3000);
+
+    // ── the freshness cue (core/perf/frameFreshness.ts): paused, the picture
+    // trails the playhead or the last edit ("Rendering…"); playing, the engine
+    // skipped frames ("Dropped N"). The DOM is written only when the cue
+    // changes; one timer, rescheduled only when an earlier deadline is needed.
+    const cue = cueRef.current;
+    const freshness = new FrameFreshness();
+    let cueKey = '';
+    let cueTimer: ReturnType<typeof setTimeout> | undefined;
+    let cueDue = 0;
+    const showCue = (): void => {
+      if (disposed) return;
+      const now = performance.now();
+      const n = freshness.dropped(now);
+      const state = n > 0 ? 'dropped' : freshness.stale(now) ? 'stale' : '';
+      const key = n > 0 ? n : state === 'stale' ? -1 : 0;
+      if (cue && String(key) !== cueKey) {
+        cueKey = String(key);
+        cue.dataset.state = state;
+        cue.textContent = n > 0
+          ? t('ui.engineSurface.cue.dropped', 'Dropped {n}', { n })
+          : state === 'stale' ? t('ui.engineSurface.cue.stale', 'Rendering…') : '';
+      }
+      const next = freshness.nextChangeIn(now);
+      if (next !== null && (cueTimer === undefined || now + next < cueDue)) {
+        clearTimeout(cueTimer);
+        cueDue = now + next;
+        cueTimer = setTimeout(() => {
+          cueTimer = undefined;
+          showCue();
+        }, next + 1);
+      }
+    };
+    /** What the viewer should show: the active tab's playhead frame at the mirror's revision. */
+    const wantNow = (): void => {
+      const tab = useProjectStore.getState().activeTabId;
+      freshness.want(tab ? getClock(tab).frame : -1, documentMirror().revision, performance.now());
+      showCue();
+    };
+    const unClockCue = usePlaybackClockStore.subscribe(wantNow);
+    const unMirrorCue = documentMirror().subscribe(['doc'], wantNow);
+    const unTabCue = useProjectStore.subscribe((s, prev) => {
+      if (s.activeTabId !== prev.activeTabId) wantNow();
+    });
+    wantNow();
     // The WebGPU blit (frameBlit.ts): up asynchronously; the newest frame waits for it.
     const blitter = createFrameBlitter(
       canvas,
@@ -427,6 +478,8 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
           console.error('[EngineSurface] overlay repaint failed', e);
         }
         stats.lastFrame = p.meta.frame;
+        freshness.shown(p.meta.frame, p.meta.revision, p.meta.dropped, now);
+        showCue();
         stats.lastLatencyMs = Date.now() - p.meta.renderDoneUs / 1000;
         stats.lastRenderMs = (p.meta.renderDoneUs - p.meta.renderStartUs) / 1000;
         stats.lastDrawnAt = now;
@@ -725,6 +778,11 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
     // restores it too; resending is cheap and makes the surface self-healing).
     const unsub = client.subscribe((batch: EventBatch) => {
       for (const e of batch.events) {
+        if (e.type === 'documentReset') {
+          // Revisions start over (a new / opened project, a restart): the cue compares afresh.
+          freshness.reset(performance.now());
+          wantNow();
+        }
         if (e.type === 'documentReset' && e.reason === 'engineRestarted') {
           stats.lastViewport = null;
           lastQuality = '';
@@ -744,6 +802,8 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
             lastPlayedFrame = -1;
           }
           playing = now;
+          freshness.setPlaying(now, performance.now());
+          showCue();
         }
       }
     });
@@ -756,6 +816,10 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
       disposed = true;
       setViewportPictureRefresh(null);
       clearTimeout(slowTimer);
+      clearTimeout(cueTimer);
+      unClockCue();
+      unMirrorCue();
+      unTabCue();
       unsub();
       unRender();
       unGuides();
@@ -785,6 +849,7 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
     <div ref={frameBoxRef} className={styles.viewport} data-engine-surface="viewport" aria-hidden="true">
       {/* Display mode Wireframe / Bounding Box: the outlines alone (the page draws them), not over the shaded picture. */}
       <canvas ref={canvasRef} className={styles.viewportCanvas} style={displayMode !== 'shaded' ? { visibility: 'hidden' } : undefined} />
+      <div ref={cueRef} className={styles.frameCue} data-engine-surface="frame-cue" />
       {!firstFrame && (
         <div className={styles.waiting} role="status">
           {notice

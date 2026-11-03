@@ -10210,6 +10210,8 @@
   "ui.engineSurface.busy.query": "Engine busy · answering a query · {time}",
   "ui.engineSurface.busy.working": "Engine busy · working · {time}",
   "ui.engineSurface.cannotDraw": "This window cannot draw the engine’s frames ({reason}). WebGPU is off or unsupported on this GPU; Help ▸ Copy Diagnostics Report has the details.",
+  "ui.engineSurface.cue.dropped": "Dropped {n}",
+  "ui.engineSurface.cue.stale": "Rendering…",
   "ui.engineSurface.restarted": "Engine restarted ({cause}) · {n} requests replayed in {ms} ms",
   "ui.engineSurface.unavailable": "Engine unavailable ({reason})",
   "ui.engineSurface.waiting": "Waiting for the C++ engine’s first frame…",

@@ -85,6 +85,9 @@ const SUITE_GATES = [
   { prefix: 'deepPrecomp/', tolerance: 60, minAbs: 2 },
   // 3000 layers: p50 ~98 ms, p95 ~145 ms from setProperty to the redrawn frame; build 6.9 s.
   { prefix: 'editLatency/', tolerance: 75, minAbs: 20 },
+  // Scrub through the page transport on the GPU engine: drag lag swings 9 ↔ 32 ms with other GPU
+  // work on the machine (render 6 vs 25 ms, same adapter); grabs on the 1500-layer comp 57–68 ms.
+  { prefix: 'scrubLatency/', tolerance: 150, minAbs: 30 },
 ];
 const gateFor = (name) => {
   const g = SUITE_GATES.find((s) => name.startsWith(s.prefix));

@@ -8676,6 +8676,8 @@
   "ui.engineSurface.busy.other": "Motor ocupado · {what} · {time}",
   "ui.engineSurface.busy.query": "Motor ocupado · respondiendo una consulta · {time}",
   "ui.engineSurface.busy.working": "Motor ocupado · trabajando · {time}",
+  "ui.engineSurface.cue.dropped": "Descartados {n}",
+  "ui.engineSurface.cue.stale": "Renderizando…",
   "ui.engineSurface.restarted": "Motor reiniciado ({cause}) · {n} solicitudes repetidas en {ms} ms",
   "ui.engineSurface.unavailable": "Motor no disponible ({reason})",
   "ui.engineSurface.waiting": "Esperando el primer fotograma del motor C++…",

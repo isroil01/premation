@@ -478,6 +478,76 @@
       "unit": "ms",
       "value": 0.1537,
       "samples": 180
+    },
+    {
+      "name": "scrubLatency/1500layers-idlePrefetch",
+      "metric": "grab.p50",
+      "unit": "ms",
+      "value": 47,
+      "samples": 12
+    },
+    {
+      "name": "scrubLatency/1500layers-idlePrefetch",
+      "metric": "grab.p95",
+      "unit": "ms",
+      "value": 71,
+      "samples": 12
+    },
+    {
+      "name": "scrubLatency/40fx-1080p",
+      "metric": "click.p50",
+      "unit": "ms",
+      "value": 9.4,
+      "samples": 16
+    },
+    {
+      "name": "scrubLatency/40fx-1080p",
+      "metric": "click.p95",
+      "unit": "ms",
+      "value": 10.1,
+      "samples": 16
+    },
+    {
+      "name": "scrubLatency/40fx-1080p",
+      "metric": "drag.firstMax",
+      "unit": "ms",
+      "value": 57.1,
+      "samples": 3
+    },
+    {
+      "name": "scrubLatency/40fx-1080p",
+      "metric": "drag.lagP50",
+      "unit": "ms",
+      "value": 9.4,
+      "samples": 297
+    },
+    {
+      "name": "scrubLatency/40fx-1080p",
+      "metric": "drag.lagP95",
+      "unit": "ms",
+      "value": 30.6,
+      "samples": 297
+    },
+    {
+      "name": "scrubLatency/40fx-1080p",
+      "metric": "drag.seekRttP50",
+      "unit": "ms",
+      "value": 0.6,
+      "samples": 359
+    },
+    {
+      "name": "scrubLatency/40fx-1080p",
+      "metric": "drag.settleMax",
+      "unit": "ms",
+      "value": 19.2,
+      "samples": 3
+    },
+    {
+      "name": "scrubLatency/40fx-1080p",
+      "metric": "drag.shown",
+      "unit": "count",
+      "value": 297,
+      "samples": 360
     }
   ]
 }
