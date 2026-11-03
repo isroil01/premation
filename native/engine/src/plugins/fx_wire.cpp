@@ -448,6 +448,10 @@ void decode_native_fx(const api::RenderEffect& e, const EffectSpec& spec, Render
   if (const auto* sim = ix.find("simState"); sim != nullptr) {
     if (auto st = doc::native_unbase64(sim->text)) out.simState = std::move(*st);
   }
+  // SDK 1.4 (C): the frame's channels it reads (scene_finish.cpp), `ch.<name>`.
+  for (const api::RenderEffectParam& p : e.params) {
+    if (p.name.starts_with("ch.") && p.kind == api::RenderParamKind::numbers) out.channels[p.name.substr(3)] = p.numbers;
+  }
   out.compTime = static_cast<std::int64_t>(std::llround(ix.num("compTime", 0)));
   out.layerTime = static_cast<std::int64_t>(std::llround(ix.num("layerTime", static_cast<double>(out.compTime))));
   out.fps = ix.num("fps", 30);

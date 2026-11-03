@@ -1355,6 +1355,7 @@ struct PluginOutputModuleInfo;
 struct PluginPanelInfo;
 struct PluginPresetInfo;
 struct PluginLayerTypeInfo;
+struct PluginToolInfo;
 struct PluginInfo;
 struct PluginList;
 struct PluginCommandResult;
@@ -1771,6 +1772,7 @@ struct Keyframe {
   std::vector<double> spatial_out;
   std::uint32_t label = 0;
   std::vector<KeyframeDim> dims;
+  std::optional<std::string> interpolator;
   bool operator==(const Keyframe&) const = default;
 };
 
@@ -2671,6 +2673,7 @@ struct KeyframeInsert {
   std::optional<SpatialInterp> spatial_interp;
   std::vector<double> spatial_in;
   std::vector<double> spatial_out;
+  std::optional<std::string> interpolator;
   bool operator==(const KeyframeInsert&) const = default;
 };
 
@@ -2705,6 +2708,7 @@ struct KeyframePatch {
   std::optional<bool> clear_spatial;
   std::optional<std::uint32_t> label;
   std::optional<std::uint32_t> dim;
+  std::optional<std::string> interpolator;
   bool operator==(const KeyframePatch&) const = default;
 };
 
@@ -4578,6 +4582,14 @@ struct PluginLayerTypeInfo {
   bool operator==(const PluginLayerTypeInfo&) const = default;
 };
 
+struct PluginToolInfo {
+  std::string id;
+  std::string name;
+  std::string command;
+  std::string shortcut;
+  bool operator==(const PluginToolInfo&) const = default;
+};
+
 struct PluginInfo {
   std::string id;
   std::string name;
@@ -4597,6 +4609,8 @@ struct PluginInfo {
   std::optional<std::string> icon;
   std::optional<std::string> panel_title;
   std::vector<PluginLayerTypeInfo> layer_types;
+  std::vector<std::string> interpolators;
+  std::vector<PluginToolInfo> tools;
   bool operator==(const PluginInfo&) const = default;
 };
 
@@ -7587,6 +7601,8 @@ void encode(wire::Writer& w, const PluginPresetInfo& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, PluginPresetInfo& out);
 void encode(wire::Writer& w, const PluginLayerTypeInfo& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, PluginLayerTypeInfo& out);
+void encode(wire::Writer& w, const PluginToolInfo& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, PluginToolInfo& out);
 void encode(wire::Writer& w, const PluginInfo& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, PluginInfo& out);
 void encode(wire::Writer& w, const PluginList& v);

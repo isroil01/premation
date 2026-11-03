@@ -16,6 +16,7 @@
 #include "plugin_props.hpp"
 #include "fxstate.hpp"
 #include "meta.hpp"
+#include "native_effects.hpp"
 #include "ptree.hpp"
 #include "scene.hpp"
 #include "strokes.hpp"
@@ -422,6 +423,11 @@ Catalog catalog_for(const Document& d, std::string_view layerId) {
       b.effectId = eid;
       b.paramKey = p.key;
       b.animatable = false;
+      // SDK 1.4 (E3): a native plugin's keyframeable curve / gradient — one data track of the whole value.
+      if ((p.type == "curve" || p.type == "gradient") && !p.fixed && NativeEffects::find(edef->type) != nullptr) {
+        b.animatable = true;
+        b.dataTrack = compound_param_track(eid, p.key);
+      }
       b.unit = p.unit.value_or("");
       if (p.type == "enum") {
         b.choices = std::vector<std::string>{};
@@ -2264,6 +2270,7 @@ std::vector<KeyAt> read_keys(const Document& d, std::string_view layer, const Pr
       for (const DataKey& k : tr->keys) {
         out.push_back(base_key(k.t, k.id ? *k.id : fallback_key_id(layer, *b.dataTrack, k.t), data_value_to_api(b, k.value, *d.node(layer)),
                                k.easing, k.bezier, k.label));
+        out.back().interp = k.interp.value_or(std::string());  // SDK 1.4 (E3)
         // A puppet pin's position key: its spatial tangents are the data key's si/so of point 0.
         if (b.special == Special::rig) pin_key_spatial(k.si, k.so, out.back().spatialIn, out.back().spatialOut);
       }
@@ -2330,6 +2337,7 @@ std::vector<KeyAt> read_keys(const Document& d, std::string_view layer, const Pr
     ka.bezier = lead->bezier;
     ka.continuous = lead->continuous.value_or(false);
     ka.roving = lead->roving.value_or(false);
+    ka.interp = lead->interp.value_or(std::string());
     ka.spatialInterp = lead->spatial.value_or(api::SpatialInterp::legacy);
     if (anySpatial) {
       ka.spatialIn = std::move(sIn);
@@ -2359,6 +2367,7 @@ api::Keyframe key_at_to_api(const PCtx& c, std::string_view layer, const PropBin
   if (k.bezier) out.bezier = api::CubicBezier{(*k.bezier)[0], (*k.bezier)[1], (*k.bezier)[2], (*k.bezier)[3]};
   out.continuous = k.continuous;
   out.roving = k.roving;
+  if (!k.interp.empty()) out.interpolator = k.interp;
   out.spatial_interp = k.spatialInterp;
   out.spatial_in = k.spatialIn;
   out.spatial_out = k.spatialOut;
@@ -2387,6 +2396,10 @@ void apply_key_fields(K& k, const KeyWrite& w) {
   if (w.label) {
     if (*w.label != 0) k.label = *w.label;
     else k.label.reset();
+  }
+  if (w.interp) {  // SDK 1.4 (E2/E3)
+    if (w.interp->empty()) k.interp.reset();
+    else k.interp = *w.interp;
   }
 }
 
@@ -2467,6 +2480,7 @@ Key fill_from(const Key& lead, double t, double value) {
   k.roving = lead.roving;
   k.spatial = lead.spatial;
   k.label = lead.label;
+  k.interp = lead.interp;
   return k;
 }
 
@@ -2496,6 +2510,16 @@ Json current_data_value(const PCtx& c, std::string_view layer, const PropBinding
     const api::Value s = read_static(c.d, layer, b);
     return Json::string(s.kind() == VK::text_document ? get<VK::text_document>(s).text : "");
   }
+  if (b.special == Special::effectParam) {  // SDK 1.4 (E3): the first key holds the param's value
+    const Json eff = read_node_effect(node_of(c.d, layer), *b.effectId);
+    if (!eff.is_undefined()) {
+      const Json v = params_of(eff).at(*b.paramKey);
+      if (!v.is_undefined()) return v;
+    }
+    const EffectDef* def = eff.is_undefined() ? nullptr : registry().effect(eff.at("type").str());
+    const EffectParamDef* pd = def != nullptr ? def->param(*b.paramKey) : nullptr;
+    return pd != nullptr ? pd->def : Json();
+  }
   // The first Colors key holds the paint's own stops.
   if (b.special == Special::fillStops) return api_to_fill_stops_key(b, read_static(c.d, layer, b));
   // A shape's first Path key holds its static outline.
@@ -2521,6 +2545,7 @@ void put_keys(const PCtx& c, std::string_view layer, const PropBinding& b, const
                              : b.special == Special::sourceText   ? "text"
                              : b.valueType == ValueType::path || b.special == Special::rig ? "points"
                              : b.valueType == ValueType::gradient ? "gradientStops"
+                             : b.special == Special::effectParam  ? "numbers"  // SDK 1.4 (E3): a plugin curve / gradient
                                                                   : "number";
     std::vector<DataKey> keys = track != nullptr ? track->keys : std::vector<DataKey>{};
     std::optional<bool> closed;

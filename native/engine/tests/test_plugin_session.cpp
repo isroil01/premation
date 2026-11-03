@@ -5,10 +5,13 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <cmath>
+#include <optional>
 #include <filesystem>
 #include <string>
 #include <vector>
 
+#include "anim.hpp"
 #include "host.hpp"
 #include "native_effects.hpp"
 #include "session_harness.hpp"
@@ -216,4 +219,57 @@ TEST_CASE("plugins in the session: colours round-trip through linear light (SDK 
   CHECK(a2.r == a0.r);
   CHECK(a2.g == a0.g);
   CHECK(a2.b == a0.b);
+}
+
+TEST_CASE("plugins in the session: a curve / gradient param keyframes as one value (SDK 1.4 E3)", "[plugins][session][compound]") {
+  pl::PluginHost host(attached());
+  host.scan();
+  host.publish_expression_functions();
+  Harness h;
+  (void)h.hello();
+  const api::LayerId layer = solid(h);
+  api::AddEffect add;
+  add.layers = {layer};
+  add.effect = "com.premation.samples.grademap";
+  const auto ra = h.run(cmd(add));
+  REQUIRE(is_ok(ra));
+  const std::string fxPath = result_as<api::GroupList>(ra).groups.at(0);
+  const std::string effectId = fxPath.substr(fxPath.rfind('/') + 1);
+
+  // Two keys of the Gradient (p3), the first eased by the mathfns plugin's compound interpolator.
+  api::AddKeyframes a;
+  api::KeyframeInsert k0;
+  k0.prop = {layer, fxPath + "/p3"};
+  k0.time = 0;
+  k0.value = doc::v_json("[[0,0,0,0,1],[1,1,1,1,1]]");
+  k0.interpolator = "com.premation.samples.mathfns:smoothblend";
+  api::KeyframeInsert k1 = k0;
+  k1.time = 705'600'000LL;  // 1 s
+  k1.value = doc::v_json("[[0.5,0,0,0,1],[1,1,1,1,1]]");
+  k1.interpolator.reset();
+  a.keys = {k0, k1};
+  REQUIRE(is_ok(h.run(cmd(a))));
+
+  const doc::DataTrack* tr = doc::anim_data_track(h.session.document(), layer, doc::compound_param_track(effectId, "p3"));
+  REQUIRE(tr != nullptr);
+  CHECK(tr->kind == "numbers");
+  REQUIRE(tr->keys.size() == 2);
+  CHECK(tr->keys[0].interp == std::optional<std::string>("com.premation.samples.mathfns:smoothblend"));
+
+  // getKeyframes reports the interpolator; the halfway value is the plugin's smoothstep blend.
+  api::GetKeyframes gk;
+  gk.props = {{layer, fxPath + "/p3"}};
+  const auto kr = h.ask(qry(gk));
+  REQUIRE(is_ok(kr));
+  const api::KeyframeSets keys = result_as<api::KeyframeSets>(std::get<api::QueryResult>(kr.outcome.v));
+  REQUIRE_FALSE(keys.sets.empty());
+  REQUIRE(keys.sets[0].keyframes.size() == 2);
+  CHECK(keys.sets[0].keyframes[0].interpolator == std::optional<std::string>("com.premation.samples.mathfns:smoothblend"));
+  const auto at = doc::sample_data_track(*tr, 0.25);
+  REQUIRE(at.has_value());
+  CHECK(std::abs(at->arr()[0].arr()[0].num() - 0.5 * 0.15625) < 1e-12);  // smoothstep(0.25) = 0.15625
+
+  // Undo takes both keys away.
+  REQUIRE(is_ok(h.run(cmd(api::Undo{}))));
+  CHECK(doc::anim_data_track(h.session.document(), layer, doc::compound_param_track(effectId, "p3")) == nullptr);
 }

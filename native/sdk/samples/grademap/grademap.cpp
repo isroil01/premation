@@ -36,6 +36,7 @@ PrErr params_setup(const PrInData* in) {
     PrParamDef c = prs::param(PR_PARAM_CURVE, kCurve, "Tone Curve");
     c.curve = kCurveDef.data();
     c.curve_count = 3;
+    c.flags |= PR_PARAM_FLAG_ANIMATE_VALUE;  // SDK 1.4 (E3): keyframed as one value
     e = in->host->add_param(in->host_ref, &c);
   }
   if (e == PR_ERR_NONE) {
@@ -43,6 +44,7 @@ PrErr params_setup(const PrInData* in) {
     PrParamDef g = prs::param(PR_PARAM_GRADIENT, kGradient, "Gradient");
     g.gradient = kStops.data();
     g.gradient_count = 2;
+    g.flags |= PR_PARAM_FLAG_ANIMATE_VALUE;  // SDK 1.4 (E3)
     e = in->host->add_param(in->host_ref, &g);
   }
   if (e == PR_ERR_NONE) {

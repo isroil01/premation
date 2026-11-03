@@ -98,6 +98,7 @@ import { PerformanceBar } from './PerformanceBar';
 import { HandOverlay } from './HandOverlay';
 import { CompareOverlay } from './CompareOverlay';
 import { RotoBrushOverlay } from './RotoBrushOverlay';
+import { PluginToolOverlay } from './PluginToolOverlay';
 import { ObjectMatteOverlay } from './ObjectMatteOverlay';
 import { SubjectChips } from './SubjectChips';
 import { TextBehindDialog } from './TextBehindDialog';
@@ -767,6 +768,8 @@ export function WorkspaceViewport({
           {/* Roto Brush strokes. Claims the pointer only while the roto tool
               is active and a footage layer is selected; inert otherwise. */}
           <RotoBrushOverlay />
+          {/* SDK 1.4 (U): a native plugin's viewer tool — its drags go to the plugin. */}
+          <PluginToolOverlay />
           {/* Object Matte: hover preview, click / box selection (same store). */}
           <ObjectMatteOverlay />
           <SubjectChips />

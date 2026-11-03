@@ -111,6 +111,9 @@ premation_sample_plugin(grademap samples/grademap/grademap.cpp)    # SDK 1.1: ST
 premation_sample_plugin(distribute samples/distribute/distribute.cpp)  # SDK 1.2: a command (Plugins menu), engine API edits
 premation_sample_plugin(ppmio samples/ppmio/ppmio.cpp)              # SDK 1.2: a footage importer (.ppm / .pfm)
 premation_sample_plugin(ppmseq samples/ppmseq/ppmseq.cpp)           # SDK 1.2: an output module (a .ppm sequence)
+premation_sample_plugin(mathfns samples/mathfns/mathfns.cpp)  # SDK 1.4: expression functions + an interpolator (E1/E2)
+premation_sample_plugin(channels samples/channels/channels.cpp)
+premation_sample_plugin(scatter samples/scatter/scatter.cpp)  # SDK 1.4 (U): a VIEWER TOOL (manifest `tools`) run by a command  # SDK 1.4 (C): PUBLISHED CHANNELS (publish_channel / read_channel)
 premation_sample_plugin(bounce samples/bounce/bounce.cpp)  # SDK 1.4: a SIMULATION (PR_OUT_FLAG_STATEFUL, SIM_STEP, get_sim_state)
 premation_sample_plugin(chartlayer samples/chartlayer/chartlayer.cpp)  # SDK 1.4: a plugin LAYER TYPE (manifest layerTypes) drawn by a generator
 premation_sample_plugin(statspanel samples/statspanel/statspanel.cpp)  # SDK 1.2: a panel without an effect (+ a command)

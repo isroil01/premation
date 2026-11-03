@@ -1,0 +1,15 @@
+{
+  "manifestVersion": 1,
+  "id": "com.premation.samples.channels",
+  "name": "Channels (sample)",
+  "version": "1.0.0",
+  "vendor": "Premation",
+  "sdk": { "major": 1, "minor": 4 },
+  "binary": { "windows": "channels.dll", "macos": "libchannels.dylib", "linux": "libchannels.so" },
+  "effects": [
+    { "matchName": "com.premation.samples.channels.controller", "name": "Controller", "category": "Premation Samples", "publishes": [ "pulse" ] },
+    { "matchName": "com.premation.samples.channels.follower", "name": "Follower", "category": "Premation Samples", "reads": [ "pulse" ] },
+    { "matchName": "com.premation.samples.channels.ping", "name": "Ping", "category": "Premation Samples", "publishes": [ "ping" ], "reads": [ "pong" ] },
+    { "matchName": "com.premation.samples.channels.pong", "name": "Pong", "category": "Premation Samples", "publishes": [ "pong" ], "reads": [ "ping" ] }
+  ]
+}

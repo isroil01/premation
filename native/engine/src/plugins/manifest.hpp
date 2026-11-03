@@ -22,6 +22,9 @@ struct ManifestEffect {
   std::string matchName;
   std::string name;
   std::string category;
+  /// SDK 1.4 (C): the channels it publishes / reads each frame.
+  std::vector<std::string> publishes;
+  std::vector<std::string> reads;
 };
 
 /// P7a — a command (manifest `commands`): the Plugins menu / command palette entry.
@@ -69,6 +72,14 @@ struct ManifestLayerType {
   std::string category;
 };
 
+/// SDK 1.4 (U) — a viewer tool (manifest `tools`): on the toolbar, its drags run `command`.
+struct ManifestTool {
+  std::string id;
+  std::string name;
+  std::string command;   ///< one of the manifest's `commands`
+  std::string shortcut;  ///< a default, e.g. "Shift+S" ("" = none)
+};
+
 struct Manifest {
   std::uint32_t manifestVersion = 1;
   std::string id;
@@ -95,6 +106,11 @@ struct Manifest {
   std::vector<ManifestOutputModule> outputModules;
   std::vector<ManifestPanel> panels;
   std::vector<ManifestLayerType> layerTypes;  // SDK 1.4
+  std::vector<ManifestTool> tools;            // SDK 1.4 (U)
+  /// SDK 1.4 (E1): pure functions offered to expressions — `plugin["<id>"].<name>(…)`.
+  std::vector<std::string> expressionFunctions;
+  /// SDK 1.4 (E2): which of them are keyframe interpolators (args t, v0, v1 → value).
+  std::vector<std::string> interpolators;
 };
 
 /// Parse + validate. `platforms` are the `binary` keys to try, most specific

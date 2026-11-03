@@ -98,6 +98,10 @@ struct TimeSpan {
 
 // data tracks
 [[nodiscard]] const DataTrack* anim_data_track(const Document& d, std::string_view node, std::string_view prop);
+/// SDK 1.4 (E3): the data track of a native plugin effect's keyframed curve / gradient param.
+[[nodiscard]] inline std::string compound_param_track(std::string_view effectId, std::string_view key) {
+  return "effect." + std::string(effectId) + "." + std::string(key);
+}
 [[nodiscard]] bool anim_is_data_animated(const Document& d, std::string_view node, std::string_view prop);
 void anim_set_data_track(Document& d, std::string_view node, std::string_view prop, std::optional<DataTrack> t);
 [[nodiscard]] std::optional<Json> sample_data_track(const DataTrack& t, double time);

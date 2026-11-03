@@ -649,6 +649,7 @@ ResultOf<api::AddKeyframes> handle(const api::AddKeyframes& c, HCtx& x) {
     if (k.easing) w.easing = *k.easing;
     if (k.bezier) w.bezier.emplace(to_bezier(k.bezier));
     if (k.roving) w.roving = *k.roving;
+    if (k.interpolator) w.interp = *k.interpolator;  // SDK 1.4 (E2)
     if (k.spatial_interp) w.spatialInterp = *k.spatial_interp;
     if (!k.spatial_in.empty()) w.spatialIn.emplace(k.spatial_in);
     if (!k.spatial_out.empty()) w.spatialOut.emplace(k.spatial_out);
@@ -768,6 +769,7 @@ ResultOf<api::UpdateKeyframes> handle(const api::UpdateKeyframes& c, HCtx& x) {
     else if (p.bezier) w.bezier.emplace(to_bezier(p.bezier));
     if (p.continuous) w.continuous = *p.continuous;
     if (p.roving) w.roving = *p.roving;
+    if (p.interpolator) w.interp = *p.interpolator;  // SDK 1.4 (E2)
     if (p.spatial_interp) w.spatialInterp = *p.spatial_interp;
     if (p.clear_spatial.value_or(false)) {
       w.spatialIn.emplace();
@@ -818,6 +820,7 @@ ResultOf<api::PasteKeyframes> handle(const api::PasteKeyframes& c, HCtx& x) {
     w.bezier.emplace(to_bezier(k.bezier));
     w.continuous = k.continuous;
     w.roving = k.roving;
+    w.interp = k.interpolator.value_or(std::string());  // SDK 1.4 (E2)
     w.spatialInterp = k.spatial_interp;
     w.spatialIn.emplace(k.spatial_in.empty() ? std::optional<std::vector<double>>{} : std::optional<std::vector<double>>{k.spatial_in});
     w.spatialOut.emplace(k.spatial_out.empty() ? std::optional<std::vector<double>>{} : std::optional<std::vector<double>>{k.spatial_out});
@@ -865,6 +868,7 @@ ResultOf<api::SetKeyframes> handle(const api::SetKeyframes& c, HCtx& x) {
     w.bezier.emplace(to_bezier(k.bezier));
     w.continuous = k.continuous;
     w.roving = k.roving;
+    w.interp = k.interpolator.value_or(std::string());  // SDK 1.4 (E2)
     w.spatialInterp = k.spatial_interp;
     w.spatialIn.emplace(k.spatial_in.empty() ? std::optional<std::vector<double>>{} : std::optional<std::vector<double>>{k.spatial_in});
     w.spatialOut.emplace(k.spatial_out.empty() ? std::optional<std::vector<double>>{} : std::optional<std::vector<double>>{k.spatial_out});

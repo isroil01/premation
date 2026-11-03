@@ -498,7 +498,13 @@ struct PluginInfo {
   panelTitle?: string = 17;
   /// SDK 1.4 (L1) — the manifest's `layerTypes`: kinds of layer the plugin draws (New ▸ Layer). Listed from the manifest only while the plugin is loaded.
   layerTypes: PluginLayerTypeInfo[] = 18;
+  /// SDK 1.4 (E2): the plugin's keyframe interpolators, "<pluginId>:<name>" (KeyframePatch.interpolator).
+  interpolators: string[] = 19;
+  /// SDK 1.4 (U): the plugin's viewer tools (manifest `tools`); their drags run `command` with the stroke (runPluginCommand args).
+  tools: PluginToolInfo[] = 20;
 }
+/// SDK 1.4 (U): a viewer tool — `id` = `<pluginId>:<toolId>`; `shortcut` a default like "Shift+S" ("" = none).
+struct PluginToolInfo { id: string = 1; name: string = 2; command: string = 3; shortcut: string = 4; }
 /// A plugin layer type: `type` = `<pluginId>:<id>` (createLayer's `generator`), drawn by generator effect `effect`.
 struct PluginLayerTypeInfo { type: string = 1; name: string = 2; effect: string = 3; category: string = 4; }
 struct PluginList { plugins: PluginInfo[] = 1; }

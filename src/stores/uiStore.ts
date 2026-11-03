@@ -59,6 +59,8 @@ export type Tool =
   // Drag a line across a shape layer: every crossing splits its path. Lives
   // beside the pen tools because it EDITS an outline rather than creating one.
   | 'knife'
+  // SDK 1.4 (U): a native plugin's viewer tool (`pluginTool` says which); its drags go to the plugin.
+  | 'plugin-tool'
   | 'text'
   // AE's Vertical Type Tool (Ctrl+T cycles it with the horizontal one).
   | 'vertical-text'
@@ -99,6 +101,9 @@ export type Tool =
 interface UIState {
   /** Active tool in the toolbar. */
   activeTool: Tool;
+  /** SDK 1.4 (U): the plugin tool while `activeTool` is `plugin-tool`. */
+  pluginTool: { id: string; plugin: string; tool: string; command: string; name: string } | null;
+  setPluginTool: (tool: { id: string; plugin: string; tool: string; command: string; name: string }) => void;
   /**
    * Armed Puppet pin variant while `activeTool` is `puppet-pin`.
    * Default is Position — the same first tool AE's flyout highlights.
@@ -380,6 +385,7 @@ export const useUIStore = create<UIStore>()(
   subscribeWithSelector(
     immer((set) => ({
       activeTool: 'select',
+      pluginTool: null,
       puppetPinKind: 'position',
       puppetAlwaysKey: true,
       boneRigMode: 'draw',
@@ -403,6 +409,11 @@ export const useUIStore = create<UIStore>()(
       setActiveTool: (tool) =>
         set((s) => {
           s.activeTool = tool;
+        }),
+      setPluginTool: (tool) =>
+        set((s) => {
+          s.pluginTool = tool;
+          s.activeTool = 'plugin-tool';
         }),
       setPuppetPinKind: (kind) =>
         set((s) => {

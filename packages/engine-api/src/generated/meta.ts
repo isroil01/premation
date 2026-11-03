@@ -296,4 +296,4 @@ export const EVENTS: Readonly<Record<EventType, EventInfo>> = {
 };
 
 /** Size of the schema, for docs and tests. */
-export const SCHEMA_COUNTS = {"enums":95,"structs":568,"unions":11,"commands":178,"queries":60,"events":34} as const;
+export const SCHEMA_COUNTS = {"enums":95,"structs":569,"unions":11,"commands":178,"queries":60,"events":34} as const;

@@ -35,6 +35,8 @@ What AE plugins cannot do, and what this program adds:
 
 ## 1. Owner decisions this program needs
 
+**Decided 2026-11-03: Q1, Q2, Q3, Q4 and Q5 are all approved by the owner** (nothing pushed until told).
+
 Settled decisions are not reopened: the JS/WGSL plugin system is not ported
 (G2), the C++ engine is the only engine (docs/TS_ENGINE_REMOVAL.md). These are
 new, and each blocks only its own rows:

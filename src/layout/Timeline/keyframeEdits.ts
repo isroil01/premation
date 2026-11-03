@@ -470,6 +470,17 @@ export async function setRovingOnKeys(uiIds: ReadonlyArray<string>, roving: bool
   await edit(roving ? 'Enable roving keyframe' : 'Disable roving keyframe', { type: 'updateKeyframes', patches });
 }
 
+/**
+ * SDK 1.4 (E2): ease the segment after each key with a plugin interpolator ("<pluginId>:<name>"),
+ * or "" to go back to the key's own easing. One entry.
+ */
+export async function setInterpolatorOnKeys(uiIds: ReadonlyArray<string>, interpolator: string): Promise<void> {
+  const ids = await resolveKeyIds(uiIds);
+  if (!ids || ids.size === 0) return;
+  const patches: KeyframePatch[] = [...new Set(ids.values())].map((id) => ({ id, interpolator, spatialIn: [], spatialOut: [] }));
+  await edit(interpolator ? 'Set plugin interpolator' : 'Clear plugin interpolator', { type: 'updateKeyframes', patches });
+}
+
 /** AE's keyframe Label (the diamond menu): 1-based into the label palette, 0 = None. One entry. */
 export async function setKeyLabelOnKeys(uiIds: ReadonlyArray<string>, label: number): Promise<void> {
   const ids = await resolveKeyIds(uiIds);

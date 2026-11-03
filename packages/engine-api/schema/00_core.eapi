@@ -226,6 +226,8 @@ struct Keyframe {
   /// continuity differ; empty = every dimension uses `easing`, `bezier` and `continuous` above (which are
   /// then the first dimension's).
   dims: KeyframeDim[] = 12;
+  /// SDK 1.4 (E2): the plugin interpolator "<pluginId>:<name>" easing the segment after this key. Absent = none.
+  interpolator?: string = 13;
 }
 
 /// A property + layer pair: the address of every animatable or static value.

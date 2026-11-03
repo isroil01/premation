@@ -56,6 +56,10 @@ typedef int32_t PrParamType;
 #define PR_PARAM_FLAG_HIDDEN (1u << 2)          /* not shown in the effect UI (still a document property) */
 #define PR_PARAM_FLAG_START_COLLAPSED (1u << 3) /* GROUP_START: twirled up */
 #define PR_PARAM_FLAG_DISABLED (1u << 4)        /* shown greyed out (UPDATE_PARAMS_UI may flip it) */
+/* SDK 1.4 (E3): a CURVE or GRADIENT param the timeline keyframes as ONE value. Between two keys of
+ * the same shape (point / stop count) the host blends every number; a key may name a plugin
+ * interpolator (manifest "interpolators") that blends them instead. Other shapes hold. */
+#define PR_PARAM_FLAG_ANIMATE_VALUE (1u << 5)
 
 /* PrHostSuite.set_param_ui flags */
 #define PR_PARAM_UI_DISABLED (1u << 0)

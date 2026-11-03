@@ -1,0 +1,15 @@
+{
+  "manifestVersion": 1,
+  "id": "com.premation.samples.scatter",
+  "name": "Scatter Brush (sample)",
+  "version": "1.0.0",
+  "vendor": "Premation",
+  "sdk": { "major": 1, "minor": 4 },
+  "binary": { "windows": "scatter.dll", "macos": "libscatter.dylib", "linux": "libscatter.so" },
+  "commands": [
+    { "id": "scatter", "name": "Scatter Brush", "menu": "Tools" }
+  ],
+  "tools": [
+    { "id": "scatter", "name": "Scatter Brush", "command": "scatter", "shortcut": "Shift+S" }
+  ]
+}

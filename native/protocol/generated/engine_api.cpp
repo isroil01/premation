@@ -3094,6 +3094,7 @@ void encode(wire::Writer& w, const Keyframe& v) {
   if (!v.spatial_out.empty()) { w.varint(82U); const std::size_t s = w.begin_ld(); for (const auto& e : v.spatial_out) w.f64(e); w.end_ld(s); }
   w.varint(88U); w.varint(v.label);
   for (const auto& e : v.dims) { w.varint(98U); { const std::size_t s = w.begin_ld(); encode(w, e); w.end_ld(s); } }
+  if (v.interpolator.has_value()) { w.varint(106U); w.str(*v.interpolator); }
 }
 
 Status decode(wire::Reader& r, Keyframe& out) {
@@ -3170,6 +3171,12 @@ Status decode(wire::Reader& r, Keyframe& out) {
       case 98U: {
         auto& e = out.dims.emplace_back();
         { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        break;
+      }
+      case 106U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.interpolator = std::move(e);
         break;
       }
       default:
@@ -8051,6 +8058,7 @@ void encode(wire::Writer& w, const KeyframeInsert& v) {
   if (v.spatial_interp.has_value()) { w.varint(56U); w.varint(static_cast<std::uint32_t>(*v.spatial_interp)); }
   if (!v.spatial_in.empty()) { w.varint(66U); const std::size_t s = w.begin_ld(); for (const auto& e : v.spatial_in) w.f64(e); w.end_ld(s); }
   if (!v.spatial_out.empty()) { w.varint(74U); const std::size_t s = w.begin_ld(); for (const auto& e : v.spatial_out) w.f64(e); w.end_ld(s); }
+  if (v.interpolator.has_value()) { w.varint(82U); w.str(*v.interpolator); }
 }
 
 Status decode(wire::Reader& r, KeyframeInsert& out) {
@@ -8110,6 +8118,12 @@ Status decode(wire::Reader& r, KeyframeInsert& out) {
         wire::Reader sub;
         if (!r.ld(sub)) return Status::truncated;
         while (!sub.at_end()) { double e = 0.0; if (!sub.f64(e)) return Status::truncated; out.spatial_out.push_back(e); }
+        break;
+      }
+      case 82U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.interpolator = std::move(e);
         break;
       }
       default:
@@ -8211,6 +8225,7 @@ void encode(wire::Writer& w, const KeyframePatch& v) {
   if (v.clear_spatial.has_value()) { w.varint(96U); w.boolean(*v.clear_spatial); }
   if (v.label.has_value()) { w.varint(104U); w.varint(*v.label); }
   if (v.dim.has_value()) { w.varint(112U); w.varint(*v.dim); }
+  if (v.interpolator.has_value()) { w.varint(122U); w.str(*v.interpolator); }
 }
 
 Status decode(wire::Reader& r, KeyframePatch& out) {
@@ -8300,6 +8315,12 @@ Status decode(wire::Reader& r, KeyframePatch& out) {
         std::uint32_t e = 0;
         if (!r.u32(e)) return Status::bad_value;
         out.dim = std::move(e);
+        break;
+      }
+      case 122U: {
+        std::string e;
+        if (!r.str(e)) return Status::truncated;
+        out.interpolator = std::move(e);
         break;
       }
       default:
@@ -19444,6 +19465,54 @@ Status decode(wire::Reader& r, PluginLayerTypeInfo& out) {
   return Status::ok;
 }
 
+void encode(wire::Writer& w, const PluginToolInfo& v) {
+  w.varint(10U); w.str(v.id);
+  w.varint(18U); w.str(v.name);
+  w.varint(26U); w.str(v.command);
+  w.varint(34U); w.str(v.shortcut);
+}
+
+Status decode(wire::Reader& r, PluginToolInfo& out) {
+  bool has_id = false;
+  bool has_name = false;
+  bool has_command = false;
+  bool has_shortcut = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 10U: {
+        if (!r.str(out.id)) return Status::truncated;
+        has_id = true;
+        break;
+      }
+      case 18U: {
+        if (!r.str(out.name)) return Status::truncated;
+        has_name = true;
+        break;
+      }
+      case 26U: {
+        if (!r.str(out.command)) return Status::truncated;
+        has_command = true;
+        break;
+      }
+      case 34U: {
+        if (!r.str(out.shortcut)) return Status::truncated;
+        has_shortcut = true;
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_id) return Status::missing_field;
+  if (!has_name) return Status::missing_field;
+  if (!has_command) return Status::missing_field;
+  if (!has_shortcut) return Status::missing_field;
+  return Status::ok;
+}
+
 void encode(wire::Writer& w, const PluginInfo& v) {
   w.varint(10U); w.str(v.id);
   w.varint(18U); w.str(v.name);
@@ -19463,6 +19532,8 @@ void encode(wire::Writer& w, const PluginInfo& v) {
   if (v.icon.has_value()) { w.varint(130U); w.str(*v.icon); }
   if (v.panel_title.has_value()) { w.varint(138U); w.str(*v.panel_title); }
   for (const auto& e : v.layer_types) { w.varint(146U); { const std::size_t s = w.begin_ld(); encode(w, e); w.end_ld(s); } }
+  for (const auto& e : v.interpolators) { w.varint(154U); w.str(e); }
+  for (const auto& e : v.tools) { w.varint(162U); { const std::size_t s = w.begin_ld(); encode(w, e); w.end_ld(s); } }
 }
 
 Status decode(wire::Reader& r, PluginInfo& out) {
@@ -19568,6 +19639,16 @@ Status decode(wire::Reader& r, PluginInfo& out) {
       }
       case 146U: {
         auto& e = out.layer_types.emplace_back();
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        break;
+      }
+      case 154U: {
+        auto& e = out.interpolators.emplace_back();
+        if (!r.str(e)) return Status::truncated;
+        break;
+      }
+      case 162U: {
+        auto& e = out.tools.emplace_back();
         { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
         break;
       }
@@ -33676,7 +33757,7 @@ Status roundtrip(std::span<const std::uint8_t> bytes, std::vector<std::uint8_t>&
   out = w.take();
   return Status::ok;
 }
-constexpr std::array<std::string_view, 579> kNames = {
+constexpr std::array<std::string_view, 580> kNames = {
     "Empty",
     "Vec2",
     "Vec3",
@@ -34103,6 +34184,7 @@ constexpr std::array<std::string_view, 579> kNames = {
     "ParamUiDrawing",
     "ParamUiItem",
     "PluginInfo",
+    "PluginToolInfo",
     "PluginLayerTypeInfo",
     "PluginList",
     "PluginPresetInfo",
@@ -34688,6 +34770,7 @@ Status roundtrip_by_name(std::string_view type, std::span<const std::uint8_t> by
   if (type == "ParamUiDrawing") return roundtrip<ParamUiDrawing>(bytes, out);
   if (type == "ParamUiItem") return roundtrip<ParamUiItem>(bytes, out);
   if (type == "PluginInfo") return roundtrip<PluginInfo>(bytes, out);
+  if (type == "PluginToolInfo") return roundtrip<PluginToolInfo>(bytes, out);
   if (type == "PluginLayerTypeInfo") return roundtrip<PluginLayerTypeInfo>(bytes, out);
   if (type == "PluginList") return roundtrip<PluginList>(bytes, out);
   if (type == "PluginPresetInfo") return roundtrip<PluginPresetInfo>(bytes, out);

@@ -14,7 +14,9 @@ import {
 
 const plugin = (id: string, extra: Partial<NativePlugin> = {}): NativePlugin => ({
   id, name: id.toUpperCase(), version: '1.0.0', vendor: 'Acme', sdk: '1.2', status: 'loaded', error: '', effects: [], gpu: false,
-  panel: false, commands: [], importers: [], outputModules: [], panels: [], presets: [], layerTypes: [], ...extra,
+  panel: false, commands: [], importers: [], outputModules: [], panels: [], presets: [], layerTypes: [],
+    interpolators: [],
+    tools: [], ...extra,
 });
 
 const listing = (id: string, extra: Partial<StorePluginSummary> = {}): StorePluginSummary => ({

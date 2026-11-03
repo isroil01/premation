@@ -75,6 +75,7 @@ Json key_to_json(const Key& k) {
   if (k.bezier) o.set("bezier", bezier_json(*k.bezier));
   if (k.continuous) o.set("continuous", Json::boolean(*k.continuous));
   if (k.roving) o.set("roving", Json::boolean(*k.roving));
+  if (k.interp) o.set("interp", Json::string(*k.interp));  // SDK 1.4 (E2)
   if (k.spatial) o.set("spatialInterp", Json::string(std::string(spatial_to_string(*k.spatial))));
   if (k.si) o.set("si", Json::number(*k.si));
   if (k.so) o.set("so", Json::number(*k.so));
@@ -92,6 +93,7 @@ std::optional<Key> key_from_json(const Json& j) {
   k.bezier = bezier_of(j.at("bezier"));
   if (j.at("continuous").is_bool()) k.continuous = j.at("continuous").b();
   if (j.at("roving").is_bool()) k.roving = j.at("roving").b();
+  if (j.at("interp").is_string() && !j.at("interp").str().empty()) k.interp = j.at("interp").str();  // SDK 1.4 (E2)
   if (j.at("spatialInterp").is_string()) k.spatial = spatial_from_string(j.at("spatialInterp").str());
   if (j.at("si").is_number()) k.si = j.at("si").num();
   if (j.at("so").is_number()) k.so = j.at("so").num();
@@ -109,6 +111,7 @@ Json data_key_to_json(const DataKey& k) {
   if (k.label) o.set("label", Json::number(*k.label));
   if (k.so) o.set("so", *k.so);
   if (k.si) o.set("si", *k.si);
+  if (k.interp) o.set("interp", Json::string(*k.interp));  // SDK 1.4 (E3)
   return o;
 }
 
@@ -123,6 +126,7 @@ std::optional<DataKey> data_key_from_json(const Json& j) {
   if (j.at("label").is_number()) k.label = j.at("label").num();
   if (!j.at("so").is_undefined()) k.so = j.at("so");
   if (!j.at("si").is_undefined()) k.si = j.at("si");
+  if (j.at("interp").is_string() && !j.at("interp").str().empty()) k.interp = j.at("interp").str();  // SDK 1.4 (E3)
   return k;
 }
 

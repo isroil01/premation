@@ -17,6 +17,7 @@
 #include "asset_image.hpp"
 #include "fxstate.hpp"
 #include "journal.hpp"
+#include "expr.hpp"  // SDK 1.4 (E1): motion::expr::set_plugin_functions
 #include "json.hpp"
 #include "log.hpp"
 #include "manifest.hpp"
@@ -76,6 +77,8 @@ struct PrHost {
   std::uint32_t overlaySpace = PR_OVERLAY_SPACE_LAYER;
   /// SDK 1.2 — DRAW_OVERLAY / OVERLAY_DRAG carry the comp camera & co. (the scene callbacks answer).
   bool overlayScene = false;
+  /// SDK 1.4 (C) — PUBLISH_CHANNELS: where publish_channel writes.
+  premation::plugins::ChannelValues* published = nullptr;
   /// SDK 1.1 — the render selector's inputs and effect (get_comp_camera, …).
   const premation::plugins::RenderInputs* inputs = nullptr;
   /// SDK 1.1 — get_asset_bytes: each FILE param's bytes, read once per call (iterate workers may ask too).
@@ -182,6 +185,8 @@ struct Plugin {
   /// The module's PremationPluginInfo (alive while `lib` is mapped): a failed reload binds the P7
   /// entry points back to it.
   const PrPluginInfo* info = nullptr;
+  /// SDK 1.4 (E1/E2): the module's expression functions by name.
+  std::map<std::string, PrExprFn, std::less<>> exprFns;
   PluginStatus status = PluginStatus::failed;
   std::string error;
   /// SDK 1.2: the presets the bundle ships (manifest `presets`, presets/*.json).
@@ -506,6 +511,9 @@ struct PluginHost::Impl {
   /// options.shadowDir and return the copy to load ('' + `err` on failure). Core thread only.
   fs::path shadow_copy(const Plugin& p, std::string& err);
   std::uint64_t shadowGeneration = 0;
+  // SDK 1.4 (E1): expression functions that faulted ("<id>.<name>"), and whether this host published.
+  std::set<std::string, std::less<>> exprCrashed;
+  bool exprPublished = false;
   std::set<std::string, std::less<>> shadowCleaned;
   /// Why a bundle requiring an entitlement may not load ('' when it may, or needs none).
   [[nodiscard]] std::string entitlement_lock(const Manifest& man) const;
@@ -593,7 +601,9 @@ PrErr PR_CALL cb_add_param(PrHost* h, const PrParamDef* def) {
     if (def->struct_size < offsetof(PrParamDef, file_missing) + sizeof(def->file_missing)) {
       return fail_with("param '" + s.name + "': a STRING / CURVE / GRADIENT / FILE param needs SDK 1.1");
     }
-    s.flags |= PR_PARAM_FLAG_CANNOT_ANIMATE;
+    // SDK 1.4 (E3): a curve or gradient may keyframe as one value; everything else stays static.
+    const bool compound = (s.flags & PR_PARAM_FLAG_ANIMATE_VALUE) != 0 && (s.type == PR_PARAM_CURVE || s.type == PR_PARAM_GRADIENT);
+    if (!compound) s.flags |= PR_PARAM_FLAG_CANNOT_ANIMATE;
     if (def->text != nullptr) s.text = def->text;
     if (def->file_types != nullptr) s.fileTypes = def->file_types;
     // Defaults through the document's own reading (clamped, sorted, bounded).
@@ -1093,6 +1103,37 @@ PrErr PR_CALL cb_get_sim_state(PrHost* h, const void** data, std::uint32_t* size
   return PR_ERR_NONE;
 }
 
+// SDK 1.4 (C): published channels.
+PrErr PR_CALL cb_publish_channel(PrHost* h, const char* name, const double* values, std::uint32_t count) {
+  if (h == nullptr || h->cmd != PR_CMD_PUBLISH_CHANNELS || h->published == nullptr || h->effect == nullptr) return PR_ERR_INVALID_CALLBACK;
+  if (name == nullptr || values == nullptr || count == 0 || count > PR_MAX_CHANNEL_VALUES) return PR_ERR_INVALID_PARAM;
+  const std::string_view n(name, strnlen(name, 65));
+  if (std::ranges::find(h->effect->publishes, n) == h->effect->publishes.end()) return PR_ERR_INVALID_PARAM;
+  std::vector<double> v(values, values + count);  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic): the SDK's array
+  if (!std::ranges::all_of(v, [](double x) { return std::isfinite(x); })) return PR_ERR_INVALID_PARAM;
+  (*h->published)[std::string(n)] = std::move(v);
+  return PR_ERR_NONE;
+}
+
+PrErr PR_CALL cb_read_channel(PrHost* h, const char* name, double* out, std::uint32_t capacity, std::uint32_t* count) {
+  if (h == nullptr || h->inputs == nullptr || h->effect == nullptr) return PR_ERR_INVALID_CALLBACK;
+  if (h->cmd != PR_CMD_PUBLISH_CHANNELS && h->cmd != PR_CMD_SMART_PRE_RENDER && h->cmd != PR_CMD_SMART_RENDER &&
+      h->cmd != PR_CMD_SMART_RENDER_GPU && h->cmd != PR_CMD_RENDER) {
+    return PR_ERR_INVALID_CALLBACK;
+  }
+  if (name == nullptr || count == nullptr || (out == nullptr && capacity > 0)) return PR_ERR_INVALID_PARAM;
+  const std::string_view n(name, strnlen(name, 65));
+  if (std::ranges::find(h->effect->reads, n) == h->effect->reads.end()) return PR_ERR_INVALID_PARAM;
+  const auto it = h->inputs->channels.find(n);
+  if (it == h->inputs->channels.end()) {
+    *count = 0;
+    return PR_ERR_NOT_FOUND;
+  }
+  *count = static_cast<std::uint32_t>(it->second.size());
+  std::copy_n(it->second.begin(), std::min<std::size_t>(capacity, it->second.size()), out);
+  return PR_ERR_NONE;
+}
+
 PrErr PR_CALL cb_ui_text(PrHost* h, double x, double y, const char* utf8, double size, std::uint32_t align, const float* rgba) {
   if (h == nullptr || h->cmd != PR_CMD_DRAW_PARAM_UI) return PR_ERR_INVALID_CALLBACK;
   if (utf8 == nullptr || !std::isfinite(size)) return PR_ERR_INVALID_PARAM;
@@ -1294,6 +1335,8 @@ PluginHost::PluginHost(HostOptions options) : impl_(std::make_unique<Impl>(*this
   s.ui_fill = &cb_ui_fill;  // SDK 1.3: Effect Controls boxes
   s.ui_text = &cb_ui_text;
   s.get_sim_state = &cb_get_sim_state;  // SDK 1.4
+  s.publish_channel = &cb_publish_channel;  // SDK 1.4 (C)
+  s.read_channel = &cb_read_channel;
 
   int threads = m.options.threads;
   if (threads <= 0) threads = std::clamp(static_cast<int>(std::thread::hardware_concurrency()) - 1, 0, 16);
@@ -1356,6 +1399,7 @@ PluginHost::PluginHost(HostOptions options) : impl_(std::make_unique<Impl>(*this
 
 PluginHost::~PluginHost() {
   Impl& m = *impl_;
+  if (m.exprPublished) motion::expr::set_plugin_functions({}, nullptr, nullptr);  // SDK 1.4: no calls into a gone host
   contrib_->shutdown();  // P7: CLOSE open importer files while the modules are set up
   if (m.options.attachToDocument) {
     PluginHost* self = this;
@@ -1447,6 +1491,7 @@ std::vector<PluginRecord> PluginHost::scan() {
     bundles.insert(bundles.end(), found.begin(), found.end());
   }
   for (const fs::path& b : bundles) m.load_bundle(b);
+  if (m.options.attachToDocument) publish_expression_functions();  // SDK 1.4 (E1)
   return plugins();
 }
 
@@ -1600,6 +1645,26 @@ Plugin* PluginHost::Impl::load_bundle(const fs::path& dir, Plugin* replacing, st
         } else {
           p->status = PluginStatus::loaded;
           p->info = info;
+          // SDK 1.4 (E1): each manifest expression function needs its entry point.
+          if (auto table_fn = reinterpret_cast<PrExprTableFn>(p->lib->symbol(PR_EXPR_TABLE_SYMBOL)); table_fn != nullptr) {  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast): the exported entry
+            struct TableCall {
+              PrExprTableFn fn;
+              const PrExprTable* out;
+            } tc{table_fn, nullptr};
+            const Fault tf = guarded_call([](void* c) { auto* x = static_cast<TableCall*>(c); x->out = x->fn(); }, &tc);
+            if (!tf && tc.out != nullptr && tc.out->struct_size >= sizeof(PrExprTable)) {
+              for (std::uint32_t i = 0; i < tc.out->count && tc.out->entries != nullptr; ++i) {
+                const PrExprEntry& x = tc.out->entries[i];  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+                if (x.name != nullptr && x.fn != nullptr) p->exprFns[x.name] = x.fn;
+              }
+            }
+          }
+          for (const std::string& fnName : p->manifest.expressionFunctions) {
+            if (!p->exprFns.contains(fnName)) {
+              p->status = PluginStatus::failed;
+              p->error = "the binary has no entry point for expression function '" + fnName + "'";
+            }
+          }
           for (const ManifestEffect& me : p->manifest.effects) {
             PrEffectMainFn main = nullptr;
             for (std::uint32_t i = 0; i < info->effect_count && info->effects != nullptr; ++i) {
@@ -1615,6 +1680,8 @@ Plugin* PluginHost::Impl::load_bundle(const fs::path& dir, Plugin* replacing, st
             e->matchName = me.matchName;
             e->name = me.name;
             e->category = me.category;
+            e->publishes = me.publishes;  // SDK 1.4 (C)
+            e->reads = me.reads;
             e->pluginId = id;
             e->main = main;
             p->effects.push_back(std::move(e));
@@ -1729,6 +1796,83 @@ Plugin* PluginHost::Impl::swap_in(std::unique_ptr<Plugin> fresh, Plugin& old, st
   return raw;
 }
 
+namespace {
+/// The watchdog / journal's name for an expression-function call (journal_ffi.cpp command_name).
+constexpr std::int32_t kExpressionCmd = 1030;
+bool expr_trampoline(void* user, std::string_view plugin, std::string_view name, std::span<const double> args, std::vector<double>& out,
+                     std::string& error) {
+  return static_cast<PluginHost*>(user)->call_expression(plugin, name, args, out, error);
+}
+}  // namespace
+
+void PluginHost::publish_expression_functions() {
+  Impl& m = *impl_;
+  std::vector<motion::expr::PluginFunction> list;
+  {
+    const std::shared_lock lock(m.pluginsMutex);
+    for (const auto& p : m.plugins) {
+      if (p->status != PluginStatus::loaded || p->userDisabled) continue;
+      for (const auto& [name, fn] : p->exprFns) {
+        if (!m.exprCrashed.contains(p->manifest.id + "." + name)) list.push_back({p->manifest.id, name});
+      }
+    }
+  }
+  motion::expr::set_plugin_functions(std::move(list), &expr_trampoline, this);
+  m.exprPublished = true;
+}
+
+bool PluginHost::call_expression(std::string_view pluginId, std::string_view name, std::span<const double> args,
+                                 std::vector<double>& out, std::string& error) {
+  Impl& m = *impl_;
+  PrExprFn fn = nullptr;
+  std::string id(pluginId);
+  {
+    const std::shared_lock lock(m.pluginsMutex);
+    for (const auto& p : m.plugins) {
+      if (p->manifest.id != pluginId || p->status != PluginStatus::loaded || p->userDisabled) continue;
+      if (const auto it = p->exprFns.find(name); it != p->exprFns.end()) fn = it->second;
+    }
+  }
+  const std::string key = id + "." + std::string(name);
+  if (fn == nullptr || m.exprCrashed.contains(key)) {
+    error = "no expression function '" + key + "'";
+    return false;
+  }
+  struct Call {
+    PrExprFn fn;
+    const double* args;
+    std::uint32_t count;
+    double* out;
+    std::uint32_t outCount;
+    PrErr result = PR_ERR_NONE;
+  };
+  // Room for PR_EXPR_MAX_OUT numbers, or for as many as the caller sized `out` to (E3: a compound
+  // value's interpolator returns the whole value).
+  std::vector<double> buf(std::clamp<std::size_t>(out.size(), PR_EXPR_MAX_OUT, 65536), 0.0);
+  Call call{fn, args.data(), static_cast<std::uint32_t>(std::min<std::size_t>(args.size(), 131072)), buf.data(),
+            static_cast<std::uint32_t>(buf.size()), PR_ERR_NONE};
+  const int ws = m.watchdog ? m.watchdog->enter(id, kExpressionCmd) : -1;
+  const Fault f = guarded_call(
+      [](void* c) {
+        auto* x = static_cast<Call*>(c);
+        x->result = x->fn(x->args, x->count, x->out, &x->outCount);
+      },
+      &call);
+  if (m.watchdog) (void)m.watchdog->leave(ws);
+  if (f) {
+    m.exprCrashed.insert(key);  // never called again this session; the next publish drops it
+    PREMATION_LOG(error, "plugin_fault").kv("plugin", id).kv("what", std::string(to_string(f.kind)) + " in expression function " + key);
+    error = std::string(to_string(f.kind)) + " in " + key;
+    return false;
+  }
+  if (call.result != PR_ERR_NONE) {
+    error = key + " returned error " + std::to_string(call.result);
+    return false;
+  }
+  out.assign(buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(std::min<std::size_t>(call.outCount, buf.size())));
+  return true;
+}
+
 bool PluginHost::reload(std::string_view pluginId, std::string& why) {
   Impl& m = *impl_;
   Plugin* p = nullptr;
@@ -1752,7 +1896,9 @@ bool PluginHost::reload(std::string_view pluginId, std::string& why) {
   }
   // A reload is the author trying again: a quarantine from the last build does not hold the new one.
   if (m.journal) m.journal->release(pluginId);
-  return m.load_bundle(p->dir, p, &why) != nullptr;
+  const bool ok = m.load_bundle(p->dir, p, &why) != nullptr;
+  if (ok && (m.options.attachToDocument || m.exprPublished)) publish_expression_functions();  // SDK 1.4 (E1)
+  return ok;
 }
 
 bool PluginHost::Impl::setup_effect(Plugin& p, EffectSpec& e) {
@@ -1997,6 +2143,18 @@ std::vector<PluginRecord> PluginHost::plugins() const {
 
 bool PluginHost::set_enabled(std::string_view pluginId, bool enabled) {
   Impl& m = *impl_;
+  // SDK 1.4 (E1): whatever path this takes, expressions see the new set of functions after it.
+  struct Republish {
+    PluginHost* host;
+    explicit Republish(PluginHost* h) : host(h) {}
+    Republish(const Republish&) = delete;
+    Republish(Republish&&) = delete;
+    Republish& operator=(Republish&&) = delete;
+    Republish& operator=(const Republish&) = delete;
+    ~Republish() {
+      if (host != nullptr) host->publish_expression_functions();
+    }
+  } republish(m.options.attachToDocument || m.exprPublished ? this : nullptr);
   Plugin* p = nullptr;
   {
     const std::shared_lock lock(m.pluginsMutex);
@@ -2422,6 +2580,31 @@ CallResult PluginHost::Impl::call_render(Plugin& p, EffectSpec& e, const RenderI
   }
   ctx.scoped.clear();
   if (r.fault) on_fault(p, &e, &in, r);
+  return r;
+}
+
+CallResult PluginHost::publish_channels(const RenderInputs& in, ChannelValues& out) {
+  Impl& m = *impl_;
+  CallResult r;
+  EffectSpec* e = nullptr;
+  Plugin* p = nullptr;
+  out.clear();
+  if (!resolve(*this, m, in, e, p, r)) return r;
+  if (!e->has(PR_OUT_FLAG_PUBLISHES)) {
+    r.ok = true;
+    return r;
+  }
+  const InstanceLease lease = m.instance_for(in, *e, *p, r);
+  if (!lease) {
+    if (r.fault) m.on_fault(*p, e, &in, r);
+    return r;
+  }
+  const RenderLock lock(*p, *e);
+  PrHost ctx;
+  ctx.host = this;
+  ctx.published = &out;
+  r = m.call_render(*p, *e, in, ctx, PR_CMD_PUBLISH_CHANNELS, nullptr, nullptr, lease.sequence());
+  if (!r.ok) out.clear();
   return r;
 }
 
@@ -3287,6 +3470,10 @@ std::vector<api::PluginInfo> PluginHost::plugin_infos() const {
         if (p->manifest.id != i.id) continue;
         for (const ManifestLayerType& lt : p->manifest.layerTypes) {
           i.layer_types.push_back(api::PluginLayerTypeInfo{p->manifest.id + ":" + lt.id, lt.name, lt.effect, lt.category});
+        }
+        for (const std::string& ip : p->manifest.interpolators) i.interpolators.push_back(p->manifest.id + ":" + ip);
+        for (const ManifestTool& t : p->manifest.tools) {  // SDK 1.4 (U)
+          i.tools.push_back(api::PluginToolInfo{p->manifest.id + ":" + t.id, t.name, t.command, t.shortcut});
         }
       }
     }

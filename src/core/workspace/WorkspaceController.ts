@@ -60,6 +60,8 @@ const TOOL_MAP: Record<UITool, string> = {
   'object-matte': 'roto',
   'selection-brush': 'roto',
   'refine-edge': 'roto',
+  // SDK 1.4 (U): `PluginToolOverlay` claims the pointer; the engine tool only gives the cursor.
+  'plugin-tool': 'roto',
 };
 
 export class WorkspaceController {

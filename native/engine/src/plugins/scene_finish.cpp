@@ -537,6 +537,85 @@ void finish_native_frame(const scene::BuildContext& c, std::string_view comp, do
   std::set<std::string> reported;
   Sampler sampler(c, comp, t, view, frame.file.scene);
 
+  // SDK 1.4 (C): the frame's published channels, before any instance renders. Publishers run in
+  // the order their manifests' "reads" / "publishes" give; a cycle is refused (layerErrors).
+  ChannelValues channels;
+  if (host != nullptr) {
+    struct Pub {
+      api::RenderEffect* e;
+      const EffectSpec* spec;
+      std::string layerId, instance, docLayer, effectId;
+      std::int64_t lt;
+    };
+    std::vector<Pub> pubs;
+    visit(frame.file.scene.renderables, [&](api::Renderable& r, List& /*list*/) {
+      for (api::RenderEffect& e : r.effects) {
+        if (e.type != kNativeFxType) continue;
+        const EffectSpec* spec = host->effect(text_of(e, "matchName"));
+        if (spec == nullptr || !spec->has(PR_OUT_FLAG_PUBLISHES) || spec->publishes.empty()) continue;
+        Pub p{&e, spec, text_of(e, "layerId"), text_of(e, "instance"), "", "", tf};
+        if (host->instance_disabled(p.instance, nullptr)) continue;
+        const std::size_t slash = p.instance.rfind('/');
+        p.effectId = slash == std::string::npos ? std::string() : p.instance.substr(slash + 1);
+        p.docLayer = doc_layer_of(c.d, p.layerId);
+        if (c.d.node(p.docLayer) != nullptr) {
+          const EffectClock clock = effect_clock(c, r, e, p.docLayer, t);
+          p.lt = flicks(clock.layer.layer_time(clock.ownNow));
+        }
+        pubs.push_back(std::move(p));
+      }
+    });
+    // Kahn's order: P before Q when Q reads a channel P publishes.
+    const auto feeds = [](const Pub& p, const Pub& q) {
+      return &p != &q && std::ranges::any_of(q.spec->reads, [&](const std::string& n) { return std::ranges::find(p.spec->publishes, n) != p.spec->publishes.end(); });
+    };
+    std::vector<bool> done(pubs.size(), false);
+    std::map<std::string, std::string> publishedBy;
+    for (std::size_t round = 0; round < pubs.size(); ++round) {
+      bool progressed = false;
+      for (std::size_t i = 0; i < pubs.size(); ++i) {
+        if (done[i]) continue;
+        bool ready = true;
+        for (std::size_t j = 0; j < pubs.size() && ready; ++j) ready = done[j] || !feeds(pubs[j], pubs[i]);
+        if (!ready) continue;
+        done[i] = true;
+        progressed = true;
+        Pub& p = pubs[i];
+        RenderInputs in = sampler.inputs_at(*p.spec, *p.e, p.docLayer, p.effectId, p.lt);
+        in.compTime = tf;
+        for (const std::string& n : p.spec->reads) {
+          if (const auto it = channels.find(n); it != channels.end()) in.channels[n] = it->second;
+        }
+        ChannelValues out;
+        const CallResult cr = host->publish_channels(in, out);
+        if (!cr.ok) {
+          if (!cr.skipped && reported.insert(p.instance + "#publish").second) {
+            frame.errors.push_back(scene::LayerError{p.layerId, "", "plugin", "channels: " + cr.message});
+          }
+          continue;
+        }
+        for (auto& [name, values] : out) {
+          if (const auto it = publishedBy.find(name); it != publishedBy.end()) {
+            if (reported.insert(p.instance + "#dup#" + name).second) {
+              frame.errors.push_back(scene::LayerError{p.layerId, "", "plugin",
+                                                       "channels: '" + name + "' is already published this frame (layer " + it->second + ")"});
+            }
+            continue;
+          }
+          publishedBy[name] = p.layerId;
+          channels[name] = std::move(values);
+        }
+      }
+      if (!progressed) break;
+    }
+    for (std::size_t i = 0; i < pubs.size(); ++i) {
+      if (!done[i] && reported.insert(pubs[i].instance + "#cycle").second) {
+        frame.errors.push_back(scene::LayerError{pubs[i].layerId, "", "plugin",
+                                                 "channels: " + pubs[i].spec->matchName + " is in a cycle of channels; it publishes nothing"});
+      }
+    }
+  }
+
   visit(frame.file.scene.renderables, [&](api::Renderable& r, List& list) {
     bool blursItself = false;
     for (api::RenderEffect& e : r.effects) {
@@ -640,6 +719,12 @@ void finish_native_frame(const scene::BuildContext& c, std::string_view comp, do
           frame.simPending = true;  // still catching up: not final, drawn again (engine_frames.cpp)
         } else if (reported.insert(instance + "#sim").second) {
           frame.errors.push_back(scene::LayerError{layerId, "", "plugin", "simulation: " + why});
+        }
+      }
+      // SDK 1.4 (C): the channels it reads, as published this frame; they travel with the entry.
+      for (const std::string& n : spec->reads) {
+        if (const auto it = channels.find(n); it != channels.end()) {
+          param(e, "ch." + n, api::RenderParamKind::numbers).numbers = it->second;
         }
       }
       if (blurOn && spec->has(PR_OUT_FLAG_USES_SHUTTER)) blursItself = true;

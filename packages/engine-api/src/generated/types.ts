@@ -1076,6 +1076,8 @@ export interface Keyframe {
    * then the first dimension's).
    */
   dims: KeyframeDim[];
+  /** SDK 1.4 (E2): the plugin interpolator "<pluginId>:<name>" easing the segment after this key. Absent = none. */
+  interpolator?: string;
 }
 
 /** A property + layer pair: the address of every animatable or static value. */
@@ -2396,6 +2398,8 @@ export interface KeyframeInsert {
   spatialInterp?: SpatialInterp;
   spatialIn: number[];
   spatialOut: number[];
+  /** SDK 1.4 (E2): ease the segment after this key with a plugin interpolator "<pluginId>:<name>" (PluginInfo.interpolators). */
+  interpolator?: string;
 }
 
 /**
@@ -2419,6 +2423,8 @@ export interface KeyframePatch {
   clearSpatial?: boolean;
   label?: number;
   dim?: number;
+  /** SDK 1.4 (E2): a plugin interpolator for the segment after this key; "" = none. */
+  interpolator?: string;
 }
 
 /** Add keyframes (replacing any at the same time on the same property — the replaced key keeps its id). Returns ids in input order. */
@@ -4465,6 +4471,18 @@ export interface PluginInfo {
   panelTitle?: string;
   /** SDK 1.4 (L1) — the manifest's `layerTypes`: kinds of layer the plugin draws (New ▸ Layer). Listed from the manifest only while the plugin is loaded. */
   layerTypes: PluginLayerTypeInfo[];
+  /** SDK 1.4 (E2): the plugin's keyframe interpolators, "<pluginId>:<name>" (KeyframePatch.interpolator). */
+  interpolators: string[];
+  /** SDK 1.4 (U): the plugin's viewer tools (manifest `tools`); their drags run `command` with the stroke (runPluginCommand args). */
+  tools: PluginToolInfo[];
+}
+
+/** SDK 1.4 (U): a viewer tool — `id` = `<pluginId>:<toolId>`; `shortcut` a default like "Shift+S" ("" = none). */
+export interface PluginToolInfo {
+  id: string;
+  name: string;
+  command: string;
+  shortcut: string;
 }
 
 /** A plugin layer type: `type` = `<pluginId>:<id>` (createLayer's `generator`), drawn by generator effect `effect`. */

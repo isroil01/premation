@@ -235,6 +235,26 @@ std::optional<Manifest> parse_manifest(std::string_view json, std::span<const st
     me.matchName = e.at("matchName").is_string() ? e.at("matchName").str() : "";
     me.name = e.at("name").is_string() ? e.at("name").str() : me.matchName;
     me.category = e.at("category").is_string() ? e.at("category").str() : m.name;
+    // SDK 1.4 (C): channel names, 1..64 of letters, digits, '_', '.', '-'.
+    for (const auto& [field, list] : {std::pair<const char*, std::vector<std::string>*>{"publishes", &me.publishes}, {"reads", &me.reads}}) {
+      const js::Json& names = e.at(field);
+      if (names.is_undefined()) continue;
+      if (!names.is_array()) {
+        error = "effect '" + me.matchName + "': \"" + field + "\" must be an array";
+        return std::nullopt;
+      }
+      for (const js::Json& n : names.arr()) {
+        const std::string name = n.is_string() ? n.str() : std::string();
+        const bool ok = !name.empty() && name.size() <= 64 && std::ranges::all_of(name, [](char c) {
+          return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_' || c == '.' || c == '-';
+        });
+        if (!ok) {
+          error = "effect '" + me.matchName + "': channel '" + name + "' must be 1-64 letters, digits, '_', '.' or '-'";
+          return std::nullopt;
+        }
+        if (std::ranges::find(*list, name) == list->end()) list->push_back(name);
+      }
+    }
     const bool owned = me.matchName == m.id || (me.matchName.size() > m.id.size() + 1 && me.matchName.starts_with(m.id) &&
                                                 me.matchName[m.id.size()] == '.');
     if (!owned || !valid_plugin_id(me.matchName)) {
@@ -286,7 +306,52 @@ std::optional<Manifest> parse_manifest(std::string_view json, std::span<const st
     }
     m.layerTypes.push_back(std::move(lt));
   }
-  if (m.effects.empty() && m.commands.empty() && m.importers.empty() && m.outputModules.empty() && m.panels.empty()) {
+  // SDK 1.4 (U): viewer tools, each run by one of the commands above.
+  if (!contribution_list(j, "tools", error)) return std::nullopt;
+  for (const js::Json& e : j.at("tools").arr()) {
+    ManifestTool t;
+    t.id = e.at("id").str();
+    t.name = str_or(e.at("name"), t.id);
+    t.command = e.at("command").is_string() ? e.at("command").str() : std::string();
+    t.shortcut = e.at("shortcut").is_string() ? e.at("shortcut").str() : std::string();
+    if (std::ranges::none_of(m.commands, [&](const ManifestCommand& c) { return c.id == t.command; })) {
+      error = "tools: '" + t.id + "' names command '" + t.command + "', which the manifest's \"commands\" do not list";
+      return std::nullopt;
+    }
+    if (t.shortcut.size() > 32) {
+      error = "tools: '" + t.id + "': the shortcut is too long";
+      return std::nullopt;
+    }
+    m.tools.push_back(std::move(t));
+  }
+  // SDK 1.4 (E1/E2): expression functions [{ "name" }] and interpolators [name] (each one of them).
+  if (const js::Json& fns = j.at("expressionFunctions"); !fns.is_undefined()) {
+    if (!fns.is_array()) {
+      error = "\"expressionFunctions\" must be an array";
+      return std::nullopt;
+    }
+    for (const js::Json& f : fns.arr()) {
+      const std::string name = f.at("name").is_string() ? f.at("name").str() : std::string();
+      const bool ident = !name.empty() && name.size() <= 64 && (std::isalpha(static_cast<unsigned char>(name[0])) != 0 || name[0] == '_') &&
+                         std::ranges::all_of(name, [](char c) { return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_'; });
+      if (!ident || std::ranges::find(m.expressionFunctions, name) != m.expressionFunctions.end()) {
+        error = "expressionFunctions: '" + name + "' must be a unique identifier (letters, digits, _)";
+        return std::nullopt;
+      }
+      m.expressionFunctions.push_back(name);
+    }
+  }
+  if (const js::Json& ips = j.at("interpolators"); !ips.is_undefined()) {
+    for (const js::Json& i : ips.arr()) {
+      const std::string name = i.is_string() ? i.str() : std::string();
+      if (std::ranges::find(m.expressionFunctions, name) == m.expressionFunctions.end()) {
+        error = "interpolators: '" + name + "' must be one of the manifest's expressionFunctions";
+        return std::nullopt;
+      }
+      m.interpolators.push_back(name);
+    }
+  }
+  if (m.effects.empty() && m.expressionFunctions.empty() && m.commands.empty() && m.importers.empty() && m.outputModules.empty() && m.panels.empty()) {
     error = "the manifest lists no effects, commands, importers, output modules or panels";
     return std::nullopt;
   }

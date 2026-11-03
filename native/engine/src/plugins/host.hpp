@@ -84,8 +84,14 @@ struct EffectSpec {
   std::vector<ParamSpec> params;
   PrHandle globalData = 0;
   bool ready = false;
+  /// SDK 1.4 (C): the manifest's channels for this effect.
+  std::vector<std::string> publishes;
+  std::vector<std::string> reads;
   [[nodiscard]] bool has(std::uint32_t flag) const noexcept { return (outFlags & flag) != 0; }
 };
+
+/// SDK 1.4 (C): one frame's published channels, by name.
+using ChannelValues = std::map<std::string, std::vector<double>, std::less<>>;
 
 /// `locked`: needs an entitlement (manifest `entitlement`) with no valid token — never loaded.
 enum class PluginStatus : std::uint8_t { loaded, disabled, failed, quarantined, revoked, locked };
@@ -224,6 +230,8 @@ struct RenderInputs {
   std::vector<TimeSample> samples;
   /// SDK 1.4 (T): a STATEFUL effect's state after this frame's SIM_STEP (get_sim_state); absent = none.
   std::optional<std::vector<std::uint8_t>> simState;
+  /// SDK 1.4 (C): the frame's channels this effect reads (scene_finish.cpp: `ch.<name>`).
+  ChannelValues channels;
 };
 
 /// SDK 1.4 (T): the state of a STATEFUL effect instance at one of its layer frames.
@@ -416,6 +424,14 @@ class PluginHost {
   /// flat sequence data. The old module stays mapped (pinned): code of it may still be on a stack.
   /// A failed reload keeps the old module loaded and says why in `why`. False = not reloaded.
   bool reload(std::string_view pluginId, std::string& why);
+  /// SDK 1.4 (E1/E2): offer the loaded, enabled plugins' expression functions to expressions
+  /// (motion::expr::set_plugin_functions). Done after every scan, reload and enable / disable by
+  /// the engine's host (attachToDocument); a test host calls it itself.
+  void publish_expression_functions();
+  /// One call of a plugin expression function, crash-guarded and under the watchdog. False +
+  /// `error` when there is no such function or it failed (a fault disables it for the session).
+  bool call_expression(std::string_view pluginId, std::string_view name, std::span<const double> args, std::vector<double>& out,
+                       std::string& error);
   [[nodiscard]] const EffectSpec* effect(std::string_view matchName) const;
 
   // ── document side (the core thread) ──
@@ -445,6 +461,9 @@ class PluginHost {
   // ── render side (any thread) ──
   /// SMART_PRE_RENDER. `info` (SDK 1.2): the times checked out and the result rect.
   CallResult pre_render(const RenderInputs& in, std::vector<CheckoutRequest>& out, PreRenderInfo* info = nullptr);
+  /// SDK 1.4 (C): PR_CMD_PUBLISH_CHANNELS — the channels the instance publishes this frame
+  /// (`in.channels`: the ones it reads, published before it). Crash-guarded like a render.
+  CallResult publish_channels(const RenderInputs& in, ChannelValues& out);
   /// SMART_RENDER (or FRAME_SETUP / RENDER / FRAME_SETDOWN for non-smart
   /// effects), into `io`'s worlds of `format`.
   CallResult render_cpu(const RenderInputs& in, CheckoutSource& io, PrPixelFormat format);

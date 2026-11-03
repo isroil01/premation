@@ -960,6 +960,127 @@ The `bounce` sample (`native/sdk/samples/bounce`) is a ball under keyframeable
 Gravity and Bounciness. `engine_plugins_tests [sim]` and
 `engine_plugins_scene_tests [sim]` hold it to the rules above.
 
+## Expression functions and interpolators (SDK 1.4)
+
+A plugin can add pure functions to the expression language. List them in the
+manifest and export a table of entry points:
+
+```json
+"expressionFunctions": [ { "name": "smoothstep" }, { "name": "springy" } ],
+"interpolators": [ "springy" ]
+```
+
+```c
+static PrErr PR_CALL smoothstep(const double* args, uint32_t n, double* out, uint32_t* out_count);
+static const PrExprEntry kEntries[] = { { "smoothstep", smoothstep }, { "springy", springy } };
+static const PrExprTable kTable = { sizeof(PrExprTable), 2, kEntries };
+extern "C" PR_EXPORT const PrExprTable* PR_CALL PremationPluginExpressions(void) { return &kTable; }
+```
+
+- **Calling them.** An expression reaches them as
+  `plugin["<plugin id>"].<name>(…)`. Numbers and arrays go in, with arrays
+  flattened into the argument list. Up to `PR_EXPR_MAX_OUT` (16) numbers come
+  back: one number is a number, and more than one is an array. Strings are not
+  passed.
+- **Pure.** A function gets no host suite and no document access. Give the
+  same answer for the same arguments; a frame must stay a function of the
+  document.
+- **Guarded.** Every call runs crash-guarded under the watchdog, like a
+  render. A function that faults is disabled for the session and its
+  expression reports an error; the engine carries on. A manifest function the
+  binary does not export fails the plugin at load.
+- **Interpolators.** A function listed in `interpolators` is called as
+  `(t, v0, v1) → value`, with `t` running 0..1 through a keyframe segment.
+  Right-click a keyframe ▸ Keyframe Interpolation ▸ Plugin Interpolator to ease
+  the segment after it. The key saves `"interp": "<plugin id>:<name>"` and the
+  engine API spells it `Keyframe.interpolator`. When the plugin is missing or
+  the call fails, the segment eases with the key's own easing.
+
+The `mathfns` sample (`native/sdk/samples/mathfns`) and
+`engine_plugins_tests [exprfn]` hold both to these rules.
+
+### Keyframed curves and gradients (SDK 1.4)
+
+A `PR_PARAM_CURVE` or `PR_PARAM_GRADIENT` param with `PR_PARAM_FLAG_ANIMATE_VALUE`
+keyframes as one value: one stopwatch, one key per time holding the whole
+curve or stop list.
+
+- **Blending.** Between two keys of the same shape (the same point or stop
+  count), every number is blended with the key's own easing. Keys of
+  different shapes hold until the next key.
+- **The plugin's blend.** A key may name one of the plugin's interpolators,
+  as for a number. The interpolator is then called with
+  `(t, a…, b…)`, where `a` and `b` are the two keys' numbers flattened and
+  `*out_count` is their length on entry. It returns the blended value's
+  numbers. The `mathfns` sample's `smoothblend` blends with a smoothstep.
+- **Storage.** The track is the layer's data track
+  `effect.<effect id>.<param key>`, of kind `numbers`. The engine API keys it
+  at `effects/<effect id>/<param key>` with a JSON value, like any other path.
+
+The `grademap` sample's Tone Curve and Gradient opt in.
+`engine_plugins_tests [compound]` and
+`engine_plugins_scene_tests [compound]` cover the API and the frame.
+
+## Published channels (SDK 1.4)
+
+Instances can talk to each other. A controller publishes named values each
+frame, and any number of readers on any layer pick them up. Each effect
+declares its channels in the manifest:
+
+```json
+{ "matchName": "com.example.fx.controller", "publishes": [ "pulse" ] },
+{ "matchName": "com.example.fx.follower", "reads": [ "pulse" ] }
+```
+
+- **Publishing.** An effect with `PR_OUT_FLAG_PUBLISHES` gets
+  `PR_CMD_PUBLISH_CHANNELS` once per frame, before any instance renders. It
+  calls `publish_channel(host, name, values, count)` for its declared
+  channels, with up to `PR_MAX_CHANNEL_VALUES` (4096) finite numbers each.
+  Params and time are that frame's.
+- **Reading.** `read_channel(host, name, out, capacity, &count)` works in
+  `PUBLISH_CHANNELS`, `SMART_PRE_RENDER`, `SMART_RENDER(_GPU)` and `RENDER`,
+  for declared reads only. It returns `PR_ERR_NOT_FOUND` when nothing
+  published the channel this frame, so draw your default then.
+- **Order.** The host runs a frame's publishers in the order the
+  declarations give, so a publisher that reads another's channel runs after
+  it. Publishers in a cycle publish nothing and report it on `layerErrors`.
+  A channel two instances publish in one frame keeps the first and reports
+  the second.
+- **Determinism.** Publishing runs on the document side, and the values
+  travel with each reader's frame entry. A frame stays a function of the
+  document. `SIM_STEP` does not see channels.
+
+The `channels` sample (`native/sdk/samples/channels`) has a Controller, a
+Follower, and a Ping/Pong pair that forms a cycle on purpose.
+`engine_plugins_scene_tests [channels]` holds them to these rules.
+
+## Viewer tools (SDK 1.4)
+
+A plugin can put a tool on the toolbar. While the tool is active, drags in
+the viewer go to the plugin. A tool is backed by one of the plugin's
+commands:
+
+```json
+"commands": [ { "id": "scatter", "name": "Scatter Brush" } ],
+"tools": [ { "id": "scatter", "name": "Scatter Brush", "command": "scatter", "shortcut": "Shift+S" } ]
+```
+
+- **Choosing the tool.** Plugins ▸ Tools lists it, and it is a command
+  (`plugin.tool.<plugin id>:<tool id>`) in the palette and in Customize. The
+  manifest's `shortcut` is the default unless another command already uses
+  that key.
+- **A drag.** The viewer collects the drag in composition pixels, every
+  coalesced pointer sample, and draws it as a trail. Escape drops it. On
+  release the tool's command runs with these args:
+  `{ "tool", "stroke": [[x, y], …], "shift", "alt", "ctrl" }`, along with the
+  comp, the selected layers and the playhead.
+- **One undo entry.** Everything the command edits for one drag is one undo
+  entry, named after the command, as for any command.
+
+The `scatter` sample stamps an ellipse layer every 48 px along the stroke.
+Shift halves the spacing and Alt doubles the size. `engine_plugins_tests
+[tools]` covers it.
+
 ## Sequence data
 
 Per-instance state lives **in the document**, not only in the process:

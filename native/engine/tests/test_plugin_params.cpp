@@ -74,8 +74,9 @@ TEST_CASE("SDK 1.1 params: declared defaults", "[plugins][params]") {
   CHECK(spec_of(*spec, kCurve).curve == std::vector<double>{0, 0, 0.5, 0.5, 1, 1});
   CHECK(spec_of(*spec, kGradient).gradient == std::vector<double>{0, 0, 0, 0, 1, 1, 1, 1, 1, 1});
   CHECK(spec_of(*spec, kLut).fileTypes == "cube");
-  // Never keyframed.
-  for (const std::uint32_t id : {kChannels, kCurve, kGradient, kLut}) CHECK((spec_of(*spec, id).flags & PR_PARAM_FLAG_CANNOT_ANIMATE) != 0);
+  // A string and a file are never keyframed; the curve and gradient opt in (SDK 1.4 E3, PR_PARAM_FLAG_ANIMATE_VALUE).
+  for (const std::uint32_t id : {kChannels, kLut}) CHECK((spec_of(*spec, id).flags & PR_PARAM_FLAG_CANNOT_ANIMATE) != 0);
+  for (const std::uint32_t id : {kCurve, kGradient}) CHECK((spec_of(*spec, id).flags & PR_PARAM_FLAG_CANNOT_ANIMATE) == 0);
 }
 
 TEST_CASE("SDK 1.1 params: values reach the render", "[plugins][params]") {

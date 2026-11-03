@@ -767,3 +767,134 @@ TEST_CASE("SDK 1.2 S6: a collapsed precomp's 3D layers are posed at each sub-tim
     CHECK(std::abs((it->second.at(12) - frameModel.at(12)) - 300 * (at - t)) < 1e-3);
   }
 }
+
+namespace {
+Json effect_json(const char* id, const char* type, Json params = Json::object()) {
+  Json e = Json::object();
+  e.set("id", Json::string(id));
+  e.set("type", Json::string(type));
+  e.set("params", std::move(params));
+  return e;
+}
+
+const api::RenderEffect* entry_of(const api::Renderable& r, std::string_view matchName) {
+  for (const api::RenderEffect& e : r.effects) {
+    if (e.type != pl::kNativeFxType) continue;
+    for (const api::RenderEffectParam& p : e.params) {
+      if (p.name == "matchName" && p.text == matchName) return &e;
+    }
+  }
+  return nullptr;
+}
+
+const api::RenderEffectParam* param_named(const api::RenderEffect& e, std::string_view name) {
+  for (const api::RenderEffectParam& p : e.params) {
+    if (p.name == name) return &p;
+  }
+  return nullptr;
+}
+}  // namespace
+
+TEST_CASE("SDK 1.4 E3: a keyframed gradient reaches the frame blended, by the plugin's interpolator when the key names one",
+          "[plugins][finish][compound]") {
+  Json document = scene_json();
+  Json* node = find_node(document, "solid");
+  REQUIRE(node != nullptr);
+  Json::Array effects;
+  effects.push_back(effect_json("fx", "com.premation.samples.grademap"));
+  fx_props(*node).set("effects", Json::array(std::move(effects)));
+  const auto stops = [](double pos) {
+    return *premation::js::parse("[[" + std::to_string(pos) + ",0,0,0,1],[1,1,1,1,1]]");
+  };
+  Json k0 = Json::object();
+  k0.set("t", Json::number(0));
+  k0.set("value", stops(0));
+  Json k1 = Json::object();
+  k1.set("t", Json::number(1));
+  k1.set("value", stops(0.5));
+  Json track = Json::object();
+  track.set("nodeId", Json::string("solid"));
+  track.set("prop", Json::string("effect.fx.p3"));
+  track.set("kind", Json::string("numbers"));
+  track.set("keyframes", Json::array({k0, k1}));
+  Json data = Json::object();
+  Json forNode = Json::object();
+  forNode.set("effect.fx.p3", track);
+  data.set("solid", std::move(forNode));
+  Json eased = document;
+  document.find_mut("animation")->set("data", data);
+  // The same, with the first key eased by mathfns' smoothblend.
+  Json withInterp = data;
+  Json& keys0 = *withInterp.find_mut("solid")->find_mut("effect.fx.p3")->find_mut("keyframes");
+  keys0.arr_mut()[0].set("interp", Json::string("com.premation.samples.mathfns:smoothblend"));
+  eased.find_mut("animation")->set("data", withInterp);
+
+  const auto first_stop = [](Fixture& f, double t) {
+    const Fixture::Built b = f.frame(t);
+    pl::RenderInputs in;
+    pl::decode_native_fx(b.entry, *f.host->effect("com.premation.samples.grademap"), in);
+    const pl::EffectSpec& spec = *f.host->effect("com.premation.samples.grademap");
+    for (std::size_t i = 0; i < spec.params.size(); ++i) {
+      if (spec.params[i].key == "p3") return in.values.at(i).gradient.at(0);
+    }
+    FAIL("no p3");
+    return 0.0;
+  };
+  {
+    Fixture f(std::move(document));
+    CHECK(std::abs(first_stop(f, 0.25) - 0.125) < 1e-9);  // linear: a quarter of the way to 0.5
+    CHECK(std::abs(first_stop(f, 2.0) - 0.5) < 1e-9);
+  }
+  {
+    Fixture g(std::move(eased));
+    g.host->publish_expression_functions();
+    CHECK(std::abs(first_stop(g, 0.25) - 0.5 * 0.15625) < 1e-9);  // smoothstep(0.25)
+  }
+}
+
+TEST_CASE("SDK 1.4 C: a controller's published channel reaches its readers in the same frame; a cycle is refused",
+          "[plugins][finish][channels]") {
+  Json document = scene_json();
+  Json* node = find_node(document, "solid");
+  REQUIRE(node != nullptr);
+  Json cparams = Json::object();
+  cparams.set("p1", Json::number(80));  // Strength
+  cparams.set("p2", Json::number(0));   // Rate: a constant 0.5 × strength
+  Json::Array effects;
+  effects.push_back(effect_json("follow", "com.premation.samples.channels.follower"));  // reads before it in the stack
+  effects.push_back(effect_json("ctrl", "com.premation.samples.channels.controller", cparams));
+  fx_props(*node).set("effects", Json::array(std::move(effects)));
+  Json cyclic = document;
+  {
+    Fixture f(std::move(document));
+    const Fixture::Built b = f.frame(1.0);
+    const api::RenderEffect* follower = entry_of(b.solid, "com.premation.samples.channels.follower");
+    REQUIRE(follower != nullptr);
+    const api::RenderEffectParam* pulse = param_named(*follower, "ch.pulse");
+    REQUIRE(pulse != nullptr);
+    REQUIRE(pulse->numbers.size() == 3);
+    CHECK(std::abs(pulse->numbers[0] - 0.4) < 1e-12);
+    CHECK(pulse->numbers[1] == 0.8);
+    // The controller itself reads nothing: no channels on its entry.
+    const api::RenderEffect* ctrl = entry_of(b.solid, "com.premation.samples.channels.controller");
+    REQUIRE(ctrl != nullptr);
+    CHECK(param_named(*ctrl, "ch.pulse") == nullptr);
+    CHECK(f.plugin_errors(1.0).empty());
+    // Decoded, the follower's render inputs carry it (read_channel answers from them).
+    pl::RenderInputs in;
+    pl::decode_native_fx(*follower, *f.host->effect("com.premation.samples.channels.follower"), in);
+    REQUIRE(in.channels.contains("pulse"));
+    CHECK(in.channels.at("pulse")[1] == 0.8);
+  }
+  {
+    Json* n2 = find_node(cyclic, "solid");
+    Json::Array loop;
+    loop.push_back(effect_json("ping", "com.premation.samples.channels.ping"));
+    loop.push_back(effect_json("pong", "com.premation.samples.channels.pong"));
+    fx_props(*n2).set("effects", Json::array(std::move(loop)));
+    Fixture g(std::move(cyclic));
+    const std::vector<sc::LayerError> errors = g.plugin_errors(1.0);
+    REQUIRE(errors.size() == 2);
+    for (const sc::LayerError& e : errors) CHECK(e.message.find("cycle") != std::string::npos);
+  }
+}

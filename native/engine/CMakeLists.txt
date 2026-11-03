@@ -690,7 +690,7 @@ if(MOTION_BUILD_TESTS)
   target_compile_definitions(engine_plugins_tests PRIVATE
     PREMATION_PLUGIN_BUNDLES="${PREMATION_PLUGIN_BUNDLES}"
     PREMATION_PLUGINS_TOOL="$<TARGET_FILE:premation-plugins>")
-  add_dependencies(engine_plugins_tests premation-plugins ripple rings checkout particles grademap distribute ppmio ppmseq statspanel chartlayer bounce)
+  add_dependencies(engine_plugins_tests premation-plugins ripple rings checkout particles grademap distribute ppmio ppmseq statspanel chartlayer bounce mathfns scatter)
   add_test(NAME engine_plugins_tests COMMAND engine_plugins_tests --reporter compact)
   target_sources(engine_plugins_tests PRIVATE tests/test_plugin_sdk12.cpp)  # SDK 1.2: times, shutter, assets, presets
   target_sources(engine_plugins_tests PRIVATE tests/test_plugin_param_ui.cpp)  # SDK 1.3: Effect Controls boxes
@@ -719,6 +719,7 @@ if(MOTION_BUILD_TESTS)
   endforeach()
   target_sources(engine_plugins_tests PRIVATE tests/test_plugin_reload.cpp)
   target_sources(engine_plugins_tests PRIVATE tests/test_plugin_sim.cpp)  # SDK 1.4 (T): simulations and their kept states
+  target_sources(engine_plugins_tests PRIVATE tests/test_plugin_exprfn.cpp)  # SDK 1.4 (E): expression functions, interpolators
   target_compile_definitions(engine_plugins_tests PRIVATE
     RELOAD_PROBE_V1="$<TARGET_FILE:reload_probe_v1>"
     RELOAD_PROBE_V2="$<TARGET_FILE:reload_probe_v2>")
@@ -1297,7 +1298,7 @@ if(TARGET engine_raster AND TARGET engine_render_graph)
     target_link_libraries(engine_plugins_scene_tests PRIVATE engine_scene engine_export_core motion::options Catch2::Catch2WithMain)
     target_compile_definitions(engine_plugins_scene_tests PRIVATE PREMATION_PLUGIN_BUNDLES="${PREMATION_PLUGIN_BUNDLES}"
       PREMATION_GOLDEN_SCENES="${CMAKE_CURRENT_SOURCE_DIR}/../../packages/render-tests/scenes")
-    add_dependencies(engine_plugins_scene_tests particles model3d ppmio chartlayer bounce)  # model3d: scene depth at sub-times (S6); ppmio: Collect Files
+    add_dependencies(engine_plugins_scene_tests particles model3d ppmio chartlayer bounce channels grademap mathfns)  # model3d: scene depth at sub-times (S6); ppmio: Collect Files
     if(MSVC)
       target_compile_options(engine_plugins_scene_tests PRIVATE /bigobj)
     endif()
