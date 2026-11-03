@@ -6,6 +6,9 @@ import { NativePluginsList } from './NativePluginsList';
 import { NativePluginsPanel } from './NativePluginsPanel';
 import { RegistryPluginsNotice } from './RegistryPluginsNotice';
 
+// The store's section is its own suite (NativePluginsPanel.test.tsx): no registry here.
+jest.mock('@core/config/edition', () => ({ ...jest.requireActual('@core/config/edition'), cloudProjectsEnabled: () => false }));
+
 jest.mock('@core/engine/engineInstance', () => {
   const engine = jest.fn();
   // Plugin management goes through pluginEngine() (the dashboard has no editor session): the same mock.
@@ -16,7 +19,7 @@ const base = { vendor: 'Acme', sdk: '1.0', error: '', effects: [], gpu: false };
 
 /** Right-click a plugin row and choose `label` from its context menu. */
 async function chooseFromRowMenu(row: RegExp, label: string): Promise<void> {
-  fireEvent.contextMenu(screen.getByRole('treeitem', { name: row }));
+  fireEvent.contextMenu(screen.getByRole('option', { name: row }));
   const item = useContextMenuStore.getState().items.find((i) => i.label === label);
   if (!item) throw new Error(`no "${label}" in ${useContextMenuStore.getState().items.map((i) => String(i.label)).join(', ')}`);
   expect(item.disabled).toBeFalsy();
@@ -24,7 +27,7 @@ async function chooseFromRowMenu(row: RegExp, label: string): Promise<void> {
 }
 
 function rowMenuLabels(row: RegExp): string[] {
-  fireEvent.contextMenu(screen.getByRole('treeitem', { name: row }));
+  fireEvent.contextMenu(screen.getByRole('option', { name: row }));
   return useContextMenuStore.getState().items.filter((i) => !i.separator).map((i) => String(i.label));
 }
 
@@ -139,10 +142,11 @@ describe('installed plugins with the store', () => {
     jest.spyOn(api, 'checkPluginUpdates').mockResolvedValue([{ id: 'com.acme.glow', latestVersion: '1.3.0', publisherKey: 'k', sha256: 'x', blocked: false, kind: 'native' }]);
 
     render(<NativePluginsPanel />);
-    // The status is a word on the row; the actions are its context menu.
+    // The status is a word on the row, the one action its button, the rest its context menu.
     expect(await screen.findByText('Update 1.3.0')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Update' })).toBeInTheDocument();
     expect(screen.queryByRole('switch')).toBeNull();
-    expect(rowMenuLabels(/Acme Glow/)).toEqual(['Disable', 'Update to 1.3.0', 'Show in Folder', 'Uninstall Acme Glow']);
+    expect(rowMenuLabels(/Acme Glow/)).toEqual(['Open Plugin Page', 'Disable', 'Update to 1.3.0', 'Show in Folder', 'Uninstall Acme Glow']);
 
     await chooseFromRowMenu(/Acme Glow/, 'Disable');
     expect(execute).toHaveBeenCalledWith({ type: 'setPluginEnabled', plugin: 'com.acme.glow', enabled: false });
@@ -181,7 +185,7 @@ describe('a Premation Cloud plugin without the plan', () => {
     render(<NativePluginsPanel />);
     expect(await screen.findByText('Locked')).toBeInTheDocument();
     expect(screen.getByText(/^Requires Premation Cloud/)).toBeInTheDocument();
-    expect(screen.getByText('Acme · v1.0.0 · Premation Cloud')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Enable' })).toBeNull();
     const labels = rowMenuLabels(/Saber/);
     expect(labels).not.toContain('Enable');
     expect(labels).not.toContain('Disable');

@@ -112,6 +112,13 @@ export interface InstalledState {
   clearMessage: () => void;
 }
 
+/**
+ * Every mounted useInstalledPlugins, so an action taken in one (a plugin's
+ * page in the main body) refreshes the others (the Plugins sidebar): each
+ * keeps its own state, and main's installed set is the one truth they re-read.
+ */
+const instances = new Set<() => void>();
+
 /** Main's installed set, store updates for it, and the install / uninstall / enable actions. */
 export function useInstalledPlugins(onEngineChange?: () => void): InstalledState {
   const [installed, setInstalled] = useState<NativePluginStoreState | null>(null);
@@ -146,16 +153,31 @@ export function useInstalledPlugins(onEngineChange?: () => void): InstalledState
     });
   }, []);
 
+  // The other instances' refresh runs after this one's action; the engine
+  // change reaches them through their own onEngineChange.
+  const others = useRef<() => void>(() => {});
+  others.current = () => {
+    refresh();
+    onChange.current?.();
+  };
+  const self = useRef<() => void>(() => others.current());
+
   useEffect(() => {
     alive.current = true;
     refresh();
-    return () => { alive.current = false; };
+    const mine = self.current;
+    instances.add(mine);
+    return () => {
+      alive.current = false;
+      instances.delete(mine);
+    };
   }, [refresh]);
 
   const run = useCallback(async (id: string, fn: () => Promise<StoreMessage>) => {
     setBusy(id);
     setMessage(null);
     const m = await fn();
+    for (const other of [...instances]) if (other !== self.current) other();
     if (!alive.current) return;
     setBusy(null);
     setMessage(m);

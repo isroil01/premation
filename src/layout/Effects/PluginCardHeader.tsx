@@ -22,35 +22,17 @@ import { Icon } from '@components/Icon';
 import { IconButton } from '@components/IconButton';
 import { Popover } from '@components/Popover';
 import { TooltipProvider } from '@components/Tooltip';
-import { api, storeMediaUrl } from '@core/api/client';
 import type { Effect } from '@core/inspector/effectCatalog';
 import type { PluginEffectDef } from '@core/inspector/pluginEffectDefs';
 import { pluginContribRevision, pluginForEffect, subscribePluginContrib } from '@core/nativePlugins/pluginContrib';
 import { pluginPresetsFor } from '@core/nativePlugins/pluginPresets';
-import { installedPlugins } from '@core/nativePlugins/pluginStore';
+import { pluginIconUrl, storeIcon } from '@layout/Plugins/pluginIcons';
 import { PluginPanelWindow } from './PluginPanel';
 import panel from './EffectsPanel.module.css';
 import { t } from '@core/i18n';
 
-/** `plugin-ui://<id>/<path under ui/>` for a manifest icon ("ui/icon.png"); null when there is none. */
-export function pluginIconUrl(plugin: Pick<PluginInfo, 'id' | 'icon'> | undefined): string | null {
-  const icon = plugin?.icon;
-  if (!plugin || !icon || !icon.startsWith('ui/')) return null;
-  return `plugin-ui://${plugin.id.toLowerCase()}/${icon.slice(3).split('/').map(encodeURIComponent).join('/')}`;
-}
-
-/** Store icons by plugin id, asked once per session (null = none / not from the store). */
-const storeIcons = new Map<string, Promise<string | null>>();
-function storeIcon(id: string): Promise<string | null> {
-  let p = storeIcons.get(id);
-  if (!p) {
-    p = installedPlugins()
-      .then((state) => (state?.plugins[id] ? api.storePluginDetail(id).then((d) => storeMediaUrl(d.iconUrl)) : null))
-      .catch(() => null);
-    storeIcons.set(id, p);
-  }
-  return p;
-}
+// The icon's sources live with the plugin's dock tab, which shows the same picture.
+export { pluginIconUrl } from '@layout/Plugins/pluginIcons';
 
 function usePlugin(type: string): PluginInfo | undefined {
   useSyncExternalStore(subscribePluginContrib, pluginContribRevision, pluginContribRevision);

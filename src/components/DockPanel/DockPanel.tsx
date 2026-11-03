@@ -54,10 +54,10 @@ import {
   type ReactNode,
   type WheelEvent,
 } from 'react';
-import { useLayoutStore, type DockDragSource, type DockDropTarget, type DockGroupState, type DockSide, type RegionId } from '@stores/layoutStore';
+import { useLayoutStore, type DockDragSource, type DockDropTarget, type DockGroupState, type DockSide, type PanelRegistration, type RegionId } from '@stores/layoutStore';
 import { bottomRegionOf, clampColumnWeights, groupsByColumn, reconcileGroups, sideOfRegion } from '@core/layout/dockGroups';
 import { openContextMenu, type ContextMenuItem } from '@stores/contextMenuStore';
-import { Icon } from '@components/Icon';
+import { Icon, type IconName } from '@components/Icon';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { cn } from '@utils/cn';
 import { panelDef, availablePanelDefs } from '@layout/EditorLayout/panelDefs';
@@ -115,6 +115,82 @@ export function closedPanelDefsForSide(
 ): ReturnType<typeof availablePanelDefs> {
   const docked = new Set([...(panelOrder[side] ?? []), ...(panelOrder[bottomRegionOf(side)] ?? [])]);
   return availablePanelDefs().filter((def) => def.region === side && !docked.has(def.id));
+}
+
+/**
+ * Registered panels that are not built in (no panelDefs entry — an installed
+ * plugin's panels) and not docked on either side: the "+" and Open Panel list
+ * them in a section of their own after the built-ins, on BOTH sides, and open
+ * the one picked into the group the menu belongs to. Only registered panels: a
+ * plugin that is not loaded registers none.
+ */
+export function closedExtraPanels(
+  panels: Readonly<Record<string, PanelRegistration>>,
+  panelOrder: Partial<Record<RegionId, ReadonlyArray<string>>>,
+): PanelRegistration[] {
+  const docked = new Set(Object.values(panelOrder).flatMap((list) => list ?? []));
+  return Object.values(panels)
+    .filter((p) => !panelDef(p.id) && !docked.has(p.id) && p.placement !== 'external')
+    .sort((a, b) => (a.menuTitle ?? a.title).localeCompare(b.menuTitle ?? b.title));
+}
+
+/**
+ * A tab's picture (an installed plugin's own icon): 14 px, before the title.
+ * A picture that fails to load, or none, draws the panel's glyph instead. The
+ * title is right beside it, so the image says nothing to a screen reader.
+ */
+function TabIcon({ url, icon }: { url: string | null; icon: string | undefined }): JSX.Element {
+  const [broken, setBroken] = useState<string | null>(null);
+  if (url && broken !== url) {
+    return <img className={styles.tabIcon} src={url} alt="" width={14} height={14} draggable={false} onError={() => setBroken(url)} />;
+  }
+  return <Icon name={(icon ?? 'plugin') as IconName} size="sm" className={styles.tabIcon} />;
+}
+
+/** The row label of a closed extra panel: its icon and its menu title. */
+function extraRowLabel(p: PanelRegistration): ReactNode {
+  const title = p.menuTitle ?? p.title;
+  if (p.iconUrl === undefined) return title;
+  return (
+    <span className={styles.menuRowWithIcon}>
+      <TabIcon url={p.iconUrl} icon={p.icon} />
+      <span>{title}</span>
+    </span>
+  );
+}
+
+/** A right-click entry carries no modifier keys to a row's handler. */
+const NO_MODIFIERS = { altKey: false, shiftKey: false, ctrlKey: false, metaKey: false } as const;
+
+/** The ≡ menu's rows as right-click entries (a check mark for a checked row). */
+function toContextEntries(items: ReadonlyArray<DropdownItem>, prefix: string): ContextMenuItem[] {
+  const out: ContextMenuItem[] = [];
+  items.forEach((it, i) => {
+    switch (it.type) {
+      case 'separator':
+        out.push({ id: `${prefix}sep-${i}`, separator: true });
+        break;
+      case 'label':
+        out.push({ id: `${prefix}label-${i}`, label: it.label, disabled: true });
+        break;
+      case 'item':
+        out.push({
+          id: `${prefix}${it.id}`,
+          label: it.label,
+          icon: it.icon,
+          disabled: it.disabled,
+          onSelect: it.onSelect ? () => it.onSelect?.(NO_MODIFIERS) : undefined,
+          children: it.submenu ? toContextEntries(it.submenu, prefix) : undefined,
+        });
+        break;
+      case 'checkbox':
+        out.push({ id: `${prefix}${it.id}`, label: it.label, icon: it.checked ? 'check' : undefined, disabled: it.disabled, onSelect: () => it.onChange(!it.checked) });
+        break;
+      default:
+        break;
+    }
+  });
+  return out;
 }
 
 function spawnPopout(panelId: string): void {
@@ -302,6 +378,9 @@ interface TabDescriptor {
   id: string;
   label: string;
   closable: boolean;
+  /** The tab's picture (`PanelRegistration.iconUrl`): absent for built-in panels. */
+  iconUrl?: string | null;
+  icon?: string;
 }
 
 export function DockPanel({ region, renderers, headerExtras, className, railSide }: DockPanelProps): JSX.Element | null {
@@ -345,11 +424,14 @@ export function DockPanel({ region, renderers, headerExtras, className, railSide
       id,
       label: p && typeof p.title === 'string' ? p.title : (def?.title ?? id),
       closable: def ? def.closable : (p?.closable ?? false),
+      ...(p && p.iconUrl !== undefined ? { iconUrl: p.iconUrl, icon: p.icon } : {}),
     };
   }, [panels]);
 
   /** This side's closed panels as menu rows (the "+" and the ≡ menu's Open Panel). */
   const closedDefs = useMemo(() => closedPanelDefsForSide(side, allPanelOrder), [side, allPanelOrder]);
+  /** The closed panels that are not built in (installed plugins'), for the same two menus. */
+  const closedExtras = useMemo(() => closedExtraPanels(panels, allPanelOrder), [panels, allPanelOrder]);
 
   // ── Divider drags: the share of height between two open groups ──────
   const groupEls = useRef(new Map<string, HTMLElement>());
@@ -531,6 +613,7 @@ export function DockPanel({ region, renderers, headerExtras, className, railSide
                       renderer={g.active ? renderers[g.active] : undefined}
                       headerExtras={g.id === firstGroup ? headerExtras : undefined}
                       closedDefs={g.id === plusGroup ? closedDefs : null}
+                      closedExtras={g.id === plusGroup ? closedExtras : null}
                       dragging={dragging}
                       bindEl={bindGroupEl}
                     />
@@ -699,6 +782,8 @@ interface DockGroupProps {
   headerExtras?: ReactNode;
   /** The side's closed panels, for the "+" — only the last group carries it. */
   closedDefs: ReturnType<typeof availablePanelDefs> | null;
+  /** The closed panels that are not built in (installed plugins'), for the "+" too. */
+  closedExtras: ReadonlyArray<PanelRegistration> | null;
   dragging: string | null;
   bindEl: (id: string, el: HTMLElement | null) => void;
 }
@@ -713,7 +798,7 @@ interface StripOverflow {
 const NO_OVERFLOW: StripOverflow = { any: false, left: false, right: false };
 
 function DockGroup({
-  group, index, columnIndex, hasGroupAbove, maximized, side, isLeft, edge, focused, describe, renderer, headerExtras, closedDefs, dragging, bindEl,
+  group, index, columnIndex, hasGroupAbove, maximized, side, isLeft, edge, focused, describe, renderer, headerExtras, closedDefs, closedExtras, dragging, bindEl,
 }: DockGroupProps): JSX.Element {
   const active = group.active;
   const tabs = useMemo(() => group.panels.map(describe), [group.panels, describe]);
@@ -846,6 +931,17 @@ function DockGroup({
     store().movePanelToGroup(id, group.id);
   };
 
+  /** The closed extra panels' rows: a section of their own after the built-ins, each opened into this group. */
+  const extraRows = (extras: ReadonlyArray<PanelRegistration>, afterBuiltIns: boolean): DropdownItem[] => (
+    extras.length === 0
+      ? []
+      : [
+          ...(afterBuiltIns ? [{ type: 'separator' } as const] : []),
+          { type: 'label', label: t('ui.dockPanel.extensions', 'Extensions') },
+          ...extras.map((p): DropdownItem => ({ type: 'item', id: `open-${p.id}`, label: extraRowLabel(p), onSelect: () => openHere(p.id) })),
+        ]
+  );
+
   const menuItems = (): DropdownItem[] => {
     const items: DropdownItem[] = [];
     for (const v of panelVerbs(activeTab)) items.push({ type: 'item', id: v.id, label: v.label, onSelect: v.onSelect, ...(v.shortcut ? { shortcut: v.shortcut } : {}) });
@@ -857,12 +953,16 @@ function DockGroup({
       submenu: groupVerbs(activeTab).map((v): DropdownItem => ({ type: 'item', id: v.id, label: v.label, onSelect: v.onSelect })),
     });
     const closed = closedPanelDefsForSide(side, store().panelOrder);
-    if (closed.length > 0) {
+    const extras = closedExtraPanels(store().panels, store().panelOrder);
+    if (closed.length > 0 || extras.length > 0) {
       items.push({
         type: 'item',
         id: 'open-here',
         label: t('ui.dockPanel.openHere', 'Open Panel in This Group'),
-        submenu: closed.map((def): DropdownItem => ({ type: 'item', id: `open-${def.id}`, label: def.title, icon: def.icon, onSelect: () => openHere(def.id) })),
+        submenu: [
+          ...closed.map((def): DropdownItem => ({ type: 'item', id: `open-${def.id}`, label: def.title, icon: def.icon, onSelect: () => openHere(def.id) })),
+          ...extraRows(extras, closed.length > 0),
+        ],
       });
     }
     if (customItems.length > 0) items.push({ type: 'separator' }, { type: 'label', label: activeTab.label }, ...customItems);
@@ -878,6 +978,10 @@ function DockGroup({
     }
     entries.push({ id: 'sep-group', separator: true });
     for (const v of groupVerbs(tab)) entries.push({ id: v.id, label: v.label, onSelect: v.onSelect });
+    // The front panel's own rows (an effect plugin's Follow / Pin), as in its ≡ menu.
+    if (tab.id === active && customItems.length > 0) {
+      entries.push({ id: 'sep-custom', separator: true }, ...toContextEntries(customItems, 'custom-'));
+    }
     openContextMenu(e.clientX, e.clientY, entries);
   };
 
@@ -1040,6 +1144,7 @@ function DockGroup({
     ? t('ui.dockPanel.expandPanel', 'Expand {name}', { name: activeTab.label })
     : t('ui.dockPanel.collapsePanel', 'Collapse {name}', { name: activeTab.label });
   const closedAdd = closedDefs && closedDefs.length > 0 ? closedDefs : null;
+  const extrasAdd = closedExtras && closedExtras.length > 0 ? closedExtras : null;
 
   const maximizedStyle = maximized && maxBox
     ? { top: maxBox.top, left: maxBox.left, width: maxBox.width, height: maxBox.height }
@@ -1127,6 +1232,7 @@ function DockGroup({
                     // collapsed → open (and stays open), open → collapsed.
                     onDoubleClick={() => store().setGroupCollapsed(group.id, !collapsedAtPress.current)}
                   >
+                    {tab.iconUrl !== undefined ? <TabIcon url={tab.iconUrl} icon={tab.icon} /> : null}
                     <span className={styles.tabLabel}>
                       {tab.label}
                       {isActive && titleDetail ? <span className={styles.tabDetail}>: {titleDetail}</span> : null}
@@ -1162,7 +1268,7 @@ function DockGroup({
               }))}
             />
           )}
-          {closedAdd && (
+          {(closedAdd || extrasAdd) && (
             <Dropdown
               placement={edge === 'right' ? 'bottom-end' : 'bottom-start'}
               offset={{ x: 0, y: 4 }}
@@ -1179,9 +1285,10 @@ function DockGroup({
               }
               items={[
                 { type: 'label', label: t('ui.dockPanel.openPanel', 'Open Panel') },
-                ...closedAdd.map((def): DropdownItem => ({
+                ...(closedAdd ?? []).map((def): DropdownItem => ({
                   type: 'item', id: `open-${def.id}`, label: def.title, icon: def.icon, onSelect: () => show(def.id),
                 })),
+                ...extraRows(extrasAdd ?? [], !!closedAdd),
               ]}
             />
           )}

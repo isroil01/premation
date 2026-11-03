@@ -1,0 +1,380 @@
+/*
+ * A plugin's page in the main body (PluginDetailPage.tsx) — owner-approved
+ * mockup board 1 (2026-11-03). The editor's own grammar, not a web store:
+ * neutral greys, hairline separators, no cards or shadows, blue only for the
+ * primary action and the selected sub-tab. Panel type roles for everything
+ * but the plugin's name.
+ */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  font-family: var(--panel-font-family);
+  font-size: var(--panel-font-size);
+  line-height: var(--panel-line-height);
+  color: var(--color-text-primary);
+  background: var(--color-panel);
+}
+
+.head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-5);
+  padding: var(--space-6) var(--space-6) var(--space-5);
+}
+
+.headBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  flex: 1;
+}
+
+.titleLine {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+/* The one larger line on the page: the plugin's name. */
+.title {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-xl);
+  line-height: var(--line-height-xl);
+  font-weight: var(--panel-weight-group);
+}
+
+.version {
+  flex: none;
+  font-family: var(--panel-font-family-value);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-value);
+  color: var(--color-text-tertiary);
+}
+
+.metaLine {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-4);
+  color: var(--color-text-secondary);
+}
+
+.publisher {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-weight: var(--panel-weight-subgroup);
+}
+
+.verified {
+  color: var(--color-primary);
+}
+
+.meta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--color-text-tertiary);
+}
+
+.metaIcon {
+  color: var(--color-text-tertiary);
+}
+
+.description {
+  margin: 0;
+  max-width: 72ch;
+  color: var(--color-text-secondary);
+}
+
+.error {
+  margin: 0;
+  font-size: var(--panel-font-size-help);
+  line-height: var(--panel-line-height-help);
+  color: var(--color-danger);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.actions:empty {
+  display: none;
+}
+
+.stateNote {
+  font-size: var(--panel-font-size-help);
+  color: var(--color-text-tertiary);
+}
+
+/* Details | Effects 3 | Presets 12 | Panels 1 | Changelog */
+.tabs {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-1);
+  padding: 0 var(--space-5);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-height-sm);
+  padding: 0 var(--space-3);
+  margin-bottom: -1px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  font-weight: var(--panel-weight-tab);
+  cursor: pointer;
+}
+
+.tab:hover {
+  color: var(--color-text-primary);
+}
+
+.tab:focus-visible {
+  outline: 1px solid var(--color-focus-ring);
+  outline-offset: -2px;
+}
+
+.tabActive {
+  color: var(--color-text-primary);
+  font-weight: var(--panel-weight-tab-active);
+  border-bottom-color: var(--color-primary);
+}
+
+.tabCount {
+  font-family: var(--panel-font-family-value);
+  font-size: var(--panel-font-size-help);
+  color: var(--color-text-tertiary);
+}
+
+.body {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-6);
+  padding: var(--space-5) var(--space-6) var(--space-6);
+}
+
+.main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  flex: 1;
+  min-width: 0;
+  max-width: 880px;
+}
+
+/* Installation: a column of facts, set off by a hairline. */
+.aside {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  flex: none;
+  width: 240px;
+  padding-left: var(--space-5);
+  border-left: 1px solid var(--color-border);
+}
+
+.asideTitle,
+.sectionTitle {
+  margin: 0;
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-group);
+  letter-spacing: var(--letter-spacing-uppercase);
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: var(--space-1) var(--space-4);
+  margin: 0;
+  width: 100%;
+}
+
+.facts dt {
+  color: var(--color-text-tertiary);
+  font-weight: var(--panel-weight-label);
+}
+
+.facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-weight: var(--panel-weight-value);
+}
+
+.mono {
+  font-family: var(--panel-font-family-value);
+}
+
+.status {
+  color: var(--color-text-tertiary);
+}
+
+.status[data-tone='ok'] {
+  color: var(--color-success);
+}
+
+.status[data-tone='warning'] {
+  color: var(--color-warning);
+}
+
+.status[data-tone='danger'] {
+  color: var(--color-danger);
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.section:first-child {
+  padding-top: 0;
+  border-top: none;
+}
+
+.text {
+  margin: 0;
+  color: var(--color-text-secondary);
+}
+
+.help {
+  margin: 0;
+  font-size: var(--panel-font-size-help);
+  line-height: var(--panel-line-height-help);
+  color: var(--color-text-tertiary);
+}
+
+.empty {
+  margin: 0;
+  color: var(--color-text-tertiary);
+}
+
+.markdown {
+  color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.markdown > :first-child {
+  margin-top: 0;
+}
+
+.markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown h1,
+.markdown h2,
+.markdown h3 {
+  margin: var(--space-4) 0 var(--space-1);
+  font-size: var(--panel-font-size);
+  font-weight: var(--panel-weight-group);
+  color: var(--color-text-primary);
+}
+
+.markdown code {
+  font-family: var(--panel-font-family-value);
+}
+
+.markdown img {
+  max-width: 100%;
+}
+
+.changelog {
+  margin: 0;
+  white-space: pre-wrap;
+  font-family: var(--panel-font-family-value);
+  font-size: var(--panel-font-size-help);
+  color: var(--color-text-secondary);
+}
+
+/* Effects / Presets / Panels: hairline rows, as the Effects & Presets panel. */
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.listRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--control-height-sm);
+  padding: var(--space-1) var(--space-3);
+  border-bottom: 1px solid var(--color-border-subtle);
+  cursor: default;
+  user-select: none;
+}
+
+.listRow:hover {
+  background: var(--color-hover);
+}
+
+.listRow[draggable='true'] {
+  cursor: grab;
+}
+
+.listIcon {
+  flex: none;
+  color: var(--color-text-tertiary);
+}
+
+.listLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.listHint {
+  flex: none;
+  font-size: var(--panel-font-size-help);
+  color: var(--color-text-tertiary);
+}
+
+.dockToggle {
+  flex: none;
+  font-size: var(--panel-font-size-help);
+}
+
+.spacer {
+  flex: 1;
+}
+
+/* Narrow window: the facts drop under the content. */
+@media (max-width: 900px) {
+  .body {
+    flex-direction: column;
+  }
+
+  .aside {
+    width: 100%;
+    padding-left: 0;
+    padding-top: var(--space-4);
+    border-left: none;
+    border-top: 1px solid var(--color-border);
+  }
+}

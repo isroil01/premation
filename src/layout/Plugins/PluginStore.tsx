@@ -45,7 +45,7 @@ import { t } from '@core/i18n';
  * not fetched yet) — unknown never hides the Install button; the store's 402
  * still answers for it.
  */
-function useHasCloudPlugins(): boolean | null {
+export function useHasCloudPlugins(): boolean | null {
   const access = useEntitlementStore((s) => s.access);
   const refresh = useEntitlementStore((s) => s.refresh);
   useEffect(() => {
@@ -60,12 +60,12 @@ function useHasCloudPlugins(): boolean | null {
  * Through the hash (AppRouter is a HashRouter) so the store also works where it
  * is rendered outside a router.
  */
-function useOpenBilling(): (() => void) | null {
+export function useOpenBilling(): (() => void) | null {
   if (!billingEnabled() || !cloudProjectsEnabled()) return null;
   return () => { window.location.hash = '#/dashboard?tab=billing'; };
 }
 
-function TierBadge({ plugin }: { plugin: StorePluginSummary }): JSX.Element {
+export function TierBadge({ plugin }: { plugin: StorePluginSummary }): JSX.Element {
   return plugin.tier === 'cloud' ? (
     <Badge variant="accent" size="sm" className={styles.inlineBadge}>Premation Cloud</Badge>
   ) : (
@@ -73,7 +73,7 @@ function TierBadge({ plugin }: { plugin: StorePluginSummary }): JSX.Element {
   );
 }
 
-function InstallButton({
+export function InstallButton({
   plugin,
   store,
   owner,
@@ -130,7 +130,7 @@ function InstallButton({
   );
 }
 
-function PublisherLine({ plugin }: { plugin: StorePluginSummary }): JSX.Element {
+export function PublisherLine({ plugin }: { plugin: StorePluginSummary }): JSX.Element {
   const name = plugin.publisher.displayName || plugin.publisher.namespace;
   return (
     <span className={styles.rowMeta}>
@@ -146,7 +146,7 @@ function PublisherLine({ plugin }: { plugin: StorePluginSummary }): JSX.Element 
 }
 
 /** Why Premation Cloud, on a Cloud plugin's page — shown to anyone who does not have it yet. */
-function CloudPitch({ plugin }: { plugin: StorePluginSummary }): JSX.Element {
+export function CloudPitch({ plugin }: { plugin: StorePluginSummary }): JSX.Element {
   const openBilling = useOpenBilling();
   const salesOpen = useProSalesOpen();
   const offerLine = useCloudOffer();
@@ -175,7 +175,7 @@ function CloudPitch({ plugin }: { plugin: StorePluginSummary }): JSX.Element {
   );
 }
 
-function Gallery({ shots, name }: { shots: NonNullable<StorePluginDetail['screenshots']>; name: string }): JSX.Element | null {
+export function Gallery({ shots, name }: { shots: NonNullable<StorePluginDetail['screenshots']>; name: string }): JSX.Element | null {
   const [active, setActive] = useState(0);
   const [zoom, setZoom] = useState(false);
   const current = shots[Math.min(active, shots.length - 1)];
@@ -209,7 +209,7 @@ function Gallery({ shots, name }: { shots: NonNullable<StorePluginDetail['screen
   );
 }
 
-function ReleaseNotes({ text }: { text: string }): JSX.Element {
+export function ReleaseNotes({ text }: { text: string }): JSX.Element {
   return (
     <div className={styles.markdown}>
       <ReactMarkdown>{text}</ReactMarkdown>
@@ -217,7 +217,7 @@ function ReleaseNotes({ text }: { text: string }): JSX.Element {
   );
 }
 
-function Versions({ versions, owner }: { versions: StorePluginVersion[]; owner?: boolean }): JSX.Element | null {
+export function Versions({ versions, owner }: { versions: StorePluginVersion[]; owner?: boolean }): JSX.Element | null {
   if (versions.length === 0) return null;
   return (
     <ul className={styles.versions} aria-label={t('plugins.store.versions', 'Versions')}>
@@ -419,9 +419,9 @@ function PluginCard({
   );
 }
 
-const SORT_KEYS: readonly StoreSort[] = ['installs', 'new', 'updated'];
+export const SORT_KEYS: readonly StoreSort[] = ['installs', 'new', 'updated'];
 
-function sortLabel(sort: StoreSort): string {
+export function sortLabel(sort: StoreSort): string {
   switch (sort) {
     case 'installs': return t('plugins.store.sortInstalls', 'Most installed');
     case 'new': return t('plugins.store.sortNew', 'Newest');

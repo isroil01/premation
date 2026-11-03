@@ -1,363 +1,416 @@
 /**
- * The editor's Plugins panel, in AE's list-panel grammar
- * (docs/mockups/plugin-docking-ae.html, frame 4): a search field, a Name |
- * Status header, one twirl row per installed plugin and, under it, a dim meta
- * line, its effects (each with the presets it ships, one level in) and its
- * panels. A small button row at the foot: Browse Store, the plugins folder,
- * Refresh.
+ * The editor's Plugins sidebar, the way VS Code lists extensions
+ * (owner-approved mockup board 1, 2026-11-03): one search field over two
+ * collapsible sections —
  *
- * Gestures, as Effects & Presets: a click selects a row; a double-click (or
- * Enter) applies an effect or preset to the selected layers, opens a panel, or
- * twirls a plugin; an effect row drags onto a layer. Up / Down move, Left /
- * Right collapse / expand. Right-click a plugin for Enable / Disable, Update,
- * Check plan, Show in Folder and Uninstall — nothing on a row is a button.
+ *   INSTALLED N ................................. 2 updates
+ *   PREMATION STORE N ......................... Most installed ▾
  *
- * Browsing the store and publishing live on the dashboard's Plugins page; a
- * plugin installed there shows here at once (the engine rescans).
+ * — one row per plugin: icon, name and version, a line of description, and a
+ * meta line (vendor · ↓ installs · status word) with ONE bordered button at
+ * the right (Install / Update / Enable / Uninstall). Everything else is the
+ * row's right-click menu.
+ *
+ * A click (or Enter) opens the plugin's page in the main body
+ * (PluginDetailPage, a closable tab of EditorTabs): its effects, presets and
+ * panels live there now. Up / Down walk the rows of both sections.
+ *
+ * The store is inline (no trip to the dashboard). Where it cannot be asked —
+ * not part of this edition, offline — its section says so quietly and the
+ * installed list is untouched.
  */
 
-import { useId, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type MouseEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react';
 import { Button } from '@components/Button';
-import { Icon, type IconName } from '@components/Icon';
+import { Dropdown } from '@components/Dropdown';
+import { Icon } from '@components/Icon';
 import { SearchField } from '@components/SearchField';
+import { invalidate } from '@core/api/cache';
 import { cloudProjectsEnabled } from '@core/config/edition';
-import { setCanvasDrag } from '@core/dnd/canvasDrag';
-import { edit } from '@core/engine/uiEdits';
-import {
-  pluginEffectDefs,
-  pluginEffectDefsRevision,
-  subscribePluginEffectDefs,
-} from '@core/inspector/pluginEffectDefs';
-import { pluginContribRevision, pluginPanels, subscribePluginContrib } from '@core/nativePlugins/pluginContrib';
-import { applyPluginPresetCommand, pluginPresets, subscribePluginPresets } from '@core/nativePlugins/pluginPresets';
-import {
-  canOpenNativePluginFolder,
-  openNativePluginFolder,
-  type NativePlugin,
-} from '@core/nativePlugins/nativePlugins';
+import { canOpenNativePluginFolder, openNativePluginFolder, type NativePlugin } from '@core/nativePlugins/nativePlugins';
+import { canInstallFromStore, hostPlatformKeys, runsHere } from '@core/nativePlugins/pluginStore';
 import { useNativePlugins } from '@hooks/useNativePlugins';
-import { useInstalledPlugins, type InstalledState } from '@hooks/usePluginStore';
-import { useAllEffectDefs } from '@layout/Effects/effectCatalog';
-import { addEffectEdit } from '@layout/Effects/effectEdits';
-import { revealAppliedEffects } from '@layout/Effects/revealEffectControls';
-import { openContextMenu, type ContextMenuItem } from '@stores/contextMenuStore';
-import { useLayoutStore } from '@stores/layoutStore';
-import { useSelectionStore } from '@stores/selectionStore';
-import { useUIStore } from '@stores/uiStore';
-import { cn } from '@utils/cn';
 import {
-  buildPluginPanelRows,
-  isSelectableRow,
-  parentRowIndex,
-  type PluginPanelRow,
+  useInstalledPlugins,
+  useStoreBrowse,
+  type InstalledState,
+  type PluginStoreBrowse,
+  type StoreSort,
+} from '@hooks/usePluginStore';
+import { pluginIconUrl } from './pluginIcons';
+import { useAllEffectDefs } from '@layout/Effects/effectCatalog';
+import { openContextMenu } from '@stores/contextMenuStore';
+import { usePluginPageStore } from '@stores/pluginPageStore';
+import { cn } from '@utils/cn';
+import { openPluginPage, pluginMenuItems, useEnginePlugins } from './pluginActions';
+import {
+  buildPluginSidebar,
+  rowMeta,
+  rowPluginId,
+  visibleRows,
+  type PluginSidebarRow,
+  type StorePluginRow,
 } from './pluginPanelRows';
+import { PluginIcon } from './PluginIcon';
+import { SORT_KEYS, sortLabel, useHasCloudPlugins } from './PluginStore';
 import { StoreMessageLine } from './StoreMessageLine';
 import styles from './NativePluginsPanel.module.css';
 import { t } from '@core/i18n';
 
+type StoreBrowse = PluginStoreBrowse & { reload: () => void };
 
-/** Every panel id docked on a side, as a set (the dock's `panelOrder`). */
-function dockedSet(order: Readonly<Record<string, ReadonlyArray<string> | undefined>>): ReadonlySet<string> {
-  const out = new Set<string>();
-  for (const list of Object.values(order)) for (const id of list ?? []) out.add(id);
-  return out;
+/** The store's listing, asked only where the store exists (a hook cannot be called conditionally). */
+function WithStore({ q, sort, children }: { q: string; sort: StoreSort; children: (browse: StoreBrowse) => ReactNode }): JSX.Element {
+  const browse = useStoreBrowse(q, sort);
+  return <>{children(browse)}</>;
 }
 
-function selectedLayers(): ReadonlyArray<string> {
-  return useSelectionStore.getState().ids;
+/** The search as the store sees it: settled for a moment, so typing is not a request per key. */
+function useSettled(value: string, ms: number): string {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    if (value === settled) return undefined;
+    const id = setTimeout(() => setSettled(value), value.trim() ? ms : 0);
+    return () => clearTimeout(id);
+  }, [value, settled, ms]);
+  return settled;
 }
 
-function needLayer(): boolean {
-  if (selectedLayers().length > 0) return false;
-  useUIStore.getState().notify({ level: 'info', message: t('plugins.panel.selectLayerFirst', 'Select a layer first, then apply the effect again.'), durationMs: 3000 });
-  return true;
-}
-
-/** The double-click / Enter action of a row. */
-function activate(row: PluginPanelRow, toggle: (plugin: string) => void): void {
-  switch (row.kind) {
-    case 'plugin':
-      toggle(row.plugin.id);
-      return;
-    case 'effect':
-      if (needLayer()) return;
-      void addEffectEdit(selectedLayers(), row.def.type);
-      revealAppliedEffects();
-      return;
-    case 'preset':
-      if (needLayer()) return;
-      // One addEffect with the preset's values: one undo entry.
-      void edit(`Apply ${row.preset.name}`, applyPluginPresetCommand(row.preset, selectedLayers()));
-      revealAppliedEffects();
-      return;
-    case 'panel':
-      useLayoutStore.getState().openPanel(row.entry.panelId);
-      return;
-    default:
-  }
-}
-
-/** Right-click on a plugin row: what can be done to the plugin itself. */
-function pluginMenuItems(plugin: NativePlugin, store: InstalledState): ContextMenuItem[] {
-  const name = plugin.name || plugin.id;
-  const mine = store.installed?.plugins[plugin.id];
-  const queued = store.installed?.uninstall.includes(plugin.id) ?? false;
-  const update = store.updates.get(plugin.id);
+function RowButton({ row, store, hasCloud }: { row: PluginSidebarRow; store: InstalledState; hasCloud: boolean | null }): JSX.Element | null {
   const busy = store.busy !== null;
-  const items: ContextMenuItem[] = [];
-  if (plugin.status !== 'revoked' && plugin.status !== 'locked') {
-    const enabled = plugin.status !== 'disabled';
-    items.push({
-      id: 'enable',
-      label: enabled ? t('plugins.panel.disable', 'Disable') : t('plugins.panel.enable', 'Enable'),
-      disabled: busy || plugin.status === 'failed',
-      onSelect: () => void store.setEnabled(plugin.id, !enabled),
-    });
-  }
-  if (update && !queued) {
-    items.push({ id: 'update', label: t('plugins.list.updateTo', 'Update to {version}', { version: update.latestVersion }), disabled: busy, onSelect: () => void store.install(plugin.id, update.latestVersion) });
-  }
-  if (plugin.status === 'locked') {
-    items.push({ id: 'plan', label: t('plugins.list.checkPlan', 'Check plan'), disabled: busy, onSelect: () => void store.checkPlan() });
-  }
-  if (canOpenNativePluginFolder()) {
-    if (items.length > 0) items.push({ id: 'sep-folder', separator: true });
-    items.push({ id: 'folder', label: t('plugins.panel.showInFolder', 'Show in Folder'), icon: 'folder-open', onSelect: () => void openNativePluginFolder() });
-  }
-  if (mine && !queued) {
-    items.push(
-      { id: 'sep-uninstall', separator: true },
-      { id: 'uninstall', label: t('plugins.list.uninstall', 'Uninstall {name}', { name }), icon: 'trash', danger: true, disabled: busy, onSelect: () => void store.uninstall(plugin.id) },
+  const stop = (e: MouseEvent): void => e.stopPropagation();
+  if (row.kind === 'store') {
+    const p = row.listing;
+    const here = hostPlatformKeys();
+    if (!canInstallFromStore() || (here && !runsHere(p.platforms, here))) return null;
+    const gated = p.tier === 'cloud' && hasCloud === false && !row.owner;
+    return (
+      <Button
+        size="xs"
+        variant="primary"
+       
+        disabled={busy}
+        leftIcon={gated ? <Icon name="lock" size="sm" /> : undefined}
+        title={gated ? t('plugins.sidebar.cloudInstallTitle', 'Included with Premation Cloud — open the page to see how to get it') : undefined}
+        onClick={(e) => {
+          stop(e);
+          // Without the plan the store would only answer 402: the page says how to get it.
+          if (gated) openPluginPage(p.id, p.name, row.owner);
+          else void store.install(p.id, p.latestVersion, row.owner);
+        }}
+      >
+        {store.busy === p.id ? t('plugins.store.installing', 'Installing…') : t('plugins.store.install', 'Install')}
+      </Button>
     );
   }
-  return items;
-}
-
-const ROW_ICON: Record<'effect' | 'preset' | 'panel', IconName> = {
-  effect: 'magic-wand',
-  preset: 'zap',
-  panel: 'panel-right',
-};
-
-function rowLabel(row: PluginPanelRow): string {
-  switch (row.kind) {
-    case 'plugin': return row.plugin.name || row.plugin.id;
-    case 'effect': return row.def.label;
-    case 'preset': return row.preset.name;
-    case 'panel': return row.entry.kind === 'effect' ? row.entry.pluginName : row.entry.panel.name;
-    default: return row.text;
+  const id = row.plugin.id;
+  switch (row.action) {
+    case 'update':
+      return (
+        <Button size="xs" variant="primary" disabled={busy} onClick={(e) => { stop(e); void store.install(id, row.update!); }}>
+          {store.busy === id ? t('plugins.store.installing', 'Installing…') : t('plugins.sidebar.update', 'Update')}
+        </Button>
+      );
+    case 'enable':
+      return (
+        <Button size="xs" variant="secondary" disabled={busy} onClick={(e) => { stop(e); void store.setEnabled(id, true); }}>
+          {t('plugins.panel.enable', 'Enable')}
+        </Button>
+      );
+    case 'uninstall':
+      return (
+        <Button size="xs" variant="secondary" disabled={busy} onClick={(e) => { stop(e); void store.uninstall(id); }}>
+          {t('plugins.sidebar.uninstall', 'Uninstall')}
+        </Button>
+      );
+    default:
+      return null;
   }
 }
 
-function rowTitle(row: PluginPanelRow): string | undefined {
-  switch (row.kind) {
-    case 'effect':
-      return t('plugins.panel.effectTitle', 'Double-click to apply {name} to the selected layers, or drag it onto a layer', { name: row.def.label });
-    case 'preset':
-      return t('plugins.panel.presetTitle', 'Double-click to apply the {effect} preset "{preset}" to the selected layers', {
-        effect: row.effectLabel,
-        preset: row.preset.name,
-      });
-    case 'panel':
-      return row.docked
-        ? t('plugins.panel.panelOpenTitle', '{name} is open — double-click to bring it forward', { name: rowLabel(row) })
-        : t('plugins.panel.panelTitle', 'Double-click to open {name}', { name: rowLabel(row) });
-    default: return undefined;
-  }
+function storeStateWord(row: StorePluginRow): { text: string; tone?: string } {
+  const here = hostPlatformKeys();
+  if (here && !runsHere(row.listing.platforms, here)) return { text: t('plugins.store.notForThisComputer', 'Not for this computer'), tone: 'dim' };
+  return row.listing.tier === 'cloud'
+    ? { text: 'Premation Cloud' }
+    : { text: t('plugins.store.free', 'Free') };
 }
 
-function PluginRows({ plugins, store }: { plugins: readonly NativePlugin[]; store: InstalledState }): JSX.Element {
-  useSyncExternalStore(subscribePluginEffectDefs, pluginEffectDefsRevision, pluginEffectDefsRevision);
-  const presets = useSyncExternalStore(subscribePluginPresets, pluginPresets, pluginPresets);
-  // The shell keeps the panel list fresh (usePluginPanels); the rows only re-read it.
-  const contribRevision = useSyncExternalStore(subscribePluginContrib, pluginContribRevision, pluginContribRevision);
-  const panelOrder = useLayoutStore((s) => s.panelOrder);
-  const [query, setQuery] = useState('');
-  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
+function PluginRow({
+  row,
+  selected,
+  focusable,
+  store,
+  hasCloud,
+  onSelect,
+}: {
+  row: PluginSidebarRow;
+  selected: boolean;
+  focusable: boolean;
+  store: InstalledState;
+  hasCloud: boolean | null;
+  onSelect: (row: PluginSidebarRow) => void;
+}): JSX.Element {
+  const installed = row.kind === 'installed' ? row : null;
+  const listing = row.listing;
+  const name = row.kind === 'installed' ? row.plugin.name || row.plugin.id : row.listing.name;
+  const version = row.kind === 'installed' ? row.plugin.version : row.listing.latestVersion;
+  const error = installed?.plugin.error ?? '';
+  const description = error || listing?.description || installed?.plugin.id || '';
+  const state: { text: string; tone?: string } = row.kind === 'installed' ? row.status : storeStateWord(row);
+  const meta = rowMeta(row);
+  const open = (): void => {
+    onSelect(row);
+    openPluginPage(rowPluginId(row), name, row.kind === 'store' ? row.owner : undefined);
+  };
+  const onContextMenu = (e: MouseEvent): void => {
+    e.preventDefault();
+    onSelect(row);
+    const items = installed
+      ? pluginMenuItems(installed.plugin, store)
+      : [{ id: 'details', label: t('plugins.sidebar.openPage', 'Open Plugin Page'), onSelect: open }];
+    if (items.length > 0) openContextMenu(e.clientX, e.clientY, items);
+  };
+  return (
+    <div
+      id={`plugin-row-${row.id}`}
+      data-row-id={row.id}
+      className={styles.row}
+      data-selected={selected || undefined}
+      role="option"
+      aria-selected={selected}
+      tabIndex={focusable ? 0 : -1}
+      onFocus={() => onSelect(row)}
+      onClick={open}
+      onContextMenu={onContextMenu}
+    >
+      <PluginIcon
+        plugin={{ name, iconUrl: listing?.iconUrl ?? null }}
+        src={installed ? pluginIconUrl(installed.plugin) : null}
+        size={36}
+      />
+      <div className={styles.rowBody}>
+        <div className={styles.rowTitle}>
+          <span className={styles.name}>{name}</span>
+          {version ? <span className={styles.version}>{version}</span> : null}
+        </div>
+        <div className={cn(styles.description, error && styles.descriptionError)} title={description}>
+          {description}
+        </div>
+        <div className={styles.metaLine}>
+          {meta.length > 0 ? <span className={styles.meta}>{meta.join(' · ')}</span> : null}
+          {meta.length > 0 ? <span className={styles.meta} aria-hidden>·</span> : null}
+          <span className={styles.status} data-tone={state.tone}>{state.text}</span>
+          <span className={styles.spacer} />
+          <RowButton row={row} store={store} hasCloud={hasCloud} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SectionHead({
+  label,
+  count,
+  open,
+  onToggle,
+  children,
+}: {
+  label: string;
+  count: number | null;
+  open: boolean;
+  onToggle: () => void;
+  children?: ReactNode;
+}): JSX.Element {
+  return (
+    <div className={styles.sectionHead}>
+      <button type="button" className={styles.sectionToggle} aria-expanded={open} onClick={onToggle}>
+        <Icon name={open ? 'chevron-down' : 'chevron-right'} size="sm" className={styles.twirl} />
+        <span className={styles.sectionLabel}>{label}</span>
+        {count !== null ? <span className={styles.sectionCount}>{count}</span> : null}
+      </button>
+      <span className={styles.spacer} />
+      {children}
+    </div>
+  );
+}
+
+function PluginList({
+  plugins,
+  engineError,
+  store,
+  browse,
+  query,
+  sort,
+  setSort,
+}: {
+  plugins: readonly NativePlugin[] | null;
+  engineError: string | null;
+  store: InstalledState;
+  /** Null: the store is not part of this edition. */
+  browse: StoreBrowse | null;
+  query: string;
+  sort: StoreSort;
+  setSort: (sort: StoreSort) => void;
+}): JSX.Element {
+  const [collapsed, setCollapsed] = useState({ installed: false, store: false });
   const [selected, setSelected] = useState<string | null>(null);
-  const treeRef = useRef<HTMLDivElement>(null);
-  const baseId = useId();
+  const listRef = useRef<HTMLDivElement>(null);
+  const hasCloud = useHasCloudPlugins();
+  // The page in front marks its row (as VS Code marks the open extension).
+  const activePage = usePluginPageStore((s) => s.active);
 
-  const effects = pluginEffectDefs();
-  const docked = useMemo(() => dockedSet(panelOrder), [panelOrder]);
-  const rows = useMemo(
-    () => buildPluginPanelRows({
-      plugins,
-      effects,
-      presets,
-      panels: pluginPanels(),
-      collapsed,
-      docked,
+  const sidebar = useMemo(
+    () => buildPluginSidebar({
+      plugins: plugins ?? [],
+      listings: browse?.items ?? null,
+      owned: browse?.owned,
+      managed: new Set(Object.keys(store.installed?.plugins ?? {})),
       updates: new Map([...store.updates].map(([id, u]) => [id, u.latestVersion])),
       uninstalling: new Set(store.installed?.uninstall ?? []),
       query,
     }),
-    // `pluginPanels()` is read through its revision.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [plugins, effects, presets, contribRevision, collapsed, docked, store.updates, store.installed, query],
+    [plugins, browse?.items, browse?.owned, store.installed, store.updates, query],
   );
+  const rows = visibleRows(sidebar, collapsed);
+  const selectedId = selected ?? (activePage ? rows.find((r) => rowPluginId(r) === activePage)?.id ?? null : null);
+  const focusIndex = Math.max(0, rows.findIndex((r) => r.id === selectedId));
 
-  const toggle = (plugin: string, open?: boolean): void => {
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      const isOpen = !prev.has(plugin);
-      if (open ?? !isOpen) next.delete(plugin);
-      else next.add(plugin);
-      return next;
-    });
-  };
-
-  const selectedIndex = rows.findIndex((r) => r.id === selected);
-  const domId = (i: number): string => `${baseId}-row-${i}`;
-
-  const select = (i: number): void => {
+  const focusRow = (i: number): void => {
     const row = rows[i];
     if (!row) return;
     setSelected(row.id);
-    treeRef.current?.ownerDocument.getElementById(domId(i))?.scrollIntoView?.({ block: 'nearest' });
-  };
-
-  const step = (from: number, dir: 1 | -1): void => {
-    for (let i = from + dir; i >= 0 && i < rows.length; i += dir) {
-      if (isSelectableRow(rows[i]!)) { select(i); return; }
-    }
+    const el = [...(listRef.current?.querySelectorAll<HTMLElement>('[data-row-id]') ?? [])].find((n) => n.dataset.rowId === row.id);
+    el?.focus();
+    el?.scrollIntoView?.({ block: 'nearest' });
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>): void => {
-    const row = rows[selectedIndex];
+    const target = e.target as HTMLElement;
+    if (!target.dataset.rowId) return; // the section headers and the row buttons keep their keys
+    const at = rows.findIndex((r) => r.id === target.dataset.rowId);
     switch (e.key) {
       case 'ArrowDown':
         e.preventDefault();
-        step(selectedIndex, 1);
+        focusRow(Math.min(rows.length - 1, at + 1));
         return;
       case 'ArrowUp':
         e.preventDefault();
-        if (selectedIndex < 0) step(rows.length, -1);
-        else step(selectedIndex, -1);
+        focusRow(Math.max(0, at - 1));
         return;
-      case 'ArrowLeft': {
+      case 'Home':
+        e.preventDefault();
+        focusRow(0);
+        return;
+      case 'End':
+        e.preventDefault();
+        focusRow(rows.length - 1);
+        return;
+      case 'Enter': {
+        const row = rows[at];
         if (!row) return;
         e.preventDefault();
-        if (row.kind === 'plugin') {
-          if (row.open && !query.trim()) toggle(row.plugin.id, false);
-          return;
-        }
-        select(parentRowIndex(rows, selectedIndex));
+        const name = row.kind === 'installed' ? row.plugin.name || row.plugin.id : row.listing.name;
+        openPluginPage(rowPluginId(row), name, row.kind === 'store' ? row.owner : undefined);
         return;
       }
-      case 'ArrowRight':
-        if (row?.kind !== 'plugin') return;
-        e.preventDefault();
-        if (!row.open) toggle(row.plugin.id, true);
-        else step(selectedIndex, 1);
-        return;
-      case 'Enter':
-        if (!row) return;
-        e.preventDefault();
-        activate(row, (id) => toggle(id));
-        return;
       default:
     }
   };
 
-  const onContextMenu = (e: MouseEvent, row: PluginPanelRow): void => {
-    if (row.kind !== 'plugin') return;
-    e.preventDefault();
-    setSelected(row.id);
-    const items = pluginMenuItems(row.plugin, store);
-    if (items.length > 0) openContextMenu(e.clientX, e.clientY, items);
-  };
+  const rowEl = (row: PluginSidebarRow): JSX.Element => (
+    <PluginRow
+      key={row.id}
+      row={row}
+      selected={row.id === selectedId}
+      focusable={rows[focusIndex]?.id === row.id}
+      store={store}
+      hasCloud={hasCloud}
+      onSelect={(r) => setSelected(r.id)}
+    />
+  );
+
+  const storeRows = sidebar.store;
+  const storeCount = browse?.items ? storeRows.length : null;
 
   return (
-    <>
-      <div className={styles.search}>
-        <SearchField
-          size="sm"
-          fullWidth
-          value={query}
-          onChange={setQuery}
-          placeholder={t('plugins.panel.search', 'Search installed plugins')}
-          ariaLabel={t('plugins.panel.search', 'Search installed plugins')}
-        />
-      </div>
-      <div className={styles.columns} aria-hidden>
-        <span className={styles.columnName}>{t('plugins.panel.columnName', 'Name')}</span>
-        <span className={styles.columnStatus}>{t('plugins.panel.columnStatus', 'Status')}</span>
-      </div>
-      <div
-        ref={treeRef}
-        className={styles.tree}
-        role="tree"
-        aria-label={t('plugins.panel.treeAria', 'Installed plugins')}
-        tabIndex={0}
-        aria-activedescendant={selectedIndex >= 0 ? domId(selectedIndex) : undefined}
-        onKeyDown={onKeyDown}
+    <div ref={listRef} className={styles.list} onKeyDown={onKeyDown}>
+      <SectionHead
+        label={t('plugins.sidebar.installed', 'Installed')}
+        count={plugins ? sidebar.installed.length : null}
+        open={!collapsed.installed}
+        onToggle={() => setCollapsed((c) => ({ ...c, installed: !c.installed }))}
       >
-        {rows.length === 0 ? <p className={styles.empty} role="status">{t('plugins.panel.noMatch', 'No installed plugin matches “{query}”.', { query })}</p> : null}
-        {rows.map((row, i) => {
-          if (row.kind === 'meta' || row.kind === 'error') {
-            return (
-              <div key={row.id} className={row.kind === 'meta' ? styles.meta : styles.errorLine} role={row.kind === 'error' ? 'note' : undefined}>
-                {row.text}
-              </div>
-            );
-          }
-          const level = row.kind === 'plugin' ? 1 : row.kind === 'preset' ? 3 : 2;
-          const label = rowLabel(row);
-          return (
-            <div
-              key={row.id}
-              id={domId(i)}
-              className={styles.row}
-              data-level={level}
-              data-selected={row.id === selected || undefined}
-              role="treeitem"
-              aria-level={level}
-              aria-selected={row.id === selected}
-              aria-expanded={row.kind === 'plugin' ? row.open : undefined}
-              title={rowTitle(row)}
-              draggable={row.kind === 'effect' || undefined}
-              onDragStart={row.kind === 'effect' ? (e) => setCanvasDrag(e, { kind: 'effect', effectType: row.def.type }) : undefined}
-              onClick={() => {
-                setSelected(row.id);
-                treeRef.current?.focus();
-              }}
-              onDoubleClick={() => activate(row, (id) => toggle(id))}
-              onContextMenu={(e) => onContextMenu(e, row)}
-            >
-              {row.kind === 'plugin' ? (
-                <span
-                  className={styles.twirl}
-                  aria-hidden
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSelected(row.id);
-                    if (!query.trim()) toggle(row.plugin.id);
-                  }}
-                >
-                  <Icon name={row.open ? 'chevron-down' : 'chevron-right'} size="sm" />
-                </span>
-              ) : null}
-              <Icon name={row.kind === 'plugin' ? 'plugin' : ROW_ICON[row.kind]} size="sm" className={styles.icon} />
-              <span className={cn(styles.label, row.kind === 'panel' && row.docked && styles.labelOpen)}>{label}</span>
-              {row.kind === 'plugin' ? (
-                <span className={styles.status} data-tone={row.status.tone}>{row.status.text}</span>
-              ) : (
-                <span className={styles.kind}>
-                  {row.kind === 'effect'
-                    ? t('plugins.panel.kindEffect', 'Effect')
-                    : row.kind === 'preset'
-                      ? t('plugins.panel.kindPreset', 'Preset')
-                      : row.docked
-                        ? t('plugins.panel.kindPanelOpen', 'Panel · open')
-                        : t('plugins.panel.kindPanel', 'Panel')}
-                </span>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </>
+        {sidebar.updateCount > 0 ? (
+          <span className={styles.sectionNote}>
+            {sidebar.updateCount === 1
+              ? t('plugins.sidebar.oneUpdate', '1 update')
+              : t('plugins.sidebar.updates', '{n} updates', { n: sidebar.updateCount })}
+          </span>
+        ) : null}
+      </SectionHead>
+      {collapsed.installed ? null : engineError && !plugins ? (
+        <p className={cn(styles.note, styles.noteError)} role="alert">{engineError}</p>
+      ) : !plugins ? (
+        <p className={styles.note} role="status">{t('plugins.list.asking', 'Asking the engine…')}</p>
+      ) : plugins.length === 0 ? (
+        <div className={styles.emptyState} role="status">
+          <strong>{t('plugins.list.emptyTitle', 'No native plugins installed')}</strong>
+          <span>{t('plugins.sidebar.emptyText', 'Install one from the store below, or copy a plugin into the plugins folder.')}</span>
+        </div>
+      ) : sidebar.installed.length === 0 ? (
+        <p className={styles.note} role="status">{t('plugins.panel.noMatch', 'No installed plugin matches “{query}”.', { query })}</p>
+      ) : (
+        <div role="listbox" aria-label={t('plugins.panel.treeAria', 'Installed plugins')}>
+          {sidebar.installed.map(rowEl)}
+        </div>
+      )}
+
+      <SectionHead
+        label={t('plugins.sidebar.store', 'Premation Store')}
+        count={storeCount}
+        open={!collapsed.store}
+        onToggle={() => setCollapsed((c) => ({ ...c, store: !c.store }))}
+      >
+        {browse ? (
+          <Dropdown
+            placement="bottom-end"
+            trigger={
+              <Button variant="ghost" size="xs" rightIcon={<Icon name="chevron-down" size="sm" />} aria-label={t('plugins.store.sortAria', 'Sort: {sort}', { sort: sortLabel(sort) })}>
+                {sortLabel(sort)}
+              </Button>
+            }
+            items={SORT_KEYS.map((s) => ({
+              type: 'checkbox' as const,
+              id: s,
+              label: sortLabel(s),
+              checked: sort === s,
+              onChange: () => setSort(s),
+            }))}
+          />
+        ) : null}
+      </SectionHead>
+      {collapsed.store ? null : !browse ? (
+        <p className={styles.note}>{t('plugins.sidebar.storeNotInEdition', 'The plugin store is not part of this edition. Copy plugins into the plugins folder.')}</p>
+      ) : browse.error && !browse.items ? (
+        <p className={styles.note} role="status">
+          {t('plugins.sidebar.storeUnavailable', 'Store unavailable.')}{' '}
+          <Button variant="ghost" size="xs" onClick={browse.reload}>{t('plugins.sidebar.retry', 'Retry')}</Button>
+        </p>
+      ) : !browse.items ? (
+        <p className={styles.note} role="status">{t('plugins.store.asking', 'Asking the store…')}</p>
+      ) : storeRows.length === 0 ? (
+        <p className={styles.note} role="status">
+          {query.trim()
+            ? t('plugins.sidebar.storeNoMatch', 'No store plugin matches “{query}”.', { query })
+            : t('plugins.sidebar.storeAllInstalled', 'Everything in the store is installed.')}
+        </p>
+      ) : (
+        <div role="listbox" aria-label={t('plugins.store.gridAria', 'Store plugins')}>
+          {storeRows.map(rowEl)}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -367,19 +420,6 @@ function FootRow({ native, store }: { native: ReturnType<typeof useNativePlugins
     <>
       {folderError ? <span className={styles.footError} role="alert">{folderError}</span> : null}
       <div className={styles.foot}>
-        {/* The dashboard's Plugins page opens on its Store tab. Through the
-            hash (AppRouter is a HashRouter) so this works outside a router;
-            /dashboard exists only in the cloud edition. */}
-        {cloudProjectsEnabled() ? (
-          <Button
-            size="sm"
-            variant="secondary"
-            leftIcon={<Icon name="plugin" size="sm" />}
-            onClick={() => { window.location.hash = '#/dashboard?tab=plugins'; }}
-          >
-            {t('plugins.panel.browseStore', 'Browse Store')}
-          </Button>
-        ) : null}
         <span className={styles.spacer} />
         {canOpenNativePluginFolder() ? (
           <Button
@@ -406,6 +446,8 @@ function FootRow({ native, store }: { native: ReturnType<typeof useNativePlugins
           onClick={() => {
             native.refresh();
             store.refresh();
+            // "Refresh" means ask the store again too, not re-read what we have.
+            if (cloudProjectsEnabled()) invalidate('plugins');
           }}
         >
           {native.loading ? t('plugins.list.checking', 'Checking…') : t('plugins.list.refresh', 'Refresh')}
@@ -418,23 +460,40 @@ function FootRow({ native, store }: { native: ReturnType<typeof useNativePlugins
 export function NativePluginsPanel(): JSX.Element {
   const native = useNativePlugins();
   const store = useInstalledPlugins(native.refresh);
-  // Asks the engine for the plugins' effects and presets once (the rows read them).
+  // Asks the engine for the plugins' effects and presets once (their pages read them).
   useAllEffectDefs();
-  const { plugins, error } = native;
+  // The one list both the sidebar and a plugin's page read; this panel's own
+  // answer until the cache has one.
+  const plugins = useEnginePlugins() ?? native.plugins;
+  const [query, setQuery] = useState('');
+  const storeQuery = useSettled(query, 250);
+  const [sort, setSort] = useState<StoreSort>('installs');
+
+  const list = (browse: StoreBrowse | null): JSX.Element => (
+    <PluginList
+      plugins={plugins}
+      engineError={native.error}
+      store={store}
+      browse={browse}
+      query={query}
+      sort={sort}
+      setSort={setSort}
+    />
+  );
+
   return (
     <div className={styles.panel}>
-      {error ? (
-        <span className={styles.notice} role="alert">{error}</span>
-      ) : !plugins ? (
-        <span className={styles.notice} role="status">{t('plugins.list.asking', 'Asking the engine…')}</span>
-      ) : plugins.length === 0 ? (
-        <div className={styles.emptyState} role="status">
-          <strong>{t('plugins.list.emptyTitle', 'No native plugins installed')}</strong>
-          <span>{t('plugins.list.emptyText', 'Install one from the plugin store, or copy a plugin into the plugins folder.')}</span>
-        </div>
-      ) : (
-        <PluginRows plugins={plugins} store={store} />
-      )}
+      <div className={styles.search}>
+        <SearchField
+          size="sm"
+          fullWidth
+          value={query}
+          onChange={setQuery}
+          placeholder={t('plugins.sidebar.search', 'Search plugins in store and installed')}
+          ariaLabel={t('plugins.sidebar.search', 'Search plugins in store and installed')}
+        />
+      </div>
+      {cloudProjectsEnabled() ? <WithStore q={storeQuery} sort={sort}>{list}</WithStore> : list(null)}
       {store.message ? (
         <div className={styles.messageLine}>
           <StoreMessageLine message={store.message} />

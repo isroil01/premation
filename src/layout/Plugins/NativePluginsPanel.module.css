@@ -1,8 +1,8 @@
 /*
- * The editor's Plugins panel (NativePluginsPanel.tsx) — AE's list-panel
- * grammar, docs/mockups/plugin-docking-ae.html frame 4: a search field, a
- * Name | Status header, hairline twirl rows, a small button row at the foot.
- * The rows match the Effects & Presets tree (BrowserTree, EffectsPanel).
+ * The editor's Plugins sidebar (NativePluginsPanel.tsx), the way VS Code lists
+ * extensions — owner-approved mockup board 1 (2026-11-03): a search field, two
+ * collapsible sections, one hairline row per plugin with ONE bordered button,
+ * a small button row at the foot. Panel type roles only, theme tokens only.
  */
 
 .panel {
@@ -20,69 +20,87 @@
   padding: var(--space-3) var(--space-3) var(--space-2);
 }
 
-/* Name | Status, the column header of an AE list panel. */
-.columns {
-  flex: none;
-  display: flex;
-  align-items: center;
-  min-height: var(--control-height-xs);
-  padding: 0 var(--space-4);
-  border-bottom: 1px solid var(--color-border);
-  font-size: var(--panel-font-size-help);
-  color: var(--color-text-tertiary);
-  user-select: none;
-}
-
-.columnName {
-  flex: 1;
-}
-
-.columnStatus {
-  flex: none;
-  text-align: right;
-}
-
-.tree {
+.list {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
 }
 
-.tree:focus-visible {
-  outline: 1px solid var(--color-focus-ring);
-  outline-offset: -1px;
-}
-
-/* One hairline row: twirl, icon, name, and a quiet word at the right. */
-.row {
+/* INSTALLED 4 ........ 1 update — uppercase group label, count, a note or the sort menu at the right. */
+.sectionHead {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-2);
   min-height: var(--control-height-xs);
-  padding: 0 var(--space-4);
+  padding: 0 var(--space-3) 0 var(--space-2);
+  background: var(--color-panel);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.sectionToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.sectionToggle:focus-visible {
+  outline: 1px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+
+.twirl {
+  flex: none;
+  color: var(--color-text-tertiary);
+}
+
+.sectionLabel {
+  font-size: var(--panel-font-size-help);
+  font-weight: var(--panel-weight-group);
+  letter-spacing: var(--letter-spacing-uppercase);
+  text-transform: uppercase;
+}
+
+.sectionCount {
+  font-family: var(--panel-font-family-value);
+  font-size: var(--panel-font-size-help);
+  color: var(--color-text-tertiary);
+}
+
+.sectionNote {
+  font-size: var(--panel-font-size-help);
+  color: var(--color-warning);
+}
+
+/* One plugin: icon | name version / description / meta ......... [Button] */
+.row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border-subtle);
   color: var(--color-text-primary);
-  font-weight: var(--panel-weight-label);
-  white-space: nowrap;
   cursor: default;
   user-select: none;
 }
 
-.row[data-level='1'] {
-  font-weight: var(--panel-weight-subgroup);
-}
-
-/* Children sit under the plugin's name: past the twirl, then one level more. */
-.row[data-level='2'] {
-  padding-left: calc(var(--space-4) + var(--space-7));
-}
-
-.row[data-level='3'] {
-  padding-left: calc(var(--space-4) + var(--space-7) + var(--space-6));
-}
-
 .row:hover {
   background: var(--color-hover);
+}
+
+.row:focus-visible {
+  outline: 1px solid var(--color-focus-ring);
+  outline-offset: -1px;
 }
 
 .row[data-selected] {
@@ -90,51 +108,68 @@
   color: var(--color-text-on-accent);
 }
 
-.row[draggable='true'] {
-  cursor: grab;
-}
-
-.twirl {
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: var(--icon-size-sm);
-  color: var(--color-text-tertiary);
-  cursor: pointer;
-}
-
-.icon {
-  flex: none;
-  color: var(--color-text-tertiary);
-}
-
-.row[data-selected] .icon,
-.row[data-selected] .twirl {
-  color: inherit;
-}
-
-.label {
+.rowBody {
+  display: flex;
+  flex-direction: column;
   flex: 1;
+  min-width: 0;
+}
+
+.rowTitle {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--panel-weight-group);
 }
 
-/* A plugin panel that is docked right now. */
-.labelOpen {
-  color: var(--color-primary);
-}
-
-.row[data-selected] .labelOpen {
-  color: inherit;
-}
-
-.kind,
-.status {
+.version {
   flex: none;
-  margin-left: auto;
+  font-family: var(--panel-font-family-value);
   font-size: var(--panel-font-size-help);
   color: var(--color-text-tertiary);
+}
+
+.description {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--panel-font-size-help);
+  line-height: var(--panel-line-height-help);
+  color: var(--color-text-secondary);
+}
+
+.descriptionError {
+  color: var(--color-danger);
+}
+
+.metaLine {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  min-height: var(--control-height-xs);
+  font-size: var(--panel-font-size-help);
+  line-height: var(--panel-line-height-help);
+}
+
+.meta {
+  flex: none;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+}
+
+.status {
+  flex: none;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
 }
 
 .status[data-tone='ok'] {
@@ -149,53 +184,35 @@
   color: var(--color-danger);
 }
 
-.row[data-selected] .kind,
+.row[data-selected] .version,
+.row[data-selected] .description,
+.row[data-selected] .meta,
 .row[data-selected] .status {
   color: inherit;
 }
 
-/* The dim line under a plugin's name: vendor · version · Premation Cloud. */
-.meta,
-.errorLine {
-  padding: 0 var(--space-4) var(--space-1) calc(var(--space-4) + var(--space-7));
+/* The row's one button keeps its size when the meta line is tight. */
+.metaLine > :last-child {
+  flex: none;
+}
+
+.note {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
   font-size: var(--panel-font-size-help);
   line-height: var(--panel-line-height-help);
-  color: var(--color-text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  user-select: none;
-}
-
-.errorLine {
-  color: var(--color-danger);
-  white-space: normal;
-}
-
-.empty {
-  margin: 0;
-  padding: var(--space-4);
-  font-size: var(--panel-font-size-help);
   color: var(--color-text-tertiary);
 }
 
-.notice {
-  padding: var(--space-4);
-  font-size: var(--panel-font-size-help);
-  color: var(--color-text-secondary);
-}
-
-.notice[role='alert'],
-.footError {
+.noteError {
   color: var(--color-danger);
 }
 
 .emptyState {
-  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  padding: var(--space-5) var(--space-4);
+  padding: var(--space-4);
   font-size: var(--panel-font-size-help);
   line-height: var(--panel-line-height-help);
   color: var(--color-text-tertiary);
@@ -215,16 +232,17 @@
 .footError {
   padding: var(--space-2) var(--space-4) 0;
   font-size: var(--panel-font-size-help);
+  color: var(--color-danger);
 }
 
-/* The foot: Browse Store, then the folder and Refresh at the right. */
+/* The foot: the plugins folder and Refresh at the right. */
 .foot {
   flex: none;
   display: flex;
   align-items: center;
   gap: var(--space-2);
   margin-top: auto;
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-2) var(--space-3);
   border-top: 1px solid var(--color-border);
 }
 

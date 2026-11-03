@@ -11,16 +11,19 @@
  * rendered unconditionally and hidden with CSS, and the Layer panel is drawn
  * over it.
  *
- * (Until 0.9 this strip also held JavaScript plugins' pages as closable tabs,
- * with an overflow menu and Ctrl/Cmd+W to close one. The plugin system is
- * gone, and those tabs with it; the Ctrl/Cmd+W guard below stays.)
+ * (Until 0.9 this strip also held JavaScript plugins' pages as closable tabs.
+ * Since 2026-11 it holds native plugins' pages again — "Plugin: <name>", one
+ * closable tab per plugin, opened from the Plugins sidebar
+ * (stores/pluginPageStore.ts). Like the Layer and Footage panels they are
+ * drawn over the composition viewer, which stays mounted. Ctrl/Cmd+W closes
+ * the plugin page in front and never falls through to closing the window.)
  *
  * `visibility: hidden`, not `display: none`: `display: none` collapses the
  * box, the canvas inside resizes to zero, and returning to Scene gives a black
  * stage until something forces a resize. This editor has had that bug before.
  */
 
-import { useEffect, useMemo, type ReactNode } from 'react';
+import { Suspense, lazy, useEffect, useMemo, type ReactNode } from 'react';
 import { Icon } from '@components/Icon';
 import { cn } from '@utils/cn';
 import { useActiveCompName } from '@layout/Composition/activeCompName';
@@ -31,6 +34,7 @@ import { canOpenInLayerPanel, openLayerPanel } from '@layout/LayerViewer/openLay
 import { LayerViewer } from '@layout/LayerViewer/LayerViewer';
 import { FootageViewer } from '@layout/Assets/FootageViewer';
 import { useFootageViewerStore } from '@stores/footageViewerStore';
+import { usePluginPageStore } from '@stores/pluginPageStore';
 import { useWorkspaceViewStore } from '@stores/workspaceViewStore';
 import { openContextMenu } from '@stores/contextMenuStore';
 import { documentMirror } from '@stores/documentMirror';
@@ -45,6 +49,10 @@ import { customConfirm } from '@components/Modal';
 import { popOutViewport } from '@layout/Workspace/ViewportDisplayControls';
 import { t } from '@core/i18n';
 import styles from './EditorTabs.module.css';
+
+// A plugin's page pulls in the store's page pieces (markdown, gallery): loaded
+// the first time one opens, not with the editor.
+const PluginDetailPage = lazy(() => import('@layout/Plugins/PluginDetailPage'));
 
 /**
  * The × on an open Layer / Footage tab. A span with a button role: the tab is
@@ -141,24 +149,35 @@ export function EditorTabs({ scene }: EditorTabsProps): JSX.Element {
   // AE's Footage panel (FootageViewer): open while there is a file to show.
   // The Layer panel wins if both are somehow up — one viewer tab at a time.
   const footageOpen = useFootageViewerStore((s) => s.open) && !!footageAsset && !layerViewerOpen;
-  const compActive = !layerViewerOpen && !footageOpen;
+  // Plugin pages: closable tabs drawn over the viewers (which stay as they were).
+  const pluginPages = usePluginPageStore((s) => s.pages);
+  const activePluginId = usePluginPageStore((s) => s.active);
+  const activePluginPage = pluginPages.find((p) => p.id === activePluginId) ?? null;
+  const pluginActive = activePluginPage !== null;
+  const compActive = !layerViewerOpen && !footageOpen && !pluginActive;
+  const footageShown = footageOpen && !pluginActive;
+  const layerShown = layerViewerOpen && !pluginActive;
   const closeViewerTabs = (): void => {
     useLayerViewerStore.getState().close();
     useFootageViewerStore.getState().close();
+    usePluginPageStore.getState().activate(null);
   };
   const viewMode = useWorkspaceViewStore((s) => s.mode);
 
   /**
-   * Ctrl/Cmd+W does nothing here — deliberately.
+   * Ctrl/Cmd+W closes the plugin page in front, and otherwise does nothing —
+   * deliberately.
    *
-   * Nothing in this strip is closeable (Scene never is), and letting the key
-   * fall through would reach the browser/Electron default of closing the
-   * window. Someone reaching for "close this tab" with the viewport focused
-   * must not lose their session.
+   * Scene is never closeable, and letting the key fall through would reach
+   * the browser/Electron default of closing the window. Someone reaching for
+   * "close this tab" with the viewport focused must not lose their session.
    */
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent): void => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'w') e.preventDefault();
+      if (!((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'w')) return;
+      e.preventDefault();
+      const pages = usePluginPageStore.getState();
+      if (pages.active !== null && !e.repeat) pages.close(pages.active);
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
@@ -237,8 +256,8 @@ export function EditorTabs({ scene }: EditorTabsProps): JSX.Element {
         <button
           type="button"
           role="tab"
-          aria-selected={footageOpen}
-          className={cn(styles.tab, footageOpen && styles.tabActive)}
+          aria-selected={footageShown}
+          className={cn(styles.tab, footageShown && styles.tabActive)}
           disabled={!footageAsset}
           title={
             footageAsset
@@ -250,7 +269,10 @@ export function EditorTabs({ scene }: EditorTabsProps): JSX.Element {
               : t('tabs.editor.footageNoneTitle', 'Footage (none) — double-click a clip in Assets, or select a media layer')
           }
           onClick={() => {
-            if (footageOpen) return;
+            if (footageOpen) {
+              usePluginPageStore.getState().activate(null);
+              return;
+            }
             if (footageAsset) openFootagePreview(footageAsset);
           }}
           onContextMenu={(e) => {
@@ -289,8 +311,8 @@ export function EditorTabs({ scene }: EditorTabsProps): JSX.Element {
         <button
           type="button"
           role="tab"
-          aria-selected={layerViewerOpen}
-          className={cn(styles.tab, layerViewerOpen && styles.tabActive)}
+          aria-selected={layerShown}
+          className={cn(styles.tab, layerShown && styles.tabActive)}
           disabled={!layerViewerOpen && !selectedViewable}
           title={
             layerViewerOpen
@@ -300,7 +322,10 @@ export function EditorTabs({ scene }: EditorTabsProps): JSX.Element {
                 : t('tabs.editor.layerNoneTitle', 'Layer (none) — select a footage, solid or composition layer')
           }
           onClick={() => {
-            if (layerViewerOpen) return;
+            if (layerViewerOpen) {
+              usePluginPageStore.getState().activate(null);
+              return;
+            }
             if (singleSelectedLayer) openLayerPanel(singleSelectedLayer);
           }}
         >
@@ -312,6 +337,61 @@ export function EditorTabs({ scene }: EditorTabsProps): JSX.Element {
             <TabClose label={t('tabs.editor.closeLayerViewer', 'Close the Layer viewer')} onClose={() => useLayerViewerStore.getState().close()} />
           )}
         </button>
+
+        {/*
+          Plugin pages, opened from the Plugins sidebar: one closable tab per
+          plugin (reopening brings the same tab forward). Middle-click closes.
+        */}
+        {pluginPages.map((page) => {
+          const active = page.id === activePluginId;
+          const label = t('tabs.editor.plugin', 'Plugin: {name}', { name: page.name });
+          return (
+            <button
+              key={page.id}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              className={cn(styles.tab, active && styles.tabActive)}
+              title={label}
+              data-testid={`plugin-tab-${page.id}`}
+              onClick={() => usePluginPageStore.getState().activate(page.id)}
+              onAuxClick={(e) => {
+                if (e.button !== 1) return;
+                e.preventDefault();
+                usePluginPageStore.getState().close(page.id);
+              }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                const store = usePluginPageStore.getState();
+                openContextMenu(e.clientX, e.clientY, [
+                  { id: 'close', label: t('tabs.editor.closeTab', 'Close'), onSelect: () => store.close(page.id) },
+                  {
+                    id: 'close-others',
+                    label: t('tabs.editor.closeOtherPluginPages', 'Close Other Plugin Pages'),
+                    disabled: store.pages.length < 2,
+                    onSelect: () => {
+                      for (const other of usePluginPageStore.getState().pages) if (other.id !== page.id) store.close(other.id);
+                    },
+                  },
+                  {
+                    id: 'close-all',
+                    label: t('tabs.editor.closeAllPluginPages', 'Close All Plugin Pages'),
+                    onSelect: () => {
+                      for (const other of usePluginPageStore.getState().pages) store.close(other.id);
+                    },
+                  },
+                ]);
+              }}
+            >
+              <Icon name="plugin" size="sm" />
+              <span className={styles.tabLabel}>{label}</span>
+              <TabClose
+                label={t('tabs.editor.closePluginPage', 'Close the {name} page', { name: page.name })}
+                onClose={() => usePluginPageStore.getState().close(page.id)}
+              />
+            </button>
+          );
+        })}
 
         </div>
 
@@ -405,7 +485,7 @@ export function EditorTabs({ scene }: EditorTabsProps): JSX.Element {
 
         {/* AE's Layer panel, over the composition viewer — which stays mounted
             and is only hidden. */}
-        {layerViewerOpen && (
+        {layerShown && (
           <div className={styles.tabPane} role="tabpanel" aria-label={t('tabs.editor.layerPanel', 'Layer panel')} data-testid="layer-pane">
             <LayerViewer />
           </div>
@@ -413,9 +493,29 @@ export function EditorTabs({ scene }: EditorTabsProps): JSX.Element {
 
         {/* AE's Footage panel: the source file on its own, likewise over the
             (still mounted) composition viewer. */}
-        {footageOpen && footageAsset && (
+        {footageShown && footageAsset && (
           <div className={styles.tabPane} role="tabpanel" aria-label={t('tabs.editor.footagePanel', 'Footage panel')} data-testid="footage-pane">
             <FootageViewer asset={footageAsset} />
+          </div>
+        )}
+
+        {/* A plugin's page, likewise over the (still mounted) viewers; keyed
+            by plugin so switching pages starts each on its Details tab. */}
+        {activePluginPage && (
+          <div
+            className={styles.tabPane}
+            role="tabpanel"
+            aria-label={t('tabs.editor.plugin', 'Plugin: {name}', { name: activePluginPage.name })}
+            data-testid="plugin-pane"
+          >
+            <Suspense fallback={null}>
+              <PluginDetailPage
+                key={activePluginPage.id}
+                id={activePluginPage.id}
+                name={activePluginPage.name}
+                owner={activePluginPage.owner}
+              />
+            </Suspense>
           </div>
         )}
       </div>

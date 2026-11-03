@@ -55,7 +55,7 @@ export function PluginToolPanel({ panelId }: { panelId: string }): JSX.Element {
       </div>
     );
   }
-  if (entry.kind === 'effect') return <PluginEffectHomePanel key={panelId} plugin={entry.plugin} pluginName={entry.pluginName} />;
+  if (entry.kind === 'effect') return <PluginEffectHomePanel key={panelId} panelId={panelId} plugin={entry.plugin} pluginName={entry.pluginName} />;
   return <ToolFrame key={panelId} plugin={entry.plugin} page={entry.panel.page} name={entry.panel.name} />;
 }
 

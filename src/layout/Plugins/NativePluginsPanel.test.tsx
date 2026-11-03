@@ -1,29 +1,22 @@
 /**
- * The Plugins panel's tree (docs/mockups/plugin-docking-ae.html, frame 4):
- * twirl rows, status words, and the Effects & Presets gestures — click
- * selects, double-click / Enter applies or opens, an effect row drags, the
- * arrow keys walk and twirl.
+ * The Plugins sidebar (owner-approved mockup board 1, 2026-11-03): Installed
+ * and Premation Store sections, one search over both, one inline button per
+ * row, and a click / Enter that opens the plugin's page in the main body.
  */
 
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { api } from '@core/api/client';
 import { engine } from '@core/engine/engineInstance';
-import { setPluginEffectDefs } from '@core/inspector/pluginEffectDefs';
 import { resetPluginContribForTest } from '@core/nativePlugins/pluginContrib';
-import { setPluginPresets } from '@core/nativePlugins/pluginPresets';
-import { edit } from '@core/engine/uiEdits';
-import { addEffectEdit } from '@layout/Effects/effectEdits';
-import { CANVAS_DRAG_MIME } from '@core/dnd/canvasDrag';
-import { useLayoutStore } from '@stores/layoutStore';
-import { useSelectionStore } from '@stores/selectionStore';
+import { usePluginPageStore } from '@stores/pluginPageStore';
 import { NativePluginsPanel } from './NativePluginsPanel';
 
 jest.mock('@core/engine/engineInstance', () => {
   const engine = jest.fn();
   return { engine, pluginEngine: (...a: unknown[]) => engine(...a) };
 });
-jest.mock('@core/engine/uiEdits', () => ({ edit: jest.fn(async () => ({ ok: true })) }));
-jest.mock('@layout/Effects/effectEdits', () => ({ addEffectEdit: jest.fn(async () => []) }));
-// The engine's effect list is set by hand below; nothing may overwrite it.
+jest.mock('@core/api/session', () => ({ ...jest.requireActual('@core/api/session'), hasSession: () => false }));
+// The engine's effect list is not asked for here.
 jest.mock('@layout/Effects/effectCatalog', () => ({ useAllEffectDefs: () => [] }));
 
 const glow = {
@@ -33,106 +26,113 @@ const glow = {
 };
 const grade = { ...glow, id: 'acme.grade', name: 'Grade Lab', vendor: 'Acme', status: 'disabled', effects: [], panel: false };
 
-const openPanel = jest.fn();
-let realOpen: (id: string) => void;
+function listing(id: string, name: string, extra: Record<string, unknown> = {}) {
+  return {
+    id, name, description: `${name} does things`, latestVersion: '2.0.0', installs: 12400, publisherKey: 'k', sha256: 's',
+    updatedAt: '2026-10-01T00:00:00.000Z', publisher: { namespace: 'acme', displayName: 'Acme Labs', verified: true },
+    categories: [], license: null, iconUrl: null, kind: 'native' as const, tier: 'free' as const, platforms: ['linux-x64'], effects: [], sdk: null,
+    ...extra,
+  };
+}
 
 beforeEach(() => {
+  resetPluginContribForTest();
+  usePluginPageStore.setState({ pages: [], active: null });
   jest.mocked(engine).mockReturnValue({
     query: jest.fn(async () => ({ ok: true, value: { type: 'listPlugins', plugins: [glow, grade] }, revision: 1 })),
   } as never);
-  setPluginEffectDefs([{ matchName: 'premation.deepglow', displayName: 'Deep Glow', category: 'Stylize', gpu: true, provider: 'premation.deepglow', params: [], supportsFloat: true, audio: false, actions: [], groups: [], customUis: [] }]);
-  setPluginPresets([{ id: 'premation.deepglow', presets: [{ name: 'Neon', effect: 'premation.deepglow', values: [], category: '' }] }]);
-  realOpen = useLayoutStore.getState().openPanel;
-  useLayoutStore.setState({ openPanel });
-  openPanel.mockClear();
-  jest.mocked(edit).mockClear();
-  jest.mocked(addEffectEdit).mockClear();
-  useSelectionStore.setState({ ids: ['layer-1'], primary: 'layer-1' });
+  jest.spyOn(api, 'browseNativePlugins').mockResolvedValue({
+    items: [listing('premation.deepglow', 'Deep Glow'), listing('acme.particles', 'Particle Storm')],
+    total: 2,
+  } as never);
 });
 
 afterEach(() => {
-  useLayoutStore.setState({ openPanel: realOpen });
-  useSelectionStore.setState({ ids: [], primary: null });
-  setPluginEffectDefs([]);
-  setPluginPresets([]);
-  resetPluginContribForTest();
+  jest.restoreAllMocks();
+  delete (window as { motionEditor?: unknown }).motionEditor;
 });
 
-const row = (name: RegExp): HTMLElement => screen.getByRole('treeitem', { name });
+const option = (name: RegExp): HTMLElement => screen.getByRole('option', { name });
 
-it('lists each plugin with its status word, meta line, effects, presets and panel', async () => {
+// First: the store's answer is remembered per search (useCachedQuery), and
+// a remembered listing outlives a later failure.
+it('keeps the installed list when the store is unreachable, and offers Retry', async () => {
+  jest.spyOn(api, 'browseNativePlugins').mockRejectedValue(new Error('offline'));
   render(<NativePluginsPanel />);
-  const plugin = await screen.findByRole('treeitem', { name: /^Deep Glow\s*Loaded/ });
-  expect(plugin).toHaveAttribute('aria-expanded', 'true');
-  expect(screen.getByText('Premation · v1.0.0')).toBeInTheDocument();
-  expect(within(row(/Deep Glow\s*Effect/)).getByText('Effect')).toBeInTheDocument();
-  expect(within(row(/Neon/)).getByText('Preset')).toBeInTheDocument();
-  expect(within(row(/Deep Glow\s*Panel/)).getByText('Panel')).toBeInTheDocument();
-  expect(within(row(/Grade Lab/)).getByText('Disabled')).toBeInTheDocument();
-  expect(screen.getByRole('searchbox', { name: 'Search installed plugins' })).toBeInTheDocument();
+  expect(await screen.findByText(/Store unavailable/)).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+  expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual([
+    expect.stringContaining('Deep Glow'),
+    expect.stringContaining('Grade Lab'),
+  ]);
 });
 
-it('applies an effect or a preset to the selected layers on double-click, and drags an effect', async () => {
+it('lists installed plugins and store plugins not installed, each with a meta line and a status word', async () => {
   render(<NativePluginsPanel />);
-  await screen.findByRole('treeitem', { name: /^Deep Glow\s*Loaded/ });
+  const installed = await screen.findByRole('listbox', { name: 'Installed plugins' });
+  expect(within(installed).getAllByRole('option')).toHaveLength(2);
+  expect(within(option(/^Deep Glow/)).getByText('Loaded')).toBeInTheDocument();
+  // The store's listing fills in the installed row's description and installs.
+  expect(within(option(/^Deep Glow/)).getByText('Deep Glow does things')).toBeInTheDocument();
+  expect(within(option(/^Deep Glow/)).getByText('Premation · ↓ 12.4K')).toBeInTheDocument();
+  expect(within(option(/^Grade Lab/)).getByText('Disabled')).toBeInTheDocument();
+  expect(within(option(/^Grade Lab/)).getByRole('button', { name: 'Enable' })).toBeInTheDocument();
 
-  fireEvent.click(row(/Deep Glow\s*Effect/));
-  expect(row(/Deep Glow\s*Effect/)).toHaveAttribute('aria-selected', 'true');
-  expect(addEffectEdit).not.toHaveBeenCalled();
-  fireEvent.doubleClick(row(/Deep Glow\s*Effect/));
-  expect(addEffectEdit).toHaveBeenCalledWith(['layer-1'], 'premation.deepglow');
-
-  fireEvent.doubleClick(row(/Neon/));
-  expect(edit).toHaveBeenCalledWith('Apply Neon', expect.objectContaining({ type: 'addEffect' }));
-
-  const setData = jest.fn();
-  fireEvent.dragStart(row(/Deep Glow\s*Effect/), { dataTransfer: { setData, effectAllowed: '' } });
-  expect(setData).toHaveBeenCalledWith(CANVAS_DRAG_MIME, JSON.stringify({ kind: 'effect', effectType: 'premation.deepglow' }));
+  const store = await screen.findByRole('listbox', { name: 'Store plugins' });
+  // Deep Glow is installed: only Particle Storm is offered.
+  expect(within(store).getAllByRole('option')).toHaveLength(1);
+  expect(within(option(/^Particle Storm/)).getByText('Free')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /Premation Store/ })).toHaveTextContent('1');
+  expect(screen.getByRole('button', { name: /Installed/ })).toHaveTextContent('2');
 });
 
-it('opens a plugin panel on double-click and marks a docked one open', async () => {
-  const order = useLayoutStore.getState().panelOrder;
-  useLayoutStore.setState({ panelOrder: { ...order, rightInspector: [...(order.rightInspector ?? []), 'plugin:premation.deepglow'] } });
-  const { unmount } = render(<NativePluginsPanel />);
-  try {
-    await screen.findByRole('treeitem', { name: /^Deep Glow\s*Loaded/ });
-    expect(within(row(/Deep Glow\s*Panel · open/)).getByText('Panel · open')).toBeInTheDocument();
-    fireEvent.doubleClick(row(/Deep Glow\s*Panel/));
-    expect(openPanel).toHaveBeenCalledWith('plugin:premation.deepglow');
-  } finally {
-    unmount();
-    useLayoutStore.setState({ panelOrder: order });
-  }
-});
-
-it('walks with the arrow keys, twirls with Left / Right, and Enter acts', async () => {
+it('filters both sections with one search', async () => {
   render(<NativePluginsPanel />);
-  await screen.findByRole('treeitem', { name: /^Deep Glow\s*Loaded/ });
-  const tree = screen.getByRole('tree', { name: 'Installed plugins' });
-
-  fireEvent.click(row(/^Deep Glow\s*Loaded/));
-  fireEvent.keyDown(tree, { key: 'ArrowDown' });
-  expect(row(/Deep Glow\s*Effect/)).toHaveAttribute('aria-selected', 'true');
-  fireEvent.keyDown(tree, { key: 'ArrowDown' });
-  expect(row(/Neon/)).toHaveAttribute('aria-selected', 'true');
-  await act(async () => { fireEvent.keyDown(tree, { key: 'Enter' }); });
-  expect(edit).toHaveBeenCalledWith('Apply Neon', expect.anything());
-
-  // Left on a child goes to its plugin; Left again twirls it shut.
-  fireEvent.keyDown(tree, { key: 'ArrowLeft' });
-  expect(row(/^Deep Glow\s*Loaded/)).toHaveAttribute('aria-selected', 'true');
-  fireEvent.keyDown(tree, { key: 'ArrowLeft' });
-  expect(row(/^Deep Glow\s*Loaded/)).toHaveAttribute('aria-expanded', 'false');
-  expect(screen.queryByRole('treeitem', { name: /Neon/ })).toBeNull();
-  fireEvent.keyDown(tree, { key: 'ArrowRight' });
-  expect(row(/^Deep Glow\s*Loaded/)).toHaveAttribute('aria-expanded', 'true');
+  await screen.findByRole('listbox', { name: 'Store plugins' });
+  fireEvent.change(screen.getByRole('searchbox', { name: 'Search plugins in store and installed' }), { target: { value: 'grade' } });
+  expect(option(/^Grade Lab/)).toBeInTheDocument();
+  expect(screen.queryByRole('option', { name: /^Deep Glow/ })).toBeNull();
+  expect(screen.queryByRole('option', { name: /^Particle Storm/ })).toBeNull();
+  expect(await screen.findByText('No store plugin matches “grade”.')).toBeInTheDocument();
 });
 
-it('filters by the search, keeping the plugin above what matched', async () => {
+it('opens a plugin page on click and on Enter, and walks the rows of both sections with the arrows', async () => {
   render(<NativePluginsPanel />);
-  await screen.findByRole('treeitem', { name: /^Deep Glow\s*Loaded/ });
-  fireEvent.change(screen.getByRole('searchbox', { name: 'Search installed plugins' }), { target: { value: 'neon' } });
-  expect(await screen.findByRole('treeitem', { name: /Neon/ })).toBeInTheDocument();
-  expect(screen.queryByRole('treeitem', { name: /Grade Lab/ })).toBeNull();
-  expect(row(/^Deep Glow\s*Loaded/)).toBeInTheDocument();
+  await screen.findByRole('listbox', { name: 'Store plugins' });
+
+  fireEvent.click(option(/^Grade Lab/));
+  expect(usePluginPageStore.getState().pages).toEqual([{ id: 'acme.grade', name: 'Grade Lab' }]);
+  expect(usePluginPageStore.getState().active).toBe('acme.grade');
+
+  act(() => { option(/^Grade Lab/).focus(); });
+  fireEvent.keyDown(option(/^Grade Lab/), { key: 'ArrowDown' });
+  expect(document.activeElement).toBe(option(/^Particle Storm/));
+  expect(option(/^Particle Storm/)).toHaveAttribute('aria-selected', 'true');
+  fireEvent.keyDown(option(/^Particle Storm/), { key: 'Enter' });
+  expect(usePluginPageStore.getState().active).toBe('acme.particles');
+  expect(usePluginPageStore.getState().pages.map((p) => p.id)).toEqual(['acme.grade', 'acme.particles']);
+});
+
+it('collapses a section from its header', async () => {
+  render(<NativePluginsPanel />);
+  await screen.findByRole('listbox', { name: 'Store plugins' });
+  fireEvent.click(screen.getByRole('button', { name: /Premation Store/ }));
+  expect(screen.queryByRole('listbox', { name: 'Store plugins' })).toBeNull();
+  expect(screen.getByRole('listbox', { name: 'Installed plugins' })).toBeInTheDocument();
+});
+
+it('installs a store plugin from its row button without opening its page', async () => {
+  const install = jest.fn(async () => ({ ok: true, id: 'acme.particles', version: '2.0.0', restartNeeded: true }));
+  (window as { motionEditor?: unknown }).motionEditor = {
+    plugins: { installed: jest.fn(async () => ({ plugins: {}, uninstall: [] })), install, host: { platform: 'linux', arch: 'x64' } },
+  };
+  jest.mocked(engine).mockReturnValue({
+    query: jest.fn(async () => ({ ok: true, value: { type: 'listPlugins', plugins: [glow, grade] }, revision: 1 })),
+    execute: jest.fn(async () => ({ ok: true, value: { plugins: [] }, revision: 1 })),
+  } as never);
+  render(<NativePluginsPanel />);
+  await screen.findByRole('listbox', { name: 'Store plugins' });
+  await act(async () => { fireEvent.click(within(option(/^Particle Storm/)).getByRole('button', { name: 'Install' })); });
+  expect(install).toHaveBeenCalledWith({ id: 'acme.particles', version: '2.0.0', owner: false });
+  expect(usePluginPageStore.getState().pages).toEqual([]);
 });

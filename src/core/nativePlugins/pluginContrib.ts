@@ -82,9 +82,23 @@ export function hasLoadedPlugins(): boolean {
   return plugins.some(loaded);
 }
 
+/**
+ * Every plugin the engine listed, loaded or not — the Plugins sidebar and a
+ * plugin's page read this one list, so an install, rescan or enable / disable
+ * made from either shows in both.
+ */
+export function pluginInfos(): readonly PluginInfo[] {
+  return plugins;
+}
+
 /** The plugin's display name. */
 export function pluginName(id: string): string {
   return plugins.find((p) => p.id === id)?.name || id;
+}
+
+/** The engine's record of a plugin, loaded or not (undefined when the engine does not list it). */
+export function pluginInfo(id: string): PluginInfo | undefined {
+  return plugins.find((p) => p.id === id);
 }
 
 /**

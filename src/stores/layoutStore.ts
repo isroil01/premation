@@ -253,6 +253,15 @@ export interface PanelRegistration {
   title: string;
   /** Optional icon name. */
   icon?: string;
+  /**
+   * A picture for the tab (an installed plugin's own icon, `plugin-ui://…`).
+   * A string draws it before the title; `null` draws the `icon` glyph there
+   * instead (a plugin without a picture); absent — every built-in panel — the
+   * tab is its title alone.
+   */
+  iconUrl?: string | null;
+  /** The panel's row in the dock's Open Panel lists, when it differs from `title` ("Atelier: Palettes"). */
+  menuTitle?: string;
   /** Default size contribution inside its region. */
   weight?: number;
   /** Whether the panel may be closed by the user. */
@@ -302,6 +311,14 @@ export interface WorkspaceLayoutInput {
 interface LayoutActions {
   registerPanel(panel: PanelRegistration): void;
   unregisterPanel(panelId: string): void;
+  /**
+   * Unregister a panel but keep its place in the dock (its id stays in its
+   * group): the dock draws only registered panels, so the tab goes, and when
+   * the panel registers again it comes back where it was. For a plugin that
+   * was uninstalled or disabled — its tab must not stay as a dead panel, and
+   * reinstalling it must not lose the user's layout.
+   */
+  parkPanel(panelId: string): void;
   openPanel(panelId: string): void;
   closePanel(panelId: string): void;
   togglePanel(panelId: string): void;
@@ -603,6 +620,8 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
           existing.closable = panel.closable;
           existing.title = panel.title;
           existing.icon = panel.icon;
+          existing.iconUrl = panel.iconUrl;
+          existing.menuTitle = panel.menuTitle;
           existing.weight = panel.weight;
           return;
         }
@@ -649,6 +668,19 @@ export const useLayoutStore = create<LayoutStore & LayoutActions>()(
         }
         const side = sideOfRegion(p.region);
         if (side) syncSide(s, side);
+        getEventBus().emit('PanelClosed', { panelId });
+      }),
+
+    parkPanel: (panelId) =>
+      set((s) => {
+        if (!s.panels[panelId]) return;
+        delete s.panels[panelId];
+        s.externalPanels = s.externalPanels.filter((id) => id !== panelId);
+        // Membership (panelOrder, its group) is left alone: that is the place it returns to.
+        for (const side of DOCK_SIDES) {
+          if (s.activePanelByRegion[side] === panelId) delete s.activePanelByRegion[side];
+          syncSide(s, side);
+        }
         getEventBus().emit('PanelClosed', { panelId });
       }),
 

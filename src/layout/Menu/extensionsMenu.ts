@@ -14,7 +14,8 @@
  * (nativeMenuTemplate.ts drops an entry with nothing to run).
  */
 
-import { pluginPanels } from '@core/nativePlugins/pluginContrib';
+import { pluginInfo, pluginPanels } from '@core/nativePlugins/pluginContrib';
+import { pluginPanelMenuTitle } from '@layout/Plugins/pluginDockRules';
 import { useLayoutStore } from '@stores/layoutStore';
 import type { MenuItemModel } from './menuModel';
 
@@ -40,7 +41,8 @@ export function buildExtensionsMenuItems(): MenuItemModel[] {
   } else {
     for (const p of panels) {
       items.push({
-        label: p.kind === 'effect' || p.panel.name === p.pluginName ? p.pluginName : `${p.pluginName}: ${p.panel.name}`,
+        // The same name the dock's tab and Open Panel rows use (pluginDockRules.ts).
+        label: pluginPanelMenuTitle(p, pluginInfo(p.plugin)),
         checked: () => isPanelDocked(p.panelId),
         onSelect: () => useLayoutStore.getState().openPanel(p.panelId),
       });

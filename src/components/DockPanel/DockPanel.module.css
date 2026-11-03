@@ -261,6 +261,24 @@
   white-space: nowrap;
 }
 
+/* An installed plugin's own icon before its tab title (built-in tabs have none). */
+.tabIcon {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-right: var(--space-2);
+  border-radius: var(--radius-xs);
+  object-fit: contain;
+  color: var(--color-text-secondary);
+}
+
+/* The same icon in the "+" / Open Panel rows. */
+.menuRowWithIcon {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
 /* The panel's subject after its title ("Properties: Logo") — quieter than the title. */
 .tabDetail {
   color: var(--color-text-secondary);
