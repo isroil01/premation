@@ -1547,6 +1547,7 @@ struct RenderDeformedMesh;
 struct RenderGenerator;
 struct RenderMeshRange;
 struct RenderPbrMaps;
+struct RenderMeshMaterial;
 struct RenderExtrudedMesh;
 struct RenderShade3D;
 struct RenderThreeD;
@@ -6606,6 +6607,12 @@ struct RenderPbrMaps {
   bool operator==(const RenderPbrMaps&) const = default;
 };
 
+struct RenderMeshMaterial {
+  std::string wgsl;
+  std::vector<double> params;
+  bool operator==(const RenderMeshMaterial&) const = default;
+};
+
 struct RenderExtrudedMesh {
   std::string key;
   std::vector<std::uint8_t> vertices;
@@ -6617,6 +6624,7 @@ struct RenderExtrudedMesh {
   double surface_width = 0.0;
   double surface_height = 0.0;
   std::vector<std::uint8_t> colors;
+  std::optional<RenderMeshMaterial> material;
   bool operator==(const RenderExtrudedMesh&) const = default;
 };
 
@@ -8069,6 +8077,8 @@ void encode(wire::Writer& w, const RenderMeshRange& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, RenderMeshRange& out);
 void encode(wire::Writer& w, const RenderPbrMaps& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, RenderPbrMaps& out);
+void encode(wire::Writer& w, const RenderMeshMaterial& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, RenderMeshMaterial& out);
 void encode(wire::Writer& w, const RenderExtrudedMesh& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, RenderExtrudedMesh& out);
 void encode(wire::Writer& w, const RenderShade3D& v);

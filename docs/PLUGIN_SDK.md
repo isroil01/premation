@@ -1209,13 +1209,41 @@ call `scene_add_mesh` (a `PrSceneMesh`) and `scene_add_light` (a `PrLight`).
 - **Motion blur.** A mesh moves rigidly with its layer, so under comp
   motion blur it gets the layer's shutter samples: there is nothing to
   provide.
-- **Limits.** This works only on a 3D layer of the composition itself; a 2D
-  or nested layer reports it on `layerErrors`. A mesh that deforms within a
-  frame is not motion-blurred by its own motion, and custom shading (a
-  plugin WGSL material) is not in yet.
+- **Custom shading.** A material may carry a WGSL function and up to 16
+  floats (`PrSceneMaterial.shader_wgsl`, `shader_params`,
+  `shader_param_count`). The host links it into its own 3D shader:
 
-The `meshgen` sample (Mesh Cube) adds a lit cube and a point light.
-`engine_plugins_scene_tests [scene3d]` checks where they land in the frame.
+  ```wgsl
+  // declared by the host:
+  struct PremationMaterialIn {
+    world : vec3<f32>, normal : vec3<f32>, uv : vec2<f32>,
+    color : vec4<f32>,                  // base colour x vertex colour
+    params : array<vec4<f32>, 4>,       // your 16 floats
+  };
+  struct PremationMaterialOut { base : vec3<f32>, alpha : f32, normal : vec3<f32>, emissive : vec3<f32> };
+  // yours:
+  fn premation_material(m : PremationMaterialIn) -> PremationMaterialOut { ... }
+  ```
+
+  The host lights `base` with the comp's lights and shadows and adds
+  `emissive`. The source may not declare bindings, entry points or
+  `enable` / `requires` / `diagnostic` directives. Each distinct source is
+  compiled once, so keep it fixed and animate through the params. A source
+  that is refused or does not compile draws the standard material, and the
+  layer reports why on `layerErrors`.
+- **Limits.** Geometry is placed only on a 3D layer of the composition
+  itself. An instance on a 2D or nested layer is still asked: if it adds
+  nothing, nothing is reported, and if it adds geometry, `layerErrors` says
+  it cannot be placed. A mesh that deforms within a frame is not
+  motion-blurred by its own motion.
+
+The `meshgen` sample (Mesh Cube) adds a lit cube and a point light; its
+Material popup has Stripes (a material function) and Broken (test). The
+`model3d` sample's Render Mode ▸ In the Comp's 3D Scene hands its glTF model
+to the host instead of rendering its own world: it intersects, shadows and is
+shadowed by the comp's 3D layers (golden `plugin-model3d-scene`).
+`engine_plugins_scene_tests [scene3d]` and `engine_plugins_gpu_tests
+[scene3d]` cover them.
 
 ## OpenFX plugins (SDK 1.4)
 

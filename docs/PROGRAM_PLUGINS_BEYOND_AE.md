@@ -90,25 +90,25 @@ as 1.4 additions if they can stay appended, otherwise they wait for **2.0**
 
 ### D — plugins inside the 3D scene (needs Q1)
 
-- [~] D1 **Contribute selector.** `PR_SEL_SCENE_CONTRIBUTE` (layer types and
+- [x] D1 **Contribute selector.** `PR_SEL_SCENE_CONTRIBUTE` (layer types and
   3D effects): the plugin hands the host meshes (positions, normals, UVs,
   indices; GPU buffers or CPU arrays), PBR materials using the engine's
   material model, and lights. The host owns drawing them in the 3D pass
   (`scene/frame_build.cpp`, `lights3d.cpp`): they cast and receive shadows,
   depth-sort and intersect with native 3D layers, get DOF and motion blur.
-  *Status 2026-11-04: PR_CMD_SCENE_CONTRIBUTE (`meshgen` sample), scene_add_mesh / scene_add_light, meshes on the extruded-mesh 3D path; top-level 3D layers only; GPU drawing not checked by a golden yet.*
+  *Status 2026-11-04: PR_CMD_SCENE_CONTRIBUTE (`meshgen`, `model3d`), scene_add_mesh / scene_add_light, meshes on the extruded-mesh 3D path; top-level 3D layers only (an instance elsewhere that adds geometry is reported; one that adds nothing is silent); drawn on the GPU in the D4 golden.*
 - [x] D2 **Motion vectors.** The plugin gives the previous-sample transform
   per mesh (or the host checks out the contribution at shutter samples via
   `checkout_time`) so comp motion blur is exact.
   *Status 2026-11-04: contributed meshes ride their layer's motion samples (model = S·F⁻¹·frame model per shutter sample), so comp motion blur blurs them with the layer; test "[scene3d]" D2.*
-- [ ] D3 **Custom shading (opt-in).** A plugin may supply a WGSL material
+- [x] D3 **Custom shading (opt-in).** A plugin may supply a WGSL material
   function the host links into its forward pass, inside the GPU error scope;
   on failure the mesh draws with a default material and `layerErrors`.
-  *Status 2026-11-04: open: needs a WGSL material hook in the 3D forward pass (renderer work, not started).*
-- [ ] D4 **Proof: `model3d` moves from "renders its own world" to D1**, and
+  *Status 2026-11-04: PrSceneMaterial.shader_wgsl / shader_params: a `premation_material(in) -> out` function linked into a copy of the solid mesh shader (params in the uniform rows that shader never reads), lit by the comp's lights and shadows. Refused before linking if it declares bindings, entry points or directives; a compile failure (pipeline_error) draws the standard material, is remembered by hash, and the next frame build reports it on layerErrors. Mesh Cube ▸ Material ▸ Stripes / Broken (test). Tests "[gpu][scene3d]" and "[finish][scene3d]" D3.*
+- [x] D4 **Proof: `model3d` moves from "renders its own world" to D1**, and
   a golden scene where a model shadows a native 3D text layer and is
   intersected by it.
-  *Status 2026-11-04: open: `meshgen` (Mesh Cube) is the proof sample; `model3d` still renders its own world; no golden of a model shadowing 3D text yet.*
+  *Status 2026-11-04: `model3d` Render Mode ▸ In the Comp's 3D Scene hands its glTF triangles and material to the host (Base Color Map / Texture Layer stay with its own render modes). Golden `plugin-model3d-scene`: the box at the depth of extruded 3D text, intersecting it, shadowing it and the floor under a shadow-mapped spot (reference blessed from this build, re-rendered identical). Test "[finish][scene3d]" D4.*
 
 ### T — simulations and their cache
 

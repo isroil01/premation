@@ -304,6 +304,9 @@ class Device {
   /// with the layout its manifest implies (CompositionPass pluginMaterial).
   /// Memoised by name + layout; the returned Mat is only valid on this device.
   Mat dynamic_material(std::string_view name, std::string_view wgsl, std::span<const LayoutEntry> layout);
+  /// SDK 1.4 (D3): runtime WGSL with `like`'s bindings, vertex buffers and depth state (a plugin
+  /// material linked into a built-in mesh shader). Keyed by `name`: the same name is the same material.
+  Mat dynamic_material_like(std::string_view name, std::string_view wgsl, Mat like);
   [[nodiscard]] const MaterialDesc& material_of(Mat m) const;
 
   [[nodiscard]] DeviceStats stats() const;

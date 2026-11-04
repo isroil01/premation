@@ -32034,6 +32034,37 @@ Status decode(wire::Reader& r, RenderPbrMaps& out) {
   return Status::ok;
 }
 
+void encode(wire::Writer& w, const RenderMeshMaterial& v) {
+  w.varint(10U); w.str(v.wgsl);
+  if (!v.params.empty()) { w.varint(18U); const std::size_t s = w.begin_ld(); for (const auto& e : v.params) w.f64(e); w.end_ld(s); }
+}
+
+Status decode(wire::Reader& r, RenderMeshMaterial& out) {
+  bool has_wgsl = false;
+  while (!r.at_end()) {
+    std::uint64_t key = 0;
+    if (!r.varint(key)) return Status::truncated;
+    switch (key) {
+      case 10U: {
+        if (!r.str(out.wgsl)) return Status::truncated;
+        has_wgsl = true;
+        break;
+      }
+      case 18U: {
+        wire::Reader sub;
+        if (!r.ld(sub)) return Status::truncated;
+        while (!sub.at_end()) { double e = 0.0; if (!sub.f64(e)) return Status::truncated; out.params.push_back(e); }
+        break;
+      }
+      default:
+        if (!r.skip(key)) return Status::truncated;
+        break;
+    }
+  }
+  if (!has_wgsl) return Status::missing_field;
+  return Status::ok;
+}
+
 void encode(wire::Writer& w, const RenderExtrudedMesh& v) {
   w.varint(10U); w.str(v.key);
   w.varint(18U); w.bytes(v.vertices);
@@ -32045,6 +32076,7 @@ void encode(wire::Writer& w, const RenderExtrudedMesh& v) {
   w.varint(65U); w.f64(v.surface_width);
   w.varint(73U); w.f64(v.surface_height);
   w.varint(82U); w.bytes(v.colors);
+  if (v.material.has_value()) { w.varint(90U); { const std::size_t s = w.begin_ld(); encode(w, *v.material); w.end_ld(s); } }
 }
 
 Status decode(wire::Reader& r, RenderExtrudedMesh& out) {
@@ -32109,6 +32141,12 @@ Status decode(wire::Reader& r, RenderExtrudedMesh& out) {
       case 82U: {
         if (!r.bytes(out.colors)) return Status::truncated;
         has_colors = true;
+        break;
+      }
+      case 90U: {
+        RenderMeshMaterial e;
+        { wire::Reader sub; if (!r.ld(sub)) return Status::truncated; if (const Status st = decode(sub, e); st != Status::ok) return st; }
+        out.material = std::move(e);
         break;
       }
       default:
@@ -34223,7 +34261,7 @@ Status roundtrip(std::span<const std::uint8_t> bytes, std::vector<std::uint8_t>&
   out = w.take();
   return Status::ok;
 }
-constexpr std::array<std::string_view, 588> kNames = {
+constexpr std::array<std::string_view, 589> kNames = {
     "Empty",
     "Vec2",
     "Vec3",
@@ -34776,6 +34814,7 @@ constexpr std::array<std::string_view, 588> kNames = {
     "RenderMeshRange",
     "RenderPbrMaps",
     "RenderExtrudedMesh",
+    "RenderMeshMaterial",
     "RenderShade3D",
     "RenderThreeD",
     "RenderDof",
@@ -35370,6 +35409,7 @@ Status roundtrip_by_name(std::string_view type, std::span<const std::uint8_t> by
   if (type == "RenderMeshRange") return roundtrip<RenderMeshRange>(bytes, out);
   if (type == "RenderPbrMaps") return roundtrip<RenderPbrMaps>(bytes, out);
   if (type == "RenderExtrudedMesh") return roundtrip<RenderExtrudedMesh>(bytes, out);
+  if (type == "RenderMeshMaterial") return roundtrip<RenderMeshMaterial>(bytes, out);
   if (type == "RenderShade3D") return roundtrip<RenderShade3D>(bytes, out);
   if (type == "RenderThreeD") return roundtrip<RenderThreeD>(bytes, out);
   if (type == "RenderDof") return roundtrip<RenderDof>(bytes, out);

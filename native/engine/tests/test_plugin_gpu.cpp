@@ -37,6 +37,7 @@
 #include "premation/protocol/wire.hpp"
 #include "render_glue.hpp"
 #include "scene_renderer.hpp"
+#include "threed.hpp"
 #include "transform.hpp"
 
 namespace pl = premation::plugins;
@@ -668,6 +669,50 @@ api::RenderFrameFile depth_frame(std::vector<api::Renderable> solids, const std:
 
 const float* px_at(const Rendered& r, std::uint32_t x, std::uint32_t y) { return &r.scene[(std::size_t{y} * kDW + x) * 4]; }
 
+/// SDK 1.4 (D3): a comp-sized 3D mesh quad (an extruded mesh, unlit) in `c`, with a plugin material.
+api::Renderable mesh_quad(const char* id, const std::string& wgsl, std::vector<double> params, api::Color c = {0.8, 0.2, 0.2, 1}) {
+  api::Renderable r;
+  r.id = id;
+  r.kind = api::RenderableKind::rect;
+  r.model_matrix = {static_cast<double>(kDW), 0, 0, 0, static_cast<double>(kDH), 0, 0, 0, 1};
+  r.bounds = {0, 0, static_cast<double>(kDW), static_cast<double>(kDH)};
+  r.opacity = 1;
+  r.color = api::Color{1, 1, 1, 1};
+  const std::array<std::array<float, 8>, 4> v{{{0, 0, 0, 0, 0, -1, 0, 0},
+                                               {static_cast<float>(kDW), 0, 0, 0, 0, -1, 1, 0},
+                                               {static_cast<float>(kDW), static_cast<float>(kDH), 0, 0, 0, -1, 1, 1},
+                                               {0, static_cast<float>(kDH), 0, 0, 0, -1, 0, 1}}};
+  const std::array<std::uint32_t, 6> idx{0, 1, 2, 0, 2, 3};
+  api::RenderExtrudedMesh m;
+  m.key = std::string(id) + "#quad";
+  m.vertices.resize(sizeof v);
+  std::memcpy(m.vertices.data(), v.data(), sizeof v);
+  m.indices.resize(sizeof idx);
+  std::memcpy(m.indices.data(), idx.data(), sizeof idx);
+  m.index_format = api::RenderIndexFormat::uint32;
+  api::RenderMeshRange range;
+  range.role = api::RenderMeshRole::front;
+  range.first = 0;
+  range.count = 6;
+  range.color = c;
+  range.gain = 1;
+  m.ranges.push_back(range);
+  m.surface = api::RenderMeshSurface::uv;
+  m.surface_width = 1;
+  m.surface_height = 1;
+  if (!wgsl.empty()) {
+    api::RenderMeshMaterial mat;
+    mat.wgsl = wgsl;
+    mat.params = std::move(params);
+    m.material = std::move(mat);
+  }
+  r.extruded_mesh = std::move(m);
+  api::RenderThreeD t;
+  t.model = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+  r.three_d = t;
+  return r;
+}
+
 }  // namespace
 
 TEST_CASE("plugin GPU (SDK 1.2 S6): the scene depth holds each 3D layer's camera-space z, +inf where empty", "[plugins][gpu][sdk12]") {
@@ -1048,4 +1093,55 @@ TEST_CASE("plugin GPU (SDK 1.2 S6): a collapsed precomp's 3D layer occludes each
     CHECK(c[0] > 0.05F);
   }
   glue.set_gpu_enabled(true);
+}
+
+TEST_CASE("plugin GPU (SDK 1.4 D3): a plugin material is linked into the 3D shader; one that fails draws standard", "[plugins][gpu][scene3d]") {
+  auto r = renderer_or_skip();
+  if (!r) return;
+  if (!r->supports_float32()) return;
+  // Bands of the inverted colour, params[0].x across the diagonal.
+  const std::string stripes = R"(
+fn premation_material(m : PremationMaterialIn) -> PremationMaterialOut {
+  var o : PremationMaterialOut;
+  let band = step(0.5, fract((m.uv.x + m.uv.y) * m.params[0].x * 0.5));
+  o.base = mix(m.color.rgb, vec3<f32>(1.0) - m.color.rgb, band);
+  o.alpha = m.color.a;
+  o.normal = m.normal;
+  o.emissive = vec3<f32>(0.0);
+  return o;
+}
+)";
+  const auto inverted = [](const Rendered& o) {
+    std::size_t n = 0;
+    for (std::size_t i = 0; i < o.scene.size(); i += 4) n += o.scene[i + 1] > o.scene[i] + 0.2F ? 1 : 0;
+    return n;
+  };
+  const Rendered standard = render(*r, depth_frame({mesh_quad("q", "", {})}, {}));
+  CHECK(inverted(standard) == 0);
+  const Rendered striped = render(*r, depth_frame({mesh_quad("q", stripes, {4, 0})}, {}));
+  for (const auto& dg : striped.stats.diagnostics) std::printf("[diag] %s: %s\n", dg.code.c_str(), dg.detail.c_str());
+  CHECK_FALSE(has_diag(striped.stats, "plugin-material"));
+  const std::size_t bands = inverted(striped);
+  INFO("inverted px " << bands << " of " << kDW * kDH);
+  CHECK(bands > (kDW * kDH) / 4);
+  CHECK(bands < (kDW * kDH) * 3 / 4);
+  // The params reach the function: more stripes, another picture.
+  const Rendered denser = render(*r, depth_frame({mesh_quad("q", stripes, {12, 0})}, {}));
+  CHECK(max_diff(denser.scene, striped.scene) > 0.3F);
+
+  // A source that does not compile: the standard material, a diagnostic once, remembered by hash.
+  const std::string broken = "fn premation_material(m : PremationMaterialIn) -> PremationMaterialOut { return nope(m); }";
+  const Rendered bad = render(*r, depth_frame({mesh_quad("q", broken, {})}, {}));
+  CHECK(has_diag(bad.stats, "plugin-material"));
+  CHECK(max_diff(bad.scene, standard.scene) < 1e-4F);
+  CHECK(rg::plugin_material_error(rg::plugin_material_hash(broken)).has_value());
+  const Rendered again = render(*r, depth_frame({mesh_quad("q", broken, {})}, {}));
+  CHECK_FALSE(has_diag(again.stats, "plugin-material"));
+  CHECK(max_diff(again.scene, standard.scene) < 1e-4F);
+  // One that reaches for a binding is refused before linking.
+  const std::string grabby = "@group(0) @binding(30) var<uniform> x : vec4<f32>;\n" + stripes;
+  CHECK_FALSE(rg::plugin_material_refusal(grabby).empty());
+  const Rendered refused = render(*r, depth_frame({mesh_quad("q", grabby, {4, 0})}, {}));
+  CHECK(has_diag(refused.stats, "plugin-material"));
+  CHECK(max_diff(refused.scene, standard.scene) < 1e-4F);
 }

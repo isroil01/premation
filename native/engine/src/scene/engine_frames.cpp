@@ -979,6 +979,15 @@ class ViewportDrawer final : public render::BuiltFrameDrawer {
       gpuErrorStreak_ = 0;
     }
     note_fx_skips(st);
+    // SDK 1.4 (D3): a plugin material that just failed to compile drew standard; the next build
+    // reports it on layerErrors, so this frame is not final.
+    for (const auto& d : st.diagnostics) {
+      if (d.code != "plugin-material") continue;
+      exact_ = false;
+      if (reported_.insert("pmat|" + d.detail.substr(0, 200)).second) {
+        PREMATION_LOG(warn, "plugin_material_failed").kv("detail", d.detail);
+      }
+    }
     return ok;
   }
 

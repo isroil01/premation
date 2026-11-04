@@ -127,6 +127,9 @@ struct ContribMesh {
   std::array<double, 4> color{1, 1, 1, 1};
   double metallic = 0, roughness = 0.5;
   bool castsShadows = true, acceptsShadows = true;
+  /// SDK 1.4 (D3): the plugin's material function ("" = standard) and its params (<= 16).
+  std::string materialWgsl;
+  std::vector<float> materialParams;
 };
 
 /// SDK 1.4 (D): a light an effect added (layer px).

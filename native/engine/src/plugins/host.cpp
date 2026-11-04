@@ -1241,7 +1241,9 @@ PrErr PR_CALL cb_read_channel(PrHost* h, const char* name, double* out, std::uin
 // SDK 1.4 (D): geometry and lights for the comp's 3D scene.
 PrErr PR_CALL cb_scene_add_mesh(PrHost* h, const PrSceneMesh* m) {
   if (h == nullptr || h->cmd != PR_CMD_SCENE_CONTRIBUTE || h->meshes == nullptr) return PR_ERR_INVALID_CALLBACK;
-  if (m == nullptr || m->struct_size < sizeof(PrSceneMesh) || m->positions == nullptr || m->indices == nullptr) return PR_ERR_INVALID_PARAM;
+  // The 1.4 D1 struct ends at the material's shadow switches; D3's material fields are appended.
+  constexpr std::size_t kMeshD1 = offsetof(PrSceneMesh, material) + offsetof(PrSceneMaterial, shader_wgsl);
+  if (m == nullptr || m->struct_size < kMeshD1 || m->positions == nullptr || m->indices == nullptr) return PR_ERR_INVALID_PARAM;
   if (m->vertex_count == 0 || m->vertex_count > PR_MAX_SCENE_VERTICES || m->index_count == 0 || m->index_count % 3 != 0 ||
       m->index_count > 3 * PR_MAX_SCENE_VERTICES || h->meshes->size() >= PR_MAX_SCENE_MESHES) {
     return PR_ERR_INVALID_PARAM;
@@ -1272,12 +1274,23 @@ PrErr PR_CALL cb_scene_add_mesh(PrHost* h, const PrSceneMesh* m) {
   if (m->uvs != nullptr) c.uvs.assign(m->uvs, m->uvs + (2 * n));  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
   else c.uvs.assign(2 * n, 0.0F);
   std::ranges::copy(m->transform, c.transform.begin());
-  if (m->material.struct_size >= sizeof(PrSceneMaterial)) {
+  if (m->material.struct_size >= offsetof(PrSceneMaterial, shader_wgsl)) {
     std::ranges::copy(m->material.base_color, c.color.begin());
     c.metallic = std::clamp(m->material.metallic, 0.0, 1.0);
     c.roughness = std::clamp(m->material.roughness, 0.0, 1.0);
     c.castsShadows = m->material.casts_shadows != 0;
     c.acceptsShadows = m->material.accepts_shadows != 0;
+  }
+  if (m->struct_size >= sizeof(PrSceneMesh) && m->material.struct_size >= sizeof(PrSceneMaterial) && m->material.shader_wgsl != nullptr) {
+    // SDK 1.4 (D3): checked again (rules, compile) where it is linked; here only bounded.
+    constexpr std::size_t kMaxWgsl = 64 * 1024;
+    const std::size_t len = strnlen(m->material.shader_wgsl, kMaxWgsl + 1);
+    if (len > kMaxWgsl || m->material.shader_param_count > 16 || (m->material.shader_param_count > 0 && m->material.shader_params == nullptr)) {
+      return PR_ERR_INVALID_PARAM;
+    }
+    c.materialWgsl.assign(m->material.shader_wgsl, len);
+    c.materialParams.assign(m->material.shader_params, m->material.shader_params + m->material.shader_param_count);  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+    if (!std::ranges::all_of(c.materialParams, [](float v) { return std::isfinite(v); })) return PR_ERR_INVALID_PARAM;
   }
   h->meshes->push_back(std::move(c));
   return PR_ERR_NONE;

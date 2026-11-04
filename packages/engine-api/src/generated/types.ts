@@ -5577,6 +5577,14 @@ export interface RenderExtrudedMesh {
    * colour; empty = white.
    */
   colors: Uint8Array;
+  /** SDK 1.4 (D3): a plugin's material function, linked into the solid mesh shader (drawn standard when it fails). */
+  material?: RenderMeshMaterial;
+}
+
+/** SDK 1.4 (D3): WGSL defining `premation_material` (pr_scene.h) and its 16 params. */
+export interface RenderMeshMaterial {
+  wgsl: string;
+  params: number[];
 }
 
 export interface RenderShade3D {

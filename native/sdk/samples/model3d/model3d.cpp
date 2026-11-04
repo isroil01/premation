@@ -90,7 +90,10 @@ enum : uint32_t {
   kMaterialGroup = 20,
   kMaterialGroupEnd = 21,
 };
-enum : int { kModeShaded = 1, kModeSceneDepth = 2 };
+// kModeInScene (SDK 1.4, D4): the model is geometry of the comp's own 3D render (SCENE_CONTRIBUTE):
+// lit by its lights, shadowing and shadowed by its 3D layers, intersecting them, in the camera's depth
+// of field and motion blur. The effect's own output is then empty.
+enum : int { kModeShaded = 1, kModeSceneDepth = 2, kModeInScene = 3 };
 constexpr uint32_t kLayerCheckout = 1;  // checkout id of the Texture Layer
 constexpr uint32_t kPositionHandle = 1;
 constexpr int32_t kMaxShutter = 16;
@@ -503,6 +506,12 @@ PrErr cpu_render(const PrInData* in, PrOutData* out, PrParamDef* const* params) 
   }
   const int32_t W = dst->width;
   const int32_t H = dst->height;
+  if (mode == kModeInScene) {  // D4: the host draws the model in the comp's 3D scene
+    auto row = [&](int32_t y) {
+      for (int32_t x = 0; x < W; ++x) prs::write(*dst, x, y, prs::Px{});
+    };
+    return prs::for_rows(in, H, row);
+  }
   if (mode == kModeSceneDepth) {
     auto row = [&](int32_t y) {
       for (int32_t x = 0; x < W; ++x) {
@@ -1112,6 +1121,7 @@ PrErr gpu_render(const PrInData* in, PrOutData* out, PrParamDef* const* params, 
 
   std::vector<Sample> samples;
   if (PrErr e = scene_samples(in, params, *model, samples); e != PR_ERR_NONE) return e;
+  if (mode == kModeInScene) samples.clear();  // D4: the host draws it in the comp's 3D scene; a clear output here
   const std::vector<Light> lights = comp_lights(in);
   const Material mat = material_of(in, params);
   WGPUTextureView baseView = g->whiteView;
@@ -1255,9 +1265,63 @@ PrErr params_setup(const PrInData* in) {
   if (e == PR_ERR_NONE) e = prs::add_simple(in, PR_PARAM_GROUP_END, kMaterialGroupEnd, "", {});
   if (e == PR_ERR_NONE) e = prs::add_simple(in, PR_PARAM_CHECKBOX, kSceneDepth, "Composite with Scene Depth", {0, 0, 0, 0});
   if (e == PR_ERR_NONE) e = prs::add_simple(in, PR_PARAM_CHECKBOX, kBlur, "Motion Blur", {1, 0, 0, 0});
-  if (e == PR_ERR_NONE) e = prs::add_simple(in, PR_PARAM_POPUP, kRenderMode, "Render Mode", {kModeShaded, 0, 0, 0}, 0, "Shaded|Scene Depth");
+  if (e == PR_ERR_NONE) {
+    e = prs::add_simple(in, PR_PARAM_POPUP, kRenderMode, "Render Mode", {kModeShaded, 0, 0, 0}, 0, "Shaded|Scene Depth|In the Comp's 3D Scene");
+  }
   if (e == PR_ERR_NONE) e = prs::add_fault_params(in);
   return e;
+}
+
+/// D4 — In the Comp's 3D Scene (PR_CMD_SCENE_CONTRIBUTE): the model's triangles and material, in the
+/// layer's px at Position (the layer's own 3D transform places that in the comp). The host draws them on its 3D path. Base Color Map / Texture Layer are not carried there.
+PrErr contribute(const PrInData* in, PrParamDef* const* params) {
+  if (static_cast<int>(prs::num(params, in, kRenderMode, 0, kModeShaded)) != kModeInScene) return PR_ERR_NONE;
+  if (in->host->struct_size < offsetof(PrHostSuite, scene_add_mesh) + sizeof(void*)) return PR_ERR_BAD_VERSION;
+  uint64_t key = 0;
+  std::string why;
+  const std::shared_ptr<const gltf_lite::Model> model = load_model(in, params, key, why);
+  if (!model) return PR_ERR_NOT_FOUND;
+  if (model->vertices.empty() || model->indices.empty() || model->vertices.size() > PR_MAX_SCENE_VERTICES) return PR_ERR_INVALID_PARAM;
+  const double ext = std::max({static_cast<double>(model->hi[0] - model->lo[0]), static_cast<double>(model->hi[1] - model->lo[1]),
+                               static_cast<double>(model->hi[2] - model->lo[2]), 1e-9});
+  const double s = std::max(0.0, prs::num(params, in, kSize)) / ext;
+  const M4 local = mul(scale(s, -s, -s), translate(-0.5 * (model->lo[0] + model->hi[0]), -0.5 * (model->lo[1] + model->hi[1]),
+                                                   -0.5 * (model->lo[2] + model->hi[2])));
+  const M4 r = mul(rot(2, prs::num(params, in, kOrientZ)), mul(rot(1, prs::num(params, in, kOrientY)), rot(0, prs::num(params, in, kOrientX))));
+  // Position is a point param in layer px (the host defaults it to the layer's centre).
+  const M4 place = mul(translate(prs::num(params, in, kPosition, 0), prs::num(params, in, kPosition, 1), prs::num(params, in, kPosition, 2)),
+                       mul(r, local));
+  const std::size_t n = model->vertices.size();
+  std::vector<float> pos(3 * n);
+  std::vector<float> nrm(3 * n);
+  std::vector<float> uv(2 * n);
+  for (std::size_t i = 0; i < n; ++i) {
+    const gltf_lite::Vertex& v = model->vertices[i];
+    for (std::size_t k = 0; k < 3; ++k) {
+      pos[(3 * i) + k] = v.p.at(k);
+      nrm[(3 * i) + k] = v.n.at(k);
+    }
+    uv[2 * i] = v.uv[0];
+    uv[(2 * i) + 1] = v.uv[1];
+  }
+  PrSceneMesh mesh{};
+  mesh.struct_size = sizeof(PrSceneMesh);
+  mesh.positions = pos.data();
+  mesh.normals = nrm.data();
+  mesh.uvs = uv.data();
+  mesh.vertex_count = static_cast<uint32_t>(n);
+  mesh.indices = model->indices.data();
+  mesh.index_count = static_cast<uint32_t>(model->indices.size());
+  for (std::size_t i = 0; i < 16; ++i) mesh.transform[i] = place.at(i);  // NOLINT(cppcoreguidelines-pro-bounds-constant-array-index)
+  const Material mat = material_of(in, params);
+  mesh.material.struct_size = sizeof(PrSceneMaterial);
+  for (std::size_t k = 0; k < 3; ++k) mesh.material.base_color[k] = mat.base.at(k) * model->baseColor.at(k);  // NOLINT(cppcoreguidelines-pro-bounds-constant-array-index)
+  mesh.material.base_color[3] = model->baseColor[3];
+  mesh.material.metallic = 0;
+  mesh.material.roughness = mat.roughness;
+  mesh.material.casts_shadows = 1;
+  mesh.material.accepts_shadows = 1;
+  return in->host->scene_add_mesh(in->host_ref, &mesh);
 }
 
 PrErr pre_render(const PrInData* in, PrParamDef* const* params) {
@@ -1396,7 +1460,8 @@ PrErr PR_CALL model3d_main(PrCmd cmd, const PrInData* in, PrOutData* out, PrPara
       out->my_version = PR_VERSION(1, 0, 0);
       out->out_flags = PR_OUT_FLAG_DEEP_COLOR_AWARE | PR_OUT_FLAG_FLOAT_COLOR_AWARE | PR_OUT_FLAG_SMART_RENDER | PR_OUT_FLAG_GENERATOR |
                        PR_OUT_FLAG_USES_CAMERA | PR_OUT_FLAG_USES_LIGHTS | PR_OUT_FLAG_USES_LAYER_TRANSFORMS | PR_OUT_FLAG_SAMPLES_TIME |
-                       PR_OUT_FLAG_USES_SHUTTER | PR_OUT_FLAG_COMP_SPACE | PR_OUT_FLAG_USES_SCENE_DEPTH | PR_OUT_FLAG_CUSTOM_OVERLAY
+                       PR_OUT_FLAG_USES_SHUTTER | PR_OUT_FLAG_COMP_SPACE | PR_OUT_FLAG_USES_SCENE_DEPTH | PR_OUT_FLAG_CUSTOM_OVERLAY |
+                       PR_OUT_FLAG_SCENE_CONTRIBUTE  // D4: Render Mode ▸ In the Comp's 3D Scene
 #if defined(PRS_SAMPLE_GPU)
                        | PR_OUT_FLAG_GPU_RENDER
 #endif
@@ -1404,6 +1469,7 @@ PrErr PR_CALL model3d_main(PrCmd cmd, const PrInData* in, PrOutData* out, PrPara
       return PR_ERR_NONE;
     case PR_CMD_PARAMS_SETUP: return params_setup(in);
     case PR_CMD_SMART_PRE_RENDER: return pre_render(in, params);
+    case PR_CMD_SCENE_CONTRIBUTE: return contribute(in, params);
     case PR_CMD_SMART_RENDER: return cpu_render(in, out, params);
 #if defined(PRS_SAMPLE_GPU)
     case PR_CMD_GPU_DEVICE_SETUP: return gpu_setup(in, static_cast<PrGpuDeviceSetupExtra*>(extra));

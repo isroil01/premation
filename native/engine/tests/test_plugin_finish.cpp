@@ -35,12 +35,14 @@
 #include "scene_eval.hpp"
 #include "scene_finish.hpp"
 #include "timeline.hpp"
+#include "../src/render_graph/threed.hpp"  // SDK 1.4 (D3): the material error registry
 
 namespace pl = premation::plugins;
 namespace doc = premation::doc;
 namespace sc = premation::scene;
 namespace api = premation::api;
 namespace fs = std::filesystem;
+namespace rg = premation::rg;
 using premation::js::Json;
 
 namespace {
@@ -1037,5 +1039,117 @@ TEST_CASE("SDK 1.4 C2: a controller's channel drives a simulation, read at each 
     CHECK(early.x == aEarly.x);
     CHECK(early.vx == aEarly.vx);
     CHECK(late.vx != state_at(alone, 2.0).vx);
+  }
+}
+
+TEST_CASE("SDK 1.4 D3: a plugin material reaches the mesh; a refused or failed one draws standard with a layer error", "[plugins][finish][scene3d]") {
+  const auto build = [](int material) {
+    Json document = scene_json("plugin-model3d-occlusion.json");
+    Json* node = find_node(document, "solid");
+    REQUIRE(node != nullptr);
+    for (Json& c : node->find_mut("components")->arr_mut()) {
+      if (c.at("type").str() == "Transform") c.find_mut("props")->set("z", Json::number(0));
+    }
+    Json params = Json::object();
+    params.set("p6", Json::number(material));  // Material: 1 Standard, 2 Stripes, 3 Broken (test)
+    params.set("p7", Json::number(9));         // Stripes
+    Json::Array effects;
+    effects.push_back(effect_json("fx", "com.premation.samples.meshgen", params));
+    fx_props(*node).set("effects", Json::array(std::move(effects)));
+    return document;
+  };
+  const auto mesh_of = [](Fixture& f, std::vector<sc::LayerError>& errors) {
+    const sc::BuildContext ctx{f.d, f.view, *f.env, f.cache, nullptr, {}};
+    const sc::ViewSpec vs = sc::export_view(480, 360, 480, 360);
+    sc::NativeFrame nf = sc::build_native_frame(ctx, "comp_root", 0.5, vs, false);
+    pl::finish_native_frame(ctx, "comp_root", 0.5, vs, false, nf, f.host.get());
+    errors = nf.errors;
+    const api::Renderable* m = pl::find_renderable_in(nf.file.scene.renderables, "solid::plugin-mesh-0");
+    REQUIRE(m != nullptr);
+    REQUIRE(m->extruded_mesh.has_value());
+    return *m->extruded_mesh;
+  };
+  std::vector<sc::LayerError> errors;
+  {
+    Fixture f(build(1));
+    CHECK_FALSE(mesh_of(f, errors).material.has_value());
+  }
+  {
+    Fixture f(build(2));
+    const api::RenderExtrudedMesh m = mesh_of(f, errors);
+    REQUIRE(m.material.has_value());
+    CHECK(m.material->wgsl.find("fn premation_material") != std::string::npos);
+    REQUIRE(m.material->params.size() == 2);
+    CHECK(m.material->params[0] == 9);
+    CHECK(errors.empty());
+  }
+  {
+    // Not yet compiled: linked as given. Once the renderer remembers it failed, the build draws it
+    // standard and the layer says so.
+    Fixture f(build(3));
+    const api::RenderExtrudedMesh first = mesh_of(f, errors);
+    REQUIRE(first.material.has_value());
+    rg::note_plugin_material_error(rg::plugin_material_hash(first.material->wgsl), "unresolved call to 'not_a_function'");
+    const api::RenderExtrudedMesh next = mesh_of(f, errors);
+    CHECK_FALSE(next.material.has_value());
+    REQUIRE(errors.size() == 1);
+    CHECK(errors[0].message.find("3D material") != std::string::npos);
+    CHECK(errors[0].message.find("not_a_function") != std::string::npos);
+  }
+}
+
+TEST_CASE("SDK 1.4 D4: model3d draws in the comp's 3D scene; its 2D modes add nothing and report nothing", "[plugins][finish][scene3d]") {
+  // The D4 golden scene (plugin-model3d-scene) with the built-in cube (no model file here).
+  const auto build = [](int mode, bool threeD) {
+    Json document = scene_json("plugin-model3d-scene.json");
+    Json* m = find_node(document, "m");
+    REQUIRE(m != nullptr);
+    for (Json& c : m->find_mut("components")->arr_mut()) {
+      if (c.at("type").str() == "fx") {
+        Json params = Json::object();
+        params.set("p6", Json::number(130));
+        params.set("p15", Json::number(mode));  // Render Mode: 1 Shaded, 3 In the Comp's 3D Scene
+        c.find_mut("props")->find_mut("effects")->arr_mut()[0].set("params", params);
+      }
+      if (c.at("type").str() == "Transform" && !threeD) c.find_mut("props")->set("z", Json::null());
+    }
+    return document;
+  };
+  const auto run = [](Json document, std::vector<sc::LayerError>& errors) {
+    Fixture f(std::move(document));
+    const sc::BuildContext ctx{f.d, f.view, *f.env, f.cache, nullptr, {}};
+    const sc::ViewSpec vs = sc::export_view(480, 360, 480, 360);
+    sc::NativeFrame nf = sc::build_native_frame(ctx, "comp_root", 0, vs, false);
+    pl::finish_native_frame(ctx, "comp_root", 0, vs, false, nf, f.host.get());
+    errors.clear();
+    for (const sc::LayerError& e : nf.errors) {
+      if (e.stage == "plugin") errors.push_back(e);
+    }
+    const api::Renderable* mesh = pl::find_renderable_in(nf.file.scene.renderables, "m::plugin-mesh-0");
+    return mesh != nullptr ? std::optional<api::Renderable>(*mesh) : std::nullopt;
+  };
+  std::vector<sc::LayerError> errors;
+  {
+    const std::optional<api::Renderable> mesh = run(build(3, true), errors);
+    REQUIRE(mesh.has_value());
+    REQUIRE(mesh->extruded_mesh.has_value());
+    CHECK(mesh->extruded_mesh->indices.size() == std::size_t{36} * 4);  // the cube's 12 triangles, u32
+    REQUIRE(mesh->three_d.has_value());
+    CHECK(mesh->three_d->casts_shadow == std::optional<bool>(true));
+    // At Position (the layer's centre by default): layer px (100, 100) of the 200 px layer at (165, 150).
+    CHECK(std::abs(mesh->three_d->model[12] - 165) < 1e-6);
+    CHECK(std::abs(mesh->three_d->model[13] - 150) < 1e-6);
+    CHECK(errors.empty());
+  }
+  {
+    // Shaded on a 2D layer (the sample's everyday use): asked, adds nothing, says nothing.
+    CHECK_FALSE(run(build(1, false), errors).has_value());
+    CHECK(errors.empty());
+  }
+  {
+    // In the 3D scene on a 2D layer: the geometry cannot be placed, and the layer says so.
+    CHECK_FALSE(run(build(3, false), errors).has_value());
+    REQUIRE(errors.size() == 1);
+    CHECK(errors[0].message.find("only on a 3D layer") != std::string::npos);
   }
 }

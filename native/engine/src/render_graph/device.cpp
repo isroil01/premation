@@ -905,6 +905,23 @@ Mat Device::dynamic_material(std::string_view name, std::string_view wgsl, std::
   return static_cast<Mat>(static_cast<std::size_t>(Mat::Count_) + dynamic_.size() - 1);
 }
 
+Mat Device::dynamic_material_like(std::string_view name, std::string_view wgsl, Mat like) {
+  const std::string key = std::string(name) + "#like";
+  for (std::size_t i = 0; i < dynamic_.size(); ++i) {
+    if (dynamic_[i]->key == key) return static_cast<Mat>(static_cast<std::size_t>(Mat::Count_) + i);
+  }
+  const MaterialDesc base = material_of(like);
+  auto d = std::make_unique<Dynamic>();
+  d->key = key;
+  d->shader = std::string(name);
+  d->layout.assign(base.layout.begin(), base.layout.end());
+  // The vertex layout spans are the built-in table's (static): shared, not copied.
+  d->desc = MaterialDesc{d->key, d->shader, d->layout, base.buffers, base.hasDepth, base.depthTest, base.depthWrite};
+  dynamicWgsl_[d->shader] = std::string(wgsl);
+  dynamic_.push_back(std::move(d));
+  return static_cast<Mat>(static_cast<std::size_t>(Mat::Count_) + dynamic_.size() - 1);
+}
+
 const MaterialDesc& Device::material_of(Mat m) const {
   const auto i = static_cast<std::size_t>(m);
   if (i < static_cast<std::size_t>(Mat::Count_)) return rg::material(m);

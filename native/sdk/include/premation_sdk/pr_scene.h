@@ -101,6 +101,19 @@ typedef struct PrSceneMaterial {
   double roughness;     /* 0..1 */
   int32_t casts_shadows;
   int32_t accepts_shadows;
+  /* ── SDK 1.4 (D3), appended: a custom material (check struct_size >= sizeof(PrSceneMaterial)) ──
+   * `shader_wgsl` (NULL = the standard material): WGSL that defines
+   *     fn premation_material(m : PremationMaterialIn) -> PremationMaterialOut
+   * with the structs the host declares (docs/PLUGIN_SDK.md): in = world position, normal, uv, the
+   * base colour (material colour x vertex colour) and `params` (array<vec4<f32>, 4>, the 16 floats
+   * below, missing ones 0); out = base colour, alpha, normal and emissive. The host lights the result
+   * with the comp's lights and shadows. No bindings, entry points or `enable` directives: the
+   * function is linked into the host's own 3D shader. Keep the source the same from frame to frame
+   * (each distinct source is compiled once) and animate through `shader_params`. A source that does
+   * not compile draws the standard material and reports it on layerErrors. */
+  const char* shader_wgsl;
+  const float* shader_params;
+  uint32_t shader_param_count; /* at most 16 */
 } PrSceneMaterial;
 
 typedef struct PrSceneMesh {

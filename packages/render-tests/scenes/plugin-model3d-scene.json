@@ -1,0 +1,420 @@
+{
+ "version": "1.9.0",
+ "scene": {
+  "version": "1.0.0",
+  "nodes": [
+   {
+    "id": "comp_root",
+    "name": "Composition 1",
+    "parent": null,
+    "children": [
+     "L",
+     "A",
+     "floor",
+     "t",
+     "m",
+     "cam"
+    ],
+    "transform": {
+     "position": {
+      "x": 0,
+      "y": 0
+     },
+     "rotation": 0,
+     "scale": {
+      "x": 1,
+      "y": 1
+     }
+    },
+    "visible": true,
+    "locked": false,
+    "components": [
+     {
+      "id": "comp_root_meta",
+      "type": "group",
+      "props": {
+       "__kind": "group"
+      }
+     }
+    ]
+   },
+   {
+    "id": "L",
+    "name": "L",
+    "children": [],
+    "parent": "comp_root",
+    "transform": {
+     "position": {
+      "x": 40,
+      "y": 20
+     },
+     "rotation": 0,
+     "scale": {
+      "x": 1,
+      "y": 1
+     }
+    },
+    "components": [
+     {
+      "id": "L_t",
+      "type": "Transform",
+      "props": {
+       "__kind": "light",
+       "x": 40,
+       "y": 20,
+       "rotation": 0,
+       "lightGlow": false,
+       "z": -330,
+       "intensity": 95,
+       "lightType": "spot",
+       "lightCone": 110,
+       "radius": 2000,
+       "poiX": 250,
+       "poiY": 190,
+       "poiZ": 0,
+       "castShadows": true,
+       "shadowDiffusion": 0,
+       "shadowDarkness": 75,
+       "shadowMap": true
+      }
+     },
+     {
+      "id": "L_s",
+      "type": "Style",
+      "props": {
+       "opacity": 100,
+       "fill": "#ffffff"
+      }
+     }
+    ],
+    "visible": true,
+    "locked": false
+   },
+   {
+    "id": "A",
+    "name": "A",
+    "children": [],
+    "parent": "comp_root",
+    "transform": {
+     "position": {
+      "x": 240,
+      "y": 180
+     },
+     "rotation": 0,
+     "scale": {
+      "x": 1,
+      "y": 1
+     }
+    },
+    "components": [
+     {
+      "id": "A_t",
+      "type": "Transform",
+      "props": {
+       "__kind": "light",
+       "x": 240,
+       "y": 180,
+       "rotation": 0,
+       "lightType": "ambient",
+       "intensity": 22
+      }
+     },
+     {
+      "id": "A_s",
+      "type": "Style",
+      "props": {
+       "opacity": 100,
+       "fill": "#ffffff"
+      }
+     }
+    ],
+    "visible": true,
+    "locked": false
+   },
+   {
+    "id": "floor",
+    "name": "floor",
+    "children": [],
+    "parent": "comp_root",
+    "transform": {
+     "position": {
+      "x": 240,
+      "y": 180
+     },
+     "rotation": 0,
+     "scale": {
+      "x": 1,
+      "y": 1
+     }
+    },
+    "components": [
+     {
+      "id": "floor_t",
+      "type": "Transform",
+      "props": {
+       "__kind": "shape",
+       "x": 240,
+       "y": 180,
+       "rotation": 0,
+       "width": 900,
+       "height": 700,
+       "shapeType": "rect",
+       "z": 160,
+       "castsShadows": false,
+       "acceptsShadows": true,
+       "acceptsLights": true,
+       "diffuse": 100
+      }
+     },
+     {
+      "id": "floor_s",
+      "type": "Style",
+      "props": {
+       "opacity": 100,
+       "fill": "#7d8494"
+      }
+     }
+    ],
+    "visible": true,
+    "locked": false
+   },
+   {
+    "id": "t",
+    "name": "t",
+    "children": [],
+    "parent": "comp_root",
+    "transform": {
+     "position": {
+      "x": 270,
+      "y": 200
+     },
+     "rotation": 0,
+     "scale": {
+      "x": 1,
+      "y": 1
+     }
+    },
+    "components": [
+     {
+      "id": "t_t",
+      "type": "Transform",
+      "props": {
+       "__kind": "text",
+       "x": 270,
+       "y": 200,
+       "rotation": 0,
+       "extrusionDepth": 70,
+       "bevelDepth": 0,
+       "rotationY": -18,
+       "rotationX": 0,
+       "z": 0,
+       "acceptsLights": true,
+       "castsShadows": true,
+       "acceptsShadows": true
+      }
+     },
+     {
+      "id": "t_text",
+      "type": "Text",
+      "props": {
+       "content": "DEPTH",
+       "fontSize": 110,
+       "fontWeight": 700,
+       "opacity": 100,
+       "fontFamily": "Arial",
+       "align": "center",
+       "fill": "#8fb8ff"
+      }
+     }
+    ],
+    "visible": true,
+    "locked": false
+   },
+   {
+    "id": "m",
+    "name": "Model",
+    "children": [],
+    "parent": "comp_root",
+    "transform": {
+     "position": {
+      "x": 165,
+      "y": 150
+     },
+     "rotation": 0,
+     "scale": {
+      "x": 1,
+      "y": 1
+     }
+    },
+    "components": [
+     {
+      "id": "m_t",
+      "type": "Transform",
+      "props": {
+       "__kind": "shape",
+       "x": 165,
+       "y": 150,
+       "rotation": 0,
+       "width": 200,
+       "height": 200,
+       "shapeType": "rect",
+       "z": -45,
+       "castsShadows": false,
+       "acceptsShadows": false
+      }
+     },
+     {
+      "id": "m_s",
+      "type": "Style",
+      "props": {
+       "opacity": 100,
+       "fill": "#000000"
+      }
+     },
+     {
+      "id": "m_fx",
+      "type": "fx",
+      "props": {
+       "effects": [
+        {
+         "id": "fx",
+         "type": "com.premation.samples.model3d",
+         "params": {
+          "p1": "m3d-box",
+          "p3": 25,
+          "p4": 35,
+          "p6": 130,
+          "p8": "#ffffff",
+          "p9": 35,
+          "p10": 50,
+          "p15": 3
+         }
+        }
+       ]
+      }
+     }
+    ],
+    "visible": true,
+    "locked": false
+   },
+   {
+    "id": "cam",
+    "name": "cam",
+    "children": [],
+    "parent": "comp_root",
+    "transform": {
+     "position": {
+      "x": 240,
+      "y": 180
+     },
+     "rotation": 0,
+     "scale": {
+      "x": 1,
+      "y": 1
+     }
+    },
+    "components": [
+     {
+      "id": "cam_t",
+      "type": "Transform",
+      "props": {
+       "__kind": "camera",
+       "x": 240,
+       "y": 180,
+       "rotation": 0,
+       "z": -1000,
+       "focalLength": 1000
+      }
+     }
+    ],
+    "visible": true,
+    "locked": false
+   }
+  ]
+ },
+ "animation": {
+  "tracks": {},
+  "expressions": {}
+ },
+ "comps": {
+  "comp_root": {
+   "id": "comp_root",
+   "name": "comp_root",
+   "width": 480,
+   "height": 360,
+   "fps": 30,
+   "durationSeconds": 10,
+   "background": "#0c0c12"
+  }
+ },
+ "motionBlur": {
+  "enabled": false,
+  "shutterAngle": 180,
+  "shutterPhase": -90,
+  "samples": 8,
+  "adaptiveSampleLimit": 128
+ },
+ "colorManagement": {
+  "workingSpace": "srgb-linear",
+  "displayTransform": "srgb",
+  "bitDepth": 16
+ },
+ "projectItems": {
+  "folders": [],
+  "footage": {
+   "m3d-box": {
+    "name": "box.glb",
+    "type": "model"
+   }
+  }
+ },
+ "openTabs": {
+  "tabOrder": [
+   "tab1"
+  ],
+  "activeTabId": "tab1",
+  "tabs": {
+   "tab1": {
+    "id": "tab1",
+    "compositionId": "comp_root",
+    "breadcrumbPath": [
+     "comp_root"
+    ],
+    "title": "comp_root",
+    "time": 0,
+    "frame": 0
+   }
+  }
+ },
+ "harness": {
+  "sceneId": "plugin-model3d-scene",
+  "frames": [
+   0
+  ],
+  "fps": 30,
+  "size": {
+   "w": 480,
+   "h": 360
+  },
+  "motionBlurFps": null,
+  "motionBlurOn": false,
+  "overlays": null,
+  "viewerLut": false,
+  "assets": [
+   {
+    "id": "m3d-box",
+    "type": "model",
+    "src": "box.glb",
+    "metadata": {}
+   }
+  ],
+  "compId": "comp_root",
+  "viewerLutCube": null,
+  "media": [
+   "box.glb"
+  ],
+  "tolerance": null,
+  "fidelityOnly": false,
+  "description": "Plugin SDK 1.4 D4: model3d in Render Mode 'In the Comp's 3D Scene' hands its glTF box to the comp's own 3D render (SCENE_CONTRIBUTE). The box sits at the depth of an extruded 3D text layer, so the two intersect (the depth buffer, not layer order, decides), and the shadow-mapped spot light makes the box shadow the text and the floor."
+ }
+}

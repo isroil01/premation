@@ -8,13 +8,35 @@
 #include <premation_sdk/premation_sdk.h>
 
 #include <array>
+#include <cstddef>
 #include <cmath>
 
 #include "sample_util.hpp"
 
 namespace {
 
-enum : uint32_t { kSize = 1, kColor = 2, kMetal = 3, kRough = 4, kLight = 5 };
+enum : uint32_t { kSize = 1, kColor = 2, kMetal = 3, kRough = 4, kLight = 5, kMaterial = 6, kStripes = 7, kGlow = 8 };
+
+// SDK 1.4 (D3): Material ▸ Stripes — a material function the host links into its 3D shader. The
+// host lights what it returns; params[0] = (stripe count, glow, 0, 0). "Broken (test)" is a source
+// that does not compile: the cube draws with the standard material and the layer reports it.
+constexpr const char* kStripesWgsl = R"(
+fn premation_material(m : PremationMaterialIn) -> PremationMaterialOut {
+  var o : PremationMaterialOut;
+  let count = max(m.params[0].x, 1.0);
+  let band = step(0.5, fract((m.uv.x + m.uv.y) * count * 0.5));
+  o.base = mix(m.color.rgb, vec3<f32>(1.0) - m.color.rgb, band);
+  o.alpha = m.color.a;
+  o.normal = m.normal;
+  o.emissive = m.color.rgb * band * m.params[0].y;
+  return o;
+}
+)";
+constexpr const char* kBrokenWgsl = R"(
+fn premation_material(m : PremationMaterialIn) -> PremationMaterialOut {
+  return not_a_function(m);
+}
+)";
 
 bool has_scene(const PrInData* in) { return in->host->struct_size >= offsetof(PrHostSuite, scene_add_light) + sizeof(void*); }
 
@@ -70,6 +92,13 @@ PrErr contribute(const PrInData* in, PrParamDef* const* params) {
   mesh.material.roughness = prs::num(params, in, kRough) / 100;
   mesh.material.casts_shadows = 1;
   mesh.material.accepts_shadows = 1;
+  const auto material = static_cast<int>(prs::num(params, in, kMaterial));
+  const std::array<float, 4> mp{static_cast<float>(prs::num(params, in, kStripes)), static_cast<float>(prs::num(params, in, kGlow) / 100), 0, 0};
+  if (material >= 2 && in->host->struct_size >= offsetof(PrHostSuite, scene_add_mesh) + sizeof(void*)) {
+    mesh.material.shader_wgsl = material == 2 ? kStripesWgsl : kBrokenWgsl;
+    mesh.material.shader_params = mp.data();
+    mesh.material.shader_param_count = 2;
+  }
   if (PrErr e = in->host->scene_add_mesh(in->host_ref, &mesh); e != PR_ERR_NONE) return e;
   const double intensity = prs::num(params, in, kLight) / 100;
   if (intensity <= 0) return PR_ERR_NONE;
@@ -99,7 +128,12 @@ PrErr PR_CALL meshgen_main(PrCmd cmd, const PrInData* in, PrOutData* out, PrPara
       if (PrErr e = prs::add_simple(in, PR_PARAM_COLOR, kColor, "Color", {0.85, 0.55, 0.2, 1.0}); e != PR_ERR_NONE) return e;
       if (PrErr e = prs::add_float(in, kMetal, "Metal", 30, 0, 100, 0, 100, 0); e != PR_ERR_NONE) return e;
       if (PrErr e = prs::add_float(in, kRough, "Roughness", 40, 0, 100, 0, 100, 0); e != PR_ERR_NONE) return e;
-      return prs::add_float(in, kLight, "Light", 80, 0, 400, 0, 200, 0);
+      if (PrErr e = prs::add_float(in, kLight, "Light", 80, 0, 400, 0, 200, 0); e != PR_ERR_NONE) return e;
+      if (PrErr e = prs::add_simple(in, PR_PARAM_POPUP, kMaterial, "Material", {1, 0, 0, 0}, 0, "Standard|Stripes|Broken (test)"); e != PR_ERR_NONE) {
+        return e;
+      }
+      if (PrErr e = prs::add_float(in, kStripes, "Stripes", 6, 1, 64, 1, 24, 0); e != PR_ERR_NONE) return e;
+      return prs::add_float(in, kGlow, "Glow", 0, 0, 400, 0, 100, 0);
     case PR_CMD_SCENE_CONTRIBUTE: return contribute(in, params);
     case PR_CMD_SMART_PRE_RENDER: return PR_ERR_NONE;
     case PR_CMD_SMART_RENDER: {

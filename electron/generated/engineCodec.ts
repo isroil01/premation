@@ -17761,6 +17761,7 @@ function encS_RenderExtrudedMesh(w: Writer, v: T.RenderExtrudedMesh): void {
   w.byte(65); w.f64(v.surfaceWidth);
   w.byte(73); w.f64(v.surfaceHeight);
   w.byte(82); w.bytes(v.colors);
+  if (v.material !== undefined) { w.byte(90); { const s = w.beginLd(); encS_RenderMeshMaterial(w, v.material); w.endLd(s); } }
 }
 function decS_RenderExtrudedMesh(r: Reader, end: number, o: any): T.RenderExtrudedMesh {
   const l_ranges: T.RenderMeshRange[] = [];
@@ -17781,6 +17782,7 @@ function decS_RenderExtrudedMesh(r: Reader, end: number, o: any): T.RenderExtrud
   let v_surfaceWidth: number | undefined;
   let v_surfaceHeight: number | undefined;
   let v_colors: Uint8Array | undefined;
+  let v_material: T.RenderMeshMaterial | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -17794,6 +17796,7 @@ function decS_RenderExtrudedMesh(r: Reader, end: number, o: any): T.RenderExtrud
       case 65: v_surfaceWidth = r.f64(); h_surfaceWidth = true; break;
       case 73: v_surfaceHeight = r.f64(); h_surfaceHeight = true; break;
       case 82: v_colors = r.bytes(); h_colors = true; break;
+      case 90: v_material = decS_RenderMeshMaterial(r, r.ldEnd(), {}); break;
       default: r.skip(key);
     }
   }
@@ -17816,6 +17819,29 @@ function decS_RenderExtrudedMesh(r: Reader, end: number, o: any): T.RenderExtrud
   o.surfaceWidth = v_surfaceWidth;
   o.surfaceHeight = v_surfaceHeight;
   o.colors = v_colors;
+  if (v_material !== undefined) o.material = v_material;
+  return o;
+}
+function encS_RenderMeshMaterial(w: Writer, v: T.RenderMeshMaterial): void {
+  w.byte(10); w.str(v.wgsl);
+  { const a = v.params; if (a.length) { w.byte(18); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+}
+function decS_RenderMeshMaterial(r: Reader, end: number, o: any): T.RenderMeshMaterial {
+  const l_params: number[] = [];
+  let h_wgsl = false;
+  let v_wgsl: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_wgsl = r.str(); h_wgsl = true; break;
+      case 18: { const e = r.ldEnd(); while (r.pos < e) l_params.push(r.f64()); r.expectAt(e); break; }
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_wgsl) throw new DecodeError('RenderMeshMaterial.wgsl: missing', 'missingField');
+  o.wgsl = v_wgsl;
+  o.params = l_params;
   return o;
 }
 function encS_RenderShade3D(w: Writer, v: T.RenderShade3D): void {
@@ -21385,6 +21411,7 @@ export const codecs = {
   RenderMeshRange: mk<T.RenderMeshRange>(encS_RenderMeshRange, (r, e) => decS_RenderMeshRange(r, e, {})),
   RenderPbrMaps: mk<T.RenderPbrMaps>(encS_RenderPbrMaps, (r, e) => decS_RenderPbrMaps(r, e, {})),
   RenderExtrudedMesh: mk<T.RenderExtrudedMesh>(encS_RenderExtrudedMesh, (r, e) => decS_RenderExtrudedMesh(r, e, {})),
+  RenderMeshMaterial: mk<T.RenderMeshMaterial>(encS_RenderMeshMaterial, (r, e) => decS_RenderMeshMaterial(r, e, {})),
   RenderShade3D: mk<T.RenderShade3D>(encS_RenderShade3D, (r, e) => decS_RenderShade3D(r, e, {})),
   RenderThreeD: mk<T.RenderThreeD>(encS_RenderThreeD, (r, e) => decS_RenderThreeD(r, e, {})),
   RenderDof: mk<T.RenderDof>(encS_RenderDof, (r, e) => decS_RenderDof(r, e, {})),

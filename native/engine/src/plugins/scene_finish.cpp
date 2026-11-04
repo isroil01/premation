@@ -575,6 +575,12 @@ api::Renderable contributed_mesh(const api::Renderable& owner, const ContribMesh
   em.surface = api::RenderMeshSurface::uv;
   em.surface_width = 1;
   em.surface_height = 1;
+  if (!m.materialWgsl.empty()) {  // SDK 1.4 (D3)
+    api::RenderMeshMaterial mat;
+    mat.wgsl = m.materialWgsl;
+    mat.params.assign(m.materialParams.begin(), m.materialParams.end());
+    em.material = std::move(mat);
+  }
   r.extruded_mesh = std::move(em);
   r.kind = api::RenderableKind::rect;
   r.model_matrix = owner.model_matrix;
@@ -912,12 +918,10 @@ void finish_native_frame(const scene::BuildContext& c, std::string_view comp, do
         }
       }
       if (spec->has(PR_OUT_FLAG_SCENE_CONTRIBUTE)) {
-        if (r.three_d && &list == &frame.file.scene.renderables) {
-          contributions.push_back({e, spec, r.id, layerId, docLayer, effectId, instance, lt});
-        } else if (reported.insert(instance + "#scene").second) {
-          frame.errors.push_back(scene::LayerError{layerId, "", "plugin",
-                                                   matchName + " adds 3D geometry only on a 3D layer of the composition itself"});
-        }
+        // Off a top-level 3D layer the instance is still asked (it may add nothing there, as
+        // model3d's 2D render modes do); only geometry it does add is refused (below).
+        const bool placed = r.three_d && &list == &frame.file.scene.renderables;
+        contributions.push_back({e, spec, placed ? r.id : std::string(), layerId, docLayer, effectId, instance, lt});
       }
       if (blurOn && spec->has(PR_OUT_FLAG_USES_SHUTTER)) blursItself = true;
       if (!spec->has(PR_OUT_FLAG_SMART_RENDER)) continue;
@@ -976,12 +980,32 @@ void finish_native_frame(const scene::BuildContext& c, std::string_view comp, do
       }
       continue;
     }
+    if (q.ownerId.empty()) {  // not on a top-level 3D layer: nothing it adds can be placed
+      if ((!meshes.empty() || !lights.empty()) && reported.insert(q.instance + "#scene").second) {
+        frame.errors.push_back(scene::LayerError{q.layerId, "", "plugin",
+                                                 q.spec->matchName + " adds 3D geometry only on a 3D layer of the composition itself"});
+      }
+      continue;
+    }
     const std::optional<motion::xf::Mat4> world = sampler.layer_world(q.docLayer);
     List& top = frame.file.scene.renderables;
     const auto owner = std::ranges::find_if(top, [&](const api::Renderable& x) { return x.id == q.ownerId; });
     if (!world || owner == top.end()) continue;
     std::vector<api::Renderable> added;
-    for (std::size_t i = 0; i < meshes.size(); ++i) added.push_back(contributed_mesh(*owner, meshes[i], *world, i));
+    for (std::size_t i = 0; i < meshes.size(); ++i) {
+      added.push_back(contributed_mesh(*owner, meshes[i], *world, i));
+      // SDK 1.4 (D3): a material refused by the rules, or one that failed to compile on an earlier
+      // frame, draws standard; the layer says why.
+      api::RenderExtrudedMesh& em = *added.back().extruded_mesh;
+      if (!em.material) continue;
+      std::string why = rg::plugin_material_refusal(em.material->wgsl);
+      if (why.empty()) why = rg::plugin_material_error(rg::plugin_material_hash(em.material->wgsl)).value_or("");
+      if (why.empty()) continue;
+      em.material.reset();
+      if (reported.insert(q.instance + "#material").second) {
+        frame.errors.push_back(scene::LayerError{q.layerId, "", "plugin", "3D material: " + why + " (drawn with the standard material)"});
+      }
+    }
     top.insert(owner + 1, std::make_move_iterator(added.begin()), std::make_move_iterator(added.end()));
     for (const ContribLight& l : lights) frame.file.scene.lights3d.push_back(contributed_light(l, *world));
   }

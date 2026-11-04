@@ -173,7 +173,12 @@ struct RenderExtrudedMesh {
   /// AE parity 4.7: per-vertex colours (glTF COLOR_0), f32 LE rgba per vertex (linear), multiplied into the base
   /// colour; empty = white.
   colors: bytes = 10;
+  /// SDK 1.4 (D3): a plugin's material function, linked into the solid mesh shader (drawn standard when it fails).
+  material?: RenderMeshMaterial = 11;
 }
+
+/// SDK 1.4 (D3): WGSL defining `premation_material` (pr_scene.h) and its 16 params.
+struct RenderMeshMaterial { wgsl: string = 1; params: f64[] = 2; }
 
 struct RenderShade3D {
   specular: f64 = 1; shininess: f64 = 2; metal?: f64 = 3; roughness?: f64 = 4; toonBands?: f64 = 5;

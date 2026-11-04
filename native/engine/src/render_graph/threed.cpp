@@ -12,6 +12,8 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <map>
+#include <mutex>
 #include <optional>
 #include <cstring>
 #include <numbers>
@@ -22,6 +24,88 @@
 #include "passes.hpp"
 
 namespace premation::rg {
+
+// ── SDK 1.4 (D3): plugin materials ──────────────────────────────────────
+
+namespace {
+struct MaterialErrors {
+  std::mutex mutex;
+  std::map<std::uint64_t, std::string> byHash;
+};
+MaterialErrors& material_errors() {
+  static MaterialErrors e;  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables): process-wide, like the pipeline cache
+  return e;
+}
+}  // namespace
+
+std::uint64_t plugin_material_hash(std::string_view wgsl) noexcept {
+  std::uint64_t h = 14695981039346656037ULL;
+  for (const char c : wgsl) h = (h ^ static_cast<unsigned char>(c)) * 1099511628211ULL;
+  return h;
+}
+
+std::optional<std::string> plugin_material_error(std::uint64_t hash) {
+  MaterialErrors& e = material_errors();
+  const std::scoped_lock lock(e.mutex);
+  const auto it = e.byHash.find(hash);
+  if (it == e.byHash.end()) return std::nullopt;
+  return it->second;
+}
+
+void note_plugin_material_error(std::uint64_t hash, std::string message) {
+  MaterialErrors& e = material_errors();
+  const std::scoped_lock lock(e.mutex);
+  e.byHash.insert_or_assign(hash, std::move(message));
+}
+
+std::string plugin_material_refusal(std::string_view wgsl) {
+  if (wgsl.find("premation_material") == std::string_view::npos) return "the material defines no premation_material function";
+  // Linked into the host's module: the function may not reach for bindings or add entry points.
+  for (const std::string_view banned : {"@group", "@binding", "@vertex", "@fragment", "@compute", "enable ", "requires ", "diagnostic("}) {
+    if (wgsl.find(banned) != std::string_view::npos) return "the material may not use " + std::string(banned);
+  }
+  return {};
+}
+
+std::string plugin_material_wgsl(std::string_view solidWgsl, std::string_view pluginWgsl) {
+  const std::size_t at = solidWgsl.rfind("@fragment");
+  std::string out(solidWgsl.substr(0, at == std::string_view::npos ? solidWgsl.size() : at));
+  out += R"(
+struct PremationMaterialIn {
+  world : vec3<f32>,
+  normal : vec3<f32>,
+  uv : vec2<f32>,
+  color : vec4<f32>,
+  params : array<vec4<f32>, 4>,
+};
+struct PremationMaterialOut {
+  base : vec3<f32>,
+  alpha : f32,
+  normal : vec3<f32>,
+  emissive : vec3<f32>,
+};
+)";
+  out += pluginWgsl;
+  // The params ride in the four rows this shader never reads (cr0..cr2, srcSpace): threed.cpp packs them.
+  out += R"(
+
+@fragment
+fn fs(@location(0) uv : vec2<f32>, @location(1) world : vec3<f32>, @location(2) nrm : vec3<f32>, @location(3) col : vec4<f32>) -> @location(0) vec4<f32> {
+  var m : PremationMaterialIn;
+  m.world = world;
+  m.normal = normalize(nrm);
+  m.uv = uv;
+  m.color = vec4<f32>(obj.tint.rgb * col.rgb, obj.tint.a * col.a);
+  m.params = array<vec4<f32>, 4>(obj.cr0, obj.cr1, obj.cr2, obj.srcSpace);
+  let o = premation_material(m);
+  let n = select(m.normal, normalize(o.normal), dot(o.normal, o.normal) > 1e-8);
+  let a = clamp(o.alpha, 0.0, 1.0) * shadeAlpha3d(world);
+  let rgb = shade3dN(world, n, max(o.base, vec3<f32>(0.0))) + max(o.emissive, vec3<f32>(0.0));
+  return vec4<f32>(rgb * a, a);
+}
+)";
+  return out;
+}
 
 // emit helpers from composition_pass.cpp
 void emit_textured(PassContext& ctx, Commands& cmds, const Mat3& mvp, const Color& tint, double opacity, Blend blend,
@@ -1794,9 +1878,45 @@ void render_3d_group(PassContext& ctx, std::span<const api::Renderable* const> g
           pbr_bind(it);
           geo(it);
         } else {
+          // SDK 1.4 (D3): a plugin's material function, linked into the solid shader. One that is
+          // refused or does not compile draws the standard material (the frame build reports it).
+          std::optional<Mat> custom;
+          if (mesh.material && !mesh.material->wgsl.empty()) {
+            const std::uint64_t h = plugin_material_hash(mesh.material->wgsl);
+            if (!plugin_material_error(h)) {
+              std::string why = plugin_material_refusal(mesh.material->wgsl);
+              if (why.empty()) {
+                char name[40];  // NOLINT(cppcoreguidelines-avoid-c-arrays, modernize-avoid-c-arrays): snprintf target
+                std::snprintf(name, sizeof name, "plugin-material-%016llx", static_cast<unsigned long long>(h));
+                const Mat m = ctx.dev.dynamic_material_like(name, plugin_material_wgsl(builtin_wgsl("mesh3d-solid"), mesh.material->wgsl),
+                                                            Mat::MESH3D_SOLID_MATERIAL);
+                why = ctx.dev.pipeline_error(m, blend, wgpu::TextureFormat::RGBA16Float);
+                if (why.empty()) custom = m;
+              }
+              if (!custom) {
+                note_plugin_material_error(h, why.substr(0, 600));
+                ctx.diagnostics.push_back({"plugin-material", r.id + ": " + why.substr(0, 400)});
+              }
+            }
+          }
           Packer p = ctx.packer();
-          pack_textured3d(p, mvp, {0, 0, 1, 1}, color, opacity, kIdentityColor, rsp, false, fogp);
-          DrawItem& it = out.add(Mat::MESH3D_SOLID_MATERIAL, blend, p.span());
+          if (custom) {
+            // pack_textured3d with the params in the colour rows and the source-space row.
+            std::array<double, 16> pm{};
+            for (std::size_t k = 0; k < pm.size() && k < mesh.material->params.size(); ++k) pm.at(k) = mesh.material->params[k];
+            ColorTransform rows;
+            for (std::size_t row = 0; row < 3; ++row) {
+              rows.m.at(row * 3) = pm.at(row * 4);
+              rows.m.at((row * 3) + 1) = pm.at((row * 4) + 1);
+              rows.m.at((row * 3) + 2) = pm.at((row * 4) + 2);
+              rows.offset.at(row) = pm.at((row * 4) + 3);
+            }
+            p.mat4(mvp).rect({0, 0, 1, 1}).color(color, opacity).color_rows(rows).vec4(pm[12], pm[13], pm[14], pm[15]);
+            pack_shade(p, rsp, fogp, 0);
+          } else {
+            pack_textured3d(p, mvp, {0, 0, 1, 1}, color, opacity, kIdentityColor, rsp, false, fogp);
+          }
+          DrawItem& it = out.add(custom.value_or(Mat::MESH3D_SOLID_MATERIAL), blend, p.span());
           geo(it);
         }
       }
