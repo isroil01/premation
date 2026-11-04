@@ -352,6 +352,8 @@ std::string specs_to_json(const std::vector<const EffectSpec*>& specs) {
   for (const EffectSpec* e : specs) {
     js::Json o = js::Json::object();
     o.set("matchName", js::Json::string(e->matchName));
+    o.set("name", js::Json::string(e->name));
+    o.set("category", js::Json::string(e->category));
     o.set("outFlags", js::Json::number(e->outFlags));
     o.set("version", js::Json::number(e->version));
     o.set("about", js::Json::string(e->about));
@@ -397,6 +399,8 @@ bool specs_from_json(std::string_view json, std::vector<EffectSpec>& out, std::s
   for (const js::Json& o : j->arr()) {
     EffectSpec e;
     e.matchName = str_of(o.at("matchName"));
+    e.name = str_of(o.at("name"));
+    e.category = str_of(o.at("category"));
     e.outFlags = static_cast<std::uint32_t>(num_of(o.at("outFlags")));
     e.version = static_cast<std::uint32_t>(num_of(o.at("version")));
     e.about = str_of(o.at("about"));

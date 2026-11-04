@@ -1170,6 +1170,68 @@ call `scene_add_mesh` (a `PrSceneMesh`) and `scene_add_light` (a `PrLight`).
 The `meshgen` sample (Mesh Cube) adds a lit cube and a point light.
 `engine_plugins_scene_tests [scene3d]` checks where they land in the frame.
 
+## OpenFX plugins (SDK 1.4)
+
+Premation hosts OpenFX 1.4 image effects. An `<name>.ofx.bundle` in a plugin
+folder is found by the scan (for example `--plugin-path "C:\Program
+Files\Common Files\OFX\Plugins"`). It **only ever runs out of process**, in
+`premation-plugin-host`, never in the engine. Its effects are listed as
+`ofx:<plugin identifier>` under its OFX grouping. A project stores them by
+that identifier, and a missing bundle takes the missing-plugin path.
+
+- **Contexts.** Filter, General (one Source clip) and Generator.
+- **Images.** CPU, RGBA, float or 8-bit, premultiplied, at render scale 1,
+  bottom-up rows. Premation converts its 8, 16 and 32-bit worlds.
+- **Suites.** Property, image effect, parameter, memory, multi-thread and
+  message.
+- **Params.**
+
+  | OpenFX param | Premation param |
+  |---|---|
+  | Double | slider (angle when it is declared as one) |
+  | Integer | integer slider |
+  | Boolean | checkbox |
+  | Choice | popup |
+  | RGB / RGBA | colour |
+  | Double2D | point |
+  | Group | Effect Controls group |
+
+  Hints become tooltips. Secret params are hidden, and params that do not
+  animate get no stopwatch. Strings, buttons, custom, parametric and 3D params
+  are defined for the plugin but not shown.
+- **Not hosted yet.** The OpenGL / CUDA / Metal / OpenCL render suites,
+  overlays (interacts), more than one input clip, temporal clip access, tiles
+  and other render scales.
+
+The `ofxinvert` sample (`native/sdk/samples/ofxinvert`, written against the OFX
+C API only) and `engine_plugins_tests [ofx]` cover loading, the param mapping
+and a render.
+
+## CLAP audio plugins (SDK 1.4)
+
+A `<name>.clap` file in a plugin folder is described and run by its own
+`premation-plugin-host`, never in the engine. `PluginHost::audio_plugins()`
+lists its plugins and their params (id, name, range, default). Then
+`process_audio(id, instance, sampleRate, channels, block, params, reset)` runs
+one block of mono or stereo float audio through it. Param values are sent as
+`CLAP_EVENT_PARAM_VALUE` at the block's start. Each `instance` keeps its own
+plugin state, and `reset` clears it on a seek. A dead or hung process is
+restarted as for any out-of-process plugin, and a failed block leaves the
+audio as it was.
+
+**Not wired yet.** The engine does not put audio effects on layers yet (the
+document's layer audio effects are still listed as unported). Until it does,
+a CLAP plugin cannot be placed on a layer, and the mixer does not call it.
+Note ports and MIDI, the plugin's own editor window, state save / load,
+latency and 64-bit audio are not hosted. VST3 is not hosted.
+
+The `clapgain` sample (`native/sdk/samples/clapgain`, written against the CLAP
+headers only) and `engine_plugins_tests [clap]` cover the description and the
+processing.
+
+The OpenFX and CLAP headers come from the vcpkg ports `openfx` (1.4) and
+`clap-cleveraudio` (1.2.10), in the manifest's `engine` feature.
+
 ## Sequence data
 
 Per-instance state lives **in the document**, not only in the process:

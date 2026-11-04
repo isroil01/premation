@@ -141,6 +141,24 @@ struct ContribLight {
   bool castsShadows = false;
 };
 
+/// SDK 1.4 (A): one parameter of a CLAP audio plugin.
+struct AudioParamInfo {
+  std::uint32_t id = 0;
+  std::string name;
+  double min = 0, max = 1, def = 0;
+  bool stepped = false;
+};
+
+/// SDK 1.4 (A): a CLAP audio plugin (one `.clap` file may hold several), hosted out of process.
+struct AudioPluginInfo {
+  std::string id;      ///< the CLAP descriptor id
+  std::string name;
+  std::string vendor;
+  std::string pluginId;  ///< the Premation plugin record (`clap.<file stem>`)
+  std::vector<std::string> features;
+  std::vector<AudioParamInfo> params;
+};
+
 /// SDK 1.4 (C): one frame's published channels, by name.
 using ChannelValues = std::map<std::string, std::vector<double>, std::less<>>;
 
@@ -491,6 +509,13 @@ class PluginHost {
   bool call_expression(std::string_view pluginId, std::string_view name, std::span<const double> args, std::vector<double>& out,
                        std::string& error);
   [[nodiscard]] const EffectSpec* effect(std::string_view matchName) const;
+  /// SDK 1.4 (A): the CLAP audio plugins of every loaded `.clap` file.
+  [[nodiscard]] std::vector<AudioPluginInfo> audio_plugins() const;
+  /// SDK 1.4 (A): one block of interleaved float audio (1 or 2 channels) through CLAP plugin `audioId`
+  /// in its process; `instance` keeps the plugin's state between blocks, `reset` clears it (a seek).
+  /// False + `why` (the audio is left as it was) when the plugin or its process failed.
+  bool process_audio(std::string_view audioId, std::string_view instance, double sampleRate, std::uint32_t channels,
+                     std::vector<float>& interleaved, std::span<const std::pair<std::uint32_t, double>> params, bool reset, std::string& why);
   /// SDK 1.4 (X): `matchName`'s plugin runs in a premation-plugin-host.
   [[nodiscard]] bool out_of_process(std::string_view matchName) const;
   /// SDK 1.4 (X): one CPU render in the plugin's own process (run_native_cpu routes here). A child

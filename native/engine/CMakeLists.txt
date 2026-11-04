@@ -542,6 +542,7 @@ add_library(engine_plugins STATIC
   src/plugins/scene_eval.cpp  # SDK 1.2: the comp camera / lights / layer matrices off the document (samples, overlays)
   src/plugins/ml_ort_ffi.cpp  # SDK 1.4 (M): the ML suite on the engine's ONNX Runtime (a stub without it)
   src/plugins/oop_wire.cpp  # SDK 1.4 (X): premation-plugin-host messages
+  src/clap_host.cpp  # SDK 1.4 (A): the CLAP audio messages (the host part builds into premation-plugin-host)
 )
 target_include_directories(engine_plugins PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/plugins ${CMAKE_CURRENT_SOURCE_DIR}/../sdk/include)
 # SDK 1.4 (M): plugins' models run on the same ONNX Runtime build as the engine's own jobs.
@@ -672,6 +673,58 @@ endif()
 # premation-plugin-host (SDK 1.4, X): one plugin bundle out of process, driven over stdin / stdout.
 add_executable(premation-plugin-host src/plugin_host_main.cpp src/plugin_host_io_ffi.cpp)
 target_link_libraries(premation-plugin-host PRIVATE engine_plugins motion::options)
+# SDK 1.4 (O): the OpenFX host (headers from the vcpkg `openfx` port: the manifest's engine feature,
+# or a side install in build/vi-sdk).
+find_path(PREMATION_OFX_INCLUDE ofxImageEffect.h
+  HINTS "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/include/openfx"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../build/vi-sdk/${VCPKG_TARGET_TRIPLET}/include/openfx"
+  NO_DEFAULT_PATH)
+if(PREMATION_OFX_INCLUDE)
+  target_sources(premation-plugin-host PRIVATE src/ofx_host.cpp)
+  target_include_directories(premation-plugin-host SYSTEM PRIVATE "${PREMATION_OFX_INCLUDE}")
+  target_compile_definitions(premation-plugin-host PRIVATE PREMATION_HAVE_OFX=1)
+  if(MSVC)
+    target_compile_definitions(premation-plugin-host PRIVATE _CRT_SECURE_NO_WARNINGS)  # vsnprintf in the message suite
+  endif()
+  message(STATUS "premation-plugin-host: OpenFX hosting (${PREMATION_OFX_INCLUDE})")
+  # The OFX sample (sdk/samples/ofxinvert), written against the OFX C API only: Invert.ofx.bundle.
+  add_library(ofxinvert MODULE ${CMAKE_CURRENT_SOURCE_DIR}/../sdk/samples/ofxinvert/ofxinvert.cpp)
+  target_include_directories(ofxinvert SYSTEM PRIVATE "${PREMATION_OFX_INCLUDE}")
+  target_link_libraries(ofxinvert PRIVATE motion::options)
+  if(WIN32)
+    set(_ofx_arch Win64)
+  elseif(APPLE)
+    set(_ofx_arch MacOS)
+  else()
+    set(_ofx_arch Linux-x86-64)
+  endif()
+  set_target_properties(ofxinvert PROPERTIES OUTPUT_NAME Invert PREFIX "" SUFFIX ".ofx"
+    LIBRARY_OUTPUT_DIRECTORY $<1:${PREMATION_PLUGIN_BUNDLES}/ofx/Invert.ofx.bundle/Contents/${_ofx_arch}>
+    RUNTIME_OUTPUT_DIRECTORY $<1:${PREMATION_PLUGIN_BUNDLES}/ofx/Invert.ofx.bundle/Contents/${_ofx_arch}>)
+endif()
+
+# SDK 1.4 (A): the CLAP host (headers from the vcpkg `clap-cleveraudio` port, as for OpenFX).
+find_path(PREMATION_CLAP_INCLUDE clap/clap.h
+  HINTS "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/include"
+        "${CMAKE_CURRENT_SOURCE_DIR}/../build/vi-sdk/${VCPKG_TARGET_TRIPLET}/include"
+  NO_DEFAULT_PATH)
+if(PREMATION_CLAP_INCLUDE)
+  add_library(premation_clap_host OBJECT src/clap_host.cpp)
+  target_include_directories(premation_clap_host SYSTEM PRIVATE "${PREMATION_CLAP_INCLUDE}")
+  target_link_libraries(premation_clap_host PRIVATE engine_plugins motion::options)
+  target_compile_definitions(premation_clap_host PRIVATE PREMATION_HAVE_CLAP=1 PREMATION_CLAP_HOST_IMPL=1)
+  target_sources(premation-plugin-host PRIVATE $<TARGET_OBJECTS:premation_clap_host>)
+  target_compile_definitions(premation-plugin-host PRIVATE PREMATION_HAVE_CLAP=1)
+  target_include_directories(premation-plugin-host SYSTEM PRIVATE "${PREMATION_CLAP_INCLUDE}")
+  # The CLAP sample (sdk/samples/clapgain), written against the CLAP headers only: ClapGain.clap.
+  add_library(clapgain MODULE ${CMAKE_CURRENT_SOURCE_DIR}/../sdk/samples/clapgain/clapgain.cpp)
+  target_include_directories(clapgain SYSTEM PRIVATE "${PREMATION_CLAP_INCLUDE}")
+  target_link_libraries(clapgain PRIVATE motion::options)
+  set_target_properties(clapgain PROPERTIES OUTPUT_NAME ClapGain PREFIX "" SUFFIX ".clap"
+    LIBRARY_OUTPUT_DIRECTORY $<1:${PREMATION_PLUGIN_BUNDLES}/clap>
+    RUNTIME_OUTPUT_DIRECTORY $<1:${PREMATION_PLUGIN_BUNDLES}/clap>)
+  message(STATUS "premation-plugin-host: CLAP hosting (${PREMATION_CLAP_INCLUDE})")
+endif()
 
 # premation-plugins: list / render / crash-check plugins without an editor (tools/premation_plugins.cpp).
 add_executable(premation-plugins tools/premation_plugins.cpp)
@@ -711,6 +764,14 @@ if(MOTION_BUILD_TESTS)
     PREMATION_PLUGINS_TOOL="$<TARGET_FILE:premation-plugins>"
     PREMATION_PLUGIN_HOST_EXE="$<TARGET_FILE:premation-plugin-host>")
   add_dependencies(engine_plugins_tests premation-plugins ripple rings checkout particles grademap distribute ppmio ppmseq statspanel chartlayer bounce mathfns scatter mlstyle premation-plugin-host)
+  if(TARGET clapgain)
+    add_dependencies(engine_plugins_tests clapgain)
+    target_compile_definitions(engine_plugins_tests PRIVATE PREMATION_HAVE_CLAP_SAMPLE=1)
+  endif()
+  if(TARGET ofxinvert)
+    add_dependencies(engine_plugins_tests ofxinvert)
+    target_compile_definitions(engine_plugins_tests PRIVATE PREMATION_HAVE_OFX_SAMPLE=1)
+  endif()
   add_test(NAME engine_plugins_tests COMMAND engine_plugins_tests --reporter compact)
   target_sources(engine_plugins_tests PRIVATE tests/test_plugin_sdk12.cpp)  # SDK 1.2: times, shutter, assets, presets
   target_sources(engine_plugins_tests PRIVATE tests/test_plugin_param_ui.cpp)  # SDK 1.3: Effect Controls boxes
@@ -739,7 +800,7 @@ if(MOTION_BUILD_TESTS)
   endforeach()
   target_sources(engine_plugins_tests PRIVATE tests/test_plugin_reload.cpp)
   target_sources(engine_plugins_tests PRIVATE tests/test_plugin_sim.cpp)  # SDK 1.4 (T): simulations and their kept states
-  target_sources(engine_plugins_tests PRIVATE tests/test_plugin_exprfn.cpp tests/test_plugin_ml.cpp tests/test_plugin_oop.cpp)  # SDK 1.4 (E): expression functions, interpolators
+  target_sources(engine_plugins_tests PRIVATE tests/test_plugin_exprfn.cpp tests/test_plugin_ml.cpp tests/test_plugin_oop.cpp tests/test_plugin_ofx.cpp tests/test_plugin_clap.cpp)  # SDK 1.4 (E): expression functions, interpolators
   target_compile_definitions(engine_plugins_tests PRIVATE
     RELOAD_PROBE_V1="$<TARGET_FILE:reload_probe_v1>"
     RELOAD_PROBE_V2="$<TARGET_FILE:reload_probe_v2>")

@@ -27,7 +27,7 @@
 
 namespace premation::plugins::oop {
 
-enum class Kind : std::uint32_t { describe = 1, render = 2, quit = 3, reply = 100 };
+enum class Kind : std::uint32_t { describe = 1, render = 2, quit = 3, audio_process = 4 /* SDK 1.4 (A): clap_host.hpp */, reply = 100 };
 
 /// The most bytes one frame carries (an 8K float world is ~530 MB; past this the effect is refused).
 inline constexpr std::uint32_t kMaxFrame = 1U << 30;

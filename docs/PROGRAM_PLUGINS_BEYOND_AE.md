@@ -216,29 +216,29 @@ as 1.4 additions if they can stay appended, otherwise they wait for **2.0**
 
 ### O — OpenFX hosting (needs Q3)
 
-- [ ] O1 **OFX host** in `plugins/ofx_*.cpp`: the Image Effect API 1.4,
+- [~] O1 **OFX host** in `plugins/ofx_*.cpp`: the Image Effect API 1.4,
   property suites mapped onto Premation params (curves, choices, groups,
   pages), Generator / Filter / General contexts, the OpenGL render suite
   skipped, CUDA / Metal / OpenCL suites out of scope at first (CPU path).
-  *Status 2026-11-04: blocked: needs the OpenFX headers and test plugins fetched (owner approval to download).*
-- [ ] O2 OFX plugins run **out of process only** (X1), with the same journal
+  *Status 2026-11-04: ofx_host.cpp in premation-plugin-host: Filter / General / Generator, CPU RGBA float + 8-bit, property / image effect / parameter / memory / multi-thread / message suites, params mapped (Double, Integer, Boolean, Choice, RGB/RGBA, Double2D, groups). Not yet: GPU render suites, interacts, multiple clips, temporal access, tiles.*
+- [x] O2 OFX plugins run **out of process only** (X1), with the same journal
   and quarantine.
-  *Status 2026-11-04: blocked (O1).*
-- [ ] O3 Projects store OFX effects by plugin identifier + version; a missing
+  *Status 2026-11-04: a `.ofx.bundle` is loaded only through premation-plugin-host; without one it is listed as failed, never loaded in the engine.*
+- [~] O3 Projects store OFX effects by plugin identifier + version; a missing
   plugin passes through as today.
-  *Status 2026-11-04: blocked (O1).*
-- [ ] O4 Test against the open OFX sample plugins; record which commercial
+  *Status 2026-11-04: effects are stored as `ofx:<identifier>`; the plugin version is reported but not stored with the instance.*
+- [~] O4 Test against the open OFX sample plugins; record which commercial
   packs load (tested on the owner's box only, no redistribution).
-  *Status 2026-11-04: blocked (O1).*
+  *Status 2026-11-04: tested against `ofxinvert` (our own OFX C API sample); no commercial pack tried on the owner box yet.*
 
 ### A — audio plugins (needs Q4)
 
-- [ ] A1 CLAP first (MIT), VST3 second. Effects on audio layers in the
+- [~] A1 CLAP first (MIT), VST3 second. Effects on audio layers in the
   playback mixer and the export mix (`audio/`), out of process (X1).
-  *Status 2026-11-04: blocked: needs the CLAP (and VST3) SDK fetched (owner approval to download).*
+  *Status 2026-11-04: CLAP host in premation-plugin-host (describe, params, process with param events, per-instance state, restarts); `clapgain` sample. NOT wired into playback / export: the native engine does not run layer audio effects yet. VST3 not started.*
 - [ ] A2 Plugin params are keyframeable layer properties; the plugin's own
   editor window opens from Effect Controls.
-  *Status 2026-11-04: blocked (A1).*
+  *Status 2026-11-04: open: CLAP params are listed (id, range, default) but not yet layer properties; no plugin editor window.*
 
 ### W — authoring
 

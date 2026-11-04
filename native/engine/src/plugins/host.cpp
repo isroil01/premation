@@ -20,6 +20,7 @@
 #include "expr.hpp"  // SDK 1.4 (E1): motion::expr::set_plugin_functions
 #include "ml.hpp"    // SDK 1.4 (M): the ML suite's runtime
 #include "oop_wire.hpp"  // SDK 1.4 (X): premation-plugin-host messages
+#include "clap_host.hpp"  // SDK 1.4 (A): the audio messages
 #include "json.hpp"
 #include "log.hpp"
 #include "manifest.hpp"
@@ -202,6 +203,8 @@ struct Plugin {
   std::map<std::string, std::uint32_t, std::less<>> modelIds;
   /// SDK 1.4 (X): the plugin runs in a premation-plugin-host (its module is never loaded here).
   bool outOfProcess = false;
+  /// SDK 1.4 (A): a `.clap` file's audio plugins (its process describes them).
+  std::vector<AudioPluginInfo> audio;
   std::mutex oopMutex;
   std::unique_ptr<OopChannel> oop;
   std::uint32_t oopRestarts = 0;
@@ -481,6 +484,9 @@ struct PluginHost::Impl {
     for (const EffectSpec& s : specs) {
       if (std::string need = out_of_process_refusal(s); !need.empty()) return refuse(s.matchName + " needs " + need);
     }
+    if (p.manifest.effects.empty()) {  // SDK 1.4 (O): an OpenFX bundle lists what its process hosts
+      for (const EffectSpec& s : specs) p.manifest.effects.push_back({s.matchName, s.name.empty() ? s.matchName : s.name, s.category, {}, {}});
+    }
     std::vector<std::unique_ptr<EffectSpec>> described;
     for (const ManifestEffect& me : p.manifest.effects) {
       const auto it = std::ranges::find_if(specs, [&](const EffectSpec& s) { return s.matchName == me.matchName; });
@@ -594,6 +600,10 @@ struct PluginHost::Impl {
   /// and swap it in only once it is fully set up; otherwise the old one stays and `why` says why.
   /// The plugin record, or nullptr (already known, or a failed reload).
   Plugin* load_bundle(const fs::path& dir, Plugin* replacing = nullptr, std::string* why = nullptr);
+  /// SDK 1.4 (O): an OpenFX bundle — out of process only; its effects are what the child hosts.
+  void load_ofx_bundle(const fs::path& dir);
+  /// SDK 1.4 (A): a `.clap` file — out of process only; its audio plugins are what the child hosts.
+  void load_clap_file(const fs::path& file);
   Plugin* swap_in(std::unique_ptr<Plugin> fresh, Plugin& old, std::string* why);
   /// Developer Mode: copy the plugin's binary and the shared libraries beside it under
   /// options.shadowDir and return the copy to load ('' + `err` on failure). Core thread only.
@@ -1707,8 +1717,163 @@ std::vector<PluginRecord> PluginHost::scan() {
     bundles.insert(bundles.end(), found.begin(), found.end());
   }
   for (const fs::path& b : bundles) m.load_bundle(b);
+  // SDK 1.4 (O): OpenFX bundles (<name>.ofx.bundle) in the same folders.
+  std::vector<fs::path> ofx;
+  for (const fs::path& root : m.options.searchPaths) {
+    std::error_code ec;
+    const auto is_ofx = [](const fs::path& p) { return p.filename().u8string().ends_with(u8".ofx.bundle"); };
+    if (is_ofx(root)) {
+      ofx.push_back(root);
+      continue;
+    }
+    if (!fs::is_directory(root, ec)) continue;
+    std::vector<fs::path> found;
+    for (const auto& entry : fs::directory_iterator(root, ec)) {
+      if (entry.is_directory(ec) && is_ofx(entry.path())) found.push_back(entry.path());
+    }
+    std::ranges::sort(found);
+    ofx.insert(ofx.end(), found.begin(), found.end());
+  }
+  for (const fs::path& b : ofx) m.load_ofx_bundle(b);
+  // SDK 1.4 (A): CLAP audio plugins (<name>.clap files) in the same folders.
+  std::vector<fs::path> claps;
+  for (const fs::path& root : m.options.searchPaths) {
+    std::error_code ec;
+    if (!fs::is_directory(root, ec)) continue;
+    for (const auto& entry : fs::directory_iterator(root, ec)) {
+      if (entry.is_regular_file(ec) && entry.path().extension() == ".clap") claps.push_back(entry.path());
+    }
+  }
+  std::ranges::sort(claps);
+  for (const fs::path& f : claps) m.load_clap_file(f);
   if (m.options.attachToDocument) publish_expression_functions();  // SDK 1.4 (E1)
   return plugins();
+}
+
+void PluginHost::Impl::load_ofx_bundle(const fs::path& dir) {
+  auto p = std::make_unique<Plugin>();
+  p->dir = dir;
+  const std::u8string f = dir.filename().u8string();
+  const std::string stem(f.begin(), f.end() - 11);  // without ".ofx.bundle"
+  std::string id = "ofx.";
+  for (const char c : stem) id += std::isalnum(static_cast<unsigned char>(c)) != 0 ? static_cast<char>(std::tolower(static_cast<unsigned char>(c))) : '-';
+  p->manifest.id = id;
+  p->manifest.name = stem + " (OpenFX)";
+  p->manifest.version = "1.0.0";
+  p->manifest.vendor = "OpenFX";
+  p->manifest.sdkMajor = 1;
+  p->manifest.sdkMinor = 4;
+  {
+    const std::shared_lock lock(pluginsMutex);
+    for (const auto& q : plugins) {
+      if (q->manifest.id == id) return;  // rescans keep what is loaded
+    }
+  }
+  if (std::ranges::find(options.disabled, id) != options.disabled.end()) {
+    p->status = PluginStatus::disabled;
+    p->userDisabled = true;
+    p->deferred = true;
+  } else if (journal && journal->is_quarantined(id)) {
+    p->status = PluginStatus::quarantined;
+  } else if (!options.spawnOutOfProcess) {
+    p->status = PluginStatus::failed;
+    p->error = "OpenFX plugins run out of process only, and this engine has no premation-plugin-host";
+  } else if (std::string why; !load_out_of_process(*p, why)) {
+    p->status = PluginStatus::failed;
+    p->error = why;
+  }
+  Plugin* raw = p.get();
+  {
+    const std::unique_lock lock(pluginsMutex);
+    plugins.push_back(std::move(p));
+    for (auto& e : raw->effects) ownerOf[e.get()] = raw;
+    if (raw->status == PluginStatus::loaded) {
+      for (auto& e : raw->effects) effects[e->matchName] = e.get();
+    }
+  }
+  if (raw->status == PluginStatus::loaded) {
+    if (options.attachToDocument) register_document(*raw);
+    PREMATION_LOG(info, "plugin_loaded").kv("plugin", id).kv("effects", raw->effects.size()).kv("kind", "openfx");
+  } else {
+    PREMATION_LOG(warn, "plugin_not_loaded").kv("plugin", id).kv("status", std::string(to_string(raw->status))).kv("error", raw->error);
+  }
+}
+
+void PluginHost::Impl::load_clap_file(const fs::path& file) {
+  auto p = std::make_unique<Plugin>();
+  p->dir = file;
+  const std::u8string stem8 = file.stem().u8string();
+  const std::string stem(stem8.begin(), stem8.end());
+  std::string id = "clap.";
+  for (const char c : stem) id += std::isalnum(static_cast<unsigned char>(c)) != 0 ? static_cast<char>(std::tolower(static_cast<unsigned char>(c))) : '-';
+  p->manifest.id = id;
+  p->manifest.name = stem + " (CLAP)";
+  p->manifest.version = "1.0.0";
+  p->manifest.vendor = "CLAP";
+  p->manifest.sdkMajor = 1;
+  p->manifest.sdkMinor = 4;
+  {
+    const std::shared_lock lock(pluginsMutex);
+    for (const auto& q : plugins) {
+      if (q->manifest.id == id) return;
+    }
+  }
+  if (std::ranges::find(options.disabled, id) != options.disabled.end()) {
+    p->status = PluginStatus::disabled;
+    p->userDisabled = true;
+    p->deferred = true;
+  } else if (!options.spawnOutOfProcess) {
+    p->status = PluginStatus::failed;
+    p->error = "CLAP plugins run out of process only, and this engine has no premation-plugin-host";
+  } else {
+    std::string why;
+    std::unique_ptr<OopChannel> ch = options.spawnOutOfProcess(file, why);
+    std::vector<std::uint8_t> reply;
+    std::optional<js::Json> j;
+    if (ch && ch->call(static_cast<std::uint32_t>(oop::Kind::describe), {}, reply, 30000, why)) {
+      j = js::parse(std::string_view(reinterpret_cast<const char*>(reply.data()), reply.size()));  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+    }
+    if (!j || !j->at("audio").is_array()) {
+      p->status = PluginStatus::failed;
+      p->error = j && j->at("error").is_string() ? j->at("error").str() : why.empty() ? std::string("its process gave no description") : why;
+    } else {
+      for (const js::Json& a : j->at("audio").arr()) {
+        AudioPluginInfo info;
+        info.id = a.at("id").is_string() ? a.at("id").str() : std::string();
+        info.name = a.at("name").is_string() ? a.at("name").str() : info.id;
+        info.vendor = a.at("vendor").is_string() ? a.at("vendor").str() : std::string();
+        info.pluginId = id;
+        if (a.at("features").is_array()) {
+          for (const js::Json& f : a.at("features").arr()) {
+            if (f.is_string()) info.features.push_back(f.str());
+          }
+        }
+        if (a.at("params").is_array()) {
+          for (const js::Json& q : a.at("params").arr()) {
+            AudioParamInfo pi;
+            pi.id = static_cast<std::uint32_t>(q.at("id").is_number() ? q.at("id").num() : 0);
+            pi.name = q.at("name").is_string() ? q.at("name").str() : std::string();
+            pi.min = q.at("min").is_number() ? q.at("min").num() : 0;
+            pi.max = q.at("max").is_number() ? q.at("max").num() : 1;
+            pi.def = q.at("default").is_number() ? q.at("default").num() : 0;
+            pi.stepped = q.at("stepped").is_bool() && q.at("stepped").b();
+            info.params.push_back(std::move(pi));
+          }
+        }
+        if (!info.id.empty()) p->audio.push_back(std::move(info));
+      }
+      p->oop = std::move(ch);
+      p->outOfProcess = true;
+      p->status = p->audio.empty() ? PluginStatus::failed : PluginStatus::loaded;
+      if (p->audio.empty()) p->error = "the file has no CLAP audio plugin";
+    }
+  }
+  Plugin* raw = p.get();
+  {
+    const std::unique_lock lock(pluginsMutex);
+    plugins.push_back(std::move(p));
+  }
+  PREMATION_LOG(info, "plugin_scanned").kv("plugin", id).kv("kind", "clap").kv("status", std::string(to_string(raw->status))).kv("audio", raw->audio.size());
 }
 
 std::string PluginHost::Impl::entitlement_lock(const Manifest& man) const {
@@ -3000,6 +3165,72 @@ CallResult PluginHost::pre_render(const RenderInputs& in, std::vector<CheckoutRe
   }
   if (x.pre_render_data != 0) m.handles.dispose(x.pre_render_data);  // G1: pre-render data is per call (see PLUGIN_SDK.md)
   return r;
+}
+
+std::vector<AudioPluginInfo> PluginHost::audio_plugins() const {
+  std::vector<AudioPluginInfo> out;
+  const std::shared_lock lock(impl_->pluginsMutex);
+  for (const auto& p : impl_->plugins) {
+    if (p->status == PluginStatus::loaded && !p->userDisabled) out.insert(out.end(), p->audio.begin(), p->audio.end());
+  }
+  return out;
+}
+
+bool PluginHost::process_audio(std::string_view audioId, std::string_view instance, double sampleRate, std::uint32_t channels,
+                               std::vector<float>& interleaved, std::span<const std::pair<std::uint32_t, double>> params, bool reset,
+                               std::string& why) {
+  Plugin* p = nullptr;
+  {
+    const std::shared_lock lock(impl_->pluginsMutex);
+    for (const auto& q : impl_->plugins) {
+      if (q->status != PluginStatus::loaded || q->userDisabled) continue;
+      if (std::ranges::any_of(q->audio, [&](const AudioPluginInfo& a) { return a.id == audioId; })) p = q.get();
+    }
+  }
+  if (p == nullptr) {
+    why = "no loaded CLAP plugin '" + std::string(audioId) + "'";
+    return false;
+  }
+  if (channels < 1 || channels > 2 || interleaved.size() % channels != 0) {
+    why = "audio must be mono or stereo";
+    return false;
+  }
+  const std::scoped_lock lock(p->oopMutex);
+  if (!p->oop || !p->oop->alive()) {
+    if (p->oopRestarts >= 3) {
+      why = "its process ended " + std::to_string(p->oopRestarts) + " times; the plugin is off until the next session";
+      return false;
+    }
+    ++p->oopRestarts;
+    p->oop = impl_->options.spawnOutOfProcess ? impl_->options.spawnOutOfProcess(p->dir, why) : nullptr;
+    std::vector<std::uint8_t> described;
+    if (!p->oop || !p->oop->call(static_cast<std::uint32_t>(oop::Kind::describe), {}, described, 30000, why)) return false;
+    PREMATION_LOG(warn, "plugin_process_restarted").kv("plugin", p->manifest.id).kv("restarts", p->oopRestarts);
+  }
+  clap::ProcessRequest req;
+  req.pluginId = std::string(audioId);
+  req.instance = std::string(instance);
+  req.sampleRate = sampleRate;
+  req.channels = channels;
+  req.interleaved = interleaved;
+  req.params.assign(params.begin(), params.end());
+  req.reset = reset;
+  std::vector<std::uint8_t> reply;
+  if (!p->oop->call(static_cast<std::uint32_t>(oop::Kind::audio_process), clap::encode(req), reply, impl_->options.outOfProcessTimeoutMs, why)) {
+    PREMATION_LOG(error, "plugin_process_fault").kv("plugin", p->manifest.id).kv("why", why);
+    return false;
+  }
+  clap::ProcessReply rep;
+  if (!clap::decode(reply, rep)) {
+    why = "its process answered something unreadable";
+    return false;
+  }
+  if (!rep.ok || rep.interleaved.size() != interleaved.size()) {
+    why = rep.message.empty() ? std::string("the plugin returned no audio") : rep.message;
+    return false;
+  }
+  interleaved = std::move(rep.interleaved);
+  return true;
 }
 
 bool PluginHost::out_of_process(std::string_view matchName) const {

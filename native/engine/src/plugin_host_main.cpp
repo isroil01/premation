@@ -20,6 +20,10 @@
 #include "json.hpp"
 #include "oop_wire.hpp"
 #include "plugin_host_io_ffi.hpp"
+#if defined(PREMATION_HAVE_OFX)
+#include "ofx_host.hpp"  // SDK 1.4 (O): a .ofx.bundle is hosted as OpenFX
+#endif
+#include "clap_host.hpp"  // SDK 1.4 (A): a .clap file is hosted as CLAP audio plugins
 
 namespace pl = premation::plugins;
 
@@ -73,6 +77,88 @@ pl::oop::RenderReply render(pl::PluginHost& host, std::span<const std::uint8_t> 
   return reply;
 }
 
+/// SDK 1.4 (A): the loop for a .clap file (describe / audio_process through clap::Host).
+int serve_clap(const std::string& file) {
+#if defined(PREMATION_HAVE_CLAP)
+  pl::clap::Host clap;
+  std::string error;
+  const bool loaded = clap.load(std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(file.data()), file.size())), error);  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+  std::vector<std::uint8_t> header(8);
+  std::vector<std::uint8_t> payload;
+  for (;;) {
+    if (!pl::oop::io::read_exact(header)) return 0;
+    pl::oop::Kind kind{};
+    std::uint32_t length = 0;
+    if (!pl::oop::read_header(header, kind, length)) return 3;
+    payload.resize(length);
+    if (length > 0 && !pl::oop::io::read_exact(payload)) return 0;
+    switch (kind) {
+      case pl::oop::Kind::describe: {
+        const std::string json = loaded ? clap.describe_json() : "{\"error\":" + premation::js::stringify(premation::js::Json::string(error)) + "}";
+        if (!send(bytes_of(json))) return 0;
+        break;
+      }
+      case pl::oop::Kind::audio_process: {
+        pl::clap::ProcessRequest req;
+        pl::clap::ProcessReply reply;
+        if (!pl::clap::decode(payload, req)) reply.message = "a malformed audio request";
+        else reply = clap.process(req);
+        if (!send(pl::clap::encode(reply))) return 0;
+        break;
+      }
+      case pl::oop::Kind::quit: return 0;
+      default: return 3;
+    }
+  }
+#else
+  (void)file;
+  std::fputs("premation-plugin-host: built without CLAP\n", stderr);
+  return 4;
+#endif
+}
+
+/// SDK 1.4 (O): the loop for an OpenFX bundle (describe / render through ofx::Host).
+int serve_ofx(const std::string& bundle) {
+#if defined(PREMATION_HAVE_OFX)
+  pl::ofx::Host ofx;
+  std::string error;
+  const bool loaded = ofx.load(std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(bundle.data()), bundle.size())), error);  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
+  if (!loaded) std::fprintf(stderr, "premation-plugin-host: %s\n", error.c_str());
+  std::vector<std::uint8_t> header(8);
+  std::vector<std::uint8_t> payload;
+  for (;;) {
+    if (!pl::oop::io::read_exact(header)) return 0;
+    pl::oop::Kind kind{};
+    std::uint32_t length = 0;
+    if (!pl::oop::read_header(header, kind, length)) return 3;
+    payload.resize(length);
+    if (length > 0 && !pl::oop::io::read_exact(payload)) return 0;
+    switch (kind) {
+      case pl::oop::Kind::describe: {
+        const std::string json = loaded ? ofx.describe_json()
+                                        : "{\"error\":" + premation::js::stringify(premation::js::Json::string(error)) + "}";
+        if (!send(bytes_of(json))) return 0;
+        break;
+      }
+      case pl::oop::Kind::render: {
+        pl::oop::RenderRequest req;
+        pl::oop::RenderReply reply;
+        if (!pl::oop::decode(payload, req)) reply.message = "a malformed render request";
+        else reply = ofx.render(req);
+        if (!send(pl::oop::encode(reply))) return 0;
+        break;
+      }
+      case pl::oop::Kind::quit: return 0;
+      default: return 3;
+    }
+  }
+#else
+  (void)bundle;
+  std::fputs("premation-plugin-host: built without OpenFX\n", stderr);
+  return 4;
+#endif
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -86,6 +172,8 @@ int main(int argc, char** argv) {
     return 2;
   }
   pl::oop::io::binary_stdio();
+  if (bundle.ends_with(".clap")) return serve_clap(bundle);
+  if (bundle.ends_with(".ofx.bundle") || bundle.ends_with(".ofx.bundle/") || bundle.ends_with(".ofx.bundle\\")) return serve_ofx(bundle);
   pl::HostOptions o;
   o.searchPaths = {std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(bundle.data()), bundle.size()))};  // NOLINT(cppcoreguidelines-pro-type-reinterpret-cast)
   o.threads = static_cast<int>(std::max(1U, std::thread::hardware_concurrency()));
