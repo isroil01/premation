@@ -404,7 +404,18 @@ export async function openAfterEffectsProjectFile(file: File): Promise<void> {
     reportAepImportFailure(file.name, viaEngine ? viaEngine.message : 'this engine does not convert After Effects projects');
     return;
   }
-  if (viaEngine.openComp) await engine().execute({ type: 'setActiveComposition', comp: viaEngine.openComp });
+  if (viaEngine.openComp) {
+    // Open it as the EDITOR's tab, not only the engine's active comp: the timeline, the viewer's
+    // frame and the layer list follow the page's tab (engineTransport syncs the engine from it).
+    // Telling the engine alone drew the imported comp inside the blank "Composition 1" frame
+    // that New Project opened, with that comp's empty timeline under it.
+    const tabs = useProjectStore.getState();
+    const blankTab = tabs.activeTabId;
+    const { mirrorCompName } = await import('@core/mirror/compNetwork');
+    tabs.actions.openTab(viaEngine.openComp, [viaEngine.openComp], mirrorCompName(documentMirror(), viaEngine.openComp));
+    if (blankTab && useProjectStore.getState().activeTabId !== blankTab) useProjectStore.getState().actions.closeTab(blankTab);
+    await engine().execute({ type: 'setActiveComposition', comp: viaEngine.openComp });
+  }
   afterProjectLoaded();
   reportEngineAepImport(file.name, viaEngine);
 }
