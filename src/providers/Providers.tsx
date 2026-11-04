@@ -80,6 +80,7 @@ import {
   afterProjectSaved,
   afterProjectLoaded,
   baselineProjectHistory,
+  markProjectDirty,
   resetProjectWorkspace,
 } from '@core/project/projectSession';
 import type { SaveOutcome } from '@core/project/ProjectManager';
@@ -374,8 +375,15 @@ async function pickAndOpenAfterEffectsProject(): Promise<void> {
  * (importProject{path}: one entry) — the File menu and a viewport drop alike.
  */
 export async function openAfterEffectsProjectFile(file: File): Promise<void> {
+  // A project with no layers yet (a dashboard "New Project", the blank start) RECEIVES the
+  // import: it keeps its identity, so cloud autosave and Save write the converted project back
+  // to it. Replacing it with a New Project unbound the editor from the routed project —
+  // CloudAutosave refuses a document that is not that project's — and the project reopened empty.
+  const mirror = documentMirror();
+  const intoCurrent = mirror.layerIds().length === 0;
+  const placeholders = intoCurrent ? [...mirror.compIds] : [];
   const { confirmDiscardChanges } = await import('@core/project/confirmDiscard');
-  if (!await confirmDiscardChanges('Open an After Effects project')) return;
+  if (!intoCurrent && !await confirmDiscardChanges('Open an After Effects project')) return;
 
   const { importAepThroughEngine } = await import('@core/aep/aepImport');
   const { reportEngineAepImport, reportAepImportFailure } = await import('@core/aep/aepImportReport');
@@ -388,12 +396,14 @@ export async function openAfterEffectsProjectFile(file: File): Promise<void> {
     return;
   }
 
-  // A blank document first: the import ADDS compositions, and adding four of
-  // someone else's on top of the user's own would produce a project belonging
-  // to neither. `newProject` also clears the path, so Save asks where to go.
-  noteNextProjectSource('aep');
-  getProjectManager().newProject(file.name.replace(/\.aepx?$/i, ''));
-  resetProjectWorkspace();
+  // A project WITH content gets a blank document first: the import ADDS compositions, and adding
+  // four of someone else's on top of the user's own would produce a project belonging to neither.
+  // `newProject` also clears the path, so Save asks where to go.
+  if (!intoCurrent) {
+    noteNextProjectSource('aep');
+    getProjectManager().newProject(file.name.replace(/\.aepx?$/i, ''));
+    resetProjectWorkspace();
+  }
 
   notify(t('providers.aep.opening', 'Opening “{name}”…', { name: file.name }), 'info');
   const viaEngine = await importAepThroughEngine(engine(), diskPath).catch((err: unknown) => ({
@@ -416,7 +426,19 @@ export async function openAfterEffectsProjectFile(file: File): Promise<void> {
     if (blankTab && useProjectStore.getState().activeTabId !== blankTab) useProjectStore.getState().actions.closeTab(blankTab);
     await engine().execute({ type: 'setActiveComposition', comp: viaEngine.openComp });
   }
-  afterProjectLoaded();
+  // The empty project's own blank comps go: reopened, it must open on the imported comp, not on
+  // an empty "Composition 1" that reads as "the import was lost".
+  const blanks = placeholders.filter((id) => id !== viaEngine.openComp && documentMirror().comp(id));
+  if (blanks.length > 0) {
+    await engine().execute({ type: 'removeItems', items: blanks, removeUsingLayers: true });
+    const store = useProjectStore.getState();
+    for (const tab of Object.values(store.tabs)) {
+      if (blanks.includes(tab.compositionId) && tab.id !== store.activeTabId) store.actions.closeTab(tab.id);
+    }
+  }
+  // The converted project is unsaved work, never "clean": the unsaved indicator and the discard
+  // prompt cover it, and (bound to a cloud project) autosave uploads it.
+  markProjectDirty();
   reportEngineAepImport(file.name, viaEngine);
 }
 
