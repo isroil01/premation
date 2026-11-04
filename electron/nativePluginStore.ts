@@ -91,7 +91,11 @@ export interface PluginStoreState {
   plugins: Record<string, InstalledPlugin>;
   /** Ids whose folder is deleted at the next start (before the engine loads anything). */
   uninstall: string[];
+  /** SDK 1.4 (X2): where a plugin runs, pinned by the user (absent = auto: third-party out of process). Any plugin id. */
+  isolation?: Record<string, PluginIsolation>;
 }
+
+export type PluginIsolation = 'process' | 'engine';
 
 export type InstallOutcome =
   | { ok: true; id: string; version: string; restartNeeded: boolean }
@@ -122,7 +126,11 @@ export async function readState(dir: string): Promise<PluginStoreState> {
       };
     }
     const uninstall = Array.isArray(raw.uninstall) ? raw.uninstall.filter((i): i is string => typeof i === 'string' && ID_RE.test(i)) : [];
-    return { plugins, uninstall };
+    const isolation: Record<string, PluginIsolation> = {};
+    for (const [id, mode] of Object.entries(raw.isolation ?? {})) {
+      if (ID_RE.test(id) && (mode === 'process' || mode === 'engine')) isolation[id] = mode;
+    }
+    return { plugins, uninstall, ...(Object.keys(isolation).length > 0 ? { isolation } : {}) };
   } catch {
     return emptyState();
   }
@@ -367,6 +375,17 @@ export async function queueUninstall(dir: string, id: string): Promise<PluginSto
   return state;
 }
 
+/** SDK 1.4 (X2): pin where `id` runs ('auto' clears the pin). The engine is told too (setPluginIsolation). */
+export async function setIsolation(dir: string, id: string, mode: PluginIsolation | 'auto'): Promise<PluginStoreState> {
+  const state = await readState(dir);
+  const isolation = { ...(state.isolation ?? {}) };
+  if (mode === 'auto') delete isolation[id];
+  else isolation[id] = mode;
+  const next: PluginStoreState = { plugins: state.plugins, uninstall: state.uninstall, ...(Object.keys(isolation).length > 0 ? { isolation } : {}) };
+  await writeState(dir, next);
+  return next;
+}
+
 export async function setEnabled(dir: string, id: string, enabled: boolean): Promise<PluginStoreState> {
   const state = await readState(dir);
   const p = state.plugins[id];
@@ -556,6 +575,7 @@ export function revokedInstalled(
 export async function engineArgsFor(dir: string, state: PluginStoreState, revoked: readonly RevocationEntry[]): Promise<string[]> {
   const args: string[] = ['--entitlement', path.join(dir, ENTITLEMENT_FILE)];
   for (const [id, p] of Object.entries(state.plugins)) if (!p.enabled) args.push('--plugin-disabled', id);
+  for (const [id, mode] of Object.entries(state.isolation ?? {})) args.push('--plugin-isolation-pin', `${id}=${mode}`);
   if (revoked.length > 0) {
     const file = path.join(dir, '.revoked.json');
     await writeFile(file, JSON.stringify({ revoked: revoked.map((e) => ({ id: e.id, reason: e.reason })) }));

@@ -6,12 +6,16 @@
 //     next render starts it again, and after three restarts the plugin is off for the session.
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "cpu_render.hpp"
 #include "host.hpp"
+#include "native_effects.hpp"
 #include "plugin_host_channel.hpp"
 
 namespace pl = premation::plugins;
@@ -24,6 +28,7 @@ constexpr std::uint32_t kW = 24, kH = 16;
 constexpr std::uint32_t kFaultParamId = 901;
 constexpr double kFaultAbort = 8;  // sample_util.hpp Fault::abort_process (1-based popup)
 constexpr double kFaultHang = 6;   // Fault::hang (1.5 s)
+constexpr double kFaultHeap = 9;   // Fault::heap_corruption (X4)
 
 pl::HostOptions opts(bool outOfProcess, std::uint32_t timeoutMs = 10000) {
   pl::HostOptions o;
@@ -128,4 +133,76 @@ TEST_CASE("out of process: a hang past the timeout ends the plugin's process; th
   const pl::CallResult r = render(host, kFaultHang, out);
   CHECK_FALSE(r.ok);
   CHECK(r.message.find("did not answer") != std::string::npos);
+}
+
+// X3: the per-frame cost of running out of process (hidden: `engine_plugins_tests "[.oopbench]"`).
+// A 1920 × 1080 8-bit frame through ripple, in process and through the pipe; the difference is the
+// cost of crossing (both images over the pipe + the child's own conversions).
+TEST_CASE("out of process: per-frame cost (benchmark)", "[.oopbench]") {
+  constexpr std::uint32_t kBw = 1920, kBh = 1080;
+  pl::TexelImage big;
+  big.format = pl::TexelFormat::rgba8;
+  big.width = kBw;
+  big.height = kBh;
+  big.bytes.assign(std::size_t{kBw} * kBh * 4, std::uint8_t{128});
+  const auto time_it = [&](pl::PluginHost& host) {
+    const pl::EffectSpec* spec = host.effect(kRipple);
+    REQUIRE(spec != nullptr);
+    pl::RenderInputs in = pl::default_inputs(*spec, "L/fx", kBw, kBh, 8);
+    pl::TexelImage out;
+    REQUIRE(pl::run_native_cpu(host, in, big, {}, out).ok);  // warm: instances, the child's first frame
+    constexpr int kFrames = 20;
+    const auto t0 = std::chrono::steady_clock::now();
+    for (int i = 0; i < kFrames; ++i) REQUIRE(pl::run_native_cpu(host, in, big, {}, out).ok);
+    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() / kFrames;
+  };
+  // The same threads both sides: the child renders with every core (plugin_host_main.cpp).
+  const int cores = static_cast<int>(std::max(1U, std::thread::hardware_concurrency()));
+  pl::HostOptions ho = opts(false);
+  ho.threads = cores;
+  pl::PluginHost here(ho);
+  here.scan();
+  pl::HostOptions to = opts(true);
+  to.threads = cores;
+  pl::PluginHost there(to);
+  there.scan();
+  const double a = time_it(here);
+  const double b = time_it(there);
+  WARN("ripple 1920x1080 8-bit: in process " << a << " ms/frame, out of process " << b << " ms/frame (+" << (b - a) << " ms)");
+  CHECK(b > 0);
+}
+
+TEST_CASE("out of process: heap corruption ends the plugin's process, never the engine (X4)", "[plugins][oop]") {
+  pl::PluginHost host(opts(true));
+  host.scan();
+  REQUIRE(host.out_of_process(kRipple));
+  pl::TexelImage out;
+  pl::CallResult r = render(host, kFaultHeap, out);
+  CHECK_FALSE(r.ok);
+  CHECK(r.message.find("process ended") != std::string::npos);
+  r = render(host, 1, out);  // started again
+  INFO(r.message);
+  CHECK(r.ok);
+}
+
+TEST_CASE("out of process: the user's pin wins over the policy (X2)", "[plugins][oop][isolation]") {
+  const char* plugin = "com.premation.samples.ripple";
+  {
+    premation::doc::NativeEffects::set_isolation_pin(plugin, "engine");
+    pl::PluginHost host(opts(true));  // the policy says out of process
+    host.scan();
+    CHECK_FALSE(host.out_of_process(kRipple));
+  }
+  {
+    premation::doc::NativeEffects::set_isolation_pin(plugin, "process");
+    pl::HostOptions o = opts(true);
+    o.runOutOfProcess = [](std::string_view) { return false; };  // the policy says in process
+    pl::PluginHost host(o);
+    host.scan();
+    CHECK(host.out_of_process(kRipple));
+    pl::TexelImage out;
+    CHECK(render(host, 1, out).ok);
+  }
+  premation::doc::NativeEffects::set_isolation_pin(plugin, "");
+  CHECK(premation::doc::NativeEffects::isolation_pin(plugin).empty());
 }

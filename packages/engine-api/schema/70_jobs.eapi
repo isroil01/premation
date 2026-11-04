@@ -343,6 +343,8 @@ command setPluginEnabled = 870 [control] { plugin: string = 1; enabled: bool = 2
 command rescanPlugins = 872 [control] {} -> PluginList;
 /// Developer Mode (W2, docs/PLUGIN_SDK.md "Hot reload") — load an installed plugin's bundle again and swap the new build in once its GLOBAL_SETUP / PARAMS_SETUP succeed. Renders in flight finish on the old module; each instance is set up again from the document's sequence data on its next render; the frame caches are purged. Without the engine's `--plugin-shadow` the old binary stays locked on Windows, so a rebuild cannot replace it. `notFound`: no such plugin; `internal`: the new build failed (the message says why) and the old module stays loaded. Returns every plugin afterwards, like listPlugins.
 command reloadPlugin = 875 [control] { plugin: string = 1; } -> PluginList;
+/// SDK 1.4 (X2) — where a plugin runs: `process` (its own premation-plugin-host: a crash there never ends the engine), `engine` (inside the engine: its GPU path, overlays and every SDK feature), or `auto` (third-party out of process, first-party in). The plugin is loaded again under the choice now; Electron persists it (`--plugin-isolation-pin <id>=<mode>`). A plugin that needs the engine's document or GPU stays in the engine whatever the choice. `notFound`: no such plugin. Returns every plugin afterwards.
+command setPluginIsolation = 876 [control] { plugin: string = 1; mode: string = 2; } -> PluginList;
 /// Store plugin data in the DOCUMENT (AE sequence data / arbitrary-data params). Undoable, saved with the project.
 command setPluginData = 871 { layer: LayerId = 1; group: PropPath = 2; key: string = 3; data: bytes = 4; }
 
@@ -373,6 +375,11 @@ struct PluginPanelInfo { id: string = 1; name: string = 2; page: string = 3; }
 query listPluginCommands = 1092 {} -> PluginCommandList;
 /// P7a — run a native plugin's command in the engine (core thread, crash-guarded, under the watchdog). `comp`, `layers` and `time` are what the user had (the active composition, the selected layers top first, the playhead; absent comp / time = the engine's active composition and playhead); `args` is JSON handed to the plugin. Every edit the plugin makes through `engine_command` is ONE undo entry labelled with the command's name, and the log holds those edits (a replay never runs the plugin). `notFound`: no such command or its plugin is not loaded; the plugin's error or a crash: `internal`, nothing changed (a crash disables the command until setPluginEnabled(true)).
 command runPluginCommand = 873 { plugin: string = 1; command: string = 2; comp?: ItemId = 3; layers: LayerId[] = 4; time?: Time = 5; args?: string = 6; } -> PluginCommandResult;
+/// SDK 1.4 (U1) — a viewer tool's live event (PR_COMMAND_TOOL_EVENT, no edits): the pointer moving, the wheel, a key, while the tool is active (`args` JSON as runPluginCommand's, with `event`). Returns what the tool draws over the viewer and its status line. `notFound`: no such command or its plugin is not loaded.
+query pluginToolEvent = 1094 { plugin: string = 1; command: string = 2; comp?: ItemId = 3; time?: Time = 4; args?: string = 5; } -> PluginToolFeedback;
+/// SDK 1.4 (U1): one item of a tool's overlay — `kind` 0 a polyline (xy pairs), 1 a circle (cx, cy, r), 2 a dot (x, y); comp px; `rgba` straight 0..1 (all 0 = the editor's accent); `width` screen px.
+struct PluginToolDrawItem { kind: u32 = 1; xy: f64[] = 2; rgba: f64[] = 3; width: f64 = 4; }
+struct PluginToolFeedback { items: PluginToolDrawItem[] = 1; message: string = 2; }
 /// `message`: the plugin's note (PrCommandOut.return_msg). `edits`: how many edit commands it applied.
 struct PluginCommandResult { message: string = 1; edits: u32 = 2; }
 

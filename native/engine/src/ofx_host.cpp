@@ -903,7 +903,8 @@ bool Host::load(const fs::path& bundle, std::string& error) {
     pl.spec.matchName = match_name(op->pluginIdentifier);
     pl.spec.name = pl.descriptor.props.str(kOfxPropLabel, op->pluginIdentifier);
     pl.spec.category = pl.descriptor.props.str(kOfxImageEffectPluginPropGrouping, "OpenFX");
-    pl.spec.version = static_cast<std::uint32_t>((op->pluginVersionMajor << 16U) | (op->pluginVersionMinor & 0xFFFFU));
+    // PR_VERSION's packing (major 8 bits, minor 8, patch 16): what the host reads back as "major.minor.0" (O3).
+    pl.spec.version = (static_cast<std::uint32_t>(op->pluginVersionMajor & 0xFFU) << 24U) | (static_cast<std::uint32_t>(op->pluginVersionMinor & 0xFFU) << 16U);
     pl.spec.about = pl.descriptor.props.str(kOfxPropPluginDescription);
     pl.spec.outFlags = PR_OUT_FLAG_SMART_RENDER | PR_OUT_FLAG_FLOAT_COLOR_AWARE | PR_OUT_FLAG_DEEP_COLOR_AWARE;
     if (pl.context == kOfxImageEffectContextGenerator) pl.spec.outFlags |= PR_OUT_FLAG_GENERATOR;

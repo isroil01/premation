@@ -1047,9 +1047,15 @@ declares its channels in the manifest:
   channels, with up to `PR_MAX_CHANNEL_VALUES` (4096) finite numbers each.
   Params and time are that frame's.
 - **Reading.** `read_channel(host, name, out, capacity, &count)` works in
-  `PUBLISH_CHANNELS`, `SMART_PRE_RENDER`, `SMART_RENDER(_GPU)` and `RENDER`,
-  for declared reads only. It returns `PR_ERR_NOT_FOUND` when nothing
-  published the channel this frame, so draw your default then.
+  `PUBLISH_CHANNELS`, `SMART_PRE_RENDER`, `SMART_RENDER(_GPU)`, `RENDER` and
+  `SIM_STEP`, for declared reads only. It returns `PR_ERR_NOT_FOUND` when
+  nothing published the channel this frame, so draw your default then.
+- **Simulations read the step's channel.** In `SIM_STEP` the channel is the
+  one published at that step's time, not at the frame being drawn: the host
+  runs the publishers again for each step it takes. Editing a publisher
+  re-steps the simulation from where its channel changed. The `bounce`
+  sample reads the `channels` sample's "pulse" as a sideways push
+  (`engine_plugins_scene_tests "[sim][channels]"`).
 - **Order.** The host runs a frame's publishers in the order the
   declarations give, so a publisher that reads another's channel runs after
   it. Publishers in a cycle publish nothing and report it on `layerErrors`.
@@ -1084,11 +1090,26 @@ commands:
   `{ "tool", "stroke": [[x, y], …], "shift", "alt", "ctrl" }`, along with the
   comp, the selected layers and the playhead.
 - **One undo entry.** Everything the command edits for one drag is one undo
-  entry, named after the command, as for any command.
+  entry, named after the command, as for any command. The tool's command is
+  not listed again as a plain command (it needs a stroke).
+- **Live feedback.** While the tool is active the command is also called
+  with `PR_COMMAND_TOOL_EVENT` for each pointer move (hover, or a drag so
+  far), wheel turn and key: `args_json` is
+  `{ "tool", "event": "move" | "wheel" | "key", "pointer": [x, y], "stroke"?,
+  "deltaY"?, "key"?, "shift", "alt", "ctrl" }`. Draw the overlay with
+  `PrCommandSuite.tool_draw(host, kind, xy, count, rgba, width)`:
+  `PR_TOOL_DRAW_LINE` (a polyline), `PR_TOOL_DRAW_CIRCLE` (cx, cy, r) or
+  `PR_TOOL_DRAW_DOT` (x, y), in comp pixels, NULL colour for the editor's
+  accent, at most 512 items. Put a status line in `return_msg`. An event
+  never edits (`engine_command` refuses); keep what it changes, such as a
+  brush size, in your module. Events go one at a time and the newest waits,
+  so a slow plugin skips moves instead of lagging. A plugin built before 1.4
+  answers the unknown selector with an error and simply draws nothing.
 
 The `scatter` sample stamps an ellipse layer every 48 px along the stroke.
-Shift halves the spacing and Alt doubles the size. `engine_plugins_tests
-[tools]` covers it.
+Shift halves the spacing and Alt doubles the size. While it is active it
+draws its brush ring and the stamps a release would make, and the wheel or
+`[` / `]` changes the spacing. `engine_plugins_tests [tools]` covers it.
 
 ## Machine learning: the ML suite (SDK 1.4)
 
@@ -1115,6 +1136,11 @@ if (in->host->ml_load(in->host_ref, "models/style.onnx", &model) == PR_ERR_NONE)
 - **Tensors.** Inputs are float32. The host fills each output's `data`,
   `count`, `shape` and `rank`, and that memory lasts until the selector
   returns. An output with no name is the model's output in that position.
+- **Memory.** A model stays open while it is used. When video memory runs
+  short the host closes the models no run has used lately, and they load
+  again on their next run, so keep no model handle across frames that you
+  could not load again. Cache & Memory shows how many are open and their
+  size.
 - **Guarded.** A run is part of the selector, so it is crash-guarded and
   under the watchdog. A failed run returns `PR_ERR_INTERNAL` with the reason
   in the log. Keep a CPU path: an older host has no ML suite, and a build
@@ -1135,6 +1161,14 @@ A crash, `abort()`, heap corruption or a hang there never ends the engine.
   default), `off` or `all`. With `auto`, first-party plugins (`com.premation.*`)
   run in the engine and everything else runs out of process. An engine
   installed without `premation-plugin-host` runs everything in process.
+- **The user's choice.** A plugin's page has Auto / Own process / In the
+  engine (`setPluginIsolation`; Electron keeps it and passes
+  `--plugin-isolation-pin <id>=<mode>`). The plugin loads again under the
+  choice at once. A plugin that needs the engine (below) stays there
+  whatever the choice, and the page says so.
+- **The cost.** Crossing costs both images over the pipe: about 14 ms more
+  per 1920×1080 8-bit frame through `ripple` (19 ms in process, 33 ms out of
+  process, same threads; `engine_plugins_tests "[.oopbench]"`).
 - **What stays in process.** A plugin stays in the engine when it has
   commands, importers, output modules, layer types or expression functions.
   So does any effect that needs the engine's document or GPU at render time:
@@ -1172,9 +1206,13 @@ call `scene_add_mesh` (a `PrSceneMesh`) and `scene_add_light` (a `PrLight`).
   with the comp's other 3D layers, lit by its lights, casting and receiving
   shadows, and in the camera's depth of field.
 - **Lights.** Up to 8 lights per frame join the comp's lights.
+- **Motion blur.** A mesh moves rigidly with its layer, so under comp
+  motion blur it gets the layer's shutter samples: there is nothing to
+  provide.
 - **Limits.** This works only on a 3D layer of the composition itself; a 2D
-  or nested layer reports it on `layerErrors`. Motion vectors (D2) and custom
-  shading (D3) are not in yet, so a contributed mesh is not motion-blurred.
+  or nested layer reports it on `layerErrors`. A mesh that deforms within a
+  frame is not motion-blurred by its own motion, and custom shading (a
+  plugin WGSL material) is not in yet.
 
 The `meshgen` sample (Mesh Cube) adds a lit cube and a point light.
 `engine_plugins_scene_tests [scene3d]` checks where they land in the frame.
@@ -1186,7 +1224,9 @@ folder is found by the scan (for example `--plugin-path "C:\Program
 Files\Common Files\OFX\Plugins"`). It **only ever runs out of process**, in
 `premation-plugin-host`, never in the engine. Its effects are listed as
 `ofx:<plugin identifier>` under its OFX grouping. A project stores them by
-that identifier, and a missing bundle takes the missing-plugin path.
+that identifier with the plugin's version (`pluginVersion`, from
+`pluginVersionMajor.Minor`; every plugin effect records its plugin version),
+and a missing bundle takes the missing-plugin path.
 
 - **Contexts.** Filter, General (one Source clip) and Generator.
 - **Images.** CPU, RGBA, float or 8-bit, premultiplied, at render scale 1,
@@ -1228,11 +1268,14 @@ plugin state, and `reset` clears it on a seek. A dead or hung process is
 restarted as for any out-of-process plugin, and a failed block leaves the
 audio as it was.
 
-**Not wired yet.** The engine does not put audio effects on layers yet (the
-document's layer audio effects are still listed as unported). Until it does,
-a CLAP plugin cannot be placed on a layer, and the mixer does not call it.
-Note ports and MIDI, the plugin's own editor window, state save / load,
-latency and 64-bit audio are not hosted. VST3 is not hosted.
+**On layers.** A loaded CLAP plugin is listed in a layer's Audio Effects
+under Plugins (CLAP), stored as `clap:<plugin id>` in the layer's audio
+effect chain. The engine's voices run it for playback and export, one block
+at a time, in the plugin's own process; a failed block passes the audio
+through. Its params, like the built-in effects' params, are layer properties
+`audio/fx/<effect id>/<param>` with stopwatches, keyframed through the
+timeline. Note ports and MIDI, the plugin's own editor window, state save /
+load, latency and 64-bit audio are not hosted. VST3 is not hosted.
 
 The `clapgain` sample (`native/sdk/samples/clapgain`, written against the CLAP
 headers only) and `engine_plugins_tests [clap]` cover the description and the

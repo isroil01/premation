@@ -27,3 +27,27 @@
   stroke-linejoin: round;
   opacity: 0.85;
 }
+
+/* SDK 1.4 (U1): what the tool draws (its brush, a preview) and its status line. */
+.item {
+  fill: none;
+  stroke: var(--accent, #4aa3ff);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.dot {
+  fill: var(--accent, #4aa3ff);
+}
+
+.status {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  padding: 2px 8px;
+  font-size: var(--panel-font-size-help, 11px);
+  color: var(--color-text-primary);
+  background: var(--color-bg-elevated, rgba(0, 0, 0, 0.6));
+  border-radius: 4px;
+  pointer-events: none;
+}

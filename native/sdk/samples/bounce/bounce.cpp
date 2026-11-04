@@ -6,6 +6,9 @@
 //
 // The state is plain bytes (State below), in layer px. `seed` (per instance) picks the launch
 // direction, so two bounces on two layers differ and both render the same everywhere.
+//
+// C2: when a Controller (the `channels` sample) publishes "pulse" in the comp, its strength pushes
+// the ball sideways (kWindPerPulse px/s² at full strength), read at each step's own time.
 #include <premation_sdk/premation_sdk.h>
 
 #include <algorithm>
@@ -21,6 +24,17 @@ enum : uint32_t { kGravity = 1, kBounciness = 2, kRadius = 3, kSpeed = 4, kColor
 struct State {
   double x, y, vx, vy;  // layer px, layer px per second
 };
+
+constexpr double kWindPerPulse = 1000;
+
+/// The "pulse" channel's strength at this step, 0 without a controller (or an older host).
+double pulse_of(const PrInData* in) {
+  if (in->host->struct_size < offsetof(PrHostSuite, read_channel) + sizeof(void*)) return 0;
+  double v[3] = {0, 0, 0};  // NOLINT(cppcoreguidelines-avoid-c-arrays, modernize-avoid-c-arrays)
+  uint32_t count = 0;
+  if (in->host->read_channel(in->host_ref, "pulse", v, 3, &count) != PR_ERR_NONE || count == 0) return 0;
+  return std::isfinite(v[0]) ? v[0] : 0;
+}
 
 PrErr params_setup(const PrInData* in) {
   if (PrErr e = prs::add_float(in, kGravity, "Gravity", 900, -10000, 10000, 0, 3000, 0); e != PR_ERR_NONE) return e;
@@ -46,6 +60,7 @@ PrErr sim_step(const PrInData* in, PrParamDef* const* params, PrSimStepExtra* x)
     const double g = prs::num(params, in, kGravity);
     const double keep = std::clamp(prs::num(params, in, kBounciness) / 100, 0.0, 1.0);
     s.vy += g * x->dt;
+    s.vx += kWindPerPulse * pulse_of(in) * x->dt;
     s.x += s.vx * x->dt;
     s.y += s.vy * x->dt;
     if (s.x < r) { s.x = r; s.vx = std::abs(s.vx) * keep; }

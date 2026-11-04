@@ -542,7 +542,6 @@ export const APP_MENU: MenuGroupModel[] = [
         ],
       },
       { commandId: 'layer.precompose', label: 'Pre-compose…' },
-      { commandId: 'layer.rigCharacter', label: 'Rig Character' },
       { separator: true },
       {
         // Derive new layers from the selection — nulls from a path's points,
@@ -557,6 +556,8 @@ export const APP_MENU: MenuGroupModel[] = [
           { commandId: 'layer.autoTrace', label: 'Auto-trace…' },
           { commandId: 'layer.newLayerFromSubject', label: 'New Layer from Subject' },
           { commandId: 'layer.createSubjectTrack', label: 'Subject Track (Null)' },
+          // A character from the selected layers (each a part on its own bone): a derived layer too.
+          { commandId: 'layer.rigCharacter', label: 'Rig Character' },
         ],
       },
       {

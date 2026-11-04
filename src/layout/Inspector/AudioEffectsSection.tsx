@@ -6,14 +6,14 @@
  * writer this would be unreachable code, which is the "composed but unexecuted"
  * failure this repo has shipped before — tests green, feature absent.
  *
- * Parameters are plain numbers by design. `audioParams.ts` reserves the ramp
- * seam for them ("audio-effect parameters are the same shape and should reuse
- * `buildParamRamp`"), so keeping them numeric is what will let them keyframe
- * without a second scheduling path. They are static for now; the keyframe
- * button belongs with that work, not ahead of it.
+ * Parameters are plain numbers by design, and each is a keyframeable property
+ * of the layer (`audio/fx/<effect id>/<key>`, SDK 1.4 A2): the stopwatch keys
+ * the `audiofx.<id>.<key>` track the mixer ramps. CLAP plugins' effects
+ * (`clap:<id>`, PluginInfo.audio) sit in the same chain with their own params.
  */
 
 import { ValueField } from '@components/ValueField';
+import { StopwatchButton } from '@components/PropertyRow';
 import { Switch } from '@components/Switch';
 import { useMirrorProperty } from '@hooks/useMirror';
 import { useMirrorJson } from '@hooks/useMirrorFields';
@@ -25,15 +25,23 @@ import {
   DISTORTION_CURVES,
   WAVE_EFFECTS,
   hasFlag,
+  isClapEffectType,
   readAudioEffects,
   type AudioEffect,
   type AudioEffectType,
+  type ClapEffectType,
   type AudioWaveform,
   type DistortionCurve,
 } from '@core/audio/audioEffects';
 import { shortId } from '@utils/lang';
 import { values } from '@core/engine/propRefs';
 import { isLayer } from '@core/mirror/docFacts';
+import { isTrackAnimated, readTrack } from '@core/mirror/selection';
+import { pluginAudioEffects } from '@core/nativePlugins/pluginContrib';
+import { documentMirror } from '@stores/documentMirror';
+import { useActiveWorkspace } from '@stores/projectStore';
+import { useMirrorTrackWatch } from '@hooks/useMirror';
+import { scalarValueCommands, stopwatchCommands } from './inspectorEdits';
 import { t } from '@core/i18n';
 import { useEngineEdit, type EngineEdit } from './useEngineEdit';
 import styles from './ParentControl.module.css';
@@ -41,6 +49,61 @@ import ta from './TextAnimatorControls.module.css';
 import tStyles from './TransformSection.module.css';
 
 const TYPES = Object.keys(AUDIO_EFFECT_DEFS) as AudioEffectType[];
+
+type ParamDef = { key: string; label: string; unit?: string; min: number; max: number; default: number };
+
+/** A chain entry's name and params: a built-in's from AUDIO_EFFECT_DEFS, a CLAP plugin's from PluginInfo.audio
+ *  (a plugin that is not loaded shows no params and passes the sound through). */
+function defOf(type: AudioEffectType | ClapEffectType): { label: string; params: ReadonlyArray<ParamDef> } {
+  if (!isClapEffectType(type)) return AUDIO_EFFECT_DEFS[type];
+  const p = pluginAudioEffects().find((x) => x.type === type);
+  return p ?? { label: t('inspector.audioEffects.missingPlugin', '{name} (not installed)', { name: type.slice(5) }), params: [] };
+}
+
+/**
+ * One param: a number field and its stopwatch. Animated, a write keys the playhead on
+ * `audio/fx/<effect id>/<key>`; static, it rewrites the chain (one entry).
+ */
+function AudioParamRow({ nodeId, effectId, effectLabel, def, stored, edit, setStatic }: {
+  nodeId: string;
+  effectId: string;
+  effectLabel: string;
+  def: ParamDef;
+  stored: number;
+  edit: EngineEdit;
+  setStatic: (v: number) => void;
+}): JSX.Element {
+  const time = useActiveWorkspace()?.time ?? 0;
+  const path = `audio/fx/${effectId}/${def.key}`;
+  useMirrorTrackWatch([nodeId], [path]);
+  const m = documentMirror();
+  const animated = isTrackAnimated(m, nodeId, path);
+  const shown = animated ? (readTrack(m, nodeId, path, time) ?? stored) : stored;
+  const name = t('inspector.audioEffects.paramOf', '{effect} {param}', { effect: effectLabel, param: def.label });
+  return (
+    <div className={ta.paramRow}>
+      <StopwatchButton
+        animated={animated}
+        label={name}
+        onToggle={() => edit.send(animated ? `Remove ${def.label} animation` : `Animate ${def.label}`, stopwatchCommands([nodeId], [path], time))}
+      />
+      <span className={ta.paramLabel}>{def.label}</span>
+      <ValueField
+        value={shown}
+        onChange={(v) => {
+          if (animated) edit.send('Audio effect parameter', scalarValueCommands(path, [{ nodeId, value: v }], { seconds: time }));
+          else setStatic(v);
+        }}
+        {...edit.scrub('Audio effect parameter')}
+        unit={def.unit}
+        min={def.min}
+        max={def.max}
+        precision={2}
+        aria-label={name}
+      />
+    </div>
+  );
+}
 
 /**
  * Read → transform → send the whole chain: the `audio/effects` json field
@@ -64,9 +127,9 @@ export function AudioEffectsSection({ nodeId }: { nodeId: string }): JSX.Element
   // it (a pure use of `readAudioEffects` over the mirror's json value).
   const chain = readAudioEffects({ components: [{ type: 'fx', props: { [AUDIO_EFFECTS_PROP]: raw } }] }) ?? [];
 
-  const add = (type: AudioEffectType): void => {
+  const add = (type: AudioEffectType | ClapEffectType): void => {
     const params: Record<string, number> = {};
-    for (const p of AUDIO_EFFECT_DEFS[type].params) params[p.key] = p.default;
+    for (const p of defOf(type).params) params[p.key] = p.default;
     writeChain(fxEdit, nodeId, 'Add audio effect', [...chain, { id: shortId('afx'), type, params }]);
   };
   const update = (id: string, patch: Partial<AudioEffect>): void =>
@@ -113,11 +176,16 @@ export function AudioEffectsSection({ nodeId }: { nodeId: string }): JSX.Element
           className={styles.select}
           style={{ width: 140 }}
           value=""
-          onChange={(e) => { if (e.currentTarget.value) add(e.currentTarget.value as AudioEffectType); }}
+          onChange={(e) => { if (e.currentTarget.value) add(e.currentTarget.value as AudioEffectType | ClapEffectType); }}
           aria-label={t('inspector.audioEffects.add', 'Add audio effect')}
         >
           <option value="">{t('inspector.audioEffects.addPlaceholder', 'Add effect…')}</option>
           {TYPES.map((ty) => <option key={ty} value={ty}>{AUDIO_EFFECT_DEFS[ty].label}</option>)}
+          {pluginAudioEffects().length > 0 && (
+            <optgroup label={t('inspector.audioEffects.pluginGroup', 'Plugins (CLAP)')}>
+              {pluginAudioEffects().map((p) => <option key={p.type} value={p.type}>{p.label}</option>)}
+            </optgroup>
+          )}
         </select>
       </div>
 
@@ -129,20 +197,20 @@ export function AudioEffectsSection({ nodeId }: { nodeId: string }): JSX.Element
         <div key={e.id} style={{ marginBottom: 6 }}>
           <div className={styles.row}>
             <span className={styles.label} style={{ color: 'var(--color-text-secondary)' }}>
-              {AUDIO_EFFECT_DEFS[e.type].label}
+              {defOf(e.type).label}
             </span>
             <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}>
               <Switch
                 checked={e.enabled !== false}
                 onChange={(ev) => update(e.id, { enabled: ev.currentTarget.checked })}
-                aria-label={t('inspector.audioEffects.enable', 'Enable {name}', { name: AUDIO_EFFECT_DEFS[e.type].label })}
+                aria-label={t('inspector.audioEffects.enable', 'Enable {name}', { name: defOf(e.type).label })}
               />
               <button type="button" className={styles.select} style={{ width: 'auto', padding: '0 6px' }}
                 disabled={i === 0} onClick={() => move(e.id, -1)} aria-label={t('inspector.audioEffects.moveUp', 'Move effect up')}>↑</button>
               <button type="button" className={styles.select} style={{ width: 'auto', padding: '0 6px' }}
                 disabled={i === chain.length - 1} onClick={() => move(e.id, 1)} aria-label={t('inspector.audioEffects.moveDown', 'Move effect down')}>↓</button>
               <button type="button" className={styles.select} style={{ width: 'auto', padding: '0 6px' }}
-                onClick={() => remove(e.id)} aria-label={t('inspector.audioEffects.remove', 'Remove {name}', { name: AUDIO_EFFECT_DEFS[e.type].label })}>✕</button>
+                onClick={() => remove(e.id)} aria-label={t('inspector.audioEffects.remove', 'Remove {name}', { name: defOf(e.type).label })}>✕</button>
             </span>
           </div>
 
@@ -174,7 +242,7 @@ export function AudioEffectsSection({ nodeId }: { nodeId: string }): JSX.Element
             Discrete like Mode above, and for the same reason: half a sine and
             half a square is not a waveform, so there is nothing to interpolate.
           */}
-          {WAVE_EFFECTS.has(e.type) && (
+          {!isClapEffectType(e.type) && WAVE_EFFECTS.has(e.type) && (
             <div className={ta.paramRow}>
               <div />
               <span className={ta.paramLabel}>{t('inspector.audioEffects.waveform', 'Waveform')}</span>
@@ -182,7 +250,7 @@ export function AudioEffectsSection({ nodeId }: { nodeId: string }): JSX.Element
                 className={styles.select}
                 value={e.wave ?? 'sine'}
                 onChange={(ev) => update(e.id, { wave: ev.currentTarget.value as AudioWaveform })}
-                aria-label={t('inspector.audioEffects.waveformOf', '{name} waveform', { name: AUDIO_EFFECT_DEFS[e.type].label })}
+                aria-label={t('inspector.audioEffects.waveformOf', '{name} waveform', { name: defOf(e.type).label })}
               >
                 {AUDIO_WAVEFORMS
                   // White Noise is a BUFFER, not an oscillator, so it is only
@@ -220,33 +288,29 @@ export function AudioEffectsSection({ nodeId }: { nodeId: string }): JSX.Element
             something consuming it, nor be consumed without appearing: the
             dead-control shape this file's header warns about.
           */}
-          {(AUDIO_EFFECT_FLAGS[e.type] ?? []).map((f) => (
+          {(isClapEffectType(e.type) ? [] : AUDIO_EFFECT_FLAGS[e.type] ?? []).map((f) => (
             <div className={ta.paramRow} key={f.key}>
               <div />
               <span className={ta.paramLabel} title={f.hint}>{f.label}</span>
               <Switch
                 checked={hasFlag(e, f.key)}
                 onChange={(ev) => setFlag(e.id, f.key, ev.currentTarget.checked)}
-                aria-label={t('inspector.audioEffects.paramOf', '{effect} {param}', { effect: AUDIO_EFFECT_DEFS[e.type].label, param: f.label })}
+                aria-label={t('inspector.audioEffects.paramOf', '{effect} {param}', { effect: defOf(e.type).label, param: f.label })}
               />
             </div>
           ))}
 
-          {AUDIO_EFFECT_DEFS[e.type].params.map((p) => (
-            <div className={ta.paramRow} key={p.key}>
-              <div />
-              <span className={ta.paramLabel}>{p.label}</span>
-              <ValueField
-                value={e.params?.[p.key] ?? p.default}
-                onChange={(v) => setParam(e.id, p.key, v)}
-                {...fxEdit.scrub('Audio effect parameter')}
-                unit={p.unit}
-                min={p.min}
-                max={p.max}
-                precision={2}
-                aria-label={t('inspector.audioEffects.paramOf', '{effect} {param}', { effect: AUDIO_EFFECT_DEFS[e.type].label, param: p.label })}
-              />
-            </div>
+          {defOf(e.type).params.map((p) => (
+            <AudioParamRow
+              key={p.key}
+              nodeId={nodeId}
+              effectId={e.id}
+              effectLabel={defOf(e.type).label}
+              def={p}
+              stored={e.params?.[p.key] ?? p.default}
+              edit={fxEdit}
+              setStatic={(v) => setParam(e.id, p.key, v)}
+            />
           ))}
         </div>
       ))}

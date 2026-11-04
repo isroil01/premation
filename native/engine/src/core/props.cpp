@@ -441,6 +441,29 @@ Catalog catalog_for(const Document& d, std::string_view layerId) {
     add_compositing(eid);
   }
 
+  // SDK 1.4 (A2): every numeric param of the layer's audio effects (fx.audioEffects: built-ins and CLAP
+  // plugins) is an animatable property, `audio/fx/<effect id>/<key>`, over the `audiofx.<id>.<key>`
+  // track the mixer reads (engine_frames.cpp effects_of).
+  if (const Json& chain = node.fx().at("audioEffects"); chain.is_array()) {
+    for (const Json& fx : chain.arr()) {
+      if (!fx.at("id").is_string() || !fx.at("params").is_object()) continue;
+      const std::string fid = fx.at("id").str();
+      for (const auto& m : fx.at("params").obj()) {
+        if (!m.value.is_number()) continue;
+        PropBinding b;
+        b.path = "audio/fx/" + fid + "/" + m.key;
+        b.name = m.key;
+        b.matchName = "Premation Audio Effect Param";
+        b.valueType = ValueType::scalar;
+        b.members = {"audiofx." + fid + "." + m.key};
+        b.special = Special::audioFxParam;
+        b.effectId = fid;
+        b.paramKey = m.key;
+        add(std::move(b));
+      }
+    }
+  }
+
   // Layer styles (B3z): Glass as a first-class style (styles/glass/<param> on the
   // glass.<param> tracks) and the styles' switches (effectFieldSpecs.ts).
   {
@@ -1692,6 +1715,16 @@ api::Value paint_path_static(const Node& n, std::string_view strokeId) {
 api::Value read_static(const Document& d, std::string_view layer, const PropBinding& b) {
   const Node& n = node_of(d, layer);
   switch (b.special) {
+    case Special::audioFxParam: {  // SDK 1.4 (A2)
+      if (const Json& chain = n.fx().at("audioEffects"); chain.is_array()) {
+        for (const Json& fx : chain.arr()) {
+          if (fx.at("id").is_string() && fx.at("id").str() == *b.effectId && fx.at("params").at(*b.paramKey).is_number()) {
+            return v_scalar(fx.at("params").at(*b.paramKey).num());
+          }
+        }
+      }
+      return v_scalar(0);
+    }
     case Special::sourceText: {
       const Component* t = text_component(n);
       const Json& content = t != nullptr ? t->props.at("content") : Json::null();
@@ -1813,6 +1846,7 @@ std::optional<bool> is_stored_static(const Document& d, std::string_view layer, 
       const auto p = maskPath();
       return p && !p->at("mode").is_undefined() && !p->at("mode").is_null();
     }
+    case Special::audioFxParam: return true;  // SDK 1.4 (A2): always stored in the chain
     case Special::maskInverted: {
       const auto p = maskPath();
       return p && p->at("inverted").is_bool();
@@ -1855,6 +1889,19 @@ void write_static(Document& d, std::string_view layer, const PropBinding& b, con
   const Node& n = node_of(d, layer);
   auto mismatch = [&](std::string what) { fail(ErrorCode::type_mismatch, "'" + b.path + "' takes " + what, {.path = b.path}); };
   switch (b.special) {
+    case Special::audioFxParam: {  // SDK 1.4 (A2): the param inside the chain's json
+      if (value.kind() != VK::scalar) mismatch("a number");
+      Json chain = n.fx().at("audioEffects");
+      if (!chain.is_array()) fail(ErrorCode::not_found, "the layer has no audio effects", {.path = b.path});
+      for (Json& fx : chain.arr_mut()) {
+        if (!fx.at("id").is_string() || fx.at("id").str() != *b.effectId) continue;
+        Json params = fx.at("params").is_object() ? fx.at("params") : Json::object();
+        params.set(*b.paramKey, Json::number(get<VK::scalar>(value)));
+        fx.set("params", std::move(params));
+      }
+      sg_set_fx(d, std::string(layer), "audioEffects", std::move(chain));
+      return;
+    }
     case Special::sourceText: {
       if (value.kind() != VK::text_document && value.kind() != VK::string) mismatch("a textDocument");
       const std::string text = value.kind() == VK::string ? get<VK::string>(value) : get<VK::text_document>(value).text;

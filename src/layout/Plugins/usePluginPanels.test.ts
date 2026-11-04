@@ -23,6 +23,9 @@ function info(over: Partial<PluginInfo>): PluginInfo {
     effects: ['premation.deepglow'], gpu: false, panel: true, commands: [], importers: [], outputModules: [], panels: [], presets: [], layerTypes: [],
     interpolators: [],
     tools: [],
+    audio: [],
+    isolation: 'engine',
+    isolationPin: '',
     ...over,
   };
 }

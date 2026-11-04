@@ -135,6 +135,7 @@ describe('installed plugins with the store', () => {
       install: jest.fn(async () => ({ ok: true, id: 'com.acme.glow', version: '1.3.0', restartNeeded: true })),
       uninstall: jest.fn(async () => { state.uninstall = ['com.acme.glow']; return state; }),
       setEnabled: jest.fn(async () => state),
+      setIsolation: jest.fn(async () => state),
       host: { platform: 'linux', arch: 'x64' },
     };
     (window as { motionEditor?: unknown }).motionEditor = { plugins: bridge };
@@ -215,7 +216,7 @@ describe('the plugin store page', () => {
       plugins: { installed: jest.fn(async () => null), install: jest.fn(), host: { platform: 'linux', arch: 'x64' } },
     };
     const { PluginStoreBrowser } = await import('./PluginStore');
-    const store = { installed: null, updates: new Map(), busy: null, message: null, refresh: jest.fn(), install: jest.fn(), uninstall: jest.fn(), setEnabled: jest.fn(), checkPlan: jest.fn(), clearMessage: jest.fn() };
+    const store = { installed: null, updates: new Map(), busy: null, message: null, refresh: jest.fn(), install: jest.fn(), uninstall: jest.fn(), setEnabled: jest.fn(), setIsolation: jest.fn(), checkPlan: jest.fn(), clearMessage: jest.fn() };
 
     render(<PluginStoreBrowser store={store} />);
     expect(await screen.findByText('Acme Glow')).toBeInTheDocument();

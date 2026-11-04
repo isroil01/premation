@@ -73,6 +73,8 @@ struct NativeCustomUi {
 struct NativeEffect {
   EffectDef def;         ///< type = the plugin's match name
   std::string provider;  ///< the plugin id
+  /// O3: the plugin's version (its manifest's; an OpenFX plugin's own), stored with each new instance.
+  std::string version;
   std::string category;
   bool gpu = false;
   bool supportsFloat = false;
@@ -242,6 +244,13 @@ class NativeEffects {
   using SimBytesFn = std::function<std::pair<std::uint64_t, std::uint64_t>()>;
   static void set_sim_bytes_handler(SimBytesFn fn);
   [[nodiscard]] static std::optional<std::pair<std::uint64_t, std::uint64_t>> sim_bytes();
+  /// SDK 1.4 (M2): plugin ML sessions — (models, model bytes) for getRenderStats, and a relief that
+  /// releases idle sessions under GPU memory pressure (returns the bytes given back).
+  using MlStatsFn = std::function<std::pair<std::uint64_t, std::uint64_t>()>;
+  using MlReliefFn = std::function<std::uint64_t(std::uint64_t over)>;
+  static void set_ml_handlers(MlStatsFn stats, MlReliefFn relief);
+  [[nodiscard]] static std::optional<std::pair<std::uint64_t, std::uint64_t>> ml_stats();
+  static std::uint64_t relieve_ml(std::uint64_t over);
   /// SDK 1.1 viewer overlays: DRAW_OVERLAY (overlay geometry) and OVERLAY_DRAG (dragEffectOverlay).
   using OverlayFn = std::function<std::variant<std::vector<NativeOverlayItem>, NativeFailure>(const NativeActionRequest&)>;
   using DragFn = std::function<std::variant<NativeEdit, NativeFailure>(const NativeActionRequest&, const NativeOverlayDrag&)>;
@@ -269,6 +278,10 @@ class NativeEffects {
   [[nodiscard]] static std::variant<NativeEdit, NativeFailure> action(const NativeActionRequest& r);
   /// setPluginEnabled: false = no such plugin (or no host).
   [[nodiscard]] static bool set_enabled(std::string_view plugin, bool enabled);
+  /// SDK 1.4 (X2): where a plugin runs, pinned by the user — "process", "engine", or "" (auto). The
+  /// plugin host reads it when it loads a bundle (`--plugin-isolation-pin`, setPluginIsolation).
+  static void set_isolation_pin(std::string_view plugin, std::string_view mode);
+  [[nodiscard]] static std::string isolation_pin(std::string_view plugin);
   /// listPlugins: every plugin the host found (empty without a host).
   [[nodiscard]] static std::vector<api::PluginInfo> plugins();
   /// rescanPlugins: nullopt when no plugin host is attached.

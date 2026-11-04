@@ -12,6 +12,7 @@
 #include <premation_sdk/premation_sdk.h>
 
 #include <algorithm>
+#include <cstddef>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -24,6 +25,9 @@ namespace {
 namespace json = prs::json;
 
 constexpr std::size_t kMaxStamps = 200;
+
+/// The brush spacing the tool's wheel / [ ] set (module state: an event never edits the document).
+double gSpacing = 48;  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
 
 void say(PrCommandOut* out, const std::string& msg) { std::snprintf(out->return_msg, sizeof(out->return_msg), "%s", msg.c_str()); }
 
@@ -86,7 +90,7 @@ PrErr run(const PrCommandContext* ctx, PrCommandOut* out) {
     say(out, "drag in the viewer to scatter");
     return PR_ERR_INVALID_PARAM;
   }
-  double spacing = args["spacing"].num() > 0 ? args["spacing"].num() : 48.0;
+  double spacing = args["spacing"].num() > 0 ? args["spacing"].num() : gSpacing;
   if (args["shift"].b) spacing /= 2;
   const double sizeK = args["alt"].b ? 2.0 : 1.0;
   const std::vector<Pt> stamps = resample(line, std::max(spacing, 2.0));
@@ -103,9 +107,43 @@ PrErr run(const PrCommandContext* ctx, PrCommandOut* out) {
   return PR_ERR_NONE;
 }
 
+/// SDK 1.4 (U1): the brush while the tool is active — its ring at the pointer, the stamps a drag would
+/// make, and the wheel / [ ] changing the spacing the next drags use.
+PrErr tool_event(const PrCommandContext* ctx, PrCommandOut* out) {
+  json::Value args;
+  (void)json::parse(ctx->args_json != nullptr ? ctx->args_json : "{}", args);
+  const std::string event = args["event"].str();
+  if (event == "wheel") gSpacing *= args["deltaY"].num() < 0 ? 1.1 : 1 / 1.1;
+  if (event == "key" && args["key"].str() == "[") gSpacing /= 1.2;
+  if (event == "key" && args["key"].str() == "]") gSpacing *= 1.2;
+  gSpacing = std::clamp(gSpacing, 8.0, 400.0);
+  const double spacing = args["shift"].b ? gSpacing / 2 : gSpacing;
+  const bool canDraw = ctx->engine->struct_size >= offsetof(PrCommandSuite, tool_draw) + sizeof(void*);
+  if (canDraw) {
+    const json::Value& pt = args["pointer"];
+    if (pt.a.size() >= 2) {
+      const double ring[3] = {pt.a[0].num(), pt.a[1].num(), spacing / 2};  // NOLINT(cppcoreguidelines-avoid-c-arrays, modernize-avoid-c-arrays)
+      (void)ctx->engine->tool_draw(ctx->host_ref, PR_TOOL_DRAW_CIRCLE, ring, 3, nullptr, 1.5);
+    }
+    std::vector<Pt> line;
+    for (const json::Value& p : args["stroke"].a) {
+      if (p.a.size() >= 2) line.push_back({p.a[0].num(), p.a[1].num()});
+    }
+    const float dot[4] = {1.0F, 0.75F, 0.2F, 1.0F};  // NOLINT(cppcoreguidelines-avoid-c-arrays, modernize-avoid-c-arrays)
+    for (const Pt& st : resample(line, spacing)) {
+      const double xy[2] = {st.x, st.y};  // NOLINT(cppcoreguidelines-avoid-c-arrays, modernize-avoid-c-arrays)
+      (void)ctx->engine->tool_draw(ctx->host_ref, PR_TOOL_DRAW_DOT, xy, 2, dot, 6);
+    }
+  }
+  say(out, "Spacing " + std::to_string(static_cast<int>(std::lround(spacing))) + " px - wheel or [ ] to change");
+  return PR_ERR_NONE;
+}
+
 PrErr PR_CALL scatter_main(PrCommandCmd cmd, const PrCommandContext* ctx, PrCommandOut* out) {
-  if (cmd != PR_COMMAND_RUN || ctx == nullptr || out == nullptr) return PR_ERR_UNSUPPORTED;
+  if (ctx == nullptr || out == nullptr) return PR_ERR_UNSUPPORTED;
   if (ctx->struct_size < sizeof(PrCommandContext) || ctx->engine == nullptr) return PR_ERR_BAD_VERSION;
+  if (cmd == PR_COMMAND_TOOL_EVENT) return tool_event(ctx, out);
+  if (cmd != PR_COMMAND_RUN) return PR_ERR_UNSUPPORTED;
   return run(ctx, out);
 }
 

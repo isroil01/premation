@@ -41,7 +41,8 @@ struct PCtx {
 /// maskAttr: one of a mask's static settings AE keeps on the mask itself — Locked, Color, Feather Falloff,
 /// Motion Blur — stored as `paramKey` on the mask path and held in every shape key like RotoBezier.
 enum class Special : std::uint8_t {
-  none, sourceText, maskPath, maskMode, maskInverted, maskRotoBezier, maskAttr, effectParam, field, layerFill, rig, fillStops, shapePath
+  none, sourceText, maskPath, maskMode, maskInverted, maskRotoBezier, maskAttr, effectParam, field, layerFill, rig, fillStops, shapePath,
+  audioFxParam  ///< SDK 1.4 (A2): one numeric param of a layer audio effect (fx.audioEffects), keyed `audiofx.<id>.<key>`
 };
 
 /// A mask's Feather Falloff (AE: Smooth | Linear) and Motion Blur (AE: Same As Layer | On | Off) choices.

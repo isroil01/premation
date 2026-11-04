@@ -10317,6 +10317,30 @@ function decS_ReloadPlugin(r: Reader, end: number, o: any): T.ReloadPlugin {
   o.plugin = v_plugin;
   return o;
 }
+function encS_SetPluginIsolation(w: Writer, v: T.SetPluginIsolation): void {
+  w.byte(10); w.str(v.plugin);
+  w.byte(18); w.str(v.mode);
+}
+function decS_SetPluginIsolation(r: Reader, end: number, o: any): T.SetPluginIsolation {
+  let h_plugin = false;
+  let h_mode = false;
+  let v_plugin: string | undefined;
+  let v_mode: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_plugin = r.str(); h_plugin = true; break;
+      case 18: v_mode = r.str(); h_mode = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_plugin) throw new DecodeError('SetPluginIsolation.plugin: missing', 'missingField');
+  if (!h_mode) throw new DecodeError('SetPluginIsolation.mode: missing', 'missingField');
+  o.plugin = v_plugin;
+  o.mode = v_mode;
+  return o;
+}
 function encS_SetPluginData(w: Writer, v: T.SetPluginData): void {
   w.byte(10); w.str(v.layer);
   w.byte(18); w.str(v.group);
@@ -10608,6 +10632,96 @@ function decS_RunPluginCommand(r: Reader, end: number, o: any): T.RunPluginComma
   o.layers = l_layers;
   if (v_time !== undefined) o.time = v_time;
   if (v_args !== undefined) o.args = v_args;
+  return o;
+}
+function encS_PluginToolEvent(w: Writer, v: T.PluginToolEvent): void {
+  w.byte(10); w.str(v.plugin);
+  w.byte(18); w.str(v.command);
+  if (v.comp !== undefined) { w.byte(26); w.str(v.comp); }
+  if (v.time !== undefined) { w.byte(32); w.i64(v.time); }
+  if (v.args !== undefined) { w.byte(42); w.str(v.args); }
+}
+function decS_PluginToolEvent(r: Reader, end: number, o: any): T.PluginToolEvent {
+  let h_plugin = false;
+  let h_command = false;
+  let v_plugin: string | undefined;
+  let v_command: string | undefined;
+  let v_comp: string | undefined;
+  let v_time: number | undefined;
+  let v_args: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_plugin = r.str(); h_plugin = true; break;
+      case 18: v_command = r.str(); h_command = true; break;
+      case 26: v_comp = r.str(); break;
+      case 32: v_time = r.i64(); break;
+      case 42: v_args = r.str(); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_plugin) throw new DecodeError('PluginToolEvent.plugin: missing', 'missingField');
+  if (!h_command) throw new DecodeError('PluginToolEvent.command: missing', 'missingField');
+  o.plugin = v_plugin;
+  o.command = v_command;
+  if (v_comp !== undefined) o.comp = v_comp;
+  if (v_time !== undefined) o.time = v_time;
+  if (v_args !== undefined) o.args = v_args;
+  return o;
+}
+function encS_PluginToolDrawItem(w: Writer, v: T.PluginToolDrawItem): void {
+  w.byte(8); w.u32(v.kind);
+  { const a = v.xy; if (a.length) { w.byte(18); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  { const a = v.rgba; if (a.length) { w.byte(26); w.varint(a.length * 8); for (let i = 0; i < a.length; i++) w.f64(a[i]!); } }
+  w.byte(33); w.f64(v.width);
+}
+function decS_PluginToolDrawItem(r: Reader, end: number, o: any): T.PluginToolDrawItem {
+  const l_xy: number[] = [];
+  const l_rgba: number[] = [];
+  let h_kind = false;
+  let h_width = false;
+  let v_kind: number | undefined;
+  let v_width: number | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 8: v_kind = r.u32(); h_kind = true; break;
+      case 18: { const e = r.ldEnd(); while (r.pos < e) l_xy.push(r.f64()); r.expectAt(e); break; }
+      case 26: { const e = r.ldEnd(); while (r.pos < e) l_rgba.push(r.f64()); r.expectAt(e); break; }
+      case 33: v_width = r.f64(); h_width = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_kind) throw new DecodeError('PluginToolDrawItem.kind: missing', 'missingField');
+  if (!h_width) throw new DecodeError('PluginToolDrawItem.width: missing', 'missingField');
+  o.kind = v_kind;
+  o.xy = l_xy;
+  o.rgba = l_rgba;
+  o.width = v_width;
+  return o;
+}
+function encS_PluginToolFeedback(w: Writer, v: T.PluginToolFeedback): void {
+  { const a = v.items; for (let i = 0; i < a.length; i++) { w.byte(10); { const s = w.beginLd(); encS_PluginToolDrawItem(w, a[i]!); w.endLd(s); } } }
+  w.byte(18); w.str(v.message);
+}
+function decS_PluginToolFeedback(r: Reader, end: number, o: any): T.PluginToolFeedback {
+  const l_items: T.PluginToolDrawItem[] = [];
+  let h_message = false;
+  let v_message: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: l_items.push(decS_PluginToolDrawItem(r, r.ldEnd(), {})); break;
+      case 18: v_message = r.str(); h_message = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_message) throw new DecodeError('PluginToolFeedback.message: missing', 'missingField');
+  o.items = l_items;
+  o.message = v_message;
   return o;
 }
 function encS_PluginCommandResult(w: Writer, v: T.PluginCommandResult): void {
@@ -13629,6 +13743,9 @@ function encS_PluginInfo(w: Writer, v: T.PluginInfo): void {
   { const a = v.layerTypes; for (let i = 0; i < a.length; i++) { w.varint(146); { const s = w.beginLd(); encS_PluginLayerTypeInfo(w, a[i]!); w.endLd(s); } } }
   { const a = v.interpolators; for (let i = 0; i < a.length; i++) { w.varint(154); w.str(a[i]!); } }
   { const a = v.tools; for (let i = 0; i < a.length; i++) { w.varint(162); { const s = w.beginLd(); encS_PluginToolInfo(w, a[i]!); w.endLd(s); } } }
+  { const a = v.audio; for (let i = 0; i < a.length; i++) { w.varint(170); { const s = w.beginLd(); encS_PluginAudioInfo(w, a[i]!); w.endLd(s); } } }
+  w.varint(178); w.str(v.isolation);
+  w.varint(186); w.str(v.isolationPin);
 }
 function decS_PluginInfo(r: Reader, end: number, o: any): T.PluginInfo {
   const l_effects: string[] = [];
@@ -13640,6 +13757,7 @@ function decS_PluginInfo(r: Reader, end: number, o: any): T.PluginInfo {
   const l_layerTypes: T.PluginLayerTypeInfo[] = [];
   const l_interpolators: string[] = [];
   const l_tools: T.PluginToolInfo[] = [];
+  const l_audio: T.PluginAudioInfo[] = [];
   let h_id = false;
   let h_name = false;
   let h_version = false;
@@ -13649,6 +13767,8 @@ function decS_PluginInfo(r: Reader, end: number, o: any): T.PluginInfo {
   let h_error = false;
   let h_gpu = false;
   let h_panel = false;
+  let h_isolation = false;
+  let h_isolationPin = false;
   let v_id: string | undefined;
   let v_name: string | undefined;
   let v_version: string | undefined;
@@ -13660,6 +13780,8 @@ function decS_PluginInfo(r: Reader, end: number, o: any): T.PluginInfo {
   let v_panel: boolean | undefined;
   let v_icon: string | undefined;
   let v_panelTitle: string | undefined;
+  let v_isolation: string | undefined;
+  let v_isolationPin: string | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -13683,6 +13805,9 @@ function decS_PluginInfo(r: Reader, end: number, o: any): T.PluginInfo {
       case 146: l_layerTypes.push(decS_PluginLayerTypeInfo(r, r.ldEnd(), {})); break;
       case 154: l_interpolators.push(r.str()); break;
       case 162: l_tools.push(decS_PluginToolInfo(r, r.ldEnd(), {})); break;
+      case 170: l_audio.push(decS_PluginAudioInfo(r, r.ldEnd(), {})); break;
+      case 178: v_isolation = r.str(); h_isolation = true; break;
+      case 186: v_isolationPin = r.str(); h_isolationPin = true; break;
       default: r.skip(key);
     }
   }
@@ -13696,6 +13821,8 @@ function decS_PluginInfo(r: Reader, end: number, o: any): T.PluginInfo {
   if (!h_error) throw new DecodeError('PluginInfo.error: missing', 'missingField');
   if (!h_gpu) throw new DecodeError('PluginInfo.gpu: missing', 'missingField');
   if (!h_panel) throw new DecodeError('PluginInfo.panel: missing', 'missingField');
+  if (!h_isolation) throw new DecodeError('PluginInfo.isolation: missing', 'missingField');
+  if (!h_isolationPin) throw new DecodeError('PluginInfo.isolationPin: missing', 'missingField');
   o.id = v_id;
   o.name = v_name;
   o.version = v_version;
@@ -13716,6 +13843,95 @@ function decS_PluginInfo(r: Reader, end: number, o: any): T.PluginInfo {
   o.layerTypes = l_layerTypes;
   o.interpolators = l_interpolators;
   o.tools = l_tools;
+  o.audio = l_audio;
+  o.isolation = v_isolation;
+  o.isolationPin = v_isolationPin;
+  return o;
+}
+function encS_PluginAudioInfo(w: Writer, v: T.PluginAudioInfo): void {
+  w.byte(10); w.str(v.id);
+  w.byte(18); w.str(v.name);
+  w.byte(26); w.str(v.vendor);
+  { const a = v.features; for (let i = 0; i < a.length; i++) { w.byte(34); w.str(a[i]!); } }
+  { const a = v.params; for (let i = 0; i < a.length; i++) { w.byte(42); { const s = w.beginLd(); encS_PluginAudioParam(w, a[i]!); w.endLd(s); } } }
+}
+function decS_PluginAudioInfo(r: Reader, end: number, o: any): T.PluginAudioInfo {
+  const l_features: string[] = [];
+  const l_params: T.PluginAudioParam[] = [];
+  let h_id = false;
+  let h_name = false;
+  let h_vendor = false;
+  let v_id: string | undefined;
+  let v_name: string | undefined;
+  let v_vendor: string | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 10: v_id = r.str(); h_id = true; break;
+      case 18: v_name = r.str(); h_name = true; break;
+      case 26: v_vendor = r.str(); h_vendor = true; break;
+      case 34: l_features.push(r.str()); break;
+      case 42: l_params.push(decS_PluginAudioParam(r, r.ldEnd(), {})); break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_id) throw new DecodeError('PluginAudioInfo.id: missing', 'missingField');
+  if (!h_name) throw new DecodeError('PluginAudioInfo.name: missing', 'missingField');
+  if (!h_vendor) throw new DecodeError('PluginAudioInfo.vendor: missing', 'missingField');
+  o.id = v_id;
+  o.name = v_name;
+  o.vendor = v_vendor;
+  o.features = l_features;
+  o.params = l_params;
+  return o;
+}
+function encS_PluginAudioParam(w: Writer, v: T.PluginAudioParam): void {
+  w.byte(8); w.u32(v.id);
+  w.byte(18); w.str(v.name);
+  w.byte(25); w.f64(v.min);
+  w.byte(33); w.f64(v.max);
+  w.byte(41); w.f64(v.default);
+  w.byte(48); w.bool(v.stepped);
+}
+function decS_PluginAudioParam(r: Reader, end: number, o: any): T.PluginAudioParam {
+  let h_id = false;
+  let h_name = false;
+  let h_min = false;
+  let h_max = false;
+  let h_default = false;
+  let h_stepped = false;
+  let v_id: number | undefined;
+  let v_name: string | undefined;
+  let v_min: number | undefined;
+  let v_max: number | undefined;
+  let v_default: number | undefined;
+  let v_stepped: boolean | undefined;
+  while (r.pos < end) {
+    const key = r.varint();
+    switch (key) {
+      case 8: v_id = r.u32(); h_id = true; break;
+      case 18: v_name = r.str(); h_name = true; break;
+      case 25: v_min = r.f64(); h_min = true; break;
+      case 33: v_max = r.f64(); h_max = true; break;
+      case 41: v_default = r.f64(); h_default = true; break;
+      case 48: v_stepped = r.bool(); h_stepped = true; break;
+      default: r.skip(key);
+    }
+  }
+  r.expectAt(end);
+  if (!h_id) throw new DecodeError('PluginAudioParam.id: missing', 'missingField');
+  if (!h_name) throw new DecodeError('PluginAudioParam.name: missing', 'missingField');
+  if (!h_min) throw new DecodeError('PluginAudioParam.min: missing', 'missingField');
+  if (!h_max) throw new DecodeError('PluginAudioParam.max: missing', 'missingField');
+  if (!h_default) throw new DecodeError('PluginAudioParam.default: missing', 'missingField');
+  if (!h_stepped) throw new DecodeError('PluginAudioParam.stepped: missing', 'missingField');
+  o.id = v_id;
+  o.name = v_name;
+  o.min = v_min;
+  o.max = v_max;
+  o.default = v_default;
+  o.stepped = v_stepped;
   return o;
 }
 function encS_PluginToolInfo(w: Writer, v: T.PluginToolInfo): void {
@@ -15014,6 +15230,8 @@ function encS_RenderStats(w: Writer, v: T.RenderStats): void {
   if (v.layerCostsAgoMs !== undefined) { w.varint(217); w.f64(v.layerCostsAgoMs); }
   if (v.simStateBytes !== undefined) { w.varint(224); w.u64(v.simStateBytes); }
   if (v.simStateDiskBytes !== undefined) { w.varint(232); w.u64(v.simStateDiskBytes); }
+  if (v.pluginModels !== undefined) { w.varint(240); w.u64(v.pluginModels); }
+  if (v.pluginModelBytes !== undefined) { w.varint(248); w.u64(v.pluginModelBytes); }
 }
 function decS_RenderStats(r: Reader, end: number, o: any): T.RenderStats {
   const l_layerCosts: T.LayerCost[] = [];
@@ -15054,6 +15272,8 @@ function decS_RenderStats(r: Reader, end: number, o: any): T.RenderStats {
   let v_layerCostsAgoMs: number | undefined;
   let v_simStateBytes: number | undefined;
   let v_simStateDiskBytes: number | undefined;
+  let v_pluginModels: number | undefined;
+  let v_pluginModelBytes: number | undefined;
   while (r.pos < end) {
     const key = r.varint();
     switch (key) {
@@ -15086,6 +15306,8 @@ function decS_RenderStats(r: Reader, end: number, o: any): T.RenderStats {
       case 217: v_layerCostsAgoMs = r.f64(); break;
       case 224: v_simStateBytes = r.u64(); break;
       case 232: v_simStateDiskBytes = r.u64(); break;
+      case 240: v_pluginModels = r.u64(); break;
+      case 248: v_pluginModelBytes = r.u64(); break;
       default: r.skip(key);
     }
   }
@@ -15128,6 +15350,8 @@ function decS_RenderStats(r: Reader, end: number, o: any): T.RenderStats {
   if (v_layerCostsAgoMs !== undefined) o.layerCostsAgoMs = v_layerCostsAgoMs;
   if (v_simStateBytes !== undefined) o.simStateBytes = v_simStateBytes;
   if (v_simStateDiskBytes !== undefined) o.simStateDiskBytes = v_simStateDiskBytes;
+  if (v_pluginModels !== undefined) o.pluginModels = v_pluginModels;
+  if (v_pluginModelBytes !== undefined) o.pluginModelBytes = v_pluginModelBytes;
   return o;
 }
 function encS_LayerCost(w: Writer, v: T.LayerCost): void {
@@ -19636,6 +19860,7 @@ function encU_Command(w: Writer, v: T.Command): void {
     case 'runPluginCommand': w.varint(6986); { const s = w.beginLd(); encS_RunPluginCommand(w, v); w.endLd(s); } return;
     case 'refreshFonts': w.varint(6994); { const s = w.beginLd(); encS_RefreshFonts(w, v); w.endLd(s); } return;
     case 'reloadPlugin': w.varint(7002); { const s = w.beginLd(); encS_ReloadPlugin(w, v); w.endLd(s); } return;
+    case 'setPluginIsolation': w.varint(7010); { const s = w.beginLd(); encS_SetPluginIsolation(w, v); w.endLd(s); } return;
     case 'liftRange': w.varint(7770); { const s = w.beginLd(); encS_LiftRange(w, v); w.endLd(s); } return;
     case 'setOverlayGeometry': w.varint(14170); { const s = w.beginLd(); encS_SetOverlayGeometry(w, v); w.endLd(s); } return;
     case 'setContentAwareFill': w.varint(14818); { const s = w.beginLd(); encS_SetContentAwareFill(w, v); w.endLd(s); } return;
@@ -19825,6 +20050,7 @@ function decU_Command(r: Reader, end: number): T.Command {
       case 6986: out = decS_RunPluginCommand(r, r.ldEnd(), { type: 'runPluginCommand' }) as T.Command; break;
       case 6994: out = decS_RefreshFonts(r, r.ldEnd(), { type: 'refreshFonts' }) as T.Command; break;
       case 7002: out = decS_ReloadPlugin(r, r.ldEnd(), { type: 'reloadPlugin' }) as T.Command; break;
+      case 7010: out = decS_SetPluginIsolation(r, r.ldEnd(), { type: 'setPluginIsolation' }) as T.Command; break;
       case 7770: out = decS_LiftRange(r, r.ldEnd(), { type: 'liftRange' }) as T.Command; break;
       case 14170: out = decS_SetOverlayGeometry(r, r.ldEnd(), { type: 'setOverlayGeometry' }) as T.Command; break;
       case 14818: out = decS_SetContentAwareFill(r, r.ldEnd(), { type: 'setContentAwareFill' }) as T.Command; break;
@@ -20014,6 +20240,7 @@ function encU_CommandResult(w: Writer, v: T.CommandResult): void {
     case 'runPluginCommand': w.varint(6986); { const s = w.beginLd(); encS_PluginCommandResult(w, v); w.endLd(s); } return;
     case 'refreshFonts': w.varint(6994); { const s = w.beginLd(); encS_FontsRefreshed(w, v); w.endLd(s); } return;
     case 'reloadPlugin': w.varint(7002); { const s = w.beginLd(); encS_PluginList(w, v); w.endLd(s); } return;
+    case 'setPluginIsolation': w.varint(7010); { const s = w.beginLd(); encS_PluginList(w, v); w.endLd(s); } return;
     case 'liftRange': w.varint(7770); { const s = w.beginLd(); encS_TimeRangeEdit(w, v); w.endLd(s); } return;
     case 'setOverlayGeometry': w.varint(14170); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
     case 'setContentAwareFill': w.varint(14818); { const s = w.beginLd(); encS_Empty(w, v); w.endLd(s); } return;
@@ -20203,6 +20430,7 @@ function decU_CommandResult(r: Reader, end: number): T.CommandResult {
       case 6986: out = decS_PluginCommandResult(r, r.ldEnd(), { type: 'runPluginCommand' }) as T.CommandResult; break;
       case 6994: out = decS_FontsRefreshed(r, r.ldEnd(), { type: 'refreshFonts' }) as T.CommandResult; break;
       case 7002: out = decS_PluginList(r, r.ldEnd(), { type: 'reloadPlugin' }) as T.CommandResult; break;
+      case 7010: out = decS_PluginList(r, r.ldEnd(), { type: 'setPluginIsolation' }) as T.CommandResult; break;
       case 7770: out = decS_TimeRangeEdit(r, r.ldEnd(), { type: 'liftRange' }) as T.CommandResult; break;
       case 14170: out = decS_Empty(r, r.ldEnd(), { type: 'setOverlayGeometry' }) as T.CommandResult; break;
       case 14818: out = decS_Empty(r, r.ldEnd(), { type: 'setContentAwareFill' }) as T.CommandResult; break;
@@ -20268,6 +20496,7 @@ function encU_Query(w: Writer, v: T.Query): void {
     case 'getCameraSolve': w.varint(8730); { const s = w.beginLd(); encS_GetCameraSolve(w, v); w.endLd(s); } return;
     case 'listPluginCommands': w.varint(8738); { const s = w.beginLd(); encS_ListPluginCommands(w, v); w.endLd(s); } return;
     case 'sampleCamera': w.varint(8746); { const s = w.beginLd(); encS_SampleCamera(w, v); w.endLd(s); } return;
+    case 'pluginToolEvent': w.varint(8754); { const s = w.beginLd(); encS_PluginToolEvent(w, v); w.endLd(s); } return;
     case 'capturePreset': w.varint(15106); { const s = w.beginLd(); encS_CapturePreset(w, v); w.endLd(s); } return;
     case 'copyKeyframes': w.varint(15114); { const s = w.beginLd(); encS_CopyKeyframes(w, v); w.endLd(s); } return;
     case 'copyEffects': w.varint(15122); { const s = w.beginLd(); encS_CopyEffects(w, v); w.endLd(s); } return;
@@ -20337,6 +20566,7 @@ function decU_Query(r: Reader, end: number): T.Query {
       case 8730: out = decS_GetCameraSolve(r, r.ldEnd(), { type: 'getCameraSolve' }) as T.Query; break;
       case 8738: out = decS_ListPluginCommands(r, r.ldEnd(), { type: 'listPluginCommands' }) as T.Query; break;
       case 8746: out = decS_SampleCamera(r, r.ldEnd(), { type: 'sampleCamera' }) as T.Query; break;
+      case 8754: out = decS_PluginToolEvent(r, r.ldEnd(), { type: 'pluginToolEvent' }) as T.Query; break;
       case 15106: out = decS_CapturePreset(r, r.ldEnd(), { type: 'capturePreset' }) as T.Query; break;
       case 15114: out = decS_CopyKeyframes(r, r.ldEnd(), { type: 'copyKeyframes' }) as T.Query; break;
       case 15122: out = decS_CopyEffects(r, r.ldEnd(), { type: 'copyEffects' }) as T.Query; break;
@@ -20406,6 +20636,7 @@ function encU_QueryResult(w: Writer, v: T.QueryResult): void {
     case 'getCameraSolve': w.varint(8730); { const s = w.beginLd(); encS_CameraSolveAnswer(w, v); w.endLd(s); } return;
     case 'listPluginCommands': w.varint(8738); { const s = w.beginLd(); encS_PluginCommandList(w, v); w.endLd(s); } return;
     case 'sampleCamera': w.varint(8746); { const s = w.beginLd(); encS_CameraSamples(w, v); w.endLd(s); } return;
+    case 'pluginToolEvent': w.varint(8754); { const s = w.beginLd(); encS_PluginToolFeedback(w, v); w.endLd(s); } return;
     case 'capturePreset': w.varint(15106); { const s = w.beginLd(); encS_CapturedPreset(w, v); w.endLd(s); } return;
     case 'copyKeyframes': w.varint(15114); { const s = w.beginLd(); encS_KeyframeSets(w, v); w.endLd(s); } return;
     case 'copyEffects': w.varint(15122); { const s = w.beginLd(); encS_CopiedEffects(w, v); w.endLd(s); } return;
@@ -20475,6 +20706,7 @@ function decU_QueryResult(r: Reader, end: number): T.QueryResult {
       case 8730: out = decS_CameraSolveAnswer(r, r.ldEnd(), { type: 'getCameraSolve' }) as T.QueryResult; break;
       case 8738: out = decS_PluginCommandList(r, r.ldEnd(), { type: 'listPluginCommands' }) as T.QueryResult; break;
       case 8746: out = decS_CameraSamples(r, r.ldEnd(), { type: 'sampleCamera' }) as T.QueryResult; break;
+      case 8754: out = decS_PluginToolFeedback(r, r.ldEnd(), { type: 'pluginToolEvent' }) as T.QueryResult; break;
       case 15106: out = decS_CapturedPreset(r, r.ldEnd(), { type: 'capturePreset' }) as T.QueryResult; break;
       case 15114: out = decS_KeyframeSets(r, r.ldEnd(), { type: 'copyKeyframes' }) as T.QueryResult; break;
       case 15122: out = decS_CopiedEffects(r, r.ldEnd(), { type: 'copyEffects' }) as T.QueryResult; break;
@@ -20926,6 +21158,7 @@ export const codecs = {
   SetPluginEnabled: mk<T.SetPluginEnabled>(encS_SetPluginEnabled, (r, e) => decS_SetPluginEnabled(r, e, {})),
   RescanPlugins: mk<T.RescanPlugins>(encS_RescanPlugins, (r, e) => decS_RescanPlugins(r, e, {})),
   ReloadPlugin: mk<T.ReloadPlugin>(encS_ReloadPlugin, (r, e) => decS_ReloadPlugin(r, e, {})),
+  SetPluginIsolation: mk<T.SetPluginIsolation>(encS_SetPluginIsolation, (r, e) => decS_SetPluginIsolation(r, e, {})),
   SetPluginData: mk<T.SetPluginData>(encS_SetPluginData, (r, e) => decS_SetPluginData(r, e, {})),
   PluginCommandInfo: mk<T.PluginCommandInfo>(encS_PluginCommandInfo, (r, e) => decS_PluginCommandInfo(r, e, {})),
   PluginCommandList: mk<T.PluginCommandList>(encS_PluginCommandList, (r, e) => decS_PluginCommandList(r, e, {})),
@@ -20935,6 +21168,9 @@ export const codecs = {
   PluginPanelInfo: mk<T.PluginPanelInfo>(encS_PluginPanelInfo, (r, e) => decS_PluginPanelInfo(r, e, {})),
   ListPluginCommands: mk<T.ListPluginCommands>(encS_ListPluginCommands, (r, e) => decS_ListPluginCommands(r, e, {})),
   RunPluginCommand: mk<T.RunPluginCommand>(encS_RunPluginCommand, (r, e) => decS_RunPluginCommand(r, e, {})),
+  PluginToolEvent: mk<T.PluginToolEvent>(encS_PluginToolEvent, (r, e) => decS_PluginToolEvent(r, e, {})),
+  PluginToolDrawItem: mk<T.PluginToolDrawItem>(encS_PluginToolDrawItem, (r, e) => decS_PluginToolDrawItem(r, e, {})),
+  PluginToolFeedback: mk<T.PluginToolFeedback>(encS_PluginToolFeedback, (r, e) => decS_PluginToolFeedback(r, e, {})),
   PluginCommandResult: mk<T.PluginCommandResult>(encS_PluginCommandResult, (r, e) => decS_PluginCommandResult(r, e, {})),
   RefreshFonts: mk<T.RefreshFonts>(encS_RefreshFonts, (r, e) => decS_RefreshFonts(r, e, {})),
   FontsRefreshed: mk<T.FontsRefreshed>(encS_FontsRefreshed, (r, e) => decS_FontsRefreshed(r, e, {})),
@@ -21029,6 +21265,8 @@ export const codecs = {
   ParamUiDrawing: mk<T.ParamUiDrawing>(encS_ParamUiDrawing, (r, e) => decS_ParamUiDrawing(r, e, {})),
   ParamUiItem: mk<T.ParamUiItem>(encS_ParamUiItem, (r, e) => decS_ParamUiItem(r, e, {})),
   PluginInfo: mk<T.PluginInfo>(encS_PluginInfo, (r, e) => decS_PluginInfo(r, e, {})),
+  PluginAudioInfo: mk<T.PluginAudioInfo>(encS_PluginAudioInfo, (r, e) => decS_PluginAudioInfo(r, e, {})),
+  PluginAudioParam: mk<T.PluginAudioParam>(encS_PluginAudioParam, (r, e) => decS_PluginAudioParam(r, e, {})),
   PluginToolInfo: mk<T.PluginToolInfo>(encS_PluginToolInfo, (r, e) => decS_PluginToolInfo(r, e, {})),
   PluginLayerTypeInfo: mk<T.PluginLayerTypeInfo>(encS_PluginLayerTypeInfo, (r, e) => decS_PluginLayerTypeInfo(r, e, {})),
   PluginList: mk<T.PluginList>(encS_PluginList, (r, e) => decS_PluginList(r, e, {})),

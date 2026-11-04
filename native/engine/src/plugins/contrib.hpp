@@ -126,6 +126,8 @@ class Contrib {
   // ── commands (core thread) ──
   [[nodiscard]] std::variant<doc::PluginCommandOutcome, api::EngineError> run(const doc::PluginCommandRequest& r,
                                                                              doc::PluginCommandBridge& bridge);
+  /// SDK 1.4 (U1): PR_COMMAND_TOOL_EVENT — a viewer tool's overlay and status for one event (no edits).
+  [[nodiscard]] std::variant<doc::PluginToolFeedback, api::EngineError> tool_event(const doc::PluginCommandRequest& r);
 
   // ── importers (any thread) ──
   /// The loaded importer for `path`'s extension, if any.

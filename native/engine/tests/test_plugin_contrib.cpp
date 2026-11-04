@@ -663,3 +663,45 @@ TEST_CASE("SDK 1.4 U: a manifest tool must name one of its commands", "[plugins]
   CHECK_FALSE(pl::parse_manifest(base + R"("tools":[{"id":"brush","name":"Brush","command":"nope"}]})", platform, error).has_value());
   CHECK(error.find("nope") != std::string::npos);
 }
+
+TEST_CASE("SDK 1.4 U1: a viewer tool's events draw its overlay and status; nothing is edited", "[plugins][contrib][tools]") {
+  pl::PluginHost host(attached());
+  host.scan();
+  Harness h;
+  (void)h.hello();
+  const api::ItemId c = comp(h);
+  const auto hist0 = query<api::HistoryState>(h, qry(api::GetHistory{}));
+  api::PluginToolEvent ev;
+  ev.plugin = "com.premation.samples.scatter";
+  ev.command = "scatter";
+  ev.comp = c;
+  // A hover: the brush ring at the pointer, radius half the spacing (48 px).
+  ev.args = R"({"tool":"scatter","event":"move","pointer":[100,90]})";
+  auto fb = query<api::PluginToolFeedback>(h, qry(ev));
+  REQUIRE(fb.items.size() == 1);
+  CHECK(fb.items[0].kind == PR_TOOL_DRAW_CIRCLE);
+  REQUIRE(fb.items[0].xy.size() == 3);
+  CHECK(fb.items[0].xy[0] == 100);
+  CHECK(fb.items[0].xy[2] == 24);
+  CHECK(fb.message.rfind("Spacing 48 px", 0) == 0);
+  // A drag in progress: the ring plus the stamps a release would make (5 over 200 px).
+  ev.args = R"({"tool":"scatter","event":"move","pointer":[210,90],"stroke":[[10,90],[110,90],[210,90]]})";
+  fb = query<api::PluginToolFeedback>(h, qry(ev));
+  REQUIRE(fb.items.size() == 1 + 5);
+  CHECK(fb.items[1].kind == PR_TOOL_DRAW_DOT);
+  CHECK(fb.items[1].width == 6);
+  REQUIRE(fb.items[1].rgba.size() == 4);
+  CHECK(fb.items[1].rgba[0] == 1);
+  // The wheel and [ ] change the spacing, kept in the plugin between events.
+  ev.args = R"({"tool":"scatter","event":"wheel","deltaY":-100,"pointer":[100,90]})";
+  fb = query<api::PluginToolFeedback>(h, qry(ev));
+  CHECK(fb.message.rfind("Spacing 53 px", 0) == 0);
+  ev.args = R"({"tool":"scatter","event":"wheel","deltaY":100,"pointer":[100,90]})";
+  fb = query<api::PluginToolFeedback>(h, qry(ev));
+  CHECK(fb.message.rfind("Spacing 48 px", 0) == 0);
+  // No event is an edit.
+  CHECK(query<api::HistoryState>(h, qry(api::GetHistory{})).position == hist0.position);
+  // A command that is not there.
+  ev.command = "nope";
+  CHECK(is_error(h.ask(qry(ev)), api::ErrorCode::not_found));
+}

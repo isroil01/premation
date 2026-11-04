@@ -55,7 +55,7 @@ describe('the Store tab for a publisher', () => {
     };
     const { PluginStoreBrowser } = await import('./PluginStore');
     const install = jest.fn();
-    const store = { installed: null, updates: new Map(), busy: null, message: null, refresh: jest.fn(), install, uninstall: jest.fn(), setEnabled: jest.fn(), checkPlan: jest.fn(), clearMessage: jest.fn() };
+    const store = { installed: null, updates: new Map(), busy: null, message: null, refresh: jest.fn(), install, uninstall: jest.fn(), setEnabled: jest.fn(), setIsolation: jest.fn(), checkPlan: jest.fn(), clearMessage: jest.fn() };
     render(<PluginStoreBrowser store={store} />);
     expect(await screen.findByText('My Grade')).toBeInTheDocument();
     expect(screen.getByText('Acme Glow')).toBeInTheDocument();

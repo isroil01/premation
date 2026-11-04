@@ -13,6 +13,7 @@ struct Registry {
   std::shared_mutex mutex;
   NativeCommands::ListFn list;
   NativeCommands::RunFn run;
+  NativeCommands::ToolEventFn toolEvent;  // SDK 1.4 (U1)
   NativeImporters::ClaimFn claim;
   NativeImporters::ProbeFn probe;
   NativeImporters::FrameFn frame;
@@ -39,6 +40,27 @@ void NativeCommands::clear_handlers() {
   const std::unique_lock lock(reg().mutex);
   reg().list = nullptr;
   reg().run = nullptr;
+  reg().toolEvent = nullptr;
+}
+
+void NativeCommands::set_tool_event_handler(ToolEventFn fn) {
+  const std::unique_lock lock(reg().mutex);
+  reg().toolEvent = std::move(fn);
+}
+
+std::variant<PluginToolFeedback, api::EngineError> NativeCommands::tool_event(const PluginCommandRequest& r) {
+  ToolEventFn fn;
+  {
+    const std::shared_lock lock(reg().mutex);
+    fn = reg().toolEvent;
+  }
+  if (!fn) {
+    api::EngineError e;
+    e.code = api::ErrorCode::not_found;
+    e.message = "no plugin host";
+    return e;
+  }
+  return fn(r);
 }
 
 std::vector<api::PluginCommandInfo> NativeCommands::list() {

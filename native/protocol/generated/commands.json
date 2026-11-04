@@ -875,6 +875,11 @@
     "type": "reloadPlugin"
   },
   {
+    "id": 876,
+    "kind": "control",
+    "type": "setPluginIsolation"
+  },
+  {
     "id": 871,
     "kind": "edit",
     "type": "setPluginData"

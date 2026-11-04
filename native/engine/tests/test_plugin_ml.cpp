@@ -101,3 +101,28 @@ TEST_CASE("ML suite: the model's grade matches the CPU path", "[plugins][ml]") {
   CHECK(worst <= 1);  // and the model agrees with the matrix
   if (pl::ml::runtime_available()) CHECK(pl::ml::stats().runs >= 1);
 }
+
+TEST_CASE("ML suite (M2): idle models are closed under memory pressure and load again on their next run", "[plugins][ml]") {
+  if (!pl::ml::runtime_available()) return;
+  pl::PluginHost host(opts());
+  host.scan();
+  const pl::EffectSpec* spec = host.effect(kMl);
+  REQUIRE(spec != nullptr);
+  pl::RenderInputs in = pl::default_inputs(*spec, "L/fx", kW, kH, 8);
+  pl::TexelImage first;
+  REQUIRE(pl::run_native_cpu(host, in, ramp(), {}, first).ok);
+  REQUIRE(pl::ml::stats().models >= 1);
+  CHECK(pl::ml::stats().bytes > 0);
+  // Used a moment ago: a 60 s idle trim keeps it.
+  CHECK(pl::ml::trim_idle(60) == 0);
+  CHECK(pl::ml::stats().models >= 1);
+  // Pressure: every model no run holds is closed.
+  CHECK(pl::ml::trim_idle(0) > 0);
+  CHECK(pl::ml::stats().models == 0);
+  CHECK(pl::ml::stats().bytes == 0);
+  // The next render loads it again, with the same pixels.
+  pl::TexelImage again;
+  REQUIRE(pl::run_native_cpu(host, in, ramp(), {}, again).ok);
+  CHECK(pl::ml::stats().models >= 1);
+  CHECK(again.bytes == first.bytes);
+}

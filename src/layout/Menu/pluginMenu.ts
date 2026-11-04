@@ -138,7 +138,10 @@ export function buildPluginMenuGroup(): MenuGroupModel | null {
   }
   // One submenu per `menu` name (the plugin's own name when it gives none), in first-seen order.
   const groups = new Map<string, PluginCommandInfo[]>();
+  // A tool's own command runs on a stroke: it is reached through the tool, never on its own.
+  const toolCommands = new Set(tools.map((tl) => `${tl.plugin}\u0000${tl.command}`));
   for (const c of commands) {
+    if (toolCommands.has(`${c.plugin}\u0000${c.id}`)) continue;
     const key = c.menu || pluginName(c.plugin);
     const list = groups.get(key);
     if (list) list.push(c);
@@ -169,7 +172,9 @@ export function syncPluginCommands(): void {
   const registry = getCommandRegistry();
   for (const id of registered) registry.unregister(id);
   registered = [];
+  const toolCommands = new Set(pluginTools().map((tl) => `${tl.plugin}\u0000${tl.command}`));
   for (const c of pluginCommands()) {
+    if (toolCommands.has(`${c.plugin}\u0000${c.id}`)) continue;  // reached through its tool (needs a stroke)
     const id = asCommandId(pluginCommandId(c.plugin, c.id));
     registry.register({
       id,

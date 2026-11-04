@@ -600,6 +600,26 @@ api::Renderable contributed_mesh(const api::Renderable& owner, const ContribMesh
   shade.roughness = m.roughness;
   shade.accepts_shadows = m.acceptsShadows;
   t.shade = shade;
+  // D2: comp motion blur. The mesh rides its layer rigidly, so at each shutter sample its model is
+  // the layer's sample pose relative to its frame pose (S · F⁻¹), applied to the mesh's frame model.
+  if (owner.three_d && owner.three_d->model.size() == 16 && !owner.motion_samples.empty()) {
+    motion::xf::Mat4 frame{};
+    std::ranges::copy(owner.three_d->model, frame.begin());
+    if (const std::optional<motion::xf::Mat4> inv = motion::xf::invert(frame)) {
+      for (const api::RenderMotionSample& s : owner.motion_samples) {
+        api::RenderMotionSample ms = s;
+        if (s.model3d.size() == 16) {
+          motion::xf::Mat4 sm{};
+          std::ranges::copy(s.model3d, sm.begin());
+          const motion::xf::Mat4 at = motion::xf::multiply(motion::xf::multiply(sm, *inv), model);
+          ms.model3d.assign(at.begin(), at.end());
+        } else {
+          ms.model3d = t.model;  // a 2D sample of the owner: the mesh holds its frame pose
+        }
+        r.motion_samples.push_back(std::move(ms));
+      }
+    }
+  }
   r.three_d = std::move(t);
   return r;
 }
@@ -670,32 +690,17 @@ void finish_native_frame(const scene::BuildContext& c, std::string_view comp, do
 
   // SDK 1.4 (C): the frame's published channels, before any instance renders. Publishers run in
   // the order their manifests' "reads" / "publishes" give; a cycle is refused (layerErrors).
-  ChannelValues channels;
-  if (host != nullptr) {
-    struct Pub {
-      api::RenderEffect* e;
-      const EffectSpec* spec;
-      std::string layerId, instance, docLayer, effectId;
-      std::int64_t lt;
-    };
-    std::vector<Pub> pubs;
-    visit(frame.file.scene.renderables, [&](api::Renderable& r, List& /*list*/) {
-      for (api::RenderEffect& e : r.effects) {
-        if (e.type != kNativeFxType) continue;
-        const EffectSpec* spec = host->effect(text_of(e, "matchName"));
-        if (spec == nullptr || !spec->has(PR_OUT_FLAG_PUBLISHES) || spec->publishes.empty()) continue;
-        Pub p{&e, spec, text_of(e, "layerId"), text_of(e, "instance"), "", "", tf};
-        if (host->instance_disabled(p.instance, nullptr)) continue;
-        const std::size_t slash = p.instance.rfind('/');
-        p.effectId = slash == std::string::npos ? std::string() : p.instance.substr(slash + 1);
-        p.docLayer = doc_layer_of(c.d, p.layerId);
-        if (c.d.node(p.docLayer) != nullptr) {
-          const EffectClock clock = effect_clock(c, r, e, p.docLayer, t);
-          p.lt = flicks(clock.layer.layer_time(clock.ownNow));
-        }
-        pubs.push_back(std::move(p));
-      }
-    });
+  // C2: the same pass runs again at a simulation step's time (`shift` flicks from the frame), so a
+  // SIM_STEP reads the channels as they were at that step, not at the frame being drawn.
+  struct Pub {
+    api::RenderEffect e;  // a copy: the frame's entries change as instances render below
+    const EffectSpec* spec;
+    std::string layerId, instance, docLayer, effectId;
+    std::int64_t lt;
+  };
+  std::vector<Pub> pubs;
+  const auto publish_all = [&](std::int64_t shift, bool report) {
+    ChannelValues channels;
     // Kahn's order: P before Q when Q reads a channel P publishes.
     const auto feeds = [](const Pub& p, const Pub& q) {
       return &p != &q && std::ranges::any_of(q.spec->reads, [&](const std::string& n) { return std::ranges::find(p.spec->publishes, n) != p.spec->publishes.end(); });
@@ -711,23 +716,23 @@ void finish_native_frame(const scene::BuildContext& c, std::string_view comp, do
         if (!ready) continue;
         done[i] = true;
         progressed = true;
-        Pub& p = pubs[i];
-        RenderInputs in = sampler.inputs_at(*p.spec, *p.e, p.docLayer, p.effectId, p.lt);
-        in.compTime = tf;
+        const Pub& p = pubs[i];
+        RenderInputs in = sampler.inputs_at(*p.spec, p.e, p.docLayer, p.effectId, p.lt + shift);
+        in.compTime = tf + shift;
         for (const std::string& n : p.spec->reads) {
           if (const auto it = channels.find(n); it != channels.end()) in.channels[n] = it->second;
         }
         ChannelValues out;
         const CallResult cr = host->publish_channels(in, out);
         if (!cr.ok) {
-          if (!cr.skipped && reported.insert(p.instance + "#publish").second) {
+          if (report && !cr.skipped && reported.insert(p.instance + "#publish").second) {
             frame.errors.push_back(scene::LayerError{p.layerId, "", "plugin", "channels: " + cr.message});
           }
           continue;
         }
         for (auto& [name, values] : out) {
           if (const auto it = publishedBy.find(name); it != publishedBy.end()) {
-            if (reported.insert(p.instance + "#dup#" + name).second) {
+            if (report && reported.insert(p.instance + "#dup#" + name).second) {
               frame.errors.push_back(scene::LayerError{p.layerId, "", "plugin",
                                                        "channels: '" + name + "' is already published this frame (layer " + it->second + ")"});
             }
@@ -739,12 +744,35 @@ void finish_native_frame(const scene::BuildContext& c, std::string_view comp, do
       }
       if (!progressed) break;
     }
-    for (std::size_t i = 0; i < pubs.size(); ++i) {
+    for (std::size_t i = 0; i < pubs.size() && report; ++i) {
       if (!done[i] && reported.insert(pubs[i].instance + "#cycle").second) {
         frame.errors.push_back(scene::LayerError{pubs[i].layerId, "", "plugin",
                                                  "channels: " + pubs[i].spec->matchName + " is in a cycle of channels; it publishes nothing"});
       }
     }
+    return channels;
+  };
+  ChannelValues channels;
+  std::map<std::int64_t, ChannelValues> channelsAtShift;  // C2: per simulation step, this frame build
+  if (host != nullptr) {
+    visit(frame.file.scene.renderables, [&](api::Renderable& r, List& /*list*/) {
+      for (api::RenderEffect& e : r.effects) {
+        if (e.type != kNativeFxType) continue;
+        const EffectSpec* spec = host->effect(text_of(e, "matchName"));
+        if (spec == nullptr || !spec->has(PR_OUT_FLAG_PUBLISHES) || spec->publishes.empty()) continue;
+        Pub p{e, spec, text_of(e, "layerId"), text_of(e, "instance"), "", "", tf};
+        if (host->instance_disabled(p.instance, nullptr)) continue;
+        const std::size_t slash = p.instance.rfind('/');
+        p.effectId = slash == std::string::npos ? std::string() : p.instance.substr(slash + 1);
+        p.docLayer = doc_layer_of(c.d, p.layerId);
+        if (c.d.node(p.docLayer) != nullptr) {
+          const EffectClock clock = effect_clock(c, r, e, p.docLayer, t);
+          p.lt = flicks(clock.layer.layer_time(clock.ownNow));
+        }
+        pubs.push_back(std::move(p));
+      }
+    });
+    channels = publish_all(0, true);
   }
 
   visit(frame.file.scene.renderables, [&](api::Renderable& r, List& list) {
@@ -839,7 +867,32 @@ void finish_native_frame(const scene::BuildContext& c, std::string_view comp, do
         q.step = step;
         q.frame = step > 0 ? std::max<std::int64_t>(0, (lt + step / 2) / step) : 0;
         q.inputsKey = sim_inputs_key(c.d, *node, effectId, text_of(e, "sequence"));
-        q.inputsAt = [&](std::int64_t k) { return sampler.inputs_at(*spec, e, docLayer, effectId, k * step); };
+        // C2: a simulation that reads channels steps on what its publishers give at each step's time;
+        // their own keys join the simulation's (a publisher's edit re-steps; an expression: always).
+        const bool readsChannels = !spec->reads.empty() && !pubs.empty();
+        if (readsChannels && q.inputsKey != 0) {
+          for (const Pub& p : pubs) {
+            const doc::Node* pn = c.d.node(p.docLayer);
+            const std::uint64_t pk = pn != nullptr ? sim_inputs_key(c.d, *pn, p.effectId, text_of(p.e, "sequence")) : 0;
+            if (pk == 0) {
+              q.inputsKey = 0;
+              break;
+            }
+            q.inputsKey = (q.inputsKey ^ pk) * 1099511628211ULL;
+          }
+        }
+        q.inputsAt = [&](std::int64_t k) {
+          RenderInputs in = sampler.inputs_at(*spec, e, docLayer, effectId, k * step);
+          if (readsChannels) {
+            const std::int64_t shift = (k * step) - lt;
+            auto at = channelsAtShift.find(shift);
+            if (at == channelsAtShift.end()) at = channelsAtShift.emplace(shift, shift == 0 ? channels : publish_all(shift, false)).first;
+            for (const std::string& n : spec->reads) {
+              if (const auto ch = at->second.find(n); ch != at->second.end()) in.channels[n] = ch->second;
+            }
+          }
+          return in;
+        };
         bool partial = false;
         q.budgetMs = simBudgetMs;
         q.partial = &partial;

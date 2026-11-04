@@ -43,6 +43,7 @@
 #include <string_view>
 
 #include "engine_process.hpp"
+#include "native_effects.hpp"
 #include "os_ffi.hpp"
 #if defined(PREMATION_HAVE_PREPARE)
 #include <string>
@@ -225,6 +226,12 @@ int run(int argc, char** argv) {
       std::uint32_t ms = 0;
       ok = parse_u32(v, ms);
       o.pluginWatchdogMs = static_cast<int>(std::min<std::uint32_t>(ms, 3'600'000U));
+    } else if (k == "--plugin-isolation-pin") {
+      // SDK 1.4 (X2): <plugin id>=process|engine, persisted by Electron.
+      const std::string_view sv(v);
+      const std::size_t eq = sv.find('=');
+      ok = eq != std::string_view::npos && eq > 0;
+      if (ok) premation::doc::NativeEffects::set_isolation_pin(sv.substr(0, eq), sv.substr(eq + 1));
     } else if (k == "--plugin-isolation") {
       o.pluginIsolation = std::string(v);
       ok = v == "auto" || v == "off" || v == "all";

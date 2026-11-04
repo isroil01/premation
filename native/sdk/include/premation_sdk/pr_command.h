@@ -48,6 +48,18 @@ extern "C" {
  *   PR_COMMAND_RUN   do the command: read with engine_query, edit with engine_command. */
 typedef int32_t PrCommandCmd;
 #define PR_COMMAND_RUN 0
+/* SDK 1.4 (U1): a viewer tool's live event while it is active — the pointer moving (a hover, or a drag
+ * in progress), the wheel, a key. `args_json` = { "tool", "event": "move" | "wheel" | "key", "pointer":
+ * [x, y] (comp px), "stroke": [[x, y], …] (the drag so far, absent on a hover), "deltaY" (wheel),
+ * "key" (key), "shift", "alt", "ctrl" }. Draw the tool's overlay with tool_draw; put a status line in
+ * return_msg. No edits here (engine_command answers PR_ERR_INVALID_CALLBACK): the drag's edits are its
+ * RUN, one undo entry. Keep what the events change (a brush size) in the module. */
+#define PR_COMMAND_TOOL_EVENT 1
+
+/* SDK 1.4 (U1): what tool_draw draws, in comp px. */
+#define PR_TOOL_DRAW_LINE 0   /* a polyline: xy = x0, y0, x1, y1, … */
+#define PR_TOOL_DRAW_CIRCLE 1 /* xy = cx, cy, r */
+#define PR_TOOL_DRAW_DOT 2    /* xy = x, y (a filled point, `width` px across on screen) */
 
 /** What a command may call back (the engine API). Results are host-owned UTF-8 JSON,
  *  NUL-terminated, valid until the selector returns. */
@@ -61,6 +73,10 @@ typedef struct PrCommandSuite {
    * and part of this invocation's single undo entry. Results and errors as engine_query.
    * A failed command changed nothing; return its error from RUN to undo the others too. */
   PrErr(PR_CALL* engine_command)(PrHost* host, const char* request_json, const char** out_json, uint32_t* out_len);
+  /* ── SDK 1.4 (U1), appended: check struct_size >= offsetof(PrCommandSuite, tool_draw) + sizeof(void*) ──
+   * PR_COMMAND_TOOL_EVENT only: one item of the tool's overlay (PR_TOOL_DRAW_*), comp px, straight RGBA
+   * (NULL = the editor's accent), `width` screen px. At most 512 items and 4096 points per event. */
+  PrErr(PR_CALL* tool_draw)(PrHost* host, uint32_t kind, const double* xy, uint32_t count, const float* rgba, double width);
 } PrCommandSuite;
 
 typedef struct PrCommandContext {

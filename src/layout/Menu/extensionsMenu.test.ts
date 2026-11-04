@@ -14,6 +14,9 @@ const plugin = {
   panels: [{ id: 'scene', name: 'Scene Setup', page: 'scene.html' }], presets: [], layerTypes: [],
     interpolators: [],
     tools: [],
+    audio: [],
+    isolation: 'engine',
+    isolationPin: '',
 };
 
 const actions = (items: MenuItemModel[]): MenuItemModel[] => items.filter((i) => !i.separator && i.onSelect);

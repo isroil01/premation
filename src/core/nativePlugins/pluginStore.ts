@@ -125,6 +125,32 @@ export async function setPluginEnabled(client: Pick<EngineClient, 'execute'>, id
   }
 }
 
+/**
+ * SDK 1.4 (X2): run a plugin in its own process ('process'), in the engine ('engine'), or as the engine
+ * decides ('auto': third-party out of process). Now (the engine reloads it) and from the next launch.
+ */
+/**
+ * Pin where a plugin runs (X2). `runs`: where it runs afterwards — a plugin that needs the engine
+ * (its document, GPU, overlays) stays there whatever the pin says.
+ */
+export async function setPluginIsolation(
+  client: Pick<EngineClient, 'execute'>,
+  id: string,
+  mode: 'auto' | 'process' | 'engine',
+): Promise<{ error: string } | { runs: string }> {
+  try {
+    const res = await client.execute({ type: 'setPluginIsolation', plugin: id, mode });
+    if (!res.ok) return { error: res.error.message };
+    await bridge()?.setIsolation?.({ id, mode });
+    const q = (client as Partial<Pick<EngineClient, 'query'>>).query;
+    if (q) await refreshPluginEffectDefs({ query: q.bind(client) });
+    const info = res.value.plugins.find((p) => p.id === id);
+    return { runs: info?.isolation ?? '' };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : 'Could not change where the plugin runs.' };
+  }
+}
+
 /** Disable now and remove at the next start (a loaded module cannot be unloaded safely). */
 export async function uninstallPlugin(client: Pick<EngineClient, 'execute'>, id: string): Promise<string | null> {
   const uninstall = bridge()?.uninstall;

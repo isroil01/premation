@@ -84,11 +84,19 @@ export type AudioEffectType =
  */
 export type AudioWaveform = OscillatorType | 'white-noise';
 
+/** SDK 1.4 (A): a CLAP plugin's effect, `clap:<descriptor id>` — run by its premation-plugin-host; its
+ *  params are `p<param id>` (PluginInfo.audio). */
+export type ClapEffectType = `clap:${string}`;
+
+export function isClapEffectType(type: string): type is ClapEffectType {
+  return type.startsWith('clap:') && type.length > 5;
+}
+
 export interface AudioEffect {
   /** Stable identity, so keyframes scope to an EFFECT and survive reordering —
    *  the same reason `PathOp.id` exists. */
   id: string;
-  type: AudioEffectType;
+  type: AudioEffectType | ClapEffectType;
   enabled?: boolean;
   /** Effect parameters, by key. Numbers only: these ride `buildParamRamp`. */
   params?: Record<string, number>;
@@ -599,14 +607,14 @@ export function readAudioEffects(node: { components: ReadonlyArray<{ type: strin
     if (!e || typeof e !== 'object') continue;
     const o = e as Partial<AudioEffect>;
     if (typeof o.id !== 'string' || !o.id) continue;
-    if (typeof o.type !== 'string' || !(o.type in AUDIO_EFFECT_DEFS)) continue;
+    if (typeof o.type !== 'string' || !(o.type in AUDIO_EFFECT_DEFS || isClapEffectType(o.type))) continue;
     const params: Record<string, number> = {};
     for (const [k, v] of Object.entries(o.params ?? {})) {
       if (typeof v === 'number' && Number.isFinite(v)) params[k] = v;
     }
     out.push({
       id: o.id,
-      type: o.type as AudioEffectType,
+      type: o.type as AudioEffectType | ClapEffectType,
       params,
       ...(o.enabled === false ? { enabled: false } : {}),
       ...(o.mode === 'lowpass' || o.mode === 'highpass' ? { mode: o.mode } : {}),

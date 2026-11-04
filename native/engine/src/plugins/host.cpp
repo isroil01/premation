@@ -21,6 +21,7 @@
 #include "ml.hpp"    // SDK 1.4 (M): the ML suite's runtime
 #include "oop_wire.hpp"  // SDK 1.4 (X): premation-plugin-host messages
 #include "clap_host.hpp"  // SDK 1.4 (A): the audio messages
+#include "audio/external_effects.hpp"  // SDK 1.4 (A): CLAP effects reach the mixer (header-only)
 #include "json.hpp"
 #include "log.hpp"
 #include "manifest.hpp"
@@ -199,7 +200,7 @@ struct Plugin {
   std::map<std::string, PrExprFn, std::less<>> exprFns;
   /// SDK 1.4 (M): the models its instances loaded (id = index + 1), by bundle path.
   std::mutex mlMutex;
-  std::vector<std::shared_ptr<ml::Model>> models;
+  std::vector<fs::path> models;  // M2: paths; the session lives in ml's registry (trimmed under GPU pressure)
   std::map<std::string, std::uint32_t, std::less<>> modelIds;
   /// SDK 1.4 (X): the plugin runs in a premation-plugin-host (its module is never loaded here).
   bool outOfProcess = false;
@@ -458,7 +459,11 @@ struct PluginHost::Impl {
   /// SDK 1.4 (X): an effect plugin the options send out of process (commands, importers, output
   /// modules, layer types and expression functions run on the engine's document side).
   [[nodiscard]] bool wants_out_of_process(const Plugin& p) const {
-    if (!options.spawnOutOfProcess || !options.runOutOfProcess || !options.runOutOfProcess(p.manifest.id)) return false;
+    if (!options.spawnOutOfProcess) return false;
+    // X2: the user's pin wins over the policy (first-party in, third-party out).
+    const std::string pin = doc::NativeEffects::isolation_pin(p.manifest.id);
+    if (pin == "engine") return false;
+    if (pin != "process" && (!options.runOutOfProcess || !options.runOutOfProcess(p.manifest.id))) return false;
     const Manifest& mf = p.manifest;
     return !mf.effects.empty() && mf.commands.empty() && mf.importers.empty() && mf.outputModules.empty() && mf.layerTypes.empty() &&
            mf.expressionFunctions.empty();
@@ -612,6 +617,7 @@ struct PluginHost::Impl {
   // SDK 1.4 (E1): expression functions that faulted ("<id>.<name>"), and whether this host published.
   std::set<std::string, std::less<>> exprCrashed;
   bool exprPublished = false;
+  bool audioPublished = false;  // SDK 1.4 (A): this host installed audio::ExternalEffects
   std::set<std::string, std::less<>> shadowCleaned;
   /// Why a bundle requiring an entitlement may not load ('' when it may, or needs none).
   [[nodiscard]] std::string entitlement_lock(const Manifest& man) const;
@@ -1216,7 +1222,7 @@ PrErr PR_CALL cb_publish_channel(PrHost* h, const char* name, const double* valu
 PrErr PR_CALL cb_read_channel(PrHost* h, const char* name, double* out, std::uint32_t capacity, std::uint32_t* count) {
   if (h == nullptr || h->inputs == nullptr || h->effect == nullptr) return PR_ERR_INVALID_CALLBACK;
   if (h->cmd != PR_CMD_PUBLISH_CHANNELS && h->cmd != PR_CMD_SMART_PRE_RENDER && h->cmd != PR_CMD_SMART_RENDER &&
-      h->cmd != PR_CMD_SMART_RENDER_GPU && h->cmd != PR_CMD_RENDER) {
+      h->cmd != PR_CMD_SMART_RENDER_GPU && h->cmd != PR_CMD_RENDER && h->cmd != PR_CMD_SIM_STEP) {  // C2: SIM_STEP too
     return PR_ERR_INVALID_CALLBACK;
   }
   if (name == nullptr || count == nullptr || (out == nullptr && capacity > 0)) return PR_ERR_INVALID_PARAM;
@@ -1608,6 +1614,11 @@ PluginHost::PluginHost(HostOptions options) : impl_(std::make_unique<Impl>(*this
       const SimStats s = sim_stats();
       return std::pair<std::uint64_t, std::uint64_t>{s.bytes, s.diskBytes};
     });
+    // SDK 1.4 (M2): model sessions in getRenderStats, and given back under GPU memory pressure.
+    doc::NativeEffects::set_ml_handlers([] {
+      const ml::Stats st = ml::stats();
+      return std::pair<std::uint64_t, std::uint64_t>{st.models, st.bytes};
+    }, [](std::uint64_t /*over*/) { return ml::trim_idle(5.0); });
     contrib_->attach();  // P7: runPluginCommand, listPluginCommands, plugin importers
     doc::NativeEffects::set_overlay_handlers([this](const doc::NativeActionRequest& r) { return draw_overlay(r); },
                                              [this](const doc::NativeActionRequest& r, const doc::NativeOverlayDrag& d) {
@@ -1626,6 +1637,7 @@ PluginHost::PluginHost(HostOptions options) : impl_(std::make_unique<Impl>(*this
 PluginHost::~PluginHost() {
   Impl& m = *impl_;
   if (m.exprPublished) motion::expr::set_plugin_functions({}, nullptr, nullptr);  // SDK 1.4: no calls into a gone host
+  if (m.audioPublished) audio::ExternalEffects::clear();  // SDK 1.4 (A): waits for blocks in flight
   contrib_->shutdown();  // P7: CLOSE open importer files while the modules are set up
   if (m.options.attachToDocument) {
     PluginHost* self = this;
@@ -1746,6 +1758,15 @@ std::vector<PluginRecord> PluginHost::scan() {
   }
   std::ranges::sort(claps);
   for (const fs::path& f : claps) m.load_clap_file(f);
+  // SDK 1.4 (A): the mixer's CLAP effects run through this host's plugin processes.
+  if (m.options.attachToDocument && !m.audioPublished) {
+    audio::ExternalEffects::set([this](const std::string& clapId, const std::string& instance, double rate, std::uint32_t channels,
+                                       std::vector<float>& block, const std::vector<std::pair<std::uint32_t, double>>& params, bool reset) {
+      std::string why;
+      return process_audio(clapId, instance, rate, channels, block, params, reset, why);
+    });
+    m.audioPublished = true;
+  }
   if (m.options.attachToDocument) publish_expression_functions();  // SDK 1.4 (E1)
   return plugins();
 }
@@ -1781,6 +1802,10 @@ void PluginHost::Impl::load_ofx_bundle(const fs::path& dir) {
   } else if (std::string why; !load_out_of_process(*p, why)) {
     p->status = PluginStatus::failed;
     p->error = why;
+  } else if (!p->effects.empty() && p->effects.front()->version != 0) {
+    // O3: the OpenFX plugin's own version (pluginVersionMajor / Minor), stored with each instance.
+    const std::uint32_t v = p->effects.front()->version;
+    p->manifest.version = std::to_string(v >> 24U) + "." + std::to_string((v >> 16U) & 0xFFU) + "." + std::to_string(v & 0xFFFFU);
   }
   Plugin* raw = p.get();
   {
@@ -2377,6 +2402,7 @@ void PluginHost::Impl::register_document(const Plugin& p) {
     ne.def.type = e->matchName;
     ne.def.label = e->name;
     ne.provider = p.manifest.id;
+    ne.version = p.manifest.version;  // O3
     ne.category = e->category;
     ne.gpu = e->has(PR_OUT_FLAG_GPU_RENDER);
     ne.supportsFloat = e->has(PR_OUT_FLAG_FLOAT_COLOR_AWARE);
@@ -3058,10 +3084,10 @@ PrErr PluginHost::ml_load(std::string_view pluginId, std::string_view bundlePath
   }
   std::shared_ptr<ml::Model> m = ml::load(file, why);
   if (m == nullptr) return PR_ERR_INTERNAL;
-  p->models.push_back(std::move(m));
+  p->models.push_back(file);
   id = static_cast<std::uint32_t>(p->models.size());
   p->modelIds.emplace(std::string(bundlePath), id);
-  PREMATION_LOG(info, "plugin_ml_model").kv("plugin", std::string(pluginId)).kv("model", std::string(bundlePath)).kv("provider", p->models.back()->provider());
+  PREMATION_LOG(info, "plugin_ml_model").kv("plugin", std::string(pluginId)).kv("model", std::string(bundlePath)).kv("provider", m->provider());
   return PR_ERR_NONE;
 }
 
@@ -3072,7 +3098,10 @@ bool PluginHost::ml_run(std::string_view pluginId, std::uint32_t id, std::span<c
     for (const auto& q : impl_->plugins) {
       if (q->manifest.id != plugin) continue;
       const std::scoped_lock ml(q->mlMutex);
-      if (mid >= 1 && mid <= q->models.size()) return q->models[mid - 1];
+      if (mid >= 1 && mid <= q->models.size()) {
+        std::string err;
+        return ml::load(q->models[mid - 1], err);  // the registry's session (loaded again after a trim)
+      }
     }
     return nullptr;
   };
@@ -3093,7 +3122,7 @@ bool PluginHost::ml_run(std::string_view pluginId, std::uint32_t id, std::span<c
   std::vector<ml::Tensor> out;
   for (const std::string& n : outNames) out.push_back(ml::Tensor{n, {}, {}});
   if (!model->run(in, out, why)) return false;
-  ml::note_run();
+  ml::note_run();  // the registry stamped its last use when the run took the session
   outData.clear();
   outShapes.clear();
   outNames.clear();
@@ -3111,7 +3140,10 @@ std::string PluginHost::ml_provider(std::string_view pluginId, std::uint32_t id)
     for (const auto& q : impl_->plugins) {
       if (q->manifest.id != plugin) continue;
       const std::scoped_lock ml(q->mlMutex);
-      if (mid >= 1 && mid <= q->models.size()) return q->models[mid - 1];
+      if (mid >= 1 && mid <= q->models.size()) {
+        std::string err;
+        return ml::load(q->models[mid - 1], err);  // the registry's session (loaded again after a trim)
+      }
     }
     return nullptr;
   };
@@ -3474,6 +3506,10 @@ std::uint64_t inputs_hash(const RenderInputs& in) {
     h = mix_str(h, v.fileItem);
   }
   h = mix_vec(h, in.sequence);
+  for (const auto& [name, values] : in.channels) {  // C2: a simulation's step reads them
+    h = mix_str(h, name);
+    h = mix_vec(h, values);
+  }
   return mix64(h, static_cast<std::uint64_t>(in.layerW) << 32U | static_cast<std::uint32_t>(in.layerH));
 }
 
@@ -4108,6 +4144,17 @@ std::vector<api::PluginInfo> PluginHost::plugin_infos() const {
           i.layer_types.push_back(api::PluginLayerTypeInfo{p->manifest.id + ":" + lt.id, lt.name, lt.effect, lt.category});
         }
         for (const std::string& ip : p->manifest.interpolators) i.interpolators.push_back(p->manifest.id + ":" + ip);
+        i.isolation = p->outOfProcess ? "process" : "engine";  // SDK 1.4 (X2)
+        i.isolation_pin = doc::NativeEffects::isolation_pin(p->manifest.id);
+        for (const AudioPluginInfo& a : p->audio) {  // SDK 1.4 (A)
+          api::PluginAudioInfo ai;
+          ai.id = a.id;
+          ai.name = a.name;
+          ai.vendor = a.vendor;
+          ai.features = a.features;
+          for (const AudioParamInfo& q : a.params) ai.params.push_back(api::PluginAudioParam{q.id, q.name, q.min, q.max, q.def, q.stepped});
+          i.audio.push_back(std::move(ai));
+        }
         for (const ManifestTool& t : p->manifest.tools) {  // SDK 1.4 (U)
           i.tools.push_back(api::PluginToolInfo{p->manifest.id + ":" + t.id, t.name, t.command, t.shortcut});
         }

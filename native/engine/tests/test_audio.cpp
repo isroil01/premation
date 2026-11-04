@@ -21,6 +21,7 @@
 #include "dsp_filters.hpp"
 #include "dsp_osc.hpp"
 #include "effects.hpp"
+#include "external_effects.hpp"
 #include "mixer.hpp"
 #include "peaks.hpp"
 #include "realtime.hpp"
@@ -518,4 +519,60 @@ TEST_CASE("voice building: retime segments and nested placement follow the TS", 
   CHECK(placed[0].outSec - placed[0].inSec == Catch::Approx(1.5));
   CHECK_FALSE(placed[0].levelDb.animated());  // nested voices use their static level
   CHECK(placed[0].id == "inst::bar::iv");
+}
+
+TEST_CASE("CLAP effects in the chain go through the external handler; without one they pass through (SDK 1.4 A)", "[audio][clap]") {
+  EffectSpec fx;
+  fx.id = "fx1";
+  fx.type = EffectType::clap;
+  fx.clapId = "com.example.gain";
+  fx.params = {{"p1", 2.0}, {"gain", 9.0}};  // a key that is not "p<id>" is not a CLAP param
+  const auto fill = [](Block& b) {
+    b.zero(2);
+    for (int i = 0; i < kQuantum; ++i) {
+      b.c(0)[i] = 0.25F;
+      b.c(1)[i] = -0.5F;
+    }
+  };
+  QuantumClock q;
+  {
+    EffectChain chain({fx}, 48000);
+    Block b;
+    fill(b);
+    chain.process(b, q);  // no handler: the signal is untouched
+    CHECK(b.c(0)[7] == 0.25F);
+    CHECK(b.c(1)[7] == -0.5F);
+  }
+  std::string seenId;
+  std::string seenInstance;
+  std::vector<std::pair<std::uint32_t, double>> seenParams;
+  int resets = 0;
+  ExternalEffects::set([&](const std::string& id, const std::string& instance, double /*rate*/, std::uint32_t channels,
+                           std::vector<float>& block, const std::vector<std::pair<std::uint32_t, double>>& params, bool reset) {
+    seenId = id;
+    seenInstance = instance;
+    seenParams = params;
+    resets += reset ? 1 : 0;
+    REQUIRE(channels == 2);
+    REQUIRE(block.size() == static_cast<std::size_t>(2 * kQuantum));
+    for (float& x : block) x *= static_cast<float>(params.at(0).second);
+    return true;
+  });
+  EffectChain chain({fx}, 48000);
+  Block b;
+  fill(b);
+  chain.process(b, q);
+  CHECK(seenId == "com.example.gain");
+  CHECK(seenInstance == "fx1");
+  CHECK(seenParams == std::vector<std::pair<std::uint32_t, double>>{{1, 2.0}});
+  CHECK(b.c(0)[7] == 0.5F);
+  CHECK(b.c(1)[7] == -1.0F);
+  fill(b);
+  chain.process(b, q);
+  CHECK(resets == 1);  // the first block of a chain resets the plugin's state, the next does not
+  chain.reset(Anchor{});
+  fill(b);
+  chain.process(b, q);
+  CHECK(resets == 2);  // a seek resets it again
+  ExternalEffects::clear();
 }

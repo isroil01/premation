@@ -1406,6 +1406,9 @@ ResultOf<api::AddEffect> handle(const api::AddEffect& c, HCtx& x) {
     Json e = obj();
     e.set("id", str(ids[i]));
     e.set("type", str(c.effect));
+    // O3: a plugin effect records the plugin version it was made with (a project opened where the
+    // plugin is missing or older says which it needs; the effect passes through meanwhile).
+    if (const NativeEffect* ne = NativeEffects::find(c.effect); ne != nullptr && !ne->version.empty()) e.set("pluginVersion", str(ne->version));
     e.set("params", new_instance_params_of(*def));
     insert_at(effects, at, std::move(e));
     write_node_effects(d, layer, std::move(effects));

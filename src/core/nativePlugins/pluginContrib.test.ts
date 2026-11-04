@@ -7,6 +7,9 @@ function info(over: Partial<PluginInfo>): PluginInfo {
     effects: [], gpu: false, panel: false, commands: [], importers: [], outputModules: [], panels: [], presets: [], layerTypes: [],
     interpolators: [],
     tools: [],
+    audio: [],
+    isolation: 'engine',
+    isolationPin: '',
     ...over,
   };
 }

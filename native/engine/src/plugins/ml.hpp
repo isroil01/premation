@@ -38,8 +38,12 @@ class Model {
 /// The model at `file` (shared: the same content hash is the same session). nullptr + `error`.
 [[nodiscard]] std::shared_ptr<Model> load(const std::filesystem::path& file, std::string& error);
 
-/// Count one run (stats).
-void note_run();
+/// Count one run (stats) of the model at `file` (its last use, for trim_idle).
+void note_run(const std::filesystem::path& file = {});
+
+/// M2 — GPU memory pressure: release the sessions no run used for `idleSeconds` (0 = every session no
+/// run holds now). They load again on their next run. Returns the bytes of their model files.
+std::uint64_t trim_idle(double idleSeconds);
 
 /// Sessions open now and the bytes of their model files (Cache & Memory, the layer profiler).
 struct Stats {

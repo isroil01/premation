@@ -1156,6 +1156,23 @@ struct ControlVisitor {
     if (!doc::NativeEffects::set_enabled(c.plugin, c.enabled)) fail(ErrorCode::not_found, "no installed plugin '" + c.plugin + "'");
     return result_for<api::SetPluginEnabled>();
   }
+  R operator()(const api::SetPluginIsolation& c) const {
+    // SDK 1.4 (X2): pin where the plugin runs, then load it again under the pin (renders in flight
+    // finish on the old load; instances are set up again on their next render).
+    const std::vector<api::PluginInfo> known = doc::NativeEffects::plugins();
+    if (std::ranges::none_of(known, [&](const api::PluginInfo& p) { return p.id == c.plugin; })) {
+      fail(ErrorCode::not_found, "no installed plugin '" + c.plugin + "'");
+    }
+    const std::string mode = c.mode == "process" || c.mode == "engine" ? c.mode : std::string();
+    doc::NativeEffects::set_isolation_pin(c.plugin, mode);
+    std::string why;
+    const std::optional<bool> reloaded = doc::NativeEffects::reload(c.plugin, why);
+    if (reloaded && !*reloaded) fail(ErrorCode::internal, "plugin '" + c.plugin + "' was not loaded again: " + why);
+    s.sink_.purge_frame_cache();
+    s.sink_.purge_disk_cache();
+    if (s.any_viewport_open()) s.request_render();
+    return result_for<api::SetPluginIsolation>(api::PluginList{doc::NativeEffects::plugins()});
+  }
   R operator()(const api::RescanPlugins&) const {
     std::optional<std::vector<api::PluginInfo>> list = doc::NativeEffects::rescan();
     if (!list) fail(ErrorCode::unsupported, "this engine was started without a plugin folder (--plugins)");
@@ -2614,6 +2631,10 @@ api::RenderStats Session::render_stats() {
   if (const auto sim = doc::NativeEffects::sim_bytes()) {  // SDK 1.4 (T2): plugin simulation states
     st.sim_state_bytes = sim->first;
     st.sim_state_disk_bytes = sim->second;
+  }
+  if (const auto ml = doc::NativeEffects::ml_stats()) {  // SDK 1.4 (M2): plugin ML sessions
+    st.plugin_models = ml->first;
+    st.plugin_model_bytes = ml->second;
   }
   st.ram_cache_budget = cacheSnap.ramBudget;
   st.vram_cache_bytes = cacheSnap.vramBytes;

@@ -141,9 +141,9 @@ inline constexpr uint32_t kFaultGroupId = 900;
 inline constexpr uint32_t kFaultParamId = 901;
 inline constexpr uint32_t kFaultGroupEndId = 902;
 inline constexpr const char* kFaultChoices =
-    "None|Access violation|Divide by zero|Stack overflow|C++ exception|Hang (1.5 s)|Error return|abort()";
+    "None|Access violation|Divide by zero|Stack overflow|C++ exception|Hang (1.5 s)|Error return|abort()|Heap corruption";
 
-enum class Fault : int { none = 1, access_violation, divide_by_zero, stack_overflow, cpp_exception, hang, error_return, abort_process };
+enum class Fault : int { none = 1, access_violation, divide_by_zero, stack_overflow, cpp_exception, hang, error_return, abort_process, heap_corruption };
 
 /// Declare the Debug group (last in every sample's params).
 inline PrErr add_fault_params(const PrInData* in) {
@@ -200,6 +200,14 @@ inline PrErr inject(const PrParamDef* p, PrOutData* out) {
       message(out, "sample fault: the plugin reported an error");
       return PR_ERR_INTERNAL;
     case Fault::abort_process: std::abort();
+    case Fault::heap_corruption: {
+      // A double free: the CRT / OS heap detects it and ends the process (on Windows a fail-fast,
+      // STATUS_HEAP_CORRUPTION) — the one fault no in-process guard can survive.
+      std::vector<char>* v = new std::vector<char>(64);  // NOLINT(cppcoreguidelines-owning-memory): the fault being injected
+      delete v;                                         // NOLINT(cppcoreguidelines-owning-memory)
+      delete v;                                         // NOLINT(cppcoreguidelines-owning-memory, clang-analyzer-cplusplus.NewDelete)
+      std::abort();  // a heap that did not notice: end the process anyway, as corruption would
+    }
     default: return PR_ERR_NONE;
   }
 }

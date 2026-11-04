@@ -233,6 +233,46 @@ std::optional<std::pair<std::uint64_t, std::uint64_t>> NativeEffects::sim_bytes(
   return fn();
 }
 
+namespace {
+struct MlHandlers {
+  std::mutex mutex;
+  NativeEffects::MlStatsFn stats;
+  NativeEffects::MlReliefFn relief;
+};
+MlHandlers& ml_handlers() {
+  static MlHandlers h;  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables): the process-wide handlers
+  return h;
+}
+}  // namespace
+
+void NativeEffects::set_ml_handlers(MlStatsFn stats, MlReliefFn relief) {
+  MlHandlers& h = ml_handlers();
+  const std::scoped_lock lock(h.mutex);
+  h.stats = std::move(stats);
+  h.relief = std::move(relief);
+}
+
+std::optional<std::pair<std::uint64_t, std::uint64_t>> NativeEffects::ml_stats() {
+  MlHandlers& h = ml_handlers();
+  MlStatsFn fn;
+  {
+    const std::scoped_lock lock(h.mutex);
+    fn = h.stats;
+  }
+  if (!fn) return std::nullopt;
+  return fn();
+}
+
+std::uint64_t NativeEffects::relieve_ml(std::uint64_t over) {
+  MlHandlers& h = ml_handlers();
+  MlReliefFn fn;
+  {
+    const std::scoped_lock lock(h.mutex);
+    fn = h.relief;
+  }
+  return fn ? fn(over) : 0;
+}
+
 std::optional<bool> NativeEffects::reload(std::string_view plugin, std::string& why) {
   State& s = state();
   ReloadFn fn;
@@ -292,6 +332,31 @@ std::variant<NativeEdit, NativeFailure> NativeEffects::overlay_drag(const Native
   }
   if (!fn) return NativeFailure{"no native plugin host is attached to this engine"};
   return fn(r, d);
+}
+
+namespace {
+struct IsolationPins {
+  std::mutex mutex;
+  std::map<std::string, std::string, std::less<>> pins;
+};
+IsolationPins& isolation_pins() {
+  static IsolationPins p;  // NOLINT(cppcoreguidelines-avoid-non-const-global-variables): the process-wide pins
+  return p;
+}
+}  // namespace
+
+void NativeEffects::set_isolation_pin(std::string_view plugin, std::string_view mode) {
+  IsolationPins& p = isolation_pins();
+  const std::scoped_lock lock(p.mutex);
+  if (mode == "process" || mode == "engine") p.pins.insert_or_assign(std::string(plugin), std::string(mode));
+  else p.pins.erase(std::string(plugin));
+}
+
+std::string NativeEffects::isolation_pin(std::string_view plugin) {
+  IsolationPins& p = isolation_pins();
+  const std::scoped_lock lock(p.mutex);
+  const auto it = p.pins.find(plugin);
+  return it == p.pins.end() ? std::string() : it->second;
 }
 
 bool NativeEffects::set_enabled(std::string_view plugin, bool enabled) {

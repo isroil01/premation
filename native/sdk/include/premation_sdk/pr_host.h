@@ -243,7 +243,8 @@ typedef struct PrHostSuite {
    * publish_channel: in PR_CMD_PUBLISH_CHANNELS only — this frame's value of a channel the
    *   manifest lists under the effect's "publishes" (1..PR_MAX_CHANNEL_VALUES finite numbers;
    *   copied). A channel two instances publish in one frame is an error on the second.
-   * read_channel: in PUBLISH_CHANNELS, SMART_PRE_RENDER, SMART_RENDER(_GPU) and RENDER — a channel
+   * read_channel: in PUBLISH_CHANNELS, SMART_PRE_RENDER, SMART_RENDER(_GPU), RENDER and SIM_STEP (the
+   *   channel at that step's time; C2) — a channel
    *   the manifest lists under "reads": up to `capacity` numbers into `out`, the channel's length in
    *   `*count`. PR_ERR_NOT_FOUND when no instance published it this frame. The host runs the frame's
    *   publishers in the order these declarations give and refuses a cycle (layerErrors). */

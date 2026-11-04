@@ -940,3 +940,102 @@ TEST_CASE("SDK 1.4 D: a plugin's mesh and light join the comp's 3D scene", "[plu
   CHECK(nf.file.scene.lights3d.size() == lightsBefore + 1);
   CHECK(nf.file.scene.lights3d.back().type == api::RenderLightType::point);
 }
+
+TEST_CASE("SDK 1.4 D2: a plugin's mesh blurs with its layer under comp motion blur", "[plugins][finish][scene3d]") {
+  Json document = scene_json("plugin-model3d-occlusion.json");
+  Json* node = find_node(document, "solid");
+  REQUIRE(node != nullptr);
+  for (Json& c : node->find_mut("components")->arr_mut()) {
+    if (c.at("type").str() == "Transform") c.find_mut("props")->set("z", Json::number(0));
+  }
+  Json::Array effects;
+  effects.push_back(effect_json("fx", "com.premation.samples.meshgen"));
+  fx_props(*node).set("effects", Json::array(std::move(effects)));
+  document.find_mut("motionBlur")->set("enabled", Json::boolean(true));
+  fx_props(*node).set("motionBlur", Json::boolean(true));
+  add_track(document, "solid", "x", keys({{0, 100}, {1, 400}}));  // 300 px/s
+  Fixture f(std::move(document));
+  const sc::BuildContext ctx{f.d, f.view, *f.env, f.cache, nullptr, {}};
+  const sc::ViewSpec vs = sc::export_view(480, 360, 480, 360);
+  sc::NativeFrame nf = sc::build_native_frame(ctx, "comp_root", 0.5, vs, true);
+  pl::finish_native_frame(ctx, "comp_root", 0.5, vs, true, nf, f.host.get());
+  const auto& list = nf.file.scene.renderables;
+  const api::Renderable* layer = pl::find_renderable_in(list, "solid");
+  const auto at = std::ranges::find_if(list, [](const api::Renderable& r) { return r.id == "solid::plugin-mesh-0"; });
+  REQUIRE(layer != nullptr);
+  REQUIRE(at != list.end());
+  REQUIRE(layer->three_d.has_value());
+  REQUIRE(at->three_d.has_value());
+  // One sample per layer sample, each moved by what the layer moved between the frame and it.
+  REQUIRE_FALSE(layer->motion_samples.empty());
+  REQUIRE(at->motion_samples.size() == layer->motion_samples.size());
+  bool moved = false;
+  for (std::size_t i = 0; i < at->motion_samples.size(); ++i) {
+    const std::vector<double>& lm = layer->motion_samples[i].model3d;
+    const std::vector<double>& mm = at->motion_samples[i].model3d;
+    REQUIRE(lm.size() == 16);
+    REQUIRE(mm.size() == 16);
+    const double layerDx = lm[12] - layer->three_d->model[12];
+    const double meshDx = mm[12] - at->three_d->model[12];
+    CHECK(std::abs(meshDx - layerDx) < 1e-6);
+    CHECK(std::abs(mm[13] - at->three_d->model[13]) < 1e-6);
+    moved = moved || std::abs(meshDx) > 1;
+  }
+  CHECK(moved);
+}
+
+TEST_CASE("SDK 1.4 C2: a controller's channel drives a simulation, read at each step's own time", "[plugins][finish][sim][channels]") {
+  struct S {
+    double x, y, vx, vy;
+  };
+  const auto state_at = [](Fixture& f, double t) {
+    const Fixture::Built b = f.frame(t);
+    const api::RenderEffectParam* st = param_named(b.entry, "simState");
+    REQUIRE(st != nullptr);
+    const auto bytes = doc::native_unbase64(st->text);
+    REQUIRE(bytes.has_value());
+    REQUIRE(bytes->size() >= sizeof(S));
+    S s{};
+    std::memcpy(&s, bytes->data(), sizeof(S));
+    return s;
+  };
+  // Bounce alone, and Bounce after a Controller (Rate 0: a constant pulse of 0.5 × Strength).
+  const auto with = [](bool controller) {
+    Json document = scene_json();
+    Json* node = find_node(document, "solid");
+    REQUIRE(node != nullptr);
+    Json::Array effects;
+    if (controller) {
+      Json cparams = Json::object();
+      cparams.set("p1", Json::number(100));  // Strength
+      cparams.set("p2", Json::number(0));    // Rate
+      effects.push_back(effect_json("ctrl", "com.premation.samples.channels.controller", cparams));
+    }
+    effects.push_back(effect_json("fx", "com.premation.samples.bounce"));
+    fx_props(*node).set("effects", Json::array(std::move(effects)));
+    return document;
+  };
+  Fixture alone(with(false));
+  const S a1 = state_at(alone, 1.0);
+  {
+    // The pulse pushes the ball sideways: the same steps, another path.
+    Fixture driven(with(true));
+    const S d1 = state_at(driven, 1.0);
+    CHECK(d1.y == a1.y);    // sideways only
+    CHECK(d1.vx != a1.vx);  // 1000 × 0.5 px/s² for a second
+    CHECK(driven.plugin_errors(1.0).empty());
+  }
+  {
+    // Strength keyed 0 until 1 s, then 100: drawn at 2 s, the steps before 1 s read the pulse as it
+    // was THEN (0), not as it is at the frame drawn — so 0.5 s scrubbed back to matches Bounce alone.
+    Json keyed = with(true);
+    add_track(keyed, "solid", "effect.ctrl.p1", keys({{0, 0}, {1.0, 0}, {1.01, 100}}));
+    Fixture k(std::move(keyed));
+    const S late = state_at(k, 2.0);
+    const S early = state_at(k, 0.5);
+    const S aEarly = state_at(alone, 0.5);
+    CHECK(early.x == aEarly.x);
+    CHECK(early.vx == aEarly.vx);
+    CHECK(late.vx != state_at(alone, 2.0).vx);
+  }
+}

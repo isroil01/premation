@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "log.hpp"
+#include "native_effects.hpp"  // SDK 1.4 (M2): plugin ML sessions give memory back under pressure
 #include "overlay_geometry.hpp"
 #include "os_ffi.hpp"
 #include "premation/protocol/framing.hpp"
@@ -580,6 +581,8 @@ void RenderThread::relieve_gpu_pressure() {
     }
     // Then what the render graph and the footage feed hold but did not use last frame.
     if (over > 0 && drawer_) trimmed += drawer_->trim_vram(over);
+    // Then plugin ML sessions no run used lately (they load again on their next run).
+    if (over > trimmed) trimmed += doc::NativeEffects::relieve_ml(over - trimmed);
     if (trimmed > 0) {
       PREMATION_LOG(info, "gpu_pressure_trim")
           .kv("budgetMB", static_cast<double>(r->budget) / (1024.0 * 1024.0))

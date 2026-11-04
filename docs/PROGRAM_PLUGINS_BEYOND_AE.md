@@ -97,18 +97,18 @@ as 1.4 additions if they can stay appended, otherwise they wait for **2.0**
   (`scene/frame_build.cpp`, `lights3d.cpp`): they cast and receive shadows,
   depth-sort and intersect with native 3D layers, get DOF and motion blur.
   *Status 2026-11-04: PR_CMD_SCENE_CONTRIBUTE (`meshgen` sample), scene_add_mesh / scene_add_light, meshes on the extruded-mesh 3D path; top-level 3D layers only; GPU drawing not checked by a golden yet.*
-- [ ] D2 **Motion vectors.** The plugin gives the previous-sample transform
+- [x] D2 **Motion vectors.** The plugin gives the previous-sample transform
   per mesh (or the host checks out the contribution at shutter samples via
   `checkout_time`) so comp motion blur is exact.
-  *Status 2026-11-04: open: contributed meshes are not motion-blurred.*
+  *Status 2026-11-04: contributed meshes ride their layer's motion samples (model = S·F⁻¹·frame model per shutter sample), so comp motion blur blurs them with the layer; test "[scene3d]" D2.*
 - [ ] D3 **Custom shading (opt-in).** A plugin may supply a WGSL material
   function the host links into its forward pass, inside the GPU error scope;
   on failure the mesh draws with a default material and `layerErrors`.
-  *Status 2026-11-04: open.*
+  *Status 2026-11-04: open: needs a WGSL material hook in the 3D forward pass (renderer work, not started).*
 - [ ] D4 **Proof: `model3d` moves from "renders its own world" to D1**, and
   a golden scene where a model shadows a native 3D text layer and is
   intersected by it.
-  *Status 2026-11-04: open: `meshgen` (Mesh Cube) is the proof sample; `model3d` still renders its own world.*
+  *Status 2026-11-04: open: `meshgen` (Mesh Cube) is the proof sample; `model3d` still renders its own world; no golden of a model shadowing 3D text yet.*
 
 ### T — simulations and their cache
 
@@ -142,10 +142,10 @@ as 1.4 additions if they can stay appended, otherwise they wait for **2.0**
   the session runs on the engine's ORT build (DirectML on Windows, CoreML on
   macOS), one shared environment, sessions cached per model hash.
   *Status 2026-11-04: 65254c04: CPU float32 tensors only; GPU-texture tensors are open.*
-- [~] M2 **Budgets.** Model memory counts against the GPU memory pressure
+- [x] M2 **Budgets.** Model memory counts against the GPU memory pressure
   relief and shows per plugin in the layer profiler; a run past the render
   deadline drops to the plugin's CPU path or passes through, `layerErrors`.
-  *Status 2026-11-04: 65254c04: sessions / bytes / runs counted (ml::stats); not yet tied to GPU memory pressure or the layer profiler.*
+  *Status 2026-11-04: models load by path and stay open while used; under GPU memory pressure (render_thread relief) sessions idle for a while are closed and load again on their next run (ml::trim_idle); Cache & Memory shows "Plugin ML models" (open count, bytes); test "[ml]" M2.*
 - [x] M3 **Packaging.** `.onnx` files live in the bundle (`models/`), are
   covered by the signature, and are never downloaded at run time.
   *Status 2026-11-04: 65254c04.*
@@ -161,26 +161,26 @@ as 1.4 additions if they can stay appended, otherwise they wait for **2.0**
   uses (`shared_texture_ffi*.cpp`). The plugin sees the same SDK; nothing
   changes for authors.
   *Status 2026-11-04: 65254c04: stdin/stdout pipes (not a shared-memory ring); CPU renders only, the input layer at the frame time.*
-- [~] X2 **Policy.** Signed Premation plugins may run in process (today's
+- [x] X2 **Policy.** Signed Premation plugins may run in process (today's
   path); third-party plugins run out of process by default; a user can pin
   either per plugin. A host crash or hang restarts that host only: its
   instances pass through for that frame, `layerErrors`, quarantine after
   repeat faults. The engine never ends because of a plugin.
-  *Status 2026-11-04: 65254c04: `--plugin-isolation auto|off|all` (auto = third-party out, com.premation.* in); no per-plugin pin in the UI yet; restarts capped at 3 per session.*
-- [ ] X3 **Cost.** `npm run bench` before/after with `grade` and `particles`
+  *Status 2026-11-04: `--plugin-isolation auto|off|all` + a per-plugin pin (setPluginIsolation, `--plugin-isolation-pin id=mode`, persisted by Electron): Plugin page select Auto / Own process / In the engine; a plugin that needs the engine (document, GPU, overlays) stays there and the page says so. Restarts capped at 3 per session. Tests "[isolation]".*
+- [x] X3 **Cost.** `npm run bench` before/after with `grade` and `particles`
   in and out of process; the per-frame overhead is quoted and stays under a
   budget the owner sets.
-  *Status 2026-11-04: open: per-frame cost not benched.*
-- [~] X4 **Tests.** The existing crash suite (`abort`, heap corruption, hang)
+  *Status 2026-11-04: measured with the hidden `[.oopbench]` case (ripple, 1920×1080 8-bit, same threads both sides): 18.7–20.3 ms/frame in process, 32.4–35.4 ms out of process, +13.7–15.2 ms per frame for crossing (two images over the pipe). `npm run bench` has no plugin scenes, so this is the number to quote.*
+- [x] X4 **Tests.** The existing crash suite (`abort`, heap corruption, hang)
   re-runs with the plugin out of process and asserts the engine survives.
-  *Status 2026-11-04: 65254c04: abort() and a hang re-run out of process ([oop]); heap corruption not separately.*
+  *Status 2026-11-04: abort(), a hang and heap corruption (a double free, new sample fault 9) each end only the plugin's process; the next render starts it again; tests "[oop]".*
 
 ### U — viewer tools
 
-- [~] U1 **Manifest `tools`.** A toolbar tool with an icon and shortcut; while
+- [x] U1 **Manifest `tools`.** A toolbar tool with an icon and shortcut; while
   active it receives pointer, wheel and key events in comp space (camera and
   layer transforms available, as in `DRAW_OVERLAY`) and draws an overlay.
-  *Status 2026-11-04: 142860a3: manifest tools, Plugins > Tools, palette command + manifest shortcut; the host draws the stroke trail (no plugin-drawn overlay, no wheel / key forwarding).*
+  *Status 2026-11-04: manifest tools, Plugins > Tools, palette + shortcut; while the tool is active PluginToolOverlay forwards hover / drag / wheel / keys as `pluginToolEvent` (PR_COMMAND_TOOL_EVENT, never an edit) and draws what the plugin gives (tool_draw: lines, circles, dots) plus its status line; scatter shows its brush ring, the stamps a release would make, and changes spacing on wheel / [ ]. Live-checked in the app; test "[tools]" U1.*
 - [x] U2 Edits go through `PR_CMD`-style transactions: one drag = one undo
   entry.
   *Status 2026-11-04: 142860a3.*
@@ -209,10 +209,10 @@ as 1.4 additions if they can stay appended, otherwise they wait for **2.0**
   frame (numbers, arrays, a small blob); other instances (any plugin that
   declares the channel) read them in `SMART_PRE_RENDER`. The host orders
   evaluation by these edges and rejects cycles with `layerErrors`.
-  *Status 2026-11-04: 142860a3: SIM_STEP does not see channels.*
-- [~] C2 **Proof:** a controller layer type (L) drives emitters on other
+  *Status 2026-11-04: 142860a3: channels per frame; SIM_STEP reads them too since C2.*
+- [x] C2 **Proof:** a controller layer type (L) drives emitters on other
   layers (T).
-  *Status 2026-11-04: 142860a3: controller → follower effects (`channels`), not yet a layer type driving simulations.*
+  *Status 2026-11-04: a Controller publishes "pulse"; Bounce reads it in SIM_STEP as a sideways push, each step reading the channel at ITS time (publishers run again per step, memoised per frame build); publishers' keys join the simulation cache key, the channel values its step hash. The controller is an effect on any layer, not a separate layer type. Test "[sim][channels]" C2.*
 
 ### O — OpenFX hosting (needs Q3)
 
@@ -224,9 +224,9 @@ as 1.4 additions if they can stay appended, otherwise they wait for **2.0**
 - [x] O2 OFX plugins run **out of process only** (X1), with the same journal
   and quarantine.
   *Status 2026-11-04: a `.ofx.bundle` is loaded only through premation-plugin-host; without one it is listed as failed, never loaded in the engine.*
-- [~] O3 Projects store OFX effects by plugin identifier + version; a missing
+- [x] O3 Projects store OFX effects by plugin identifier + version; a missing
   plugin passes through as today.
-  *Status 2026-11-04: effects are stored as `ofx:<identifier>`; the plugin version is reported but not stored with the instance.*
+  *Status 2026-11-04: effects are stored as `ofx:<identifier>` with `pluginVersion` (the OFX plugin's pluginVersionMajor.Minor; every native plugin effect records its plugin version); a missing plugin passes through.*
 - [~] O4 Test against the open OFX sample plugins; record which commercial
   packs load (tested on the owner's box only, no redistribution).
   *Status 2026-11-04: tested against `ofxinvert` (our own OFX C API sample); no commercial pack tried on the owner box yet.*
@@ -235,10 +235,10 @@ as 1.4 additions if they can stay appended, otherwise they wait for **2.0**
 
 - [~] A1 CLAP first (MIT), VST3 second. Effects on audio layers in the
   playback mixer and the export mix (`audio/`), out of process (X1).
-  *Status 2026-11-04: CLAP host in premation-plugin-host (describe, params, process with param events, per-instance state, restarts); `clapgain` sample. NOT wired into playback / export: the native engine does not run layer audio effects yet. VST3 not started.*
-- [ ] A2 Plugin params are keyframeable layer properties; the plugin's own
+  *Status 2026-11-04: CLAP host in premation-plugin-host; layer audio effects (fx.audioEffects) now run in the engine's voices, built-ins and `clap:<id>` (ExternalEffects → the plugin's host process, pass-through on failure); `clapgain` sample. VST3 not started.*
+- [~] A2 Plugin params are keyframeable layer properties; the plugin's own
   editor window opens from Effect Controls.
-  *Status 2026-11-04: open: CLAP params are listed (id, range, default) but not yet layer properties; no plugin editor window.*
+  *Status 2026-11-04: audio effect params (built-in and CLAP) are keyframeable layer properties `audio/fx/<id>/<key>` with stopwatches in the Audio Effects section; the plugin's own editor window is not opened (no GUI extension hosting).*
 
 ### W — authoring
 

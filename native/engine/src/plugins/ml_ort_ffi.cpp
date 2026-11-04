@@ -2,6 +2,7 @@
 // this file. Without the runtime it builds to a stub whose load() fails with a clear reason.
 #include "ml.hpp"
 
+#include <chrono>
 #include <fstream>
 #include <map>
 #include <mutex>
@@ -35,6 +36,9 @@ struct Registry {
 #endif
   std::mutex mutex;
   std::map<std::uint64_t, std::shared_ptr<Model>> byHash;
+  std::map<std::uint64_t, std::uint64_t> sizeOf;  // hash → model file bytes
+  std::map<std::uint64_t, std::chrono::steady_clock::time_point> lastUse;
+  std::map<std::string, std::uint64_t> hashOfPath;  // a model file seen before: no re-hash on the next load
   std::uint64_t bytes = 0;
   std::uint64_t runs = 0;
 };
@@ -179,16 +183,30 @@ bool runtime_available() noexcept {
 }
 
 std::shared_ptr<Model> load(const std::filesystem::path& file, std::string& error) {
+  Registry& r = registry();
+  const std::u8string u8 = file.u8string();
+  const std::string key(u8.begin(), u8.end());
+  {
+    const std::scoped_lock lock(r.mutex);
+    if (const auto p = r.hashOfPath.find(key); p != r.hashOfPath.end()) {
+      if (const auto it = r.byHash.find(p->second); it != r.byHash.end()) {
+        r.lastUse[p->second] = std::chrono::steady_clock::now();
+        return it->second;
+      }
+    }
+  }
   std::uint64_t hash = 0;
   std::uint64_t size = 0;
   if (!hash_file(file, hash, size, error)) return nullptr;
-  Registry& r = registry();
   const std::scoped_lock lock(r.mutex);
+  r.hashOfPath[key] = hash;
+  r.lastUse[hash] = std::chrono::steady_clock::now();
   if (const auto it = r.byHash.find(hash); it != r.byHash.end()) return it->second;
 #ifdef PREMATION_PLUGINS_ORT
   try {
     auto m = std::make_shared<OrtModel>(file);
     r.byHash.emplace(hash, m);
+    r.sizeOf[hash] = size;
     r.bytes += size;
     return m;
   } catch (const std::exception& e) {
@@ -201,10 +219,38 @@ std::shared_ptr<Model> load(const std::filesystem::path& file, std::string& erro
 #endif
 }
 
-void note_run() {
+void note_run(const std::filesystem::path& file) {
   Registry& r = registry();
   const std::scoped_lock lock(r.mutex);
   ++r.runs;
+  const std::u8string u8 = file.u8string();
+  if (const auto p = r.hashOfPath.find(std::string(u8.begin(), u8.end())); p != r.hashOfPath.end()) {
+    r.lastUse[p->second] = std::chrono::steady_clock::now();
+  }
+}
+
+std::uint64_t trim_idle(double idleSeconds) {
+  Registry& r = registry();
+  std::vector<std::shared_ptr<Model>> dropped;  // destroyed outside the lock
+  std::uint64_t freed = 0;
+  {
+    const std::scoped_lock lock(r.mutex);
+    const auto now = std::chrono::steady_clock::now();
+    for (auto it = r.byHash.begin(); it != r.byHash.end();) {
+      const auto last = r.lastUse.find(it->first);
+      const double idle = last == r.lastUse.end() ? 1e9 : std::chrono::duration<double>(now - last->second).count();
+      // use_count 1 = only the registry holds it: no run is in flight.
+      if (it->second.use_count() == 1 && idle >= idleSeconds) {
+        freed += r.sizeOf[it->first];
+        r.bytes -= std::min(r.bytes, r.sizeOf[it->first]);
+        dropped.push_back(std::move(it->second));
+        it = r.byHash.erase(it);
+      } else {
+        ++it;
+      }
+    }
+  }
+  return freed;
 }
 
 Stats stats() {

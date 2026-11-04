@@ -1666,6 +1666,70 @@ class EngineAudio final : public MediaClock {
     v.pan = curve_of(c, n.id, "audioPan", pan, startSec, durationSec);
   }
 
+  /// audioEffects.ts `AudioEffect[]` → the mixer's chain: static params by key, keyframed ones from the
+  /// node's `audiofx.<id>.<key>` tracks (audioEffectTrackProp), mode / wave / curve / flags. An effect
+  /// type the mixer does not know is skipped (logged once per layer), never a silent voice.
+  std::vector<audio::EffectSpec> effects_of(const Ctx& c, const std::string& node, const Json& list, double startSec, double durationSec) {
+    std::vector<audio::EffectSpec> out;
+    if (!list.is_array()) return out;
+    static const std::map<std::string, audio::EffectType, std::less<>> kTypes{
+        {"parametric-eq", audio::EffectType::parametricEq}, {"bass-treble", audio::EffectType::bassTreble},
+        {"high-low-pass", audio::EffectType::highLowPass},  {"delay", audio::EffectType::delay},
+        {"reverb", audio::EffectType::reverb},              {"flange-chorus", audio::EffectType::flangeChorus},
+        {"tone", audio::EffectType::tone},                  {"modulator", audio::EffectType::modulator},
+        {"stereo-mixer", audio::EffectType::stereoMixer},   {"compressor", audio::EffectType::compressor},
+        {"distortion", audio::EffectType::distortion},      {"de-esser", audio::EffectType::deEsser},
+        {"backwards", audio::EffectType::backwards}};
+    for (const Json& e : list.arr()) {
+      if (!e.is_object() || !e.at("id").is_string() || !e.at("type").is_string()) continue;
+      audio::EffectSpec fx;
+      fx.id = e.at("id").str();
+      const std::string type = e.at("type").str();
+      if (type.starts_with("clap:")) {
+        fx.type = audio::EffectType::clap;  // SDK 1.4 (A): a CLAP plugin, run out of process
+        fx.clapId = type.substr(5);
+      } else if (const auto it = kTypes.find(type); it != kTypes.end()) {
+        fx.type = it->second;
+      } else {
+        notes_.insert("audio effect '" + type + "' (" + node + ")");
+        continue;
+      }
+      fx.enabled = !(e.at("enabled").is_bool() && !e.at("enabled").b());
+      if (!fx.enabled) continue;
+      fx.lowpass = e.at("mode").is_string() && e.at("mode").str() == "lowpass";
+      if (e.at("wave").is_string()) {
+        const std::string w = e.at("wave").str();
+        fx.hasWave = true;
+        fx.wave = w == "square" ? audio::Wave::square : w == "sawtooth" ? audio::Wave::sawtooth : w == "triangle" ? audio::Wave::triangle
+                  : w == "white-noise" ? audio::Wave::whiteNoise : audio::Wave::sine;
+      }
+      if (e.at("curve").is_string()) {
+        const std::string cv = e.at("curve").str();
+        fx.shape = cv == "hard-clip" ? audio::DistortionShape::hardClip : cv == "saturation-1" ? audio::DistortionShape::saturation1
+                   : cv == "saturation-2" ? audio::DistortionShape::saturation2 : cv == "tube" ? audio::DistortionShape::tube
+                   : cv == "fuzz" ? audio::DistortionShape::fuzz : audio::DistortionShape::softClip;
+      }
+      if (e.at("flags").is_array()) {
+        for (const Json& f : e.at("flags").arr()) {
+          if (f.is_string()) fx.flags.push_back(f.str());
+        }
+      }
+      if (e.at("params").is_object()) {
+        for (const auto& m : e.at("params").obj()) {
+          if (!m.value.is_number()) continue;
+          const std::string track = "audiofx." + fx.id + "." + m.key;
+          if (doc::anim_is_animated(c.d, node, track)) {
+            fx.curves.emplace_back(m.key, curve_of(c, node, track, m.value.num(), startSec, durationSec));
+          } else {
+            fx.params.emplace_back(m.key, m.value.num());
+          }
+        }
+      }
+      out.push_back(std::move(fx));
+    }
+    return out;
+  }
+
   void finish_voice(const Ctx& c, const doc::Node& n, audio::Voice& v, double staticDb) {
     const double dur = std::max(0.0, v.outSec - v.inSec);
     v.levelDb = curve_of(c, n.id, "audioLevelDb", staticDb, v.startSec, dur);
@@ -1749,7 +1813,6 @@ class EngineAudio final : public MediaClock {
     const bool muted = !n.visible || (p.at("__muted").is_bool() && p.at("__muted").b());
     const std::uint64_t source = source_of(src);
     if (source == 0) return {};
-    if (p.at("effects").is_array() && !p.at("effects").arr().empty()) notes_.insert("audio effects (" + n.id + ")");
     std::vector<audio::Voice> out;
     auto timings = timings_of(c, n.id);
     if (timings.empty()) {
@@ -1769,6 +1832,8 @@ class EngineAudio final : public MediaClock {
       v.loop = loops;
       v.muted = muted || !t.enabled;
       finish_voice(c, n, v, db);
+      // audioEffects.ts AUDIO_EFFECTS_PROP: the chain lives on the fx component.
+      v.effects = effects_of(c, n.id, n.fx().at("audioEffects"), v.startSec, std::max(0.0, v.outSec - v.inSec));
       out.push_back(std::move(v));
     }
     return out;
@@ -1832,6 +1897,7 @@ class EngineAudio final : public MediaClock {
       v.loop = asset_loops(asset);
       v.muted = muted || !t.enabled || freeze;
       finish_voice(c, n, v, db);
+      v.effects = effects_of(c, n.id, n.fx().at("audioEffects"), v.startSec, std::max(0.0, v.outSec - v.inSec));
       if (retimed && !freeze) {
         const auto sourceAt = [&](double at) { return retimed_source_sec(c, n, asset, fps, at); };
         const std::vector<audio::RateSegment> segs = audio::retime_segments(sourceAt, t, fps);

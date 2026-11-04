@@ -251,6 +251,19 @@ function Overview({ readout }: { readout: MemoryReadout | null }): JSX.Element {
             </span>
           </>
         ) : null}
+        {(r?.mlModels ?? 0) > 0 ? (
+          <>
+            <div className={styles.rowHead}>
+              <span className={styles.group}>{t('cacheMemory.ml', 'Plugin ML models')}</span>
+              <span className={styles.value} data-numeric>
+                {t('cacheMemory.mlValue', '{count} open · {size}', { count: r?.mlModels ?? 0, size: formatBytes(r?.mlBytes ?? 0) })}
+              </span>
+            </div>
+            <span className={styles.help}>
+              {t('cacheMemory.mlHelp', 'Models plugins run on the GPU. When video memory runs short, the ones not used lately are closed and load again when next needed.')}
+            </span>
+          </>
+        ) : null}
       </section>
 
       <section className={styles.section} aria-label={t('cacheMemory.comp', 'This composition')}>

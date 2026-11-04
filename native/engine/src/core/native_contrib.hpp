@@ -9,6 +9,7 @@
 // asked from the core thread (import, probe) and the frame builder (frames).
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -50,6 +51,19 @@ struct PluginCommandRequest {
   std::string args = "{}";
 };
 
+/// SDK 1.4 (U1): one item a viewer tool draws (PR_TOOL_DRAW_*), comp px.
+struct PluginToolItem {
+  std::uint32_t kind = 0;
+  std::vector<double> xy;
+  std::array<float, 4> rgba{0, 0, 0, 0};  ///< all 0 = the editor's accent
+  double width = 1;
+};
+
+struct PluginToolFeedback {
+  std::vector<PluginToolItem> items;
+  std::string message;
+};
+
 struct PluginCommandOutcome {
   std::string label;    ///< the history entry's label (the command's name)
   std::string message;  ///< PrCommandOut.return_msg
@@ -60,6 +74,10 @@ class NativeCommands {
   using ListFn = std::function<std::vector<api::PluginCommandInfo>()>;
   using RunFn = std::function<std::variant<PluginCommandOutcome, api::EngineError>(const PluginCommandRequest&, PluginCommandBridge&)>;
   static void set_handlers(ListFn list, RunFn run);
+  /// SDK 1.4 (U1): PR_COMMAND_TOOL_EVENT (no edits) — the tool's overlay and status for one event.
+  using ToolEventFn = std::function<std::variant<PluginToolFeedback, api::EngineError>(const PluginCommandRequest&)>;
+  static void set_tool_event_handler(ToolEventFn fn);
+  [[nodiscard]] static std::variant<PluginToolFeedback, api::EngineError> tool_event(const PluginCommandRequest& r);
   static void clear_handlers();
   /// listPluginCommands (empty without a host).
   [[nodiscard]] static std::vector<api::PluginCommandInfo> list();

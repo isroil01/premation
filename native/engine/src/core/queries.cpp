@@ -905,6 +905,29 @@ struct Q {
     out.plugins = NativeEffects::plugins();
     return query_result_for<api::ListPlugins>(std::move(out));
   }
+  api::QueryResult operator()(const api::PluginToolEvent& q) const {
+    // SDK 1.4 (U1): a viewer tool's event — the plugin draws, nothing is edited.
+    PluginCommandRequest r;
+    r.plugin = q.plugin;
+    r.command = q.command;
+    r.comp = q.comp.value_or("");
+    r.time = q.time.value_or(0);
+    r.args = q.args.value_or("{}");
+    auto out = NativeCommands::tool_event(r);
+    if (auto* e = std::get_if<api::EngineError>(&out)) fail(e->code, e->message);
+    const PluginToolFeedback& fb = std::get<PluginToolFeedback>(out);
+    api::PluginToolFeedback res;
+    res.message = fb.message;
+    for (const PluginToolItem& it : fb.items) {
+      api::PluginToolDrawItem item;
+      item.kind = it.kind;
+      item.xy = it.xy;
+      item.rgba.assign(it.rgba.begin(), it.rgba.end());
+      item.width = it.width;
+      res.items.push_back(std::move(item));
+    }
+    return query_result_for<api::PluginToolEvent>(std::move(res));
+  }
   api::QueryResult operator()(const api::ListPluginCommands&) const {
     // P7a: native plugin commands (none without a host).
     api::PluginCommandList out;

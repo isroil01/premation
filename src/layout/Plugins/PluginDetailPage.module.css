@@ -119,6 +119,17 @@
   color: var(--color-text-tertiary);
 }
 
+/* SDK 1.4 (X2): Auto | Own process | In the engine */
+.isolation {
+  height: 24px;
+  padding: 0 6px;
+  font-size: var(--panel-font-size-help);
+  color: var(--color-text-primary);
+  background: var(--color-bg-input, var(--color-bg-secondary));
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+}
+
 /* Details | Effects 3 | Presets 12 | Panels 1 | Changelog */
 .tabs {
   display: flex;

@@ -68,6 +68,8 @@ api::EngineError engine_error(api::ErrorCode code, std::string message) {
 /// The invocation in flight on this thread (commands run on the core thread, one at a time).
 struct CommandCall {
   doc::PluginCommandBridge* bridge = nullptr;
+  /// SDK 1.4 (U1): PR_COMMAND_TOOL_EVENT's overlay (null in RUN).
+  std::vector<doc::PluginToolItem>* toolItems = nullptr;
   std::deque<std::string> replies;  ///< host-owned result JSON, alive until RUN returns
 
   PrErr reply(std::string json, const char** out, std::uint32_t* len, PrErr code) {
@@ -115,7 +117,22 @@ PrErr PR_CALL cb_engine_command(PrHost* host, const char* json, const char** out
                                    [](doc::PluginCommandBridge& b, const api::Command& c) { return to_json(b.command(c)); });
 }
 
-const PrCommandSuite kCommandSuite = {sizeof(PrCommandSuite), &cb_engine_query, &cb_engine_command};
+PrErr PR_CALL cb_tool_draw(PrHost* host, std::uint32_t kind, const double* xy, std::uint32_t count, const float* rgba, double width) {
+  CommandCall* c = t_call;
+  if (host == nullptr || c == nullptr || c->toolItems == nullptr) return PR_ERR_INVALID_CALLBACK;
+  const std::uint32_t want = kind == PR_TOOL_DRAW_CIRCLE ? 3 : kind == PR_TOOL_DRAW_DOT ? 2 : 4;
+  if (kind > PR_TOOL_DRAW_DOT || xy == nullptr || count < want || count > 4096 || c->toolItems->size() >= 512) return PR_ERR_INVALID_PARAM;
+  doc::PluginToolItem it;
+  it.kind = kind;
+  it.xy.assign(xy, xy + count);  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic): the SDK's array
+  if (!std::ranges::all_of(it.xy, [](double v) { return std::isfinite(v); })) return PR_ERR_INVALID_PARAM;
+  if (rgba != nullptr) std::copy_n(rgba, 4, it.rgba.begin());
+  it.width = std::isfinite(width) && width > 0 ? std::min(width, 64.0) : 1.0;
+  c->toolItems->push_back(std::move(it));
+  return PR_ERR_NONE;
+}
+
+const PrCommandSuite kCommandSuite = {sizeof(PrCommandSuite), &cb_engine_query, &cb_engine_command, &cb_tool_draw};
 
 // ── pixels ──────────────────────────────────────────────────────────────
 
@@ -247,6 +264,7 @@ void Contrib::attach() {
     const std::scoped_lock lock(mutex_);
     attached_ = true;
   }
+  doc::NativeCommands::set_tool_event_handler([this](const doc::PluginCommandRequest& r) { return tool_event(r); });  // SDK 1.4 (U1)
   doc::NativeCommands::set_handlers([this] { return commands(); },
                                     [this](const doc::PluginCommandRequest& r, doc::PluginCommandBridge& b) { return run(r, b); });
   doc::NativeImporters::set_handlers([this](std::string_view path) { return claims(path); },
@@ -438,6 +456,63 @@ std::variant<doc::PluginCommandOutcome, api::EngineError> Contrib::run(const doc
     return engine_error(api::ErrorCode::internal, "'" + name + "': " + msg);
   }
   return doc::PluginCommandOutcome{name, message_of(call.out.return_msg, sizeof(call.out.return_msg))};
+}
+
+std::variant<doc::PluginToolFeedback, api::EngineError> Contrib::tool_event(const doc::PluginCommandRequest& r) {
+  const std::string key = r.plugin + "/c/" + r.command;
+  PrCommandMainFn fn = nullptr;
+  {
+    const std::scoped_lock lock(mutex_);
+    const auto it = entries_.find(key);
+    if (it == entries_.end() || crashed_.contains(key)) return engine_error(api::ErrorCode::not_found, "no plugin command '" + r.plugin + "/" + r.command + "'");
+    fn = it->second->command;
+  }
+  if (!loaded(r.plugin)) return engine_error(api::ErrorCode::not_found, "plugin '" + r.plugin + "' is not loaded");
+  struct Call {
+    PrCommandMainFn fn;
+    PrCommandContext ctx;
+    PrCommandOut out;
+    PrErr result;
+  } call{};
+  call.fn = fn;
+  call.ctx.struct_size = sizeof(PrCommandContext);
+  call.ctx.host_sdk_version = PR_SDK_VERSION;
+  call.ctx.engine = &kCommandSuite;
+  call.ctx.command_id = r.command.c_str();
+  call.ctx.comp_id = r.comp.c_str();
+  call.ctx.time = r.time;
+  call.ctx.frame_rate = r.fps;
+  call.ctx.args_json = r.args.c_str();
+  call.out.struct_size = sizeof(PrCommandOut);
+  std::vector<doc::PluginToolItem> items;
+  CommandCall state;  // no bridge: engine_query / engine_command refuse (an event never edits)
+  state.toolItems = &items;
+  CommandCall* const outer = t_call;
+  t_call = &state;
+  const CallResult res = host_.call_guarded(
+      r.plugin, kJournalCommandRun,
+      [](void* p, PrHost* h, const PrHostSuite* s) {
+        auto* c = static_cast<Call*>(p);
+        c->ctx.host = s;
+        c->ctx.host_ref = h;
+        c->result = c->fn(PR_COMMAND_TOOL_EVENT, &c->ctx, &c->out);
+      },
+      &call);
+  t_call = outer;
+  if (res.fault) {
+    const std::scoped_lock lock(mutex_);
+    crashed_.insert(key);
+    crashWhy_[key] = "plugin '" + r.plugin + "' crashed in a tool event (" + res.message + ")";
+    return engine_error(api::ErrorCode::internal, crashWhy_[key]);
+  }
+  if (res.skipped) return engine_error(api::ErrorCode::not_found, res.message);
+  doc::PluginToolFeedback fb;
+  // A tool built before SDK 1.4 answers the unknown selector with an error: it draws nothing.
+  if (call.result == PR_ERR_NONE) {
+    fb.items = std::move(items);
+    fb.message = message_of(call.out.return_msg, sizeof(call.out.return_msg));
+  }
+  return fb;
 }
 
 // ── importers ────────────────────────────────────────────────────────────

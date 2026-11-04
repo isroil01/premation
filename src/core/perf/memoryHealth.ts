@@ -58,6 +58,9 @@ export interface MemoryReadout {
   gpuTrimmed: number;
   /** SDK 1.4: plugin simulation states kept in RAM and on disk (null without a plugin host). */
   simBytes: number | null;
+  /** SDK 1.4 (M2): plugin ML model sessions and their bytes. */
+  mlModels: number | null;
+  mlBytes: number | null;
   simDiskBytes: number | null;
 }
 
@@ -84,6 +87,8 @@ export function readMemory(s: RenderStats): MemoryReadout {
     gpuTotal: s.gpuMemoryTotal ?? null,
     gpuTrimmed: s.gpuMemoryTrimmed ?? 0,
     simBytes: s.simStateBytes ?? null,
+    mlModels: s.pluginModels ?? null,
+    mlBytes: s.pluginModelBytes ?? null,
     simDiskBytes: s.simStateDiskBytes ?? null,
   };
 }

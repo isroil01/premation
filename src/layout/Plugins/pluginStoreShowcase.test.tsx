@@ -36,7 +36,7 @@ const cloud: StorePluginDetail = {
 };
 
 function storeState() {
-  return { installed: null, updates: new Map(), busy: null, message: null, refresh: jest.fn(), install: jest.fn(), uninstall: jest.fn(), setEnabled: jest.fn(), checkPlan: jest.fn(), clearMessage: jest.fn() };
+  return { installed: null, updates: new Map(), busy: null, message: null, refresh: jest.fn(), install: jest.fn(), uninstall: jest.fn(), setEnabled: jest.fn(), setIsolation: jest.fn(), checkPlan: jest.fn(), clearMessage: jest.fn() };
 }
 
 async function freeAccount(): Promise<void> {

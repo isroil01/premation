@@ -97,6 +97,15 @@ TEST_CASE("plugins in the session: list, add, act, UI state, undo", "[plugins][s
   const auto ra = h.run(cmd(add));
   REQUIRE(is_ok(ra));
   const std::string fxPath = result_as<api::GroupList>(ra).groups.at(0);
+  // O3: the instance records its plugin's version.
+  {
+    const doc::Node* n = h.session.document().node(layer);
+    REQUIRE(n != nullptr);
+    const std::vector<js::Json> fx = doc::read_node_effects(*n);
+    REQUIRE_FALSE(fx.empty());
+    REQUIRE(fx.back().at("pluginVersion").is_string());
+    CHECK(fx.back().at("pluginVersion").str() == "1.0.0");
+  }
   // addEffect stored the instance's initial sequence data (SEQUENCE_SETUP → FLATTEN) in the document.
   const std::string initial = stored_sequence(h, layer, fxPath);
   REQUIRE_FALSE(initial.empty());
@@ -272,4 +281,96 @@ TEST_CASE("plugins in the session: a curve / gradient param keyframes as one val
   // Undo takes both keys away.
   REQUIRE(is_ok(h.run(cmd(api::Undo{}))));
   CHECK(doc::anim_data_track(h.session.document(), layer, doc::compound_param_track(effectId, "p3")) == nullptr);
+}
+
+TEST_CASE("audio effect params are keyframeable layer properties (SDK 1.4 A2)", "[plugins][session][audiofx]") {
+  Harness h;
+  (void)h.hello();
+  api::CreateComposition outer;
+  outer.settings.name = "Host";
+  outer.settings.width = 64;
+  outer.settings.height = 64;
+  outer.settings.frame_rate = api::Rational{30, 1};
+  outer.settings.duration = 705'600'000LL * 2;
+  const auto ro = h.run(cmd(outer));
+  REQUIRE(is_ok(ro));
+  api::CreateComposition inner;
+  inner.settings.name = "Inner";
+  inner.settings.width = 64;
+  inner.settings.height = 64;
+  inner.settings.frame_rate = api::Rational{30, 1};
+  inner.settings.duration = 705'600'000LL * 2;
+  const auto ri = h.run(cmd(inner));
+  REQUIRE(is_ok(ri));
+  api::CreateLayer pre;
+  pre.comp = result_item(ro);
+  pre.kind = api::LayerKind::precomp;
+  pre.source = result_item(ri);
+  const auto rp = h.run(cmd(pre));
+  REQUIRE(is_ok(rp));
+  const api::LayerId layer = result_layer(rp);
+
+  api::SetProperty chain;
+  chain.prop = {layer, "audio/effects"};
+  chain.value = doc::v_json(R"([{"id":"fx1","type":"stereo-mixer","params":{"leftLevel":100,"leftPan":0}},{"id":"fx2","type":"clap:com.premation.samples.clapgain","params":{"p1":-6}}])");
+  REQUIRE(is_ok(h.run(cmd(chain))));
+  // Every numeric param is a property, built-in and CLAP alike.
+  api::GetPropertyTree tree;
+  tree.layer = layer;
+  tree.path = "audio";
+  tree.depth = 8;
+  const auto rt = h.ask(qry(tree));
+  REQUIRE(is_ok(rt));
+  const auto& nodes = result_as<api::PropertyTree>(std::get<api::QueryResult>(rt.outcome.v)).nodes;
+  const auto has = [&](std::string_view path) { return std::ranges::any_of(nodes, [&](const api::PropertyInfo& p) { return p.path == path; }); };
+  CHECK(has("audio/fx/fx1/leftLevel"));
+  CHECK(has("audio/fx/fx2/p1"));
+  // A static write lands in the chain's json.
+  api::SetProperty level;
+  level.prop = {layer, "audio/fx/fx1/leftLevel"};
+  level.value = doc::v_scalar(50);
+  REQUIRE(is_ok(h.run(cmd(level))));
+  const auto& stored = h.session.document().node(layer)->fx().at("audioEffects");
+  REQUIRE(stored.is_array());
+  CHECK(stored.arr()[0].at("params").at("leftLevel").num() == 50);
+  // Keyframes go on the track the mixer reads.
+  api::AddKeyframes a;
+  for (const auto& [t, v] : std::vector<std::pair<api::Time, double>>{{0, 0.0}, {705'600'000LL, 100.0}}) {
+    api::KeyframeInsert k;
+    k.prop = {layer, "audio/fx/fx2/p1"};
+    k.time = t;
+    k.value = doc::v_scalar(v);
+    a.keys.push_back(std::move(k));
+  }
+  REQUIRE(is_ok(h.run(cmd(a))));
+  CHECK(doc::anim_track(h.session.document(), layer, "audiofx.fx2.p1") != nullptr);
+  REQUIRE(is_ok(h.run(cmd(api::Undo{}))));
+  CHECK(doc::anim_track(h.session.document(), layer, "audiofx.fx2.p1") == nullptr);
+}
+
+TEST_CASE("setPluginIsolation pins where a plugin runs (SDK 1.4 X2)", "[plugins][session][isolation]") {
+  pl::PluginHost host(attached());
+  host.scan();
+  Harness h;
+  (void)h.hello();
+  const auto info = [&](const char* id) {
+    const auto list = query<api::PluginList>(h, qry(api::ListPlugins{})).plugins;
+    const auto it = std::ranges::find_if(list, [&](const api::PluginInfo& p) { return p.id == id; });
+    REQUIRE(it != list.end());
+    return *it;
+  };
+  CHECK(info(kRings).isolation == "engine");
+  CHECK(info(kRings).isolation_pin.empty());
+  api::SetPluginIsolation pin;
+  pin.plugin = kRings;
+  pin.mode = "engine";
+  REQUIRE(is_ok(h.run(cmd(pin))));
+  CHECK(info(kRings).isolation_pin == "engine");
+  CHECK(info(kRings).status == api::PluginStatus::loaded);
+  // "auto" (or anything else) clears the pin.
+  pin.mode = "auto";
+  REQUIRE(is_ok(h.run(cmd(pin))));
+  CHECK(info(kRings).isolation_pin.empty());
+  pin.plugin = "com.example.missing";
+  CHECK(is_error(h.run(cmd(pin)), api::ErrorCode::not_found));
 }

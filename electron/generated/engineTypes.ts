@@ -3637,6 +3637,12 @@ export interface ReloadPlugin {
   plugin: string;
 }
 
+/** SDK 1.4 (X2) — where a plugin runs: `process` (its own premation-plugin-host: a crash there never ends the engine), `engine` (inside the engine: its GPU path, overlays and every SDK feature), or `auto` (third-party out of process, first-party in). The plugin is loaded again under the choice now; Electron persists it (`--plugin-isolation-pin <id>=<mode>`). A plugin that needs the engine's document or GPU stays in the engine whatever the choice. `notFound`: no such plugin. Returns every plugin afterwards. */
+export interface SetPluginIsolation {
+  plugin: string;
+  mode: string;
+}
+
 /** Store plugin data in the DOCUMENT (AE sequence data / arbitrary-data params). Undoable, saved with the project. */
 export interface SetPluginData {
   layer: LayerId;
@@ -3707,6 +3713,28 @@ export interface RunPluginCommand {
   layers: LayerId[];
   time?: Time;
   args?: string;
+}
+
+/** SDK 1.4 (U1) — a viewer tool's live event (PR_COMMAND_TOOL_EVENT, no edits): the pointer moving, the wheel, a key, while the tool is active (`args` JSON as runPluginCommand's, with `event`). Returns what the tool draws over the viewer and its status line. `notFound`: no such command or its plugin is not loaded. */
+export interface PluginToolEvent {
+  plugin: string;
+  command: string;
+  comp?: ItemId;
+  time?: Time;
+  args?: string;
+}
+
+/** SDK 1.4 (U1): one item of a tool's overlay — `kind` 0 a polyline (xy pairs), 1 a circle (cx, cy, r), 2 a dot (x, y); comp px; `rgba` straight 0..1 (all 0 = the editor's accent); `width` screen px. */
+export interface PluginToolDrawItem {
+  kind: number;
+  xy: number[];
+  rgba: number[];
+  width: number;
+}
+
+export interface PluginToolFeedback {
+  items: PluginToolDrawItem[];
+  message: string;
 }
 
 /** `message`: the plugin's note (PrCommandOut.return_msg). `edits`: how many edit commands it applied. */
@@ -4492,6 +4520,30 @@ export interface PluginInfo {
   interpolators: string[];
   /** SDK 1.4 (U): the plugin's viewer tools (manifest `tools`); their drags run `command` with the stroke (runPluginCommand args). */
   tools: PluginToolInfo[];
+  /** SDK 1.4 (A): the plugin's CLAP audio effects (a `.clap` file); a layer's audio effect `clap:<id>` runs one. */
+  audio: PluginAudioInfo[];
+  /** SDK 1.4 (X2): where it runs now — "process" (its own premation-plugin-host) or "engine". */
+  isolation: string;
+  /** SDK 1.4 (X2): the user's pin — "process", "engine", or "" (auto). */
+  isolationPin: string;
+}
+
+/** SDK 1.4 (A): one CLAP audio effect — its params are keyed `p<id>` on the layer (`audio/fx/<effect>/p<id>`). */
+export interface PluginAudioInfo {
+  id: string;
+  name: string;
+  vendor: string;
+  features: string[];
+  params: PluginAudioParam[];
+}
+
+export interface PluginAudioParam {
+  id: number;
+  name: string;
+  min: number;
+  max: number;
+  default: number;
+  stepped: boolean;
 }
 
 /** SDK 1.4 (U): a viewer tool — `id` = `<pluginId>:<toolId>`; `shortcut` a default like "Shift+S" ("" = none). */
@@ -4851,6 +4903,9 @@ export interface RenderStats {
   /** SDK 1.4 (T2): plugin simulation states the engine keeps — in RAM, and on disk (`--sim-cache-dir`), bytes. Absent = no plugin host. */
   simStateBytes?: number;
   simStateDiskBytes?: number;
+  /** SDK 1.4 (M2): plugin ML model sessions open and their model files' bytes (given back under GPU pressure). Absent = no plugin host. */
+  pluginModels?: number;
+  pluginModelBytes?: number;
 }
 
 export interface LayerCost {
@@ -6194,6 +6249,7 @@ export type Command =
   | ({ type: 'setPluginEnabled' } & SetPluginEnabled)
   | ({ type: 'rescanPlugins' } & RescanPlugins)
   | ({ type: 'reloadPlugin' } & ReloadPlugin)
+  | ({ type: 'setPluginIsolation' } & SetPluginIsolation)
   | ({ type: 'setPluginData' } & SetPluginData)
   | ({ type: 'runPluginCommand' } & RunPluginCommand)
   | ({ type: 'refreshFonts' } & RefreshFonts)
@@ -6378,6 +6434,7 @@ export type CommandResult =
   | ({ type: 'setPluginEnabled' } & Empty)
   | ({ type: 'rescanPlugins' } & PluginList)
   | ({ type: 'reloadPlugin' } & PluginList)
+  | ({ type: 'setPluginIsolation' } & PluginList)
   | ({ type: 'setPluginData' } & Empty)
   | ({ type: 'runPluginCommand' } & PluginCommandResult)
   | ({ type: 'refreshFonts' } & FontsRefreshed)
@@ -6392,6 +6449,7 @@ export type Query =
   | ({ type: 'getCameraSolve' } & GetCameraSolve)
   | ({ type: 'getSubjectTracks' } & GetSubjectTracks)
   | ({ type: 'listPluginCommands' } & ListPluginCommands)
+  | ({ type: 'pluginToolEvent' } & PluginToolEvent)
   | ({ type: 'getDocument' } & GetDocument)
   | ({ type: 'exportDocument' } & ExportDocument)
   | ({ type: 'getComposition' } & GetComposition)
@@ -6456,6 +6514,7 @@ export type QueryResult =
   | ({ type: 'getCameraSolve' } & CameraSolveAnswer)
   | ({ type: 'getSubjectTracks' } & SubjectTracks)
   | ({ type: 'listPluginCommands' } & PluginCommandList)
+  | ({ type: 'pluginToolEvent' } & PluginToolFeedback)
   | ({ type: 'getDocument' } & DocumentSnapshot)
   | ({ type: 'exportDocument' } & ExportedDocument)
   | ({ type: 'getComposition' } & CompositionDetails)
@@ -6728,6 +6787,7 @@ export interface CommandArgs {
   setPluginEnabled: SetPluginEnabled;
   rescanPlugins: RescanPlugins;
   reloadPlugin: ReloadPlugin;
+  setPluginIsolation: SetPluginIsolation;
   setPluginData: SetPluginData;
   runPluginCommand: RunPluginCommand;
   refreshFonts: RefreshFonts;
@@ -6912,6 +6972,7 @@ export interface CommandResults {
   setPluginEnabled: Empty;
   rescanPlugins: PluginList;
   reloadPlugin: PluginList;
+  setPluginIsolation: PluginList;
   setPluginData: Empty;
   runPluginCommand: PluginCommandResult;
   refreshFonts: FontsRefreshed;
@@ -6926,6 +6987,7 @@ export interface QueryArgs {
   getCameraSolve: GetCameraSolve;
   getSubjectTracks: GetSubjectTracks;
   listPluginCommands: ListPluginCommands;
+  pluginToolEvent: PluginToolEvent;
   getDocument: GetDocument;
   exportDocument: ExportDocument;
   getComposition: GetComposition;
@@ -6990,6 +7052,7 @@ export interface QueryResults {
   getCameraSolve: CameraSolveAnswer;
   getSubjectTracks: SubjectTracks;
   listPluginCommands: PluginCommandList;
+  pluginToolEvent: PluginToolFeedback;
   getDocument: DocumentSnapshot;
   exportDocument: ExportedDocument;
   getComposition: CompositionDetails;

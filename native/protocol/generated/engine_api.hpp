@@ -1254,6 +1254,7 @@ struct SetCaptions;
 struct SetPluginEnabled;
 struct RescanPlugins;
 struct ReloadPlugin;
+struct SetPluginIsolation;
 struct SetPluginData;
 struct RunPluginCommand;
 struct RefreshFonts;
@@ -1265,6 +1266,7 @@ struct GetLayerTrackers;
 struct GetCameraSolve;
 struct GetSubjectTracks;
 struct ListPluginCommands;
+struct PluginToolEvent;
 struct GetDocument;
 struct ExportDocument;
 struct GetComposition;
@@ -1358,6 +1360,8 @@ struct PluginPanelInfo;
 struct PluginPresetInfo;
 struct PluginLayerTypeInfo;
 struct PluginToolInfo;
+struct PluginAudioParam;
+struct PluginAudioInfo;
 struct PluginInfo;
 struct PluginList;
 struct PluginCommandResult;
@@ -1370,6 +1374,8 @@ struct SubjectTrackFrame;
 struct SubjectTrack;
 struct SubjectTracks;
 struct PluginCommandList;
+struct PluginToolDrawItem;
+struct PluginToolFeedback;
 struct ProjectSettings;
 struct Interpretation;
 struct ItemInfo;
@@ -3693,6 +3699,12 @@ struct ReloadPlugin {
   bool operator==(const ReloadPlugin&) const = default;
 };
 
+struct SetPluginIsolation {
+  std::string plugin;
+  std::string mode;
+  bool operator==(const SetPluginIsolation&) const = default;
+};
+
 struct SetPluginData {
   LayerId layer;
   PropPath group;
@@ -3905,13 +3917,14 @@ struct Command {
     set_plugin_enabled = 870,
     rescan_plugins = 872,
     reload_plugin = 875,
+    set_plugin_isolation = 876,
     set_plugin_data = 871,
     run_plugin_command = 873,
     refresh_fonts = 874,
     start_live_input = 1948,
     stop_live_input = 1949,
   };
-  std::variant<Undo, Redo, JumpToHistory, BeginGesture, EndGesture, ClearHistory, SetHistoryLimit, AddHistoryCheckpoint, RestoreDocument, NewProject, OpenProject, SaveProject, ImportProject, SetProjectSettings, RevertProject, CollectFiles, SetAutosave, SetGuides, SetSwatches, SetMaterials, SetMotionBlur, SetColorManagement, ImportFiles, ImportBytes, RelinkItem, ReloadItems, RemoveItems, RenameItem, CreateFolder, MoveItems, SetInterpretation, SetItemLabel, RemoveUnusedItems, SetProxy, SetItemComment, SetItemTags, CreateComposition, DuplicateComposition, SetCompositionSettings, SetWorkArea, ClearWorkArea, Precompose, TrimCompToWorkArea, CropComposition, AssembleComposition, MigrateLegacyPrecomps, SetEssentialProp, AddRenderItems, SetRenderItem, RemoveRenderItems, ReorderRenderItems, CreateLayer, DeleteLayers, DuplicateLayers, ReorderLayers, SetParent, RenameLayer, SetLayerSwitches, SetBlendMode, SetTrackMatte, ReplaceLayerSource, GroupLayers, UngroupLayer, BindToBone, CreateCharacter, ConvertLayer, PasteLayers, SeparateLayer, AutoTrace, SetLayerComment, SetPinnedProperties, PoseIk3D, BakeIk3D, CreateLiveMerge, SetLayerTiming, MoveLayersInTime, TrimLayers, SlipLayers, SlideLayer, RollEdit, SplitLayers, RippleDeleteLayers, EditWorkArea, InsertGap, TimeReverseLayers, SetTimeRemap, FreezeFrame, SetRetime, SequenceLayers, TimeStretchLayers, UnfreezeLayers, RippleDeleteRange, LiftRange, ShiftLayerKeyframes, AddTransition, SetTransition, RemoveTransitions, SetProperty, SetProperties, ResetProperty, SetAnimated, SetDimensionsSeparated, SetExpression, SetExpressionEnabled, ConvertExpressionToKeyframes, LinkProperty, AddKeyframes, DeleteKeyframes, MoveKeyframes, UpdateKeyframes, ScaleKeyframes, ReverseKeyframes, PasteKeyframes, SetKeyframes, SetMemberKeyframes, AddEffect, AddMask, AddPropertyGroup, RemovePropertyGroups, MovePropertyGroup, DuplicatePropertyGroups, SetGroupEnabled, RenamePropertyGroup, CopyPropertyGroups, ApplyPreset, InvokeEffectAction, DragEffectOverlay, DragEffectParamUi, AddProperties, RemoveProperties, PasteEffects, RemoveStroke, AddPaintStroke, UpdatePaintStroke, RemovePaintStrokes, SetPaintOnTransparent, SetPaintStrokePath, SetPaintPathAnimated, EditPathTopology, SetShapeOutline, SetPerformanceTake, ClearPerformanceTakes, AddMarkers, UpdateMarkers, DeleteMarkers, MoveMarkers, Play, Pause, Seek, Step, SetLoop, SetPreviewQuality, SetAudioPreview, SetActiveComposition, SetViewport, CloseViewport, SetCacheBudget, PurgeCache, SetInteracting, SetViewportHiddenLayers, SetViewportFocus, SetViewerLut, SetUseProxies, SetOverlayGeometry, SetLayerTrackers, SetCameraSolve, SetLayerMatte, StartJob, CancelJob, ApplyJobResult, SetContentAwareFill, SetCaptions, SetPluginEnabled, RescanPlugins, ReloadPlugin, SetPluginData, RunPluginCommand, RefreshFonts, StartLiveInput, StopLiveInput> v;
+  std::variant<Undo, Redo, JumpToHistory, BeginGesture, EndGesture, ClearHistory, SetHistoryLimit, AddHistoryCheckpoint, RestoreDocument, NewProject, OpenProject, SaveProject, ImportProject, SetProjectSettings, RevertProject, CollectFiles, SetAutosave, SetGuides, SetSwatches, SetMaterials, SetMotionBlur, SetColorManagement, ImportFiles, ImportBytes, RelinkItem, ReloadItems, RemoveItems, RenameItem, CreateFolder, MoveItems, SetInterpretation, SetItemLabel, RemoveUnusedItems, SetProxy, SetItemComment, SetItemTags, CreateComposition, DuplicateComposition, SetCompositionSettings, SetWorkArea, ClearWorkArea, Precompose, TrimCompToWorkArea, CropComposition, AssembleComposition, MigrateLegacyPrecomps, SetEssentialProp, AddRenderItems, SetRenderItem, RemoveRenderItems, ReorderRenderItems, CreateLayer, DeleteLayers, DuplicateLayers, ReorderLayers, SetParent, RenameLayer, SetLayerSwitches, SetBlendMode, SetTrackMatte, ReplaceLayerSource, GroupLayers, UngroupLayer, BindToBone, CreateCharacter, ConvertLayer, PasteLayers, SeparateLayer, AutoTrace, SetLayerComment, SetPinnedProperties, PoseIk3D, BakeIk3D, CreateLiveMerge, SetLayerTiming, MoveLayersInTime, TrimLayers, SlipLayers, SlideLayer, RollEdit, SplitLayers, RippleDeleteLayers, EditWorkArea, InsertGap, TimeReverseLayers, SetTimeRemap, FreezeFrame, SetRetime, SequenceLayers, TimeStretchLayers, UnfreezeLayers, RippleDeleteRange, LiftRange, ShiftLayerKeyframes, AddTransition, SetTransition, RemoveTransitions, SetProperty, SetProperties, ResetProperty, SetAnimated, SetDimensionsSeparated, SetExpression, SetExpressionEnabled, ConvertExpressionToKeyframes, LinkProperty, AddKeyframes, DeleteKeyframes, MoveKeyframes, UpdateKeyframes, ScaleKeyframes, ReverseKeyframes, PasteKeyframes, SetKeyframes, SetMemberKeyframes, AddEffect, AddMask, AddPropertyGroup, RemovePropertyGroups, MovePropertyGroup, DuplicatePropertyGroups, SetGroupEnabled, RenamePropertyGroup, CopyPropertyGroups, ApplyPreset, InvokeEffectAction, DragEffectOverlay, DragEffectParamUi, AddProperties, RemoveProperties, PasteEffects, RemoveStroke, AddPaintStroke, UpdatePaintStroke, RemovePaintStrokes, SetPaintOnTransparent, SetPaintStrokePath, SetPaintPathAnimated, EditPathTopology, SetShapeOutline, SetPerformanceTake, ClearPerformanceTakes, AddMarkers, UpdateMarkers, DeleteMarkers, MoveMarkers, Play, Pause, Seek, Step, SetLoop, SetPreviewQuality, SetAudioPreview, SetActiveComposition, SetViewport, CloseViewport, SetCacheBudget, PurgeCache, SetInteracting, SetViewportHiddenLayers, SetViewportFocus, SetViewerLut, SetUseProxies, SetOverlayGeometry, SetLayerTrackers, SetCameraSolve, SetLayerMatte, StartJob, CancelJob, ApplyJobResult, SetContentAwareFill, SetCaptions, SetPluginEnabled, RescanPlugins, ReloadPlugin, SetPluginIsolation, SetPluginData, RunPluginCommand, RefreshFonts, StartLiveInput, StopLiveInput> v;
   Command();
   Command(const Command&);
   Command(Command&&) noexcept;
@@ -3944,6 +3957,15 @@ struct GetSubjectTracks {
 
 struct ListPluginCommands {
   bool operator==(const ListPluginCommands&) const = default;
+};
+
+struct PluginToolEvent {
+  std::string plugin;
+  std::string command;
+  std::optional<ItemId> comp;
+  std::optional<Time> time;
+  std::optional<std::string> args;
+  bool operator==(const PluginToolEvent&) const = default;
 };
 
 struct GetDocument {
@@ -4294,6 +4316,7 @@ struct Query {
     get_camera_solve = 1091,
     get_subject_tracks = 1954,
     list_plugin_commands = 1092,
+    plugin_tool_event = 1094,
     get_document = 1000,
     export_document = 1088,
     get_composition = 1001,
@@ -4350,7 +4373,7 @@ struct Query {
     get_cache_coverage = 1089,
     list_cameras = 1938,
   };
-  std::variant<GetPerformanceTakes, GetLayerTrackers, GetCameraSolve, GetSubjectTracks, ListPluginCommands, GetDocument, ExportDocument, GetComposition, GetLayers, GetPropertyTree, GetPropertyValues, SampleProperty, GetKeyframes, GetMotionPath, GetMarkers, CopyLayers, CopyKeyframes, GetMemberKeyframes, CopyEffects, GetSearchFacts, GetDocumentColors, GetCaptionCues, MapLayerTime, GetSourceSize, CheckPrecompose, GetTimelineRows, GetRigPose, SampleCamera, GetWaveform, ListFonts, GetItems, GetSvgDocument, GetCryptomatte, GetThumbnail, RenderDocumentStill, ListEffects, ListGroupTypes, ListPresets, CapturePreset, GetCapabilities, ListPlugins, GetEffectUi, DrawEffectParamUi, GetLayerFaces, HitTest, GetLayerBounds, GetLayerTransforms, GetTextLayout, EvaluateExpression, ReadPixels, FindLayers, GetDependencies, GetHistory, GetRenderStats, GetLayerErrors, GetJobs, GetRenderQueue, GetCommandLog, GetCacheCoverage, ListCameras> v;
+  std::variant<GetPerformanceTakes, GetLayerTrackers, GetCameraSolve, GetSubjectTracks, ListPluginCommands, PluginToolEvent, GetDocument, ExportDocument, GetComposition, GetLayers, GetPropertyTree, GetPropertyValues, SampleProperty, GetKeyframes, GetMotionPath, GetMarkers, CopyLayers, CopyKeyframes, GetMemberKeyframes, CopyEffects, GetSearchFacts, GetDocumentColors, GetCaptionCues, MapLayerTime, GetSourceSize, CheckPrecompose, GetTimelineRows, GetRigPose, SampleCamera, GetWaveform, ListFonts, GetItems, GetSvgDocument, GetCryptomatte, GetThumbnail, RenderDocumentStill, ListEffects, ListGroupTypes, ListPresets, CapturePreset, GetCapabilities, ListPlugins, GetEffectUi, DrawEffectParamUi, GetLayerFaces, HitTest, GetLayerBounds, GetLayerTransforms, GetTextLayout, EvaluateExpression, ReadPixels, FindLayers, GetDependencies, GetHistory, GetRenderStats, GetLayerErrors, GetJobs, GetRenderQueue, GetCommandLog, GetCacheCoverage, ListCameras> v;
   Query();
   Query(const Query&);
   Query(Query&&) noexcept;
@@ -4607,6 +4630,25 @@ struct PluginToolInfo {
   bool operator==(const PluginToolInfo&) const = default;
 };
 
+struct PluginAudioParam {
+  std::uint32_t id = 0;
+  std::string name;
+  double min_ = 0.0;
+  double max_ = 0.0;
+  double default_ = 0.0;
+  bool stepped = false;
+  bool operator==(const PluginAudioParam&) const = default;
+};
+
+struct PluginAudioInfo {
+  std::string id;
+  std::string name;
+  std::string vendor;
+  std::vector<std::string> features;
+  std::vector<PluginAudioParam> params;
+  bool operator==(const PluginAudioInfo&) const = default;
+};
+
 struct PluginInfo {
   std::string id;
   std::string name;
@@ -4628,6 +4670,9 @@ struct PluginInfo {
   std::vector<PluginLayerTypeInfo> layer_types;
   std::vector<std::string> interpolators;
   std::vector<PluginToolInfo> tools;
+  std::vector<PluginAudioInfo> audio;
+  std::string isolation;
+  std::string isolation_pin;
   bool operator==(const PluginInfo&) const = default;
 };
 
@@ -4824,13 +4869,14 @@ struct CommandResult {
     set_plugin_enabled = 870,
     rescan_plugins = 872,
     reload_plugin = 875,
+    set_plugin_isolation = 876,
     set_plugin_data = 871,
     run_plugin_command = 873,
     refresh_fonts = 874,
     start_live_input = 1948,
     stop_live_input = 1949,
   };
-  std::variant<HistoryStep, HistoryStep, HistoryStep, GestureRef, Empty, Empty, Empty, Empty, Empty, Empty, OpenProjectResult, SaveProjectResult, ImportProjectResult, Empty, Empty, SaveProjectResult, Empty, Empty, Empty, Empty, Empty, Empty, ItemList, ItemList, Empty, Empty, Empty, Empty, ItemRef, Empty, Empty, Empty, ItemList, Empty, Empty, Empty, ItemRef, ItemRef, Empty, Empty, Empty, PrecomposeResult, Empty, Empty, ItemRef, ItemList, Empty, RenderItemList, Empty, Empty, Empty, LayerRef, Empty, LayerList, Empty, Empty, RenameLayerResult, Empty, Empty, Empty, Empty, LayerRef, LayerList, Empty, LayerRef, LayerList, LayerList, LayerList, GroupList, Empty, Empty, IkResult, IkResult, LayerRef, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, Empty, LayerList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, TimeRangeEdit, Empty, TransitionRef, Empty, Empty, PropertyWriteResult, Empty, Empty, PropertyWriteResult, Empty, ExpressionResult, Empty, KeyframeIds, Empty, KeyframeIds, Empty, Empty, Empty, Empty, Empty, KeyframeIds, KeyframeIds, Empty, GroupList, GroupList, GroupList, Empty, Empty, GroupList, Empty, Empty, GroupList, GroupList, Empty, Empty, Empty, PropertyPaths, Empty, GroupList, Empty, PaintStrokeId, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, MarkerIds, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, JobRef, Empty, ItemList, Empty, LayerList, Empty, PluginList, PluginList, Empty, PluginCommandResult, FontsRefreshed, Empty, Empty> v;
+  std::variant<HistoryStep, HistoryStep, HistoryStep, GestureRef, Empty, Empty, Empty, Empty, Empty, Empty, OpenProjectResult, SaveProjectResult, ImportProjectResult, Empty, Empty, SaveProjectResult, Empty, Empty, Empty, Empty, Empty, Empty, ItemList, ItemList, Empty, Empty, Empty, Empty, ItemRef, Empty, Empty, Empty, ItemList, Empty, Empty, Empty, ItemRef, ItemRef, Empty, Empty, Empty, PrecomposeResult, Empty, Empty, ItemRef, ItemList, Empty, RenderItemList, Empty, Empty, Empty, LayerRef, Empty, LayerList, Empty, Empty, RenameLayerResult, Empty, Empty, Empty, Empty, LayerRef, LayerList, Empty, LayerRef, LayerList, LayerList, LayerList, GroupList, Empty, Empty, IkResult, IkResult, LayerRef, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, Empty, LayerList, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, LayerList, TimeRangeEdit, Empty, TransitionRef, Empty, Empty, PropertyWriteResult, Empty, Empty, PropertyWriteResult, Empty, ExpressionResult, Empty, KeyframeIds, Empty, KeyframeIds, Empty, Empty, Empty, Empty, Empty, KeyframeIds, KeyframeIds, Empty, GroupList, GroupList, GroupList, Empty, Empty, GroupList, Empty, Empty, GroupList, GroupList, Empty, Empty, Empty, PropertyPaths, Empty, GroupList, Empty, PaintStrokeId, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, MarkerIds, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, Empty, JobRef, Empty, ItemList, Empty, LayerList, Empty, PluginList, PluginList, PluginList, Empty, PluginCommandResult, FontsRefreshed, Empty, Empty> v;
   CommandResult();
   CommandResult(const CommandResult&);
   CommandResult(CommandResult&&) noexcept;
@@ -4877,6 +4923,20 @@ struct SubjectTracks {
 struct PluginCommandList {
   std::vector<PluginCommandInfo> commands;
   bool operator==(const PluginCommandList&) const = default;
+};
+
+struct PluginToolDrawItem {
+  std::uint32_t kind = 0;
+  std::vector<double> xy;
+  std::vector<double> rgba;
+  double width = 0.0;
+  bool operator==(const PluginToolDrawItem&) const = default;
+};
+
+struct PluginToolFeedback {
+  std::vector<PluginToolDrawItem> items;
+  std::string message;
+  bool operator==(const PluginToolFeedback&) const = default;
 };
 
 struct ProjectSettings {
@@ -5772,6 +5832,8 @@ struct RenderStats {
   std::optional<double> layer_costs_ago_ms;
   std::optional<std::uint64_t> sim_state_bytes;
   std::optional<std::uint64_t> sim_state_disk_bytes;
+  std::optional<std::uint64_t> plugin_models;
+  std::optional<std::uint64_t> plugin_model_bytes;
   bool operator==(const RenderStats&) const = default;
 };
 
@@ -5854,6 +5916,7 @@ struct QueryResult {
     get_camera_solve = 1091,
     get_subject_tracks = 1954,
     list_plugin_commands = 1092,
+    plugin_tool_event = 1094,
     get_document = 1000,
     export_document = 1088,
     get_composition = 1001,
@@ -5910,7 +5973,7 @@ struct QueryResult {
     get_cache_coverage = 1089,
     list_cameras = 1938,
   };
-  std::variant<PerformanceTakes, LayerTrackers, CameraSolveAnswer, SubjectTracks, PluginCommandList, DocumentSnapshot, ExportedDocument, CompositionDetails, LayerDetails, PropertyTree, PropertyValues, PropertySamples, KeyframeSets, PropertySamples, MarkerList, DocumentFragment, KeyframeSets, MemberTracks, CopiedEffects, SearchFactsList, DocumentColors, CaptionCues, MappedTime, SourceSizes, PrecomposeCheck, TimelineRowSets, RigPose, CameraSamples, WaveformPeaks, FontList, ItemDetails, SvgDocument, CryptomatteInfo, Thumbnail, Thumbnail, EffectCatalog, GroupTypeList, PresetList, CapturedPreset, Capabilities, PluginList, EffectUi, ParamUiDrawing, LayerFaces, HitResult, LayerBoundsList, LayerTransformList, TextLayout, ExpressionEvaluation, PixelSamples, LayerList, Dependencies, HistoryState, RenderStats, LayerErrorList, JobList, RenderQueueState, CommandLog, CacheCoverage, CameraList> v;
+  std::variant<PerformanceTakes, LayerTrackers, CameraSolveAnswer, SubjectTracks, PluginCommandList, PluginToolFeedback, DocumentSnapshot, ExportedDocument, CompositionDetails, LayerDetails, PropertyTree, PropertyValues, PropertySamples, KeyframeSets, PropertySamples, MarkerList, DocumentFragment, KeyframeSets, MemberTracks, CopiedEffects, SearchFactsList, DocumentColors, CaptionCues, MappedTime, SourceSizes, PrecomposeCheck, TimelineRowSets, RigPose, CameraSamples, WaveformPeaks, FontList, ItemDetails, SvgDocument, CryptomatteInfo, Thumbnail, Thumbnail, EffectCatalog, GroupTypeList, PresetList, CapturedPreset, Capabilities, PluginList, EffectUi, ParamUiDrawing, LayerFaces, HitResult, LayerBoundsList, LayerTransformList, TextLayout, ExpressionEvaluation, PixelSamples, LayerList, Dependencies, HistoryState, RenderStats, LayerErrorList, JobList, RenderQueueState, CommandLog, CacheCoverage, CameraList> v;
   QueryResult();
   QueryResult(const QueryResult&);
   QueryResult(QueryResult&&) noexcept;
@@ -7420,6 +7483,8 @@ void encode(wire::Writer& w, const RescanPlugins& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, RescanPlugins& out);
 void encode(wire::Writer& w, const ReloadPlugin& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, ReloadPlugin& out);
+void encode(wire::Writer& w, const SetPluginIsolation& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, SetPluginIsolation& out);
 void encode(wire::Writer& w, const SetPluginData& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, SetPluginData& out);
 void encode(wire::Writer& w, const RunPluginCommand& v);
@@ -7442,6 +7507,8 @@ void encode(wire::Writer& w, const GetSubjectTracks& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, GetSubjectTracks& out);
 void encode(wire::Writer& w, const ListPluginCommands& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, ListPluginCommands& out);
+void encode(wire::Writer& w, const PluginToolEvent& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, PluginToolEvent& out);
 void encode(wire::Writer& w, const GetDocument& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, GetDocument& out);
 void encode(wire::Writer& w, const ExportDocument& v);
@@ -7628,6 +7695,10 @@ void encode(wire::Writer& w, const PluginLayerTypeInfo& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, PluginLayerTypeInfo& out);
 void encode(wire::Writer& w, const PluginToolInfo& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, PluginToolInfo& out);
+void encode(wire::Writer& w, const PluginAudioParam& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, PluginAudioParam& out);
+void encode(wire::Writer& w, const PluginAudioInfo& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, PluginAudioInfo& out);
 void encode(wire::Writer& w, const PluginInfo& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, PluginInfo& out);
 void encode(wire::Writer& w, const PluginList& v);
@@ -7652,6 +7723,10 @@ void encode(wire::Writer& w, const SubjectTracks& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, SubjectTracks& out);
 void encode(wire::Writer& w, const PluginCommandList& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, PluginCommandList& out);
+void encode(wire::Writer& w, const PluginToolDrawItem& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, PluginToolDrawItem& out);
+void encode(wire::Writer& w, const PluginToolFeedback& v);
+[[nodiscard]] wire::Status decode(wire::Reader& r, PluginToolFeedback& out);
 void encode(wire::Writer& w, const ProjectSettings& v);
 [[nodiscard]] wire::Status decode(wire::Reader& r, ProjectSettings& out);
 void encode(wire::Writer& w, const Interpretation& v);

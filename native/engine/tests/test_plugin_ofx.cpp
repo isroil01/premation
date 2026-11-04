@@ -55,6 +55,7 @@ TEST_CASE("OpenFX: a bundle is hosted out of process; its params map onto Premat
   CHECK(spec->main == nullptr);
   CHECK(spec->name == "OFX Invert");
   CHECK(spec->category == "Premation Samples");
+  CHECK(spec->version == PR_VERSION(1, 0, 0));  // O3: the plugin's pluginVersionMajor / Minor
   const pl::ParamSpec* amount = param_named(*spec, "Amount");
   REQUIRE(amount != nullptr);
   CHECK(amount->type == PR_PARAM_FLOAT_SLIDER);

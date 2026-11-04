@@ -160,6 +160,26 @@ function Actions({
       </Button>,
     );
   }
+  // SDK 1.4 (X2): where an effect plugin runs — its own process (a crash there never ends the engine) or the engine.
+  if (plugin && plugin.status === 'loaded' && plugin.effects.length > 0) {
+    buttons.push(
+      <select
+        key="isolation"
+        className={styles.isolation}
+        value={plugin.isolationPin || 'auto'}
+        disabled={busy}
+        title={plugin.isolation === 'process'
+          ? t('plugins.page.runsInProcess', 'Runs in its own process: a crash there never ends the engine.')
+          : t('plugins.page.runsInEngine', 'Runs inside the engine (GPU path, overlays, every SDK feature).')}
+        aria-label={t('plugins.page.isolation', 'Where this plugin runs')}
+        onChange={(e) => void store.setIsolation(id, e.currentTarget.value as 'auto' | 'process' | 'engine')}
+      >
+        <option value="auto">{t('plugins.page.isolationAuto', 'Auto')}</option>
+        <option value="process">{t('plugins.page.isolationProcess', 'Own process')}</option>
+        <option value="engine">{t('plugins.page.isolationEngine', 'In the engine')}</option>
+      </select>,
+    );
+  }
   if (mine) {
     buttons.push(
       <Button key="uninstall" size="sm" variant="secondary" disabled={busy} onClick={() => void store.uninstall(id)}>

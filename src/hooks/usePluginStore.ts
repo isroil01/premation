@@ -17,7 +17,7 @@ import {
   compareVersions,
   installFromStore,
   installedPlugins,
-  setPluginEnabled,
+  setPluginEnabled, setPluginIsolation,
   uninstallPlugin,
 } from '@core/nativePlugins/pluginStore';
 import type { NativePluginStoreState } from '@/types/motionEditor';
@@ -107,6 +107,8 @@ export interface InstalledState {
   install: (id: string, version: string, owner?: boolean) => Promise<void>;
   uninstall: (id: string) => Promise<void>;
   setEnabled: (id: string, enabled: boolean) => Promise<void>;
+  /** SDK 1.4 (X2): run the plugin in its own process, in the engine, or as the engine decides. */
+  setIsolation: (id: string, mode: 'auto' | 'process' | 'engine') => Promise<void>;
   /** Premation Cloud: refresh the entitlement now (a locked plugin's "Check plan"). */
   checkPlan: () => Promise<void>;
   clearMessage: () => void;
@@ -201,6 +203,16 @@ export function useInstalledPlugins(onEngineChange?: () => void): InstalledState
       return err ? { text: err, error: true } : { text: t('hooks.pluginStore.uninstalled', '{id} is disabled and will be removed when Premation restarts.', { id }), error: false };
     }),
     checkPlan: () => run('premation-cloud', checkPremationCloud),
+    setIsolation: (id, mode) => run(id, async () => {
+      const r = await setPluginIsolation(pluginEngine(), id, mode);
+      if ('error' in r) return { text: r.error, error: true };
+      // Where it runs now, which a plugin that needs the engine decides for itself.
+      if (mode === 'process' && r.runs === 'engine') {
+        return { text: t('hooks.pluginStore.needsEngine', '{id} needs the engine (its document, GPU or overlays), so it stays in the engine.', { id }), error: false };
+      }
+      return { text: r.runs === 'process' ? t('hooks.pluginStore.inProcess', '{id} now runs in its own process.', { id })
+        : t('hooks.pluginStore.inEngine', '{id} now runs in the engine.', { id }), error: false };
+    }),
     setEnabled: (id, enabled) => run(id, async () => {
       const err = await setPluginEnabled(pluginEngine(), id, enabled);
       return err ? { text: err, error: true } : { text: enabled ? t('hooks.pluginStore.enabled', '{id} enabled.', { id }) : t('hooks.pluginStore.disabled', '{id} disabled.', { id }), error: false };

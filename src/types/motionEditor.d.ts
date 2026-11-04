@@ -888,6 +888,8 @@ export interface MotionEditorApi {
     uninstall?(id: string): Promise<NativePluginStoreState | null>;
     /** Persist enabled / disabled across launches. */
     setEnabled?(req: { id: string; enabled: boolean }): Promise<NativePluginStoreState | null>;
+    /** SDK 1.4 (X2): persist where a plugin runs ('auto' clears the pin). */
+    setIsolation?(req: { id: string; mode: 'auto' | 'process' | 'engine' }): Promise<NativePluginStoreState | null>;
     installed?(): Promise<NativePluginStoreState>;
     /** Pick a `.pplugin` and have main inspect it; null when cancelled. */
     pickPackageFile?(): Promise<NativePluginPackageInspect | null>;

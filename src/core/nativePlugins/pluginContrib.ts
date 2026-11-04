@@ -268,6 +268,25 @@ export function pluginTools(): readonly PluginTool[] {
   );
 }
 
+/** SDK 1.4 (A): a CLAP audio effect a loaded plugin offers, as the Audio Effects list shows it. */
+export interface PluginAudioEffect {
+  /** The layer audio effect's type: `clap:<descriptor id>`. */
+  type: `clap:${string}`;
+  label: string;
+  params: ReadonlyArray<{ key: string; label: string; min: number; max: number; default: number }>;
+}
+
+/** SDK 1.4 (A): every CLAP audio effect of the loaded plugins. */
+export function pluginAudioEffects(): readonly PluginAudioEffect[] {
+  return plugins.filter(loaded).flatMap((p) =>
+    (p.audio ?? []).map((a) => ({
+      type: `clap:${a.id}` as const,
+      label: a.name,
+      params: a.params.map((q) => ({ key: `p${q.id}`, label: q.name, min: q.min, max: q.max, default: q.default })),
+    })),
+  );
+}
+
 export type PluginLayerOutcome = { ok: true; layer: string } | { ok: false; error: string };
 
 /**

@@ -27,6 +27,9 @@ const glow = {
   panels: [], presets: [], layerTypes: [],
     interpolators: [],
     tools: [],
+    audio: [],
+    isolation: 'engine',
+    isolationPin: '',
 };
 
 const listing: StorePluginDetail = {

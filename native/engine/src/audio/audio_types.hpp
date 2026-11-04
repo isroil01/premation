@@ -50,6 +50,7 @@ enum class EffectType : std::uint8_t {
   deEsser,
   backwards,
   plugin,  // a plugin's declared chain (pluginAudioGraph.ts)
+  clap,    // SDK 1.4 (A): a CLAP plugin, run in its premation-plugin-host (external_effects.hpp)
 };
 
 enum class Wave : std::uint8_t { sine, triangle, sawtooth, square, whiteNoise };
@@ -99,6 +100,8 @@ struct EffectSpec {
   DistortionShape shape = DistortionShape::softClip;
   std::vector<std::string> flags;  // swapChannels, invertPhase, stereoVoices, sibilanceOnly
   std::shared_ptr<const PluginChain> plugin;  // type == plugin
+  /// type == clap: the CLAP descriptor id; params keyed "p<param id>" (static or keyframed).
+  std::string clapId;
 
   [[nodiscard]] bool has_flag(const std::string& f) const noexcept;
 };

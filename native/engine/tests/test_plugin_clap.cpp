@@ -6,12 +6,14 @@
 //   * without a plugin host process it is listed, never loaded here.
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "audio/external_effects.hpp"
 #include "host.hpp"
 #include "plugin_host_channel.hpp"
 
@@ -96,6 +98,23 @@ TEST_CASE("CLAP: audio through the plugin, with its params", "[plugins][clap]") 
   out = block;
   CHECK_FALSE(host.process_audio("com.nobody.gain", "layer/fx", 48000, 2, out, half, false, why));
   CHECK(out == block);
+}
+
+TEST_CASE("CLAP: an attached host serves the mixer's CLAP effects (ExternalEffects)", "[plugins][clap]") {
+  pl::HostOptions o = clap_opts(true);
+  o.attachToDocument = true;
+  std::vector<float> block(256, 0.5F);
+  {
+    pl::PluginHost host(std::move(o));
+    host.scan();
+    const std::vector<std::pair<std::uint32_t, double>> half{{1, -6.0205999}};
+    REQUIRE(premation::audio::ExternalEffects::process(kGain, "layer/fx", 48000, 2, block, half, true));
+    CHECK(std::abs(block[10] - 0.25F) < 1e-5F);
+  }
+  // The host is gone: nothing processes, the audio is left alone.
+  std::fill(block.begin(), block.end(), 0.5F);
+  CHECK_FALSE(premation::audio::ExternalEffects::process(kGain, "layer/fx", 48000, 2, block, {}, false));
+  CHECK(block[10] == 0.5F);
 }
 
 #endif

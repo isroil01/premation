@@ -84,7 +84,7 @@ describe('backwards', () => {
 });
 
 describe('every effect is declared as well as built', () => {
-  const ALL: AudioEffect['type'][] = [
+  const ALL: Exclude<AudioEffect['type'], `clap:${string}`>[] = [
     'parametric-eq', 'bass-treble', 'high-low-pass', 'delay',
     'reverb', 'flange-chorus', 'tone', 'modulator', 'stereo-mixer', 'backwards',
     // AE 26.3's additions.

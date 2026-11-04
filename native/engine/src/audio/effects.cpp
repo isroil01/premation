@@ -1,7 +1,10 @@
 #include "effects.hpp"
 
+#include "external_effects.hpp"  // SDK 1.4 (A)
+
 #include <algorithm>
 #include <array>
+#include <optional>
 #include <bit>
 #include <numbers>
 #include <cmath>
@@ -1119,6 +1122,62 @@ std::shared_ptr<const StereoIr> reverb_ir(double sampleRate, double decaySec, do
   return out;
 }
 
+/// SDK 1.4 (A): a CLAP plugin (external_effects.hpp), one render quantum per call, params ("p<id>",
+/// static or keyframed) at the quantum's start. Its process is out of the engine, so a call crosses a
+/// pipe and allocates there (the request): bounded per quantum, never on the voice's own buffers. A
+/// call that fails (no host, the process died or is restarting) passes the quantum through.
+class ClapFx final : public Effect {
+ public:
+  ClapFx(const EffectSpec& fx, double sampleRate) : id_(fx.clapId), instance_(fx.id), sampleRate_(sampleRate) {
+    for (const auto& [key, v] : fx.params) {
+      if (const auto id = param_id(key)) static_.emplace_back(*id, v);
+    }
+    for (const auto& [key, c] : fx.curves) {
+      if (const auto id = param_id(key)) curves_.emplace_back(*id, c);
+    }
+    params_.reserve(static_.size() + curves_.size());
+    buf_.reserve(static_cast<std::size_t>(2 * kQuantum));
+  }
+  void reset(const Anchor& /*a*/) noexcept override { reset_ = true; }
+  void process(Block& io, const QuantumClock& q) noexcept override {
+    try {
+      const int ch = io.channels;
+      buf_.resize(static_cast<std::size_t>(ch * kQuantum));
+      for (int i = 0; i < kQuantum; ++i) {
+        for (int c = 0; c < ch; ++c) buf_[static_cast<std::size_t>(i * ch + c)] = io.c(c)[i];  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+      }
+      params_.assign(static_.begin(), static_.end());
+      const double t = static_cast<double>(q.frame0) / q.sampleRate;
+      for (const auto& [id, c] : curves_) params_.emplace_back(id, c.at(t));
+      if (!ExternalEffects::process(id_, instance_, sampleRate_, static_cast<std::uint32_t>(ch), buf_, params_, reset_)) return;
+      reset_ = false;
+      for (int i = 0; i < kQuantum; ++i) {
+        for (int c = 0; c < ch; ++c) io.c(c)[i] = buf_[static_cast<std::size_t>(i * ch + c)];  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
+      }
+    } catch (...) {  // NOLINT(bugprone-empty-catch): an allocation failure passes the quantum through
+    }
+  }
+
+ private:
+  static std::optional<std::uint32_t> param_id(const std::string& key) {
+    if (key.size() < 2 || key[0] != 'p') return std::nullopt;
+    std::uint32_t v = 0;
+    for (std::size_t i = 1; i < key.size(); ++i) {
+      if (key[i] < '0' || key[i] > '9') return std::nullopt;
+      v = v * 10 + static_cast<std::uint32_t>(key[i] - '0');
+    }
+    return v;
+  }
+  std::string id_;
+  std::string instance_;
+  double sampleRate_;
+  bool reset_ = true;
+  std::vector<std::pair<std::uint32_t, double>> static_;
+  std::vector<std::pair<std::uint32_t, ParamCurve>> curves_;
+  std::vector<std::pair<std::uint32_t, double>> params_;
+  std::vector<float> buf_;
+};
+
 EffectChain::EffectChain(const std::vector<EffectSpec>& specs, double sampleRate) {
   for (const auto& fx : specs) {
     if (!fx.enabled) continue;
@@ -1166,6 +1225,9 @@ EffectChain::EffectChain(const std::vector<EffectSpec>& specs, double sampleRate
       case EffectType::plugin:
         // An uninstalled / undeclared plugin passes the signal through.
         if (fx.plugin) e = std::make_unique<PluginFx>(fx, sampleRate);
+        break;
+      case EffectType::clap:  // SDK 1.4 (A)
+        if (!fx.clapId.empty()) e = std::make_unique<ClapFx>(fx, sampleRate);
         break;
     }
     if (e) fx_.push_back(std::move(e));

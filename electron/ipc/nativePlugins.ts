@@ -34,6 +34,7 @@ import {
   readState,
   revokedInstalled,
   setEnabled,
+  setIsolation,
   verifyRevocationList,
   readEntitlement,
   removeEntitlement,
@@ -257,6 +258,7 @@ export function storeHandlers(deps: StoreDeps): {
   install: (req: unknown) => Promise<InstallOutcome>;
   uninstall: (id: unknown) => Promise<PluginStoreState | null>;
   setEnabled: (req: unknown) => Promise<PluginStoreState | null>;
+  setIsolation: (req: unknown) => Promise<PluginStoreState | null>;
   state: () => Promise<PluginStoreState>;
 } {
   return {
@@ -309,6 +311,11 @@ export function storeHandlers(deps: StoreDeps): {
       return installPackage({ dir, bytes, record, platform: deps.platform ?? process.platform, revoked });
     },
     uninstall: async (id) => (typeof id === 'string' && ID_RE.test(id) ? queueUninstall(deps.dir(), id) : null),
+    setIsolation: async (req) => {
+      const { id, mode } = (req ?? {}) as { id?: unknown; mode?: unknown };
+      if (typeof id !== 'string' || !ID_RE.test(id) || (mode !== 'auto' && mode !== 'process' && mode !== 'engine')) return null;
+      return setIsolation(deps.dir(), id, mode);
+    },
     setEnabled: async (req) => {
       const { id, enabled } = (req ?? {}) as { id?: unknown; enabled?: unknown };
       if (typeof id !== 'string' || !ID_RE.test(id) || typeof enabled !== 'boolean') return null;
@@ -326,6 +333,8 @@ export function registerPluginStoreIpc(deps: StoreDeps): void {
   handle('plugins:uninstall', (_e, id: unknown) => h.uninstall(id));
   /** Persist enabled / disabled (the page also tells the running engine). */
   handle('plugins:setEnabled', (_e, req: unknown) => h.setEnabled(req));
+  /** SDK 1.4 (X2): persist where a plugin runs (the page also tells the running engine). */
+  handle('plugins:setIsolation', (_e, req: unknown) => h.setIsolation(req));
   /** The installed set (versions, pinned keys, enabled, pending). */
   handle('plugins:installed', () => h.state());
 }

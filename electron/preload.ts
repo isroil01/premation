@@ -470,6 +470,7 @@ const bridge = {
     install: (req: { id: string; version: string; owner?: boolean }) => ipcRenderer.invoke('plugins:install', req),
     uninstall: (id: string) => ipcRenderer.invoke('plugins:uninstall', id),
     setEnabled: (req: { id: string; enabled: boolean }) => ipcRenderer.invoke('plugins:setEnabled', req),
+    setIsolation: (req: { id: string; mode: 'auto' | 'process' | 'engine' }) => ipcRenderer.invoke('plugins:setIsolation', req),
     installed: () => ipcRenderer.invoke('plugins:installed'),
     // Install from a `.pplugin` file (electron/pluginFileInstall.ts): main reads and checks it, the page confirms.
     pickPackageFile: () => ipcRenderer.invoke('plugins:pickPackageFile'),
