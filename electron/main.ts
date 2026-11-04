@@ -231,6 +231,20 @@ if (cliInvocation.kind === 'help') {
 // fatal for a CLI, which would exit 0 having rendered nothing while the open
 // editor silently ignored it. Renders are their own processes; that is the
 // whole point of being able to run several at once.
+/**
+ * The OS's preferred languages, for the page to pick the UI language from on a
+ * first launch (src/core/i18n/locales.ts). On the URL like the chrome is, because
+ * the language must be known before first paint. Every window gets the same list,
+ * or a pop-out could resolve a different language from the main window.
+ */
+function systemLanguagesParam(): string {
+  try {
+    return app.getPreferredSystemLanguages().join(',');
+  } catch {
+    return '';
+  }
+}
+
 const hasSingleInstanceLock = isHeadlessRun || app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) {
   app.quit();
@@ -974,7 +988,7 @@ function createMainWindow(): BrowserWindow {
 
   // The renderer draws the bar at first paint, so it reads the chrome off the
   // URL rather than asking over IPC (src/core/config/uiPlatform.ts).
-  const chromeQuery = uiChromeQuery(chrome);
+  const chromeQuery = { ...uiChromeQuery(chrome), systemLanguages: systemLanguagesParam() };
   if (isDev) {
     void win.loadURL(`${DEV_SERVER_URL}/?${new URLSearchParams(chromeQuery).toString()}`);
   } else {
@@ -1102,7 +1116,7 @@ function registerPopoutIpc(): void {
     // One route segment however the id is spelled: a plugin panel is `plugin:<id>/<panel>` (src/core/layout/popoutPath.ts).
     // The chrome rides on the query, as for the main window (src/core/config/uiPlatform.ts).
     const hash = `/popout/${encodeURIComponent(panelId)}`;
-    const query = uiChromeQuery(chrome);
+    const query = { ...uiChromeQuery(chrome), systemLanguages: systemLanguagesParam() };
 
     // F2: the engine relays its events to every pop-out (a second mirror).
     // C: a pop-out's viewport is its own engine surface — its receivers reset

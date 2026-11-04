@@ -51,6 +51,26 @@ describe('localeRuntime', () => {
     expect(t('menu.file', 'File')).toBe('File');
   });
 
+  it('follows a language changed in another window', async () => {
+    await initLocale({ isDev: true, systemLocales: ['en-US'] });
+    const blob = JSON.stringify({ [LOCALE_SETTING_KEY]: 'en-XA' });
+    localStorage.setItem(BLOB, blob);
+    window.dispatchEvent(new StorageEvent('storage', { key: BLOB, newValue: blob }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(getLocale()).toBe('en-XA');
+    expect(getLocalePreference()).toBe('en-XA');
+  });
+
+  it('does not rebuild the UI for a choice that changes nothing', async () => {
+    await initLocale({ isDev: true, systemLocales: ['en-US'] });
+    const fired = jest.fn();
+    const off = subscribeCatalogue(fired);
+    await setLocalePreference('en');
+    await setLocalePreference(null);
+    off();
+    expect(fired).not.toHaveBeenCalled();
+  });
+
   it('ignores a dev-only choice in a release build', async () => {
     localStorage.setItem(BLOB, JSON.stringify({ [LOCALE_SETTING_KEY]: 'en-XA' }));
     await initLocale({ isDev: false, systemLocales: ['en-US'] });

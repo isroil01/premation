@@ -9,6 +9,8 @@
  * "Match system" is a real, separate choice rather than a synonym for whatever
  * the system happens to be today: it stores nothing, so the app follows an OS
  * language change on the next launch. Picking a language explicitly pins it.
+ *
+ * The switch applies at once everywhere: see `LocaleBoundary`.
  */
 
 import { useState } from 'react';
@@ -35,13 +37,12 @@ export function LanguageSetting(): JSX.Element | null {
   const offered = availableLocales(isDev);
   // Local state: `getLocalePreference` reads storage, which is not reactive.
   const [preference, setPreference] = useState<LocaleCode | null>(() => getLocalePreference());
-  const [switched, setSwitched] = useState(false);
 
   if (offered.length < 2) return null;
 
   const systemName = findLocale(matchSystemLocale(systemLocales, isDev), isDev)?.nativeName ?? 'English';
   const choose = (code: LocaleCode | null): void => {
-    if (code !== preference) setSwitched(true);
+    if (code === preference) return;
     setPreference(code);
     void setLocalePreference(code);
   };
@@ -77,14 +78,6 @@ export function LanguageSetting(): JSX.Element | null {
             <span className={styles.settingTitle}>{t('settings.language.label', 'Interface language')}</span>
             <span className={styles.settingDesc}>{t('settings.language.desc', 'Project content and effect names stay as they are.')}</span>
           </div>
-          {/* Menus and this row redraw on the switch; the panels read t() once per
-              render and do not subscribe (no per-string hooks across the editor),
-              so a reload finishes the switch everywhere. */}
-          {switched && (
-            <Button size="sm" onClick={() => window.location.reload()}>
-              {t('settings.language.reload', 'Reload interface')}
-            </Button>
-          )}
           <Dropdown
             placement="bottom-end"
             items={items}

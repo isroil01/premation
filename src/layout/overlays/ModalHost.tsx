@@ -13,6 +13,7 @@
  * blocking dialog is open above it.
  */
 
+import { useCatalogueRevision } from '@hooks/useLocale';
 import { useEffect } from 'react';
 import { Modal } from '@components/Modal';
 import { useModalStore } from '@stores/modalStore';
@@ -21,6 +22,8 @@ import { installOverlayCommands } from './installCommands';
 export function ModalHost(): JSX.Element | null {
   const stack = useModalStore((s) => s.stack);
   const close = useModalStore((s) => s.close);
+  // A stored modal's body element is rebuilt by `render`, so it needs this redraw.
+  useCatalogueRevision();
 
   // The dialog-adjacent commands (What's New, help docs, the Export panel,
   // the power tour) register from here because this is the one component

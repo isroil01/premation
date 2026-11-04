@@ -121,3 +121,29 @@
     "IBM Plex Sans", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC",
     "Noto Sans SC", "Source Han Sans SC", system-ui, sans-serif;
 }
+
+/* Japanese UI: the same reason as Chinese above, the other way round. A browser
+   left to itself can pick a Chinese face for shared Han, and kana in Plex's
+   fallback would not match it. Latin stays in Plex. */
+:root:lang(ja) {
+  --font-family-sans:
+    "IBM Plex Sans", "Hiragino Sans", "Yu Gothic UI", "Meiryo",
+    "Noto Sans CJK JP", "Noto Sans JP", "Source Han Sans JP", "Segoe UI",
+    -apple-system, system-ui, sans-serif;
+  --font-family-display:
+    "IBM Plex Sans", "Hiragino Sans", "Yu Gothic UI", "Meiryo",
+    "Noto Sans CJK JP", "Noto Sans JP", "Source Han Sans JP", system-ui,
+    sans-serif;
+}
+
+/* Korean UI: IBM Plex has no Hangul either. Latin stays in Plex. */
+:root:lang(ko) {
+  --font-family-sans:
+    "IBM Plex Sans", "Apple SD Gothic Neo", "Malgun Gothic",
+    "Noto Sans CJK KR", "Noto Sans KR", "Source Han Sans KR", "Segoe UI",
+    -apple-system, system-ui, sans-serif;
+  --font-family-display:
+    "IBM Plex Sans", "Apple SD Gothic Neo", "Malgun Gothic",
+    "Noto Sans CJK KR", "Noto Sans KR", "Source Han Sans KR", system-ui,
+    sans-serif;
+}

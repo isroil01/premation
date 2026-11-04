@@ -1,4 +1,4 @@
-import { LOCALES, PSEUDO_LOCALE, availableLocales, matchSystemLocale, resolveLocale } from './locales';
+import { LOCALES, PSEUDO_LOCALE, availableLocales, matchSystemLocale, resolveLocale, systemLocalesFrom } from './locales';
 import { pseudoLocalize } from './pseudo';
 import { t, setCatalogue } from './t';
 
@@ -28,8 +28,38 @@ describe('matchSystemLocale', () => {
     expect(matchSystemLocale([], false)).toBe('en');
   });
 
+  it('picks each language from the regional form an OS reports', () => {
+    expect(matchSystemLocale(['ja-JP'], false)).toBe('ja');
+    expect(matchSystemLocale(['ko-KR'], false)).toBe('ko');
+    expect(matchSystemLocale(['de-AT'], false)).toBe('de');
+    expect(matchSystemLocale(['fr-CA'], false)).toBe('fr');
+    expect(matchSystemLocale(['es-MX'], false)).toBe('es');
+    expect(matchSystemLocale(['pt-PT'], false)).toBe('pt-BR');
+    expect(matchSystemLocale(['zh-Hans-CN'], false)).toBe('zh-CN');
+  });
+
+  it('is English on a computer whose language we do not ship', () => {
+    expect(matchSystemLocale(['uz-UZ'], false)).toBe('en');
+    expect(matchSystemLocale(['zh-TW'], false)).toBe('en');
+  });
+
+  it('takes the first language in the list that we ship', () => {
+    expect(matchSystemLocale(['uz-UZ', 'ko-KR', 'en-US'], false)).toBe('ko');
+  });
+
   it('never auto-selects a dev-only locale', () => {
     expect(matchSystemLocale(['en-XA'], true)).toBe('en');
+  });
+});
+
+describe('systemLocalesFrom', () => {
+  it('prefers the list the desktop shell passes on the URL', () => {
+    expect(systemLocalesFrom('?uiPlatform=win&systemLanguages=ja-JP%2Cen-US', ['en-US'])).toEqual(['ja-JP', 'en-US']);
+  });
+
+  it('falls back to the browser list without the shell, or with an empty one', () => {
+    expect(systemLocalesFrom('', ['ko-KR'])).toEqual(['ko-KR']);
+    expect(systemLocalesFrom('?systemLanguages=', ['ko-KR'])).toEqual(['ko-KR']);
   });
 });
 

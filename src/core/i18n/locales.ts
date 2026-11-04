@@ -70,6 +70,31 @@ export const LOCALES: ReadonlyArray<LocaleInfo> = [
     systemMatches: ['pt'],
     load: () => import('./locales/pt-BR.json').then((m) => m.default),
   },
+  {
+    code: 'ja',
+    nativeName: '日本語',
+    systemMatches: ['ja'],
+    load: () => import('./locales/ja.json').then((m) => m.default),
+  },
+  {
+    code: 'ko',
+    nativeName: '한국어',
+    systemMatches: ['ko'],
+    load: () => import('./locales/ko.json').then((m) => m.default),
+  },
+  {
+    code: 'de',
+    nativeName: 'Deutsch',
+    systemMatches: ['de'],
+    load: () => import('./locales/de.json').then((m) => m.default),
+  },
+  {
+    code: 'fr',
+    nativeName: 'Français',
+    // Written for France; the closest we ship for every `fr-*`.
+    systemMatches: ['fr'],
+    load: () => import('./locales/fr.json').then((m) => m.default),
+  },
   /*
     Pseudo-localisation: every string that went through `t()` is accented,
     bracketed and ~35% longer — "[Ñéŵ Ƥŕöĵéçţ ···]". Two things become visible
@@ -96,9 +121,24 @@ function subtagPrefix(tag: string, prefix: string): boolean {
 }
 
 /**
+ * The computer's languages, most preferred first. The desktop shell passes the
+ * OS list on the URL (`?systemLanguages=ja-JP,en-US`), which is the real one:
+ * `navigator.languages` is the browser engine's, and is only the fallback, for
+ * a browser build or a page opened without the shell.
+ */
+export function systemLocalesFrom(
+  search: string,
+  navigatorLanguages: ReadonlyArray<string>,
+): ReadonlyArray<string> {
+  const fromShell = new URLSearchParams(search).get('systemLanguages');
+  const list = fromShell ? fromShell.split(',').map((s) => s.trim()).filter(Boolean) : [];
+  return list.length > 0 ? list : navigatorLanguages;
+}
+
+/**
  * The locale to use for a user who has not chosen one: the first system
  * language (in the OS's preference order) that some locale claims, else
- * English. `systemLocales` is `navigator.languages`.
+ * English. `systemLocales` comes from `systemLocalesFrom`.
  */
 export function matchSystemLocale(systemLocales: ReadonlyArray<string>, isDev: boolean): LocaleCode {
   const offered = availableLocales(isDev);

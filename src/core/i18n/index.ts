@@ -8,6 +8,7 @@ export {
   findLocale,
   matchSystemLocale,
   resolveLocale,
+  systemLocalesFrom,
 } from './locales';
 export type { LocaleCode, LocaleInfo } from './locales';
 export {

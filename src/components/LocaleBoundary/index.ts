@@ -1,0 +1,1 @@
+export { LocaleBoundary } from './LocaleBoundary';

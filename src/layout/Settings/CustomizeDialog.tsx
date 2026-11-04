@@ -53,6 +53,7 @@ import { FilesTab } from './FilesTab';
 import { DiskCacheSettings } from './DiskCacheSettings';
 import { AudioHardwareSection } from './AudioHardwareSection';
 import { LanguageSetting } from './LanguageSetting';
+import { useCatalogueRevision } from '@hooks/useLocale';
 import { isServerEdition } from '@core/config/edition';
 import { t } from '@core/i18n';
 import styles from './CustomizeDialog.module.css';
@@ -955,6 +956,8 @@ export function Customize({ initialTab = 'shortcuts' }: { initialTab?: Tab }): J
   const [tab, setTab] = useState<Tab>(
     tabs.some((tb) => tb.id === initialTab) ? initialTab : 'shortcuts',
   );
+  // The open tab survives a language switch; what is inside it is rebuilt.
+  const revision = useCatalogueRevision();
 
   return (
     <div className={styles.root}>
@@ -974,7 +977,7 @@ export function Customize({ initialTab = 'shortcuts' }: { initialTab?: Tab }): J
         ))}
       </div>
 
-      <div className={styles.contentWrap}>
+      <div className={styles.contentWrap} key={revision}>
         {tab === 'shortcuts' ? (
           <ShortcutsTab />
         ) : tab === 'tabs' ? (

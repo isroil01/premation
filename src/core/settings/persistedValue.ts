@@ -25,7 +25,8 @@
 import { tryCoreServices } from '@core/services/coreServices';
 
 /** Must match `createLocalStorageBackend`'s default in SettingsManager.ts. */
-const BLOB_KEY = 'motion-editor.settings';
+export const SETTINGS_BLOB_KEY = 'motion-editor.settings';
+const BLOB_KEY = SETTINGS_BLOB_KEY;
 
 function readBlob(): Record<string, unknown> {
   try {
@@ -65,6 +66,14 @@ export function writePersisted<T>(key: string, value: T): void {
   const blob = readBlob();
   blob[key] = value;
   writeBlob(blob);
+}
+
+/**
+ * Write a booted manager's debounced changes to disk now, for a choice that must
+ * survive a crash in the next moment. Before boot, writes are already immediate.
+ */
+export function flushPersisted(): void {
+  tryCoreServices()?.settings.flush();
 }
 
 /** Remove a persisted setting whether or not the core has booted. */

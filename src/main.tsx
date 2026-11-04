@@ -9,7 +9,7 @@ import { parseMcpDevPlan, setMcpDevPlan } from '@core/ai/mcp/mcpAccess';
 import { purgeLegacyLocalAiKeys } from '@core/api/purgeLocalKeys';
 import { configureUiPlatform } from '@core/config/uiPlatform';
 import { setDevBuild } from '@core/config/devBuild';
-import { initLocale } from '@core/i18n';
+import { initLocale, systemLocalesFrom } from '@core/i18n';
 import './styles/global.css';
 
 // FIRST, before any store hydrates or any plugin host boots: remove plaintext
@@ -99,7 +99,10 @@ if (!rootEl) {
 // a frame later. `initLocale` never rejects: a failed load renders English.
 void initLocale({
   isDev: import.meta.env.DEV,
-  systemLocales: navigator.languages?.length ? navigator.languages : [navigator.language],
+  systemLocales: systemLocalesFrom(
+    window.location.search,
+    navigator.languages?.length ? navigator.languages : [navigator.language],
+  ),
 }).finally(() => {
   createRoot(rootEl).render(
     <StrictMode>

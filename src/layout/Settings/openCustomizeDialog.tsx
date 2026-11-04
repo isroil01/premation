@@ -7,12 +7,19 @@
 import { openModal } from '@stores/modalStore';
 import { aiEnabled } from '@core/config/edition';
 import { t } from '@core/i18n';
+import { useLocale } from '@hooks/useLocale';
 import { Customize, type Tab } from './CustomizeDialog';
+
+/** A component, not a string: the language can change while this dialog is open. */
+function CustomizeTitle(): JSX.Element {
+  useLocale();
+  return <>{t('settings.customize.title', 'Studio Preferences & Customization')}</>;
+}
 
 export function openCustomizeDialog(initialTab?: Tab): void {
   openModal({
     id: 'customize',
-    title: t('settings.customize.title', 'Studio Preferences & Customization'),
+    title: <CustomizeTitle />,
     size: 'lg',
     render: () => <Customize {...(initialTab ? { initialTab } : {})} />,
   });

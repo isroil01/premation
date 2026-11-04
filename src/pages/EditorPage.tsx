@@ -20,6 +20,7 @@ import { ClaudeActivityBadge } from '../components/ClaudeActivityBadge';
 import { ApiFileAdapter } from '@core/files/ApiFileAdapter';
 import { useUIStore } from '@stores/uiStore';
 import { t } from '@core/i18n';
+import { LocaleBoundary } from '@components/LocaleBoundary';
 import { useCloudProjectStore } from '@stores/cloudProjectStore';
 import { baselineHistoryEdit } from '@core/engine/historyBaseline';
 import { useWorkspaceStore } from '@stores/index';
@@ -229,7 +230,10 @@ export function EditorPage(): JSX.Element {
         <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
           <ReadOnlyBanner />
           <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
-            <LazyEditorShell />
+            {/* Only the views: Providers and the project loaders above stay mounted. */}
+            <LocaleBoundary>
+              <LazyEditorShell />
+            </LocaleBoundary>
             <LocalStart />
             {/* Claude for Premation: runs the calls an MCP client sends, and
                 says so while it does (docs/MCP_PLAN.md). */}

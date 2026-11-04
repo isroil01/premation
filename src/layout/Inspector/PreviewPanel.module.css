@@ -185,9 +185,6 @@
 
 .help {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   font-family: var(--panel-font-family);
   font-size: var(--panel-font-size-help);
   font-weight: var(--panel-weight-help);

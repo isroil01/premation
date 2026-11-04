@@ -8,13 +8,23 @@
  * should see the app follow; someone who picked English on a Chinese OS should
  * not be overruled.
  *
+ * A change applies at once in every window: this one through `setCatalogue`
+ * (see `LocaleBoundary` for how the UI redraws), the others through the
+ * `storage` event, since they share the settings blob.
+ *
  * `initLocale` runs in `main.tsx` BEFORE the first render and is awaited, so a
  * Chinese user never sees one frame of English menus. It never rejects: a
  * catalogue that fails to load leaves the UI in English, which is a working
  * app, rather than a blank window.
  */
 
-import { readPersisted, writePersisted, deletePersisted } from '@core/settings/persistedValue';
+import {
+  SETTINGS_BLOB_KEY,
+  deletePersisted,
+  flushPersisted,
+  readPersisted,
+  writePersisted,
+} from '@core/settings/persistedValue';
 import { setCatalogue, subscribeCatalogue } from './t';
 import { DEFAULT_LOCALE, PSEUDO_LOCALE, findLocale, resolveLocale, type LocaleCode } from './locales';
 import { pseudoLocalize } from './pseudo';
@@ -24,7 +34,7 @@ export const LOCALE_SETTING_KEY = 'ui.locale';
 export interface LocaleBoot {
   /** `import.meta.env.DEV` — whether dev-only locales are offered. */
   isDev: boolean;
-  /** `navigator.languages`. */
+  /** The computer's languages, most preferred first: see `systemLocalesFrom`. */
   systemLocales: ReadonlyArray<string>;
 }
 
@@ -72,9 +82,35 @@ async function apply(code: LocaleCode): Promise<void> {
   setCatalogue(catalogue, active === PSEUDO_LOCALE ? { transform: pseudoLocalize } : {});
 }
 
+let followsOtherWindows = false;
+
+/** Another window changed the language: follow it, as if it had happened here. */
+function onStorage(event: StorageEvent): void {
+  if (event.key !== SETTINGS_BLOB_KEY || event.newValue === null) return;
+  let saved: unknown;
+  try {
+    saved = (JSON.parse(event.newValue) as Record<string, unknown>)[LOCALE_SETTING_KEY];
+  } catch {
+    return;
+  }
+  const next = typeof saved === 'string' ? saved : null;
+  // Into this window's own settings too, or its next write puts the old one back.
+  // (Before boot this reads the blob itself, which already holds the new value.)
+  if (next !== getLocalePreference()) {
+    if (next === null) deletePersisted(LOCALE_SETTING_KEY);
+    else writePersisted(LOCALE_SETTING_KEY, next);
+  }
+  const code = resolveLocale(next, boot.systemLocales, boot.isDev);
+  if (code !== active) void apply(code);
+}
+
 /** Resolve and load the language for this launch. Call once, before rendering. */
 export async function initLocale(next: LocaleBoot): Promise<void> {
   boot = next;
+  if (!followsOtherWindows && typeof window !== 'undefined') {
+    followsOtherWindows = true;
+    window.addEventListener('storage', onStorage);
+  }
   try {
     await apply(resolveLocale(getLocalePreference(), boot.systemLocales, boot.isDev));
   } catch {
@@ -89,5 +125,9 @@ export async function initLocale(next: LocaleBoot): Promise<void> {
 export async function setLocalePreference(code: LocaleCode | null): Promise<void> {
   if (code === null) deletePersisted(LOCALE_SETTING_KEY);
   else writePersisted(LOCALE_SETTING_KEY, code);
-  await apply(resolveLocale(code, boot.systemLocales, boot.isDev));
+  // On disk now: the settings manager debounces, and a crash must not lose this.
+  flushPersisted();
+  const next = resolveLocale(code, boot.systemLocales, boot.isDev);
+  // "Match system" on the language already showing: nothing to rebuild.
+  if (next !== active) await apply(next);
 }

@@ -8615,7 +8615,6 @@
   "settings.language.desc": "Project content and effect names stay as they are.",
   "settings.language.hint": "Anything not yet translated stays in English.",
   "settings.language.label": "Interface language",
-  "settings.language.reload": "Reload interface",
   "settings.language.system": "Match system ({language})",
   "settings.language.title": "Language",
   "settings.mcpApps.connect": "Connect {app}",

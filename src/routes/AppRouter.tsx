@@ -35,6 +35,8 @@ import { useMcpFrontDesk } from '@hooks/useMcpFrontDesk';
 
 import { LoadingScreen } from '@components/LoadingScreen';
 import { t } from '@core/i18n';
+import { useCatalogueRevision } from '@hooks/useLocale';
+import { LocaleBoundary } from '@components/LocaleBoundary';
 
 function BootSplash(): JSX.Element {
   return <LoadingScreen message={t('routes.bootSplash.loading', 'Loading…')} fullScreen />;
@@ -87,6 +89,9 @@ function AppLayout(): JSX.Element {
   const location = useLocation();
   const isPopout = location.pathname.startsWith('/popout');
   const isEditor = location.pathname.startsWith('/editor') || isPopout;
+  // A language switch redraws everything below from here, without a reload. The
+  // heavy views sit in a LocaleBoundary; forms and hosts keep their state.
+  useCatalogueRevision();
 
   useEffect(() => {
     if (isEditor) {
@@ -104,7 +109,9 @@ function AppLayout(): JSX.Element {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', overflow: 'hidden' }}>
       {!isPopout && <MainWindowServices />}
-      <TitleBar />
+      <LocaleBoundary>
+        <TitleBar />
+      </LocaleBoundary>
       <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
         <Suspense fallback={<BootSplash />}>
         <Routes>
@@ -154,7 +161,9 @@ function AppLayout(): JSX.Element {
                     the editor rather than being the thing that already fired.
                   */}
                   <ErrorBoundary scope="dashboard">
-                    <DashboardPage />
+                    <LocaleBoundary>
+                      <DashboardPage />
+                    </LocaleBoundary>
                   </ErrorBoundary>
                 </RequireAuth>
               }

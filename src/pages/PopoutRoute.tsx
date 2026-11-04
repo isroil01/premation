@@ -11,6 +11,7 @@ import { pluginToolPanelRenderer } from '@layout/Plugins/PluginToolPanel';
 import { AiChatProvider } from '@layout/AiChat/AiChatContext';
 import { panelIdFromPopoutSegment } from '@core/layout/popoutPath';
 import { t } from '@core/i18n';
+import { LocaleBoundary } from '@components/LocaleBoundary';
 import { pluginContribRevision, pluginPanel, subscribePluginContrib } from '@core/nativePlugins/pluginContrib';
 import { EmptyState } from '@components/EmptyState';
 import { Providers } from '../providers/Providers';
@@ -91,7 +92,9 @@ function PopoutContent(): JSX.Element {
 export function PopoutRoute(): JSX.Element {
   return (
     <Providers>
-      <PopoutContent />
+      <LocaleBoundary>
+        <PopoutContent />
+      </LocaleBoundary>
     </Providers>
   );
 }
