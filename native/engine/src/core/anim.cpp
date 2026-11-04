@@ -540,7 +540,7 @@ std::optional<Json> sample_data_track(const DataTrack& tr, double t) {
   const std::size_t i = static_cast<std::size_t>(std::distance(ks.begin(), ub)) - 1;
   const DataKey& a = kfs[i];
   const DataKey& b = kfs[i + 1];
-  if (tr.kind == "text") return a.value;
+  if (tr.kind == "text" || tr.kind == "hold") return a.value;  // "hold": a plugin popup / checkbox
   const double raw = (t - a.t) / (b.t - a.t);
   if (a.easing && (*a.easing == api::Easing::hold || *a.easing == api::Easing::step)) return a.value;
   const double u = ease_segment(a, raw);

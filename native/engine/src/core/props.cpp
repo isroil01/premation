@@ -424,7 +424,10 @@ Catalog catalog_for(const Document& d, std::string_view layerId) {
       b.paramKey = p.key;
       b.animatable = false;
       // SDK 1.4 (E3): a native plugin's keyframeable curve / gradient — one data track of the whole value.
-      if ((p.type == "curve" || p.type == "gradient") && !p.fixed && NativeEffects::find(edef->type) != nullptr) {
+      // A native plugin's popup / checkbox keyframes as After Effects does: hold keys (the value
+      // jumps at each key), on the same per-param data track (kind "hold"). CANNOT_ANIMATE opts out.
+      if ((p.type == "curve" || p.type == "gradient" || p.type == "enum" || p.type == "checkbox") && !p.fixed &&
+          NativeEffects::find(edef->type) != nullptr) {
         b.animatable = true;
         b.dataTrack = compound_param_track(eid, p.key);
       }
@@ -2171,7 +2174,41 @@ KeyAt base_key(double t, std::string id, api::Value value, std::optional<api::Ea
   return k;
 }
 
+/// A native plugin popup / checkbox with hold keys (kind "hold"): its keys hold the value as the
+/// effect stores it (a popup's option value, a checkbox's bool).
+bool held_param(const PropBinding& b) {
+  return b.special == Special::effectParam && b.dataTrack && (b.valueType == ValueType::choice || b.valueType == ValueType::bool_);
+}
+const EffectParamDef* held_param_def(const Node& n, const PropBinding& b) {
+  const Json eff = read_node_effect(n, *b.effectId);
+  const EffectDef* def = eff.is_undefined() ? nullptr : registry().effect(eff.at("type").str());
+  return def != nullptr ? def->param(*b.paramKey) : nullptr;
+}
+Json held_param_value(const Document& d, std::string_view layer, const PropBinding& b, const api::Value& value) {
+  if (b.valueType == ValueType::bool_) {
+    if (value.kind() != VK::bool_) fail(ErrorCode::type_mismatch, "'" + b.path + "' takes a bool", {.path = b.path});
+    return Json::boolean(get<VK::bool_>(value));
+  }
+  if (value.kind() == VK::scalar) return Json::number(std::round(get<VK::scalar>(value)));
+  if (value.kind() != VK::choice) fail(ErrorCode::type_mismatch, "'" + b.path + "' takes a choice", {.path = b.path});
+  if (const EffectParamDef* pd = held_param_def(node_of(d, layer), b)) {
+    for (const auto& o : pd->options) {
+      if (o.label == get<VK::choice>(value)) return Json::number(o.value);
+    }
+  }
+  fail(ErrorCode::invalid_argument, "'" + b.path + "' has no choice '" + get<VK::choice>(value) + "'", {.path = b.path});
+}
+
 api::Value data_value_to_api(const PropBinding& b, const Json& v, const Node& n) {
+  if (held_param(b)) {
+    if (b.valueType == ValueType::bool_) return v_bool((v.is_bool() && v.b()) || (v.is_number() && v.num() == 1));
+    if (const EffectParamDef* pd = held_param_def(n, b)) {
+      for (const auto& o : pd->options) {
+        if (v.is_number() && o.value == v.num()) return v_choice(o.label);
+      }
+    }
+    return v_choice(v.is_undefined() || v.is_null() ? "" : string_of(v));
+  }
   if (b.special == Special::rig) return pin_key_to_api(v);
   if (b.special == Special::shapePath) {
     const Json* pts = as_points(v);
@@ -2545,6 +2582,8 @@ void put_keys(const PCtx& c, std::string_view layer, const PropBinding& b, const
                              : b.special == Special::sourceText   ? "text"
                              : b.valueType == ValueType::path || b.special == Special::rig ? "points"
                              : b.valueType == ValueType::gradient ? "gradientStops"
+                             : b.special == Special::effectParam && (b.valueType == ValueType::choice || b.valueType == ValueType::bool_)
+                                 ? "hold"  // a plugin popup / checkbox: its stored value, held
                              : b.special == Special::effectParam  ? "numbers"  // SDK 1.4 (E3): a plugin curve / gradient
                                                                   : "number";
     std::vector<DataKey> keys = track != nullptr ? track->keys : std::vector<DataKey>{};
@@ -2567,7 +2606,10 @@ void put_keys(const PCtx& c, std::string_view layer, const PropBinding& b, const
         value = shape_points(get<VK::path>(*w.value), as_points(prev), b.path);
         closed = get<VK::path>(*w.value).closed;
       } else {
-        value = w.value ? api_to_data_value(b, *w.value) : existing != nullptr ? existing->value : current_data_value(c, layer, b, w.t);
+        value = w.value && held_param(b) ? held_param_value(d, layer, b, *w.value)
+                : w.value                ? api_to_data_value(b, *w.value)
+                : existing != nullptr    ? existing->value
+                                         : current_data_value(c, layer, b, w.t);
       }
       DataKey next = existing != nullptr ? *existing : DataKey{};
       next.id = existing != nullptr && existing->id ? *existing->id : w.id;
@@ -2838,6 +2880,7 @@ std::optional<api::Value> value_at(const PCtx& c, std::string_view layer, const 
       return s;
     }
     if (b.special == Special::sourceText) return v_text(string_of(*v));
+    if (held_param(b)) return data_value_to_api(b, *v, node_of(d, layer));  // a plugin popup / checkbox: choice / bool
     if (b.special == Special::rig) return pin_key_to_api(*v);
     if (b.special == Special::fillStops) return fill_stops_key_to_api(*d.node(layer), *v);
     if (b.special == Special::shapePath) {

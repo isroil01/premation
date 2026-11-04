@@ -129,7 +129,7 @@ struct DataKey {
 };
 
 struct DataTrack {
-  std::string kind;  ///< 'text' | 'points' | 'gradientStops' | 'number' | 'numbers' (E3: nested number arrays)
+  std::string kind;  ///< 'text' | 'points' | 'gradientStops' | 'number' | 'numbers' (E3: nested number arrays) | 'hold' (a plugin popup / checkbox)
   std::vector<DataKey> keys;
   friend bool operator==(const DataTrack&, const DataTrack&) = default;
 };

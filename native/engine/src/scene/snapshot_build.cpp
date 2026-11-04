@@ -854,9 +854,9 @@ std::vector<Json> Walk::effects_of(const doc::Node& n, const Values& a, std::opt
       const doc::EffectDef* def = id.empty() ? nullptr : doc::registry().effect(e.at("type").is_string() ? e.at("type").str() : "");
       if (def == nullptr) continue;
       for (const doc::EffectParamDef& p : def->params) {
-        if (p.type != "curve" && p.type != "gradient") continue;
+        if (p.type != "curve" && p.type != "gradient" && p.type != "enum" && p.type != "checkbox") continue;
         const doc::DataTrack* tr = doc::anim_data_track(d_, sid(n.id), doc::compound_param_track(id, p.key));
-        if (tr == nullptr || tr->kind != "numbers") continue;
+        if (tr == nullptr || (tr->kind != "numbers" && tr->kind != "hold")) continue;
         if (auto v = doc::sample_data_track(*tr, layerTime.value_or(t_))) {
           if (!e.at("params").is_object()) e.set("params", Json::object());
           e.find_mut("params")->set(p.key, std::move(*v));

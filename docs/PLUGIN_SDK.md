@@ -111,6 +111,15 @@ copy/paste, save/open and change events all work as they do for a builtin.
 
 Flags: `CANNOT_ANIMATE`, `SUPERVISE`, `HIDDEN`, `START_COLLAPSED`, `DISABLED`.
 
+**Keyframes.** Every param but a `CANNOT_ANIMATE` one keyframes. Numbers, angles,
+points and colours interpolate. A `POPUP` or `CHECKBOX` takes **hold keys**, as in
+After Effects: the value jumps at each key and holds until the next, so two modes
+are never blended. The keys live on the effect's data track
+`effect.<effect id>.<param key>` (kind `hold`); the engine API addresses them at
+`effects/<effect id>/<param key>` with a `choice` (by label) or `bool` value, and
+the frame hands the plugin the held value. A `CURVE` / `GRADIENT` keyframes with
+`ANIMATE_VALUE` (SDK 1.4, below).
+
 How Effect Controls draws a plugin effect (as AE does): params and buttons in
 declaration order; a group open unless `START_COLLAPSED`; no stopwatch on a
 `CANNOT_ANIMATE` param (the engine refuses its keyframes: `notAnimatable`).

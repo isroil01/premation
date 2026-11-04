@@ -1,7 +1,8 @@
 import { hasEffectHandles } from '@core/effects/effectHandles';
 import { Button } from '@components/Button';
 import { edit } from '@core/engine/uiEdits';
-import { paths, ref, values } from '@core/engine/propRefs';
+import { compTime, paths, ref, values } from '@core/engine/propRefs';
+import type { Command } from '@motion/engine-api';
 import { useLiquifyBrushStore } from '@stores/liquifyBrushStore';
 import { LIQUIFY_TOOLS, type LiquifyTool } from '@core/effects/liquifyField';
 import { useEffectHandleStore } from '@stores/effectHandleStore';
@@ -50,7 +51,7 @@ import { ValueField } from '@components/ValueField';
 import { Checkbox } from '@components/Checkbox';
 import { Slider } from '@components/Slider';
 import { AngleDial } from '@components/AngleDial';
-import { PropertyRow } from '@components/PropertyRow';
+import { PropertyRow, StopwatchButton } from '@components/PropertyRow';
 import { ColorPicker } from '@components/ColorPicker';
 import { Dropdown, type DropdownItem } from '@components/Dropdown';
 import { Tooltip, TooltipProvider } from '@components/Tooltip';
@@ -547,6 +548,26 @@ function EffectParamControl({
   useMirrorTrackWatch([nodeId], navTracks);
   const m = documentMirror();
 
+  // A native plugin's popup, checkbox or curve keyframes on one track (After Effects: hold keys
+  // for a popup / checkbox, the value jumps at each key; a curve blends). The engine marks which
+  // ones may: a CANNOT_ANIMATE param, or a built-in effect's, has no stopwatch.
+  const heldApiPath = paths.effectParam(effect.id, param.key);
+  const heldInfo = isPluginEffectDef(def) && (param.type === 'enum' || param.type === 'checkbox' || param.type === 'curve')
+    ? m.tree(nodeId)?.nodes.get(heldApiPath)
+    : undefined;
+  const heldAnimated = !!heldInfo && m.keyframes(nodeId, heldApiPath).length > 0;
+  const heldValue = heldAnimated ? m.valueAt(nodeId, heldApiPath, compTime(time)) : undefined;
+  const toggleHeld = (): void => {
+    e.send(heldAnimated ? `Remove ${label} animation` : `Animate ${label}`, [
+      { type: 'setAnimated', prop: { layer: nodeId, path: heldApiPath }, animated: !heldAnimated, time: compTime(time) } as Command,
+    ]);
+  };
+  const heldStopwatch = heldInfo && (heldInfo.animatable || heldAnimated) && !(fixed && !heldAnimated) ? (
+    <StopwatchButton animated={heldAnimated} label={label} onToggle={toggleHeld} onAltToggle={() => altStopwatch(nodeId, heldApiPath)} />
+  ) : (
+    <div style={{ width: 14 }} />
+  );
+
   // A RESOLVED param is computed by the render pipeline every frame (Audio
   // Spectrum's band magnitudes). Rendering a control for it would give the user
   // a field whose input is overwritten before it is ever read — the dead-control
@@ -586,10 +607,10 @@ function EffectParamControl({
     return (
       <ParamLine>
         <div className={row.paramRow}>
-          <div style={{ width: 14 }} />
+          {heldStopwatch}
           <ParamLabel text={param.label} description={description} />
           <Checkbox
-            checked={value === true}
+            checked={heldValue && heldValue.kind === 'bool' ? heldValue.value : value === true}
             onChange={(ev) => send(ev.currentTarget.checked)}
             aria-label={label}
             style={{ width: 14, height: 14 }}
@@ -663,9 +684,10 @@ function EffectParamControl({
     /*
       A named choice stored as a NUMBER (see EffectParamDef). AE renders these
       as a plain menu with no stopwatch — Echo Operator, Bend Style — because
-      interpolating BETWEEN two named modes is meaningless. A hold-keyframed
-      enum is a real thing in AE, but it belongs with hold interpolation, not
-      with a stopwatch that would linearly ramp "Add" into "Screen".
+      interpolating BETWEEN two named modes is meaningless. A native PLUGIN's
+      popup is the exception, as in AE: it takes HOLD keys (the engine's
+      "hold" data track — the value jumps at each key, never a ramp), so its
+      row carries a stopwatch (`heldStopwatch`) unless it is CANNOT_ANIMATE.
 
       Falls back to the def's default rather than option[0] when the stored
       value names no option: a project written by a build that had one more
@@ -673,12 +695,13 @@ function EffectParamControl({
       value the effect is guaranteed to handle.
     */
     const opts = param.options ?? [];
-    const current = typeof value === 'number' ? value : Number(param.default);
+    const keyed = heldValue && heldValue.kind === 'choice' ? opts.find((o) => o.label === heldValue.value)?.value : undefined;
+    const current = keyed ?? (typeof value === 'number' ? value : Number(param.default));
     const known = opts.some((o) => o.value === current);
     return (
       <ParamLine>
         <div className={row.paramRow}>
-          <div style={{ width: 14 }} />
+          {heldStopwatch}
           <ParamLabel text={param.label} description={description} />
           <select
             value={known ? String(current) : String(param.default)}
@@ -720,7 +743,10 @@ function EffectParamControl({
     return (
       <ParamLine>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '4px 0' }}>
-          <ParamLabel text={param.label} description={description} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            {heldInfo ? heldStopwatch : null}
+            <ParamLabel text={param.label} description={description} />
+          </div>
           {/* A point drag (press → release) is one gesture: one undo entry. */}
           <div {...e.press(`Set ${label}`)}>
             <CurveEditor
