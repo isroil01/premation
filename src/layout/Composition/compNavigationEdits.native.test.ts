@@ -116,3 +116,28 @@ describe('opening and walking the trail', () => {
     expect(Object.values(useProjectStore.getState().tabs).some((t) => t.compositionId === lower)).toBe(false);
   });
 });
+
+describe('a project opened without its default comp', () => {
+  // An imported After Effects project has no `comp_root` (the blank one is removed on import), but
+  // a project opens with the default tab on it: the repair closed that tab and opened nothing, so
+  // the Timeline read "(none)" over a composition the engine was showing (2026-11-04).
+  it('opens the main composition when the only tab named a comp that is gone', async () => {
+    const { lower } = await placeLowerThird();
+    const made = await h.run({ type: 'createComposition', settings: { name: 'MAIN COMP', duration: sec(20) }, fromItems: [] } as Command) as { item: string };
+    await h.run({ type: 'removeItems', items: [ROOT], removeUsingLayers: true } as Command);
+    await settle();
+    repairNestedTabs();
+    const s = useProjectStore.getState();
+    expect(s.tabOrder).toHaveLength(1);
+    // The longest top-level comp, not Lower Third (nested in nothing now, but shorter).
+    expect(active().compositionId).toBe(made.item);
+    expect(active().compositionId).not.toBe(lower);
+  });
+
+  it('leaves the Timeline empty when the user closed the last tab themselves', async () => {
+    const s = useProjectStore.getState();
+    s.actions.closeTab(s.activeTabId!);
+    repairNestedTabs();
+    expect(useProjectStore.getState().tabOrder).toHaveLength(0);
+  });
+});

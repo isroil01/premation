@@ -257,11 +257,13 @@ export function repairNestedTabs(): void {
   const m = documentMirror();
   if (m.status !== 'ready') return;
   const s = useProjectStore.getState();
+  let closed = false;
   for (const tab of Object.values(s.tabs)) {
     if (exists(tab.compositionId)) continue;
     const { path, via, at } = trailOf(tab);
     const wasActive = useProjectStore.getState().activeTabId === tab.id;
     s.actions.closeTab(tab.id);
+    closed = true;
     if (!wasActive || at <= 0) continue;
     for (let i = at - 1; i >= 0; i--) {
       const compId = path[i]!;
@@ -270,6 +272,29 @@ export function repairNestedTabs(): void {
       break;
     }
   }
+  // The last tab named a comp that is gone — a project opened with the default tab on a
+  // composition it does not have (an imported After Effects project removes the blank one): open
+  // the document's own main comp rather than leaving the Timeline at "(none)" while the engine
+  // shows a composition. A user closing the last tab themselves is not this (nothing was gone).
+  if (closed && useProjectStore.getState().tabOrder.length === 0) {
+    const main = mainComposition();
+    if (main) activate(main, [main], [], null);
+  }
+}
+
+/** The comp a person would open (AE / the .aep importer's rule): one nothing nests, the longest. */
+function mainComposition(): string | undefined {
+  const m = documentMirror();
+  const comps = m.compIds.filter((id) => exists(id));
+  const nested = new Set<string>();
+  for (const id of m.layerIds()) {
+    const target = mirrorNestedTarget(m, id);
+    if (target?.kind === 'instance') nested.add(target.compId);
+  }
+  const top = comps.filter((id) => !nested.has(id));
+  const pool = top.length > 0 ? top : comps;
+  const duration = (id: string): number => m.comp(id)?.settings.duration ?? 0;
+  return [...pool].sort((a, b) => duration(b) - duration(a))[0];
 }
 
 /** Repair on every change to the document's compositions or layers. Returns the disposer. */
