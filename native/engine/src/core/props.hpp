@@ -69,6 +69,21 @@ struct MaskRgb {
 /// A shape layer's whole-outline keyframe track (AE's Path property).
 inline constexpr std::string_view kShapePathTrack = "path.points";
 
+/// The keyframe track of a compound shape's subpath `i` ≥ 1 (subpath 0 is kShapePathTrack): an
+/// After Effects shape layer animates each of its paths on its own ("O": the outer and the hole).
+[[nodiscard]] inline std::string shape_subpath_track(std::size_t i) { return "path.subpath." + std::to_string(i); }
+/// `i` of a shape_subpath_track key (nullopt for anything else).
+[[nodiscard]] inline std::optional<std::size_t> shape_subpath_index(std::string_view key) {
+  constexpr std::string_view kPrefix = "path.subpath.";
+  if (!key.starts_with(kPrefix) || key.size() == kPrefix.size()) return std::nullopt;
+  std::size_t i = 0;
+  for (const char c : key.substr(kPrefix.size())) {
+    if (c < '0' || c > '9') return std::nullopt;
+    i = i * 10 + static_cast<std::size_t>(c - '0');
+  }
+  return i;
+}
+
 /// A rig binding's storage (rigProps.ts RigRef): owner puppet | pin | skeleton | bone | ik | controller.
 struct RigRef {
   std::string owner;

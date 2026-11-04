@@ -266,7 +266,8 @@ api::ImportProjectResult import_aep_project(const api::ImportProject& c, HCtx& x
   const std::size_t dot = name.find_last_of('.');
   if (dot != std::string::npos && aep::is_aep_path(name)) name.resize(dot);
   if (name.empty()) name = "After Effects Project";
-  aep::AepApplyResult applied = aep::apply_aep_plan(x, plan, name, c.folder && !c.folder->empty() ? c.folder : std::nullopt);
+  aep::AepApplyResult applied =
+      aep::apply_aep_plan(x, plan, name, c.folder && !c.folder->empty() ? c.folder : std::nullopt, c.path);
   api::ImportProjectResult out;
   out.items = std::move(applied.items);
   out.warnings = std::move(applied.warnings);

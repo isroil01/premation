@@ -217,6 +217,16 @@ std::optional<Box> shape_path_extent(const SpaceCtx& c, const Node& n, const Val
         const Component* geom = n.comp("Geometry");
         add_path(e, *pts, geom != nullptr && geom->props.at("open").is_bool() && geom->props.at("open").b());
         live = e.ok();
+        // A compound outline: its other subpaths, live from their own tracks or as stored.
+        const Json subs = geom != nullptr ? geom->props.at("subpaths") : Json();
+        if (live && subs.is_array()) {
+          for (std::size_t i = 1; i < subs.arr().size(); ++i) {
+            const bool open = subs.arr()[i].at("open").is_bool() && subs.arr()[i].at("open").b();
+            const DataTrack* st = anim_data_track(c.d, n.id, shape_subpath_track(i));
+            const auto sp = st != nullptr ? sample_data_track(*st, comp_to_keyframe_time(c.d, c.view, n.id, seconds)) : std::nullopt;
+            add_path(e, sp && sp->is_array() ? *sp : subs.arr()[i].at("points"), open);
+          }
+        }
       }
     }
     if (!live) {

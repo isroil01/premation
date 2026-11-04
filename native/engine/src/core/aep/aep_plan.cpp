@@ -1,12 +1,15 @@
 #include "core/aep/aep_plan.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <limits>
 #include <map>
 #include <optional>
 #include <set>
 #include <string_view>
 
+#include "catalog_data.hpp"
 #include "core/aep/aep_ease.hpp"
 #include "core/aep/aep_effects.hpp"
 #include "jsmath.hpp"
@@ -37,7 +40,7 @@ std::string layer_kind(const AepLayer& layer, const Source* source) {
   if (layer.kind == LayerKind::camera) return "camera";
   if (layer.kind == LayerKind::light) return "light";
   if (layer.kind == LayerKind::text) return "text";
-  // A shape layer's vector contents are not walked yet: a group keeps its transform, effects, children.
+  // A shape layer whose contents could not be converted (plan_shape decides; a path layer otherwise).
   if (layer.kind == LayerKind::shape) return "group";
   if (layer.adjustment) return "adjustment";
   if (layer.nullLayer) return "null";
@@ -87,7 +90,365 @@ struct PlanContext {
   double height;
   std::vector<std::string>& warnings;
   PlanSummary& summary;
+  /// AE layer space → this editor's centre-origin layer space: what is added to an AE anchor
+  /// (and a mask vertex). −size/2 for a sized layer, 0 for text, −(outline centre) for a shape.
+  double shiftX = 0;
+  double shiftY = 0;
 };
+
+// ── Paths (masks and shape contents) ─────────────────────────────────────
+
+/// A 2-D affine map `p ↦ M·p + t` (AE group transforms compose into one).
+struct Affine2 {
+  double a = 1, b = 0, c = 0, d = 1, tx = 0, ty = 0;
+  [[nodiscard]] std::pair<double, double> apply(double x, double y) const { return {a * x + c * y + tx, b * x + d * y + ty}; }
+  /// this ∘ o: `o` first.
+  [[nodiscard]] Affine2 then(const Affine2& o) const {
+    return {a * o.a + c * o.b, b * o.a + d * o.b, a * o.c + c * o.d, b * o.c + d * o.d, a * o.tx + c * o.ty + tx,
+            b * o.tx + d * o.ty + ty};
+  }
+};
+
+/// An AE outline (tangents relative) → this editor's points (handles absolute), mapped by `m`.
+std::vector<PlannedMaskPoint> outline_points(const AepShape& s, const Affine2& m) {
+  std::vector<PlannedMaskPoint> out;
+  out.reserve(s.vertices.size());
+  for (const AepShapeVertex& v : s.vertices) {
+    const auto [x, y] = m.apply(v.x, v.y);
+    const auto [ix, iy] = m.apply(v.x + v.inX, v.y + v.inY);
+    const auto [ox, oy] = m.apply(v.x + v.outX, v.y + v.outY);
+    out.push_back({x, y, ix, iy, ox, oy});
+  }
+  return out;
+}
+
+double first_or(const std::vector<double>& v, double fb) { return v.empty() ? fb : v[0]; }
+
+/// AE path keyframes carry an ease but no value to measure speed against: a zero speed is
+/// AE's Easy Ease (flat handle), any other speed a straight handle of the same influence.
+std::vector<PlannedPathKey> outline_keys(const std::vector<AepKeyframe>& keyframes, const Affine2& m) {
+  std::vector<PlannedPathKey> out;
+  for (std::size_t i = 0; i < keyframes.size(); ++i) {
+    const AepKeyframe& kf = keyframes[i];
+    if (!kf.shape || kf.shape->vertices.empty()) return {};  // a key without an outline: not animatable here
+    const AepKeyframe* next = i + 1 < keyframes.size() ? &keyframes[i + 1] : nullptr;
+    PlannedPathKey k;
+    k.t = kf.time;
+    k.points = outline_points(*kf.shape, m);
+    if (kf.outInterp == Interp::hold) {
+      k.easing = api::Easing::hold;
+    } else if (next != nullptr && !(kf.outInterp == Interp::linear && next->inInterp == Interp::linear)) {
+      k.easing = api::Easing::bezier;
+      const double x1 = std::clamp(first_or(kf.outInfluence, 1.0 / 3), 0.0, 1.0);
+      const double x2 = 1 - std::clamp(first_or(next->inInfluence, 1.0 / 3), 0.0, 1.0);
+      const double y1 = first_or(kf.outSpeed, 0) == 0 ? 0 : x1;
+      const double y2 = first_or(next->inSpeed, 0) == 0 ? 1 : x2;
+      k.bezier = std::array<double, 4>{x1, y1, x2, y2};
+    }
+    out.push_back(std::move(k));
+  }
+  return out;
+}
+
+/// AE's four-point bezier circle constant.
+constexpr double kKappa = 0.5522847498307936;
+
+/// A rectangle contour (AE: clockwise from the top-right corner, rounded corners when `r` > 0).
+AepShape rect_shape(double cx, double cy, double w, double h, double r) {
+  const double hw = std::abs(w) / 2;
+  const double hh = std::abs(h) / 2;
+  r = std::clamp(r, 0.0, std::min(hw, hh));
+  AepShape s;
+  if (r <= 0) {
+    s.vertices = {{cx + hw, cy - hh}, {cx + hw, cy + hh}, {cx - hw, cy + hh}, {cx - hw, cy - hh}};
+    return s;
+  }
+  const double k = r * kKappa;
+  // Each corner: the vertex leaving the straight edge, then the one entering the next edge.
+  s.vertices = {
+      {cx + hw - r, cy - hh, 0, 0, k, 0}, {cx + hw, cy - hh + r, 0, -k, 0, 0},
+      {cx + hw, cy + hh - r, 0, 0, 0, k}, {cx + hw - r, cy + hh, k, 0, 0, 0},
+      {cx - hw + r, cy + hh, 0, 0, -k, 0}, {cx - hw, cy + hh - r, 0, k, 0, 0},
+      {cx - hw, cy - hh + r, 0, 0, 0, -k}, {cx - hw + r, cy - hh, -k, 0, 0, 0},
+  };
+  return s;
+}
+
+/// An ellipse contour (AE: four vertices, clockwise from the top).
+AepShape ellipse_shape(double cx, double cy, double w, double h) {
+  const double rx = std::abs(w) / 2;
+  const double ry = std::abs(h) / 2;
+  const double kx = rx * kKappa;
+  const double ky = ry * kKappa;
+  AepShape s;
+  s.vertices = {
+      {cx, cy - ry, -kx, 0, kx, 0},
+      {cx + rx, cy, 0, -ky, 0, ky},
+      {cx, cy + ry, kx, 0, -kx, 0},
+      {cx - rx, cy, 0, ky, 0, -ky},
+  };
+  return s;
+}
+
+/// `vec(p, i, fb)`: dimension `i` of a property's (first) value.
+double vec(const AepProp* p, std::size_t i, double fb) {
+  if (p == nullptr) return fb;
+  const std::vector<double>& v = !p->value.empty() ? p->value : (!p->keyframes.empty() ? p->keyframes[0].value : p->value);
+  return i < v.size() ? v[i] : fb;
+}
+
+bool keyed(const AepProp* p) { return p != nullptr && !p->keyframes.empty(); }
+
+struct ShapeWalk {
+  PlannedShape& out;
+  /// Per run: its fill (`#rrggbb` + opacity), and whether a stroke reached it.
+  std::vector<std::optional<std::pair<std::string, double>>> runFill;
+  std::vector<bool> runStroked;
+  std::vector<std::string> unsupported;
+  std::vector<std::string> notes;
+  bool strokesDiffer = false;
+  bool fillOrderSet = false;
+};
+
+void note_once(std::vector<std::string>& list, const std::string& what) {
+  if (std::find(list.begin(), list.end(), what) == list.end()) list.push_back(what);
+}
+
+std::string ae_cap(double v) { return v == 2 ? "round" : v == 3 ? "square" : "butt"; }
+std::string ae_join(double v) { return v == 2 ? "round" : v == 3 ? "bevel" : "miter"; }
+
+/// One `ADBE Vectors Group` / `ADBE Root Vectors Group`, AE's Contents order: a Fill or Stroke
+/// paints the paths ABOVE it in the same group (nested groups included). Returns the runs it made.
+std::vector<std::size_t> walk_contents(const AepProp& contents, const Affine2& m, double groupOpacity, ShapeWalk& w) {
+  std::vector<std::size_t> made;
+  std::optional<std::size_t> fillAt, strokeAt;
+  for (std::size_t idx = 0; idx < contents.children.size(); ++idx) {
+    const AepProp& item = contents.children[idx];
+    const std::string& mn = item.matchName;
+    const std::string label = item.name ? *item.name : mn;
+    if (mn == "ADBE Vector Group") {
+      const AepProp* xf = find_group(&item, "ADBE Vector Transform Group");
+      const AepProp* anchor = find_leaf(xf, "ADBE Vector Anchor");
+      const AepProp* pos = find_leaf(xf, "ADBE Vector Position");
+      const AepProp* scale = find_leaf(xf, "ADBE Vector Scale");
+      const AepProp* rot = find_leaf(xf, "ADBE Vector Rotation");
+      const AepProp* skew = find_leaf(xf, "ADBE Vector Skew");
+      const AepProp* opacity = find_leaf(xf, "ADBE Vector Group Opacity");
+      if (keyed(anchor) || keyed(pos) || keyed(scale) || keyed(rot) || keyed(opacity)) {
+        note_once(w.notes, "\"" + label + "\" has an animated group transform; its first value was used");
+      }
+      if (skew != nullptr && vec(skew, 0, 0) != 0) note_once(w.unsupported, "group skew");
+      const double sx = vec(scale, 0, 100) / 100;
+      const double sy = vec(scale, 1, 100) / 100;
+      const double rad = vec(rot, 0, 0) * 3.141592653589793 / 180;
+      const double cs = std::cos(rad);
+      const double sn = std::sin(rad);
+      // p ↦ position + R·S·(p − anchor)
+      Affine2 g{cs * sx, sn * sx, -sn * sy, cs * sy, 0, 0};
+      const auto [ax, ay] = g.apply(vec(anchor, 0, 0), vec(anchor, 1, 0));
+      g.tx = vec(pos, 0, 0) - ax;
+      g.ty = vec(pos, 1, 0) - ay;
+      const AepProp* inner = find_group(&item, "ADBE Vectors Group");
+      if (inner == nullptr) continue;
+      const std::vector<std::size_t> sub = walk_contents(*inner, m.then(g), groupOpacity * vec(opacity, 0, 100) / 100, w);
+      made.insert(made.end(), sub.begin(), sub.end());
+      continue;
+    }
+    std::optional<AepShape> outline;
+    std::vector<AepKeyframe> keys;
+    if (mn == "ADBE Vector Shape - Group") {
+      const AepProp* path = find_leaf(&item, "ADBE Vector Shape");
+      if (path != nullptr && path->shape) {
+        outline = path->shape;
+        keys = path->keyframes;
+      }
+    } else if (mn == "ADBE Vector Shape - Rect") {
+      const AepProp* size = find_leaf(&item, "ADBE Vector Rect Size");
+      const AepProp* pos = find_leaf(&item, "ADBE Vector Rect Position");
+      const AepProp* round = find_leaf(&item, "ADBE Vector Rect Roundness");
+      if (keyed(size) || keyed(pos) || keyed(round)) note_once(w.notes, "\"" + label + "\" is an animated rectangle; its first size was used");
+      outline = rect_shape(vec(pos, 0, 0), vec(pos, 1, 0), vec(size, 0, 100), vec(size, 1, 100), vec(round, 0, 0));
+    } else if (mn == "ADBE Vector Shape - Ellipse") {
+      const AepProp* size = find_leaf(&item, "ADBE Vector Ellipse Size");
+      const AepProp* pos = find_leaf(&item, "ADBE Vector Ellipse Position");
+      if (keyed(size) || keyed(pos)) note_once(w.notes, "\"" + label + "\" is an animated ellipse; its first size was used");
+      outline = ellipse_shape(vec(pos, 0, 0), vec(pos, 1, 0), vec(size, 0, 100), vec(size, 1, 100));
+    } else if (mn == "ADBE Vector Graphic - Fill") {
+      const AepProp* color = find_leaf(&item, "ADBE Vector Fill Color");
+      const AepProp* opacity = find_leaf(&item, "ADBE Vector Fill Opacity");
+      const AepProp* rule = find_leaf(&item, "ADBE Vector Fill Rule");
+      if (keyed(color) || keyed(opacity)) note_once(w.notes, "\"" + label + "\" has an animated fill; its first value was used");
+      if (rule != nullptr && vec(rule, 0, 1) == 2) note_once(w.unsupported, "Even-Odd fill rule");
+      const std::string hex = color != nullptr ? color_hex(color->value.empty() && keyed(color) ? color->keyframes[0].value : color->value)
+                                               : "#ff0000";
+      const double op = std::clamp(vec(opacity, 0, 100) / 100, 0.0, 1.0) * groupOpacity;
+      for (const std::size_t r : made) {
+        if (!w.runFill[r]) w.runFill[r] = std::make_pair(hex, op);
+      }
+      if (!fillAt) fillAt = idx;
+      continue;
+    } else if (mn == "ADBE Vector Graphic - Stroke") {
+      const AepProp* color = find_leaf(&item, "ADBE Vector Stroke Color");
+      const AepProp* opacity = find_leaf(&item, "ADBE Vector Stroke Opacity");
+      const AepProp* width = find_leaf(&item, "ADBE Vector Stroke Width");
+      if (keyed(color) || keyed(opacity) || keyed(width)) note_once(w.notes, "\"" + label + "\" has an animated stroke; its first value was used");
+      const AepProp* dashes = find_group(&item, "ADBE Vector Stroke Dashes");
+      if (dashes != nullptr && !dashes->children.empty()) note_once(w.unsupported, "stroke dashes");
+      PlannedShape::Stroke s;
+      s.color = color != nullptr ? color_hex(color->value.empty() && keyed(color) ? color->keyframes[0].value : color->value) : "#ffffff";
+      s.opacity = std::clamp(vec(opacity, 0, 100) / 100, 0.0, 1.0) * groupOpacity;
+      // A group scale scales the stroke too (the geometric mean, for a non-uniform one).
+      s.width = std::max(0.0, vec(width, 0, 2)) * std::sqrt(std::abs(m.a * m.d - m.b * m.c));
+      s.cap = ae_cap(vec(find_leaf(&item, "ADBE Vector Stroke Line Cap"), 0, 1));
+      s.join = ae_join(vec(find_leaf(&item, "ADBE Vector Stroke Line Join"), 0, 1));
+      s.miterLimit = std::max(1.0, vec(find_leaf(&item, "ADBE Vector Stroke Miter Limit"), 0, 4));
+      bool any = false;
+      for (const std::size_t r : made) {
+        if (!w.runStroked[r]) {
+          w.runStroked[r] = true;
+          any = true;
+        }
+      }
+      if (any) {
+        if (!w.out.stroke) w.out.stroke = s;
+        else if (w.out.stroke->color != s.color || w.out.stroke->width != s.width) w.strokesDiffer = true;
+      }
+      if (!strokeAt) strokeAt = idx;
+      continue;
+    } else if (mn == "ADBE Vector Filter - Merge") {
+      continue;  // contours of one layer are subpaths of one outline here already
+    } else if (mn.starts_with("ADBE Vector")) {
+      note_once(w.unsupported, label);
+      continue;
+    } else {
+      continue;
+    }
+    if (!outline || outline->vertices.empty()) continue;
+    PlannedRun run;
+    run.closed = outline->closed;
+    run.points = outline_points(*outline, m);
+    if (keys.size() > 1) run.keys = outline_keys(keys, m);
+    w.out.runs.push_back(std::move(run));
+    w.runFill.emplace_back();
+    w.runStroked.push_back(false);
+    made.push_back(w.out.runs.size() - 1);
+  }
+  if (!w.fillOrderSet && fillAt && strokeAt) {
+    w.out.fillAboveStroke = *fillAt < *strokeAt;
+    w.fillOrderSet = true;
+  }
+  return made;
+}
+
+/// An AE shape layer's Contents → one path outline, or nullopt when nothing drawable came across.
+std::optional<PlannedShape> plan_shape(const AepLayer& layer, std::vector<std::string>& warnings) {
+  const AepProp* root = find_group(&layer.properties, "ADBE Root Vectors Group");
+  if (root == nullptr) return std::nullopt;
+  PlannedShape shape;
+  ShapeWalk w{shape, {}, {}, {}, {}, false, false};
+  (void)walk_contents(*root, Affine2{}, 1.0, w);
+  const std::string who = "\"" + layer.name + "\"";
+  for (const std::string& n : w.notes) warnings.push_back(n);
+  if (!w.unsupported.empty()) {
+    std::string list;
+    for (std::size_t i = 0; i < w.unsupported.size(); ++i) list += (i > 0 ? ", " : "") + w.unsupported[i];
+    warnings.push_back(who + " uses shape features this editor does not convert yet (" + list + "); they were left out");
+  }
+  if (shape.runs.empty()) return std::nullopt;
+  if (w.strokesDiffer) warnings.push_back(who + " strokes its paths differently; the first stroke was applied to all of them");
+  if (shape.stroke && std::find(w.runStroked.begin(), w.runStroked.end(), false) != w.runStroked.end()) {
+    warnings.push_back(who + " strokes only some of its paths; the stroke was applied to all of them");
+  }
+  // One fill for the layer when every filled run agrees; per-run paint otherwise.
+  std::optional<std::pair<std::string, double>> common;
+  bool uniform = true;
+  for (const auto& f : w.runFill) {
+    if (!f) {
+      uniform = false;
+      continue;
+    }
+    if (!common) common = f;
+    else if (*common != *f) uniform = false;
+  }
+  if (common && uniform) {
+    shape.fill = common->first;
+    shape.fillOpacity = common->second;
+  } else if (common) {
+    for (const auto& f : w.runFill) shape.runFills.push_back(f ? f->first : std::string("transparent"));
+    shape.fillOpacity = common->second;
+  }
+  // AE draws the top of the Contents list last: the first run ends up on top here.
+  std::reverse(shape.runs.begin(), shape.runs.end());
+  std::reverse(shape.runFills.begin(), shape.runFills.end());
+  // Centre the outline (every key included) on the layer: AE's layer origin is wherever (0, 0) is.
+  constexpr double kInf = std::numeric_limits<double>::infinity();
+  double minX = kInf, minY = kInf, maxX = -kInf, maxY = -kInf;
+  const auto grow = [&](const std::vector<PlannedMaskPoint>& pts) {
+    for (const PlannedMaskPoint& p : pts) {
+      for (const double x : {p.x, p.inX, p.outX}) {
+        minX = std::min(minX, x);
+        maxX = std::max(maxX, x);
+      }
+      for (const double y : {p.y, p.inY, p.outY}) {
+        minY = std::min(minY, y);
+        maxY = std::max(maxY, y);
+      }
+    }
+  };
+  for (const PlannedRun& r : shape.runs) {
+    grow(r.points);
+    for (const PlannedPathKey& k : r.keys) grow(k.points);
+  }
+  if (!(minX <= maxX && minY <= maxY)) return std::nullopt;
+  shape.cx = (minX + maxX) / 2;
+  shape.cy = (minY + maxY) / 2;
+  shape.width = std::max(1.0, maxX - minX);
+  shape.height = std::max(1.0, maxY - minY);
+  const auto shift = [&](std::vector<PlannedMaskPoint>& pts) {
+    for (PlannedMaskPoint& p : pts) {
+      p.x -= shape.cx;
+      p.inX -= shape.cx;
+      p.outX -= shape.cx;
+      p.y -= shape.cy;
+      p.inY -= shape.cy;
+      p.outY -= shape.cy;
+    }
+  };
+  for (PlannedRun& r : shape.runs) {
+    shift(r.points);
+    for (PlannedPathKey& k : r.keys) shift(k.points);
+  }
+  return shape;
+}
+
+// ── Expressions ──────────────────────────────────────────────────────────
+
+/// AE transform match name → this editor's API path (and the member of a separated dimension).
+std::optional<std::pair<std::string, std::optional<std::uint32_t>>> transform_path(std::string_view mn) {
+  if (mn == "ADBE Position") return std::make_pair(std::string("transform/position"), std::optional<std::uint32_t>());
+  if (mn == "ADBE Position_0") return std::make_pair(std::string("transform/position"), std::optional<std::uint32_t>(0));
+  if (mn == "ADBE Position_1") return std::make_pair(std::string("transform/position"), std::optional<std::uint32_t>(1));
+  if (mn == "ADBE Position_2") return std::make_pair(std::string("transform/position"), std::optional<std::uint32_t>(2));
+  if (mn == "ADBE Anchor Point") return std::make_pair(std::string("transform/anchorPoint"), std::optional<std::uint32_t>());
+  if (mn == "ADBE Scale") return std::make_pair(std::string("transform/scale"), std::optional<std::uint32_t>());
+  if (mn == "ADBE Rotate Z") return std::make_pair(std::string("transform/rotation"), std::optional<std::uint32_t>());
+  if (mn == "ADBE Rotate X") return std::make_pair(std::string("transform/xRotation"), std::optional<std::uint32_t>());
+  if (mn == "ADBE Rotate Y") return std::make_pair(std::string("transform/yRotation"), std::optional<std::uint32_t>());
+  if (mn == "ADBE Opacity") return std::make_pair(std::string("transform/opacity"), std::optional<std::uint32_t>());
+  if (mn == "ADBE Orientation") return std::make_pair(std::string("transform/orientation"), std::optional<std::uint32_t>());
+  return std::nullopt;
+}
+
+void plan_transform_expressions(const AepLayer& layer, PlannedLayer& out) {
+  const AepProp* group = find_group(&layer.properties, "ADBE Transform Group");
+  if (group == nullptr) return;
+  for (const AepProp& p : group->children) {
+    if (p.isGroup || !p.expression) continue;
+    const auto target = transform_path(p.matchName);
+    if (!target) continue;
+    out.layerExpressions.push_back(PlannedExpression{target->first, *p.expression, p.expressionEnabled, target->second});
+  }
+}
 
 void set_prop(std::vector<std::pair<std::string, double>>& props, const std::string& key, double v) {
   for (auto& [k, val] : props) {
@@ -136,9 +497,8 @@ void plan_transform(const PlanContext& ctx, PlannedLayer& out) {
   }
   // Anchor: AE's top-left origin → this editor's centre origin. Text has no box in AE: its anchor
   // is relative to the text origin, which the Text `textAnchor: "alignment"` reproduces here.
-  const bool text = ctx.layer.kind == LayerKind::text;
-  take("ADBE Anchor Point", 0, "anchorX", 0, Affine{1, text ? 0 : -ctx.width / 2, 1});
-  take("ADBE Anchor Point", 1, "anchorY", 0, Affine{1, text ? 0 : -ctx.height / 2, 1});
+  take("ADBE Anchor Point", 0, "anchorX", 0, Affine{1, ctx.shiftX, 1});
+  take("ADBE Anchor Point", 1, "anchorY", 0, Affine{1, ctx.shiftY, 1});
   take("ADBE Scale", 0, "scaleX", 1, Affine{1, 0, 100});
   take("ADBE Scale", 1, "scaleY", 1, Affine{1, 0, 100});
   take("ADBE Rotate Z", 0, "rotation", 0);
@@ -252,13 +612,20 @@ void plan_masks(const PlanContext& ctx, PlannedLayer& out) {
     m.locked = mask.locked;
     m.color = {mask.color[0], mask.color[1], mask.color[2]};
     m.closed = mask.shape->closed;
-    // A text layer's masks are relative to its text origin, not to a box corner.
-    const bool text = ctx.layer.kind == LayerKind::text;
-    for (const AepShapeVertex& v : mask.shape->vertices) {
-      const double x = text ? v.x : v.x - ctx.width / 2;
-      const double y = text ? v.y : v.y - ctx.height / 2;
-      // AE stores tangents as offsets; this editor stores the handle positions.
-      m.points.push_back({x, y, x + v.inX, y + v.inY, x + v.outX, y + v.outY});
+    // AE layer space → centre origin (a text layer's masks are relative to its text origin, no shift).
+    // AE stores tangents as offsets; this editor stores the handle positions.
+    const Affine2 toLayer{1, 0, 0, 1, ctx.shiftX, ctx.shiftY};
+    m.points = outline_points(*mask.shape, toLayer);
+    const AepProp* path = nullptr;
+    for (const AepProp& c : mask.properties.children) {
+      if (!c.isGroup && c.shape) {
+        path = &c;
+        break;
+      }
+    }
+    if (path != nullptr && path->keyframes.size() > 1) {
+      m.keys = outline_keys(path->keyframes, toLayer);
+      if (m.keys.empty()) ctx.warnings.push_back("\"" + mask.name + "\" has an animated outline whose keys could not be read; the first shape was imported");
     }
     // AE's feather is 2-D; this editor's is one diameter (the horizontal stands for both).
     m.feather = scalar_of(feather, 0);
@@ -331,6 +698,15 @@ void convert_ae_units(const AepProp& effect, PlannedEffect& e) {
       put_param(e, "tintEnable", js::Json::boolean(true));
       put_param(e, "tint", js::Json::string(colorA != nullptr ? color_hex(colorA->value) : "#ffffff"));
     }
+  } else if (e.type == "add-grain") {
+    // AE's Intensity is a multiplier (1 = its default grain, our 30 %); Saturation 0–1 (default 1:
+    // colour grain), ours 0–100 % (default mono).
+    take_param(e, effect, "intensity", "intensity", 30, 0, 1);
+    if (const auto it = std::find_if(e.params.begin(), e.params.end(), [](const auto& p) { return p.first == "intensity"; });
+        it != e.params.end() && it->second.is_number()) {
+      it->second = js::Json::number(std::min(100.0, it->second.num()));
+    }
+    take_param(e, effect, "saturation", "saturation", 100, 0, 1);
   } else if (e.type == "gradient-ramp") {
     // Start/End Color, and the direction from Start of Ramp to End of Ramp (already pixels).
     const AepProp* a = ae_param(effect, "startcolor");
@@ -369,6 +745,7 @@ void plan_effects(const PlanContext& ctx, PlannedLayer& out) {
     for (const MappedEffect& target : mapped) {
       PlannedEffect e;
       e.type = target.type;
+      const EffectDef* def = registry().effect(target.type);
       auto setParam = [&](const std::string& key, js::Json v) {
         for (auto& [k, val] : e.params) {
           if (k == key) {
@@ -385,8 +762,14 @@ void plan_effects(const PlanContext& ctx, PlannedLayer& out) {
           setParam(key, js::Json::string(color_hex(prop->value)));
           continue;
         }
+        // A colour or a group heading never feeds a number (and a number never a colour).
+        if (def != nullptr) {
+          const auto pd = std::find_if(def->params.begin(), def->params.end(), [&](const EffectParamDef& d) { return d.key == key; });
+          if (pd != def->params.end() && pd->type == "color") continue;
+        }
         setParam(key, js::Json::number(prop->value.empty() ? 0 : prop->value[0]));
         if (!prop->keyframes.empty()) e.tracks.push_back({key, to_keyframe_track(prop->keyframes, 0)});
+        if (prop->expression) e.expressions.emplace_back(key, PlannedExpression{"", *prop->expression, prop->expressionEnabled, {}});
       }
       // A point is one AE parameter and two of ours (the reader already made it pixels).
       for (const auto& [base, pt] : target.points) {
@@ -397,6 +780,11 @@ void plan_effects(const PlanContext& ctx, PlannedLayer& out) {
         if (!prop->keyframes.empty()) {
           e.tracks.push_back({pt.keyX, to_keyframe_track(prop->keyframes, 0)});
           e.tracks.push_back({pt.keyY, to_keyframe_track(prop->keyframes, 1)});
+        }
+        // Each half of the point runs the AE expression on its own number (loopOut, wiggle… work per value).
+        if (prop->expression) {
+          e.expressions.emplace_back(pt.keyX, PlannedExpression{"", *prop->expression, prop->expressionEnabled, {}});
+          e.expressions.emplace_back(pt.keyY, PlannedExpression{"", *prop->expression, prop->expressionEnabled, {}, false});
         }
       }
       convert_ae_units(entry, e);
@@ -422,7 +810,7 @@ PlannedLayer plan_layer(const AepLayer& layer, const AepComp& comp, const std::m
   const Source* source = it != sources.end() ? &it->second : nullptr;
   const double w = source != nullptr && source->width() != 0 ? source->width() : comp.width;
   const double h = source != nullptr && source->height() != 0 ? source->height() : comp.height;
-  const PlanContext ctx{comp, layer, w, h, warnings, summary};
+  PlanContext ctx{comp, layer, w, h, warnings, summary, -w / 2, -h / 2};
 
   PlannedLayer out;
   out.uid = std::to_string(comp.id) + ":" + std::to_string(layer.id);
@@ -431,10 +819,24 @@ PlannedLayer plan_layer(const AepLayer& layer, const AepComp& comp, const std::m
              : source != nullptr && !source->name().empty() ? source->name()
                                                              : "Layer " + std::to_string(layer.index);
   out.kind = layer_kind(layer, source);
+  // Text has no box in AE: its anchor is relative to the text origin, which `textAnchor: "alignment"` reproduces.
+  if (layer.kind == LayerKind::text) ctx.shiftX = ctx.shiftY = 0;
+  if (layer.kind == LayerKind::shape) {
+    if (std::optional<PlannedShape> shape = plan_shape(layer, warnings)) {
+      // AE's shape layer origin is wherever its contents' (0, 0) is; here the outline is centred.
+      ctx.shiftX = -shape->cx;
+      ctx.shiftY = -shape->cy;
+      out.kind = "path";
+      out.shape = std::move(shape);
+    } else {
+      warnings.push_back("\"" + out.name + "\" is a shape layer with nothing this editor can draw yet; it came across as an empty group");
+    }
+  }
   if (layer.parentId != 0) out.parentUid = std::to_string(comp.id) + ":" + std::to_string(layer.parentId);
   if (source != nullptr) out.source = PlannedLayer::Source{source->comp != nullptr, source->id()};
   plan_transform(ctx, out);
   if (layer.kind == LayerKind::camera) plan_camera(ctx, out);
+  else plan_transform_expressions(layer, out);
   collect_expressions(layer.properties, "", out.expressions);
   summary.expressions += static_cast<std::uint32_t>(out.expressions.size());
 
@@ -513,6 +915,10 @@ AepImportPlan plan_aep_import(const AepProject& project) {
       for (const PlannedTrack& t : l.tracks) plan.summary.keyframes += static_cast<std::uint32_t>(t.keyframes.size());
       for (const PlannedEffect& e : l.effects) {
         for (const PlannedTrack& t : e.tracks) plan.summary.keyframes += static_cast<std::uint32_t>(t.keyframes.size());
+      }
+      for (const PlannedMask& m : l.masks) plan.summary.keyframes += static_cast<std::uint32_t>(m.keys.size());
+      if (l.shape) {
+        for (const PlannedRun& r : l.shape->runs) plan.summary.keyframes += static_cast<std::uint32_t>(r.keys.size());
       }
     }
     pc.aepId = comp.id;

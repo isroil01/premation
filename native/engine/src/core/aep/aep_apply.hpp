@@ -30,11 +30,21 @@ struct AepApplyResult {
   std::vector<std::string> warnings;
   std::vector<std::string> missingFootage;
   std::optional<std::string> openComp;
+  /// AE expressions set on a property here (on, or off as AE had them).
+  std::uint32_t expressionsPlaced = 0;
 };
 
-/// `applyAepPlan`: build `plan` into the document under a new folder named `folderName` (inside `parentFolder`).
+/// `applyAepPlan`: build `plan` into the document under a new folder named `folderName` (inside
+/// `parentFolder`). `projectPath`: the `.aep` itself — footage AE recorded elsewhere is looked
+/// for relative to it (a collected or moved project); empty = only the recorded paths.
 [[nodiscard]] AepApplyResult apply_aep_plan(HCtx& x, const AepImportPlan& plan, const std::string& folderName,
-                                            const std::optional<std::string>& parentFolder);
+                                            const std::optional<std::string>& parentFolder,
+                                            const std::string& projectPath = {});
+
+/// Where a footage file AE recorded at `recorded` may be now, best first: the recorded path, then
+/// the same file relative to `projectPath` (the `.aep`) — trailing folders of the recorded path
+/// under the project's folder, as AE relinks a collected or moved project.
+[[nodiscard]] std::vector<std::string> footage_candidates(const std::string& recorded, const std::string& projectPath);
 
 /// `parseAepBytes`: sniff XML vs RIFX by CONTENT (people rename these files). Throws EngineFail(decode).
 [[nodiscard]] ChunkTree parse_aep_bytes(Bytes bytes);

@@ -34,6 +34,14 @@ struct PlannedMaskPoint {
   double x = 0, y = 0, inX = 0, inY = 0, outX = 0, outY = 0;
 };
 
+/// One outline key of an animated path (mask or shape), points in this editor's form.
+struct PlannedPathKey {
+  double t = 0;
+  std::vector<PlannedMaskPoint> points;
+  api::Easing easing = api::Easing::linear;
+  std::optional<std::array<double, 4>> bezier;
+};
+
 struct PlannedMask {
   std::string name;
   std::string mode;
@@ -43,9 +51,23 @@ struct PlannedMask {
   std::array<std::uint32_t, 3> color = {0, 0, 0};
   bool closed = true;
   std::vector<PlannedMaskPoint> points;
+  std::vector<PlannedPathKey> keys;
   double feather = 0;
   double opacity = 1;
   double expansion = 0;
+};
+
+/// An AE expression on a property this editor has: where it goes, what it says.
+struct PlannedExpression {
+  /// API property path (`transform/position`, `effects/<planned effect index>/<key>`: the applier
+  /// swaps the index for the effect's id).
+  std::string path;
+  std::string source;
+  bool enabled = true;
+  /// One dimension of an unseparated vector (AE's separated Position X / Y / Z).
+  std::optional<std::uint32_t> member;
+  /// False on the second half of an AE point split into two params here (one AE expression).
+  bool counted = true;
 };
 
 struct PlannedEffect {
@@ -53,7 +75,35 @@ struct PlannedEffect {
   /// Param key → value (a number, or a `#rrggbb` string), insertion order.
   std::vector<std::pair<std::string, js::Json>> params;
   std::vector<PlannedTrack> tracks;
+  /// Param key → expression.
+  std::vector<std::pair<std::string, PlannedExpression>> expressions;
   bool defaultsOnly = false;
+};
+
+/// One contour of a shape layer: its outline, and its keys when it is animated.
+struct PlannedRun {
+  bool closed = true;
+  std::vector<PlannedMaskPoint> points;
+  std::vector<PlannedPathKey> keys;
+};
+
+/// An AE shape layer as ONE path layer here: every contour a subpath, one fill, one stroke.
+/// Points are layer-local, centred on the outline's box (`cx`, `cy` in AE layer space).
+struct PlannedShape {
+  std::vector<PlannedRun> runs;
+  double cx = 0, cy = 0, width = 1, height = 1;
+  std::optional<std::string> fill;  ///< `#rrggbb`; absent = no fill
+  double fillOpacity = 1;
+  /// Per-run fills when the layer's groups paint in different colours (index = run).
+  std::vector<std::string> runFills;
+  struct Stroke {
+    std::string color = "#ffffff";
+    double width = 2, opacity = 1, miterLimit = 4;
+    std::string cap = "butt", join = "miter";
+  };
+  std::optional<Stroke> stroke;
+  /// AE draws the item higher in the Contents list on top: Fill above Stroke.
+  bool fillAboveStroke = false;
 };
 
 /// shape text image video audio null solid camera light adjustment comp group
@@ -90,6 +140,9 @@ struct PlannedLayer {
   std::optional<Matte> matte;
   std::vector<PlannedMask> masks;
   std::vector<PlannedEffect> effects;
+  /// Layer-level expressions (transform), API paths.
+  std::vector<PlannedExpression> layerExpressions;
+  std::optional<PlannedShape> shape;
   std::optional<AepTextDocument> text;
   std::optional<std::string> solidColor;
   struct Expression {

@@ -20,6 +20,17 @@ namespace premation::doc::aep {
 
 enum class Interp : std::uint8_t { linear, bezier, hold };
 
+struct AepShapeVertex {
+  double x = 0, y = 0;
+  /// Tangent handles, relative to the vertex.
+  double inX = 0, inY = 0, outX = 0, outY = 0;
+};
+
+struct AepShape {
+  bool closed = true;
+  std::vector<AepShapeVertex> vertices;
+};
+
 struct AepKeyframe {
   /// Seconds, already converted out of the comp's internal timebase.
   double time = 0;
@@ -36,17 +47,9 @@ struct AepKeyframe {
   bool spatialAutoBezier = false;
   bool spatialContinuous = false;
   bool roving = false;
-};
-
-struct AepShapeVertex {
-  double x = 0, y = 0;
-  /// Tangent handles, relative to the vertex.
-  double inX = 0, inY = 0, outX = 0, outY = 0;
-};
-
-struct AepShape {
-  bool closed = true;
-  std::vector<AepShapeVertex> vertices;
+  /// A Mask Path / shape Path keyframe: the outline at this key (AE keeps the
+  /// keys' timing in `tdbs` and the outlines, in the same order, in `omks`).
+  std::optional<AepShape> shape;
 };
 
 /// `AepTextDocument`: what a text layer says, as much as is recoverable.

@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "aep_build.hpp"
+#include "core/aep/aep_apply.hpp"
 #include "core/aep/aep_plan.hpp"
 #include "core/aep/aep_read.hpp"
 #include "core/aep/riff.hpp"
@@ -450,4 +451,234 @@ TEST_CASE("aep: a track matte whose video AE switched off still comes across as 
   CHECK(layers[0].flags.enabled);  // this editor only builds a matte source whose eye is on
   CHECK(layers[1].matte->inverted);
   CHECK_FALSE(layers[2].flags.enabled);  // a hidden layer that is no matte stays hidden
+}
+
+// ── 2026-11-04: real AE projects (Motion Stretch Text, a CRT/VHS look) ────
+
+namespace {
+
+AepProp leaf(std::string mn, std::vector<double> value) {
+  AepProp p;
+  p.matchName = std::move(mn);
+  p.value = std::move(value);
+  p.dimensions = p.value.size();
+  return p;
+}
+AepProp group_of(std::string mn, std::vector<AepProp> children, std::optional<std::string> name = std::nullopt) {
+  AepProp g;
+  g.isGroup = true;
+  g.matchName = std::move(mn);
+  g.name = std::move(name);
+  g.children = std::move(children);
+  return g;
+}
+AepShape square(double x0, double y0, double size) {
+  AepShape s;
+  s.vertices = {{x0, y0}, {x0 + size, y0}, {x0 + size, y0 + size}, {x0, y0 + size}};
+  return s;
+}
+/// A path whose outline is keyed: one AepShape per key, AE's Easy Ease between them.
+AepProp keyed_path(std::vector<std::pair<double, AepShape>> keys) {
+  AepProp path = leaf("ADBE Vector Shape", {});
+  path.shape = keys.at(0).second;
+  for (auto& [t, s] : keys) {
+    AepKeyframe k;
+    k.time = t;
+    k.inInterp = Interp::bezier;
+    k.outInterp = Interp::bezier;
+    k.inSpeed = {0};
+    k.outSpeed = {0};
+    k.inInfluence = {1.0 / 3};
+    k.outInfluence = {1.0 / 3};
+    k.shape = s;
+    path.keyframes.push_back(std::move(k));
+  }
+  return path;
+}
+AepProject one_layer_project(AepLayer layer) {
+  AepComp comp;
+  comp.id = 1;
+  comp.name = "Main";
+  comp.width = 1080;
+  comp.height = 1920;
+  comp.fps = 30;
+  comp.durationSeconds = 6;
+  comp.layers = {std::move(layer)};
+  AepProject p;
+  p.comps = {std::move(comp)};
+  p.items = {AepItemRef{ItemKind::comp, 1, "Main", {}, 0}};
+  return p;
+}
+
+}  // namespace
+
+TEST_CASE("aep: a shape layer is a path layer: animated contours, fill, stroke, the hole of an O", "[aep][shapes]") {
+  // "O": an outer and an inner contour, each keyed, merged; Stroke listed above Fill (stroke on top).
+  AepLayer layer;
+  layer.id = 2;
+  layer.name = "O";
+  layer.kind = LayerKind::shape;
+  std::vector<AepProp> contents = {
+      group_of("ADBE Vector Shape - Group", {keyed_path({{0, square(0, 0, 100)}, {1, square(0, 0, 300)}})}),
+      group_of("ADBE Vector Shape - Group", {keyed_path({{0, square(25, 25, 50)}, {1, square(25, 25, 250)}})}),
+      group_of("ADBE Vector Filter - Merge", {}),
+      group_of("ADBE Vector Graphic - Stroke", {leaf("ADBE Vector Stroke Color", {0, 0, 1, 1}), leaf("ADBE Vector Stroke Width", {3})}),
+      group_of("ADBE Vector Graphic - Fill", {leaf("ADBE Vector Fill Color", {0, 1, 0, 1})}),
+      group_of("ADBE Vector Filter - Trim", {}, std::string("Trim Paths 1")),
+  };
+  std::vector<AepProp> groupXf = {leaf("ADBE Vector Position", {10, 20})};
+  layer.properties = group_of("ADBE Layer", {
+      group_of("ADBE Root Vectors Group", {group_of("ADBE Vector Group", {group_of("ADBE Vectors Group", contents),
+                                                                          group_of("ADBE Vector Transform Group", groupXf)})}),
+      group_of("ADBE Transform Group", {leaf("ADBE Anchor Point", {0, 0, 0}), leaf("ADBE Position", {540, 960, 0})}),
+  });
+  const AepImportPlan plan = plan_aep_import(one_layer_project(std::move(layer)));
+  const PlannedLayer& l = plan.comps.at(0).layers.at(0);
+  REQUIRE(l.kind == "path");
+  REQUIRE(l.shape);
+  const PlannedShape& s = *l.shape;
+  REQUIRE(s.runs.size() == 2);
+  CHECK(s.fill == "#00ff00");
+  REQUIRE(s.stroke);
+  CHECK(s.stroke->color == "#0000ff");
+  CHECK(s.stroke->width == 3);
+  CHECK_FALSE(s.fillAboveStroke);
+  // Box = every key's outline, group-moved by (10, 20): x 10..310, y 20..320.
+  CHECK(s.cx == Catch::Approx(160));
+  CHECK(s.cy == Catch::Approx(170));
+  CHECK(s.width == Catch::Approx(300));
+  // The anchor (AE (0, 0)) lands on the same comp point: ours is AE's minus the centre.
+  CHECK(l.prop("anchorX") == Catch::Approx(-160));
+  CHECK(l.prop("anchorY") == Catch::Approx(-170));
+  // Runs reversed (the top item in AE's Contents is drawn last): run 1 is the outer contour.
+  const PlannedRun& outer = s.runs[1];
+  REQUIRE(outer.keys.size() == 2);
+  CHECK(outer.keys[0].points[0].x == Catch::Approx(10 - 160));
+  CHECK(outer.keys[1].points[2].x == Catch::Approx(310 - 160));
+  CHECK(outer.keys[0].easing == premation::api::Easing::bezier);
+  CHECK((*outer.keys[0].bezier)[1] == 0);  // Easy Ease: a flat handle
+  CHECK(plan.summary.keyframes == 4);
+  // What does not come across is named, never silent.
+  bool trimNamed = false;
+  for (const std::string& w : plan.warnings) trimNamed = trimNamed || w.find("Trim Paths 1") != std::string::npos;
+  CHECK(trimNamed);
+}
+
+TEST_CASE("aep: a shape layer with nothing drawable stays an empty group, and says so", "[aep][shapes]") {
+  AepLayer layer;
+  layer.id = 2;
+  layer.name = "Stars";
+  layer.kind = LayerKind::shape;
+  layer.properties = group_of("ADBE Layer", {group_of("ADBE Root Vectors Group", {group_of("ADBE Vector Shape - Star", {})})});
+  const AepImportPlan plan = plan_aep_import(one_layer_project(std::move(layer)));
+  CHECK(plan.comps.at(0).layers.at(0).kind == "group");
+  CHECK(plan.warnings.size() == 2);  // the Star named, and the empty group
+}
+
+TEST_CASE("aep: rectangles and ellipses become outlines", "[aep][shapes]") {
+  AepLayer layer;
+  layer.id = 2;
+  layer.name = "Prims";
+  layer.kind = LayerKind::shape;
+  layer.properties = group_of(
+      "ADBE Layer",
+      {group_of("ADBE Root Vectors Group",
+                {
+                    group_of("ADBE Vector Shape - Rect", {leaf("ADBE Vector Rect Size", {200, 100}), leaf("ADBE Vector Rect Roundness", {10})}),
+                    group_of("ADBE Vector Shape - Ellipse",
+                             {leaf("ADBE Vector Ellipse Size", {50, 50}), leaf("ADBE Vector Ellipse Position", {300, 0})}),
+                    group_of("ADBE Vector Graphic - Fill", {leaf("ADBE Vector Fill Color", {1, 1, 1, 1}), leaf("ADBE Vector Fill Opacity", {50})}),
+                })});
+  const AepImportPlan plan = plan_aep_import(one_layer_project(std::move(layer)));
+  const PlannedShape& s = *plan.comps.at(0).layers.at(0).shape;
+  REQUIRE(s.runs.size() == 2);
+  CHECK(s.runs[1].points.size() == 8);  // a rounded rectangle: two vertices a corner
+  CHECK(s.runs[0].points.size() == 4);  // an ellipse
+  CHECK(s.width == Catch::Approx(425));  // -100 .. 325
+  CHECK(s.fillOpacity == Catch::Approx(0.5));
+}
+
+TEST_CASE("aep: an animated mask keeps every outline key", "[aep]") {
+  AepLayer layer;
+  layer.id = 1;
+  layer.name = "Masked";
+  layer.kind = LayerKind::av;
+  AepMask mask;
+  mask.name = "Mask 1";
+  mask.shape = square(0, 0, 10);
+  AepProp path = keyed_path({{0, square(0, 0, 10)}, {2, square(0, 0, 40)}});
+  path.matchName = "ADBE Mask Shape";
+  mask.properties = group_of("ADBE Mask Atom", {path});
+  layer.masks = {mask};
+  const AepImportPlan plan = plan_aep_import(one_layer_project(std::move(layer)));
+  const PlannedMask& m = plan.comps.at(0).layers.at(0).masks.at(0);
+  REQUIRE(m.keys.size() == 2);
+  CHECK(m.keys[1].t == 2);
+  CHECK(m.keys[1].points[2].x == Catch::Approx(40 - 540));  // layer space, centre origin (no source: comp-sized)
+}
+
+TEST_CASE("aep: expressions go to the property they were on", "[aep][expressions]") {
+  AepLayer layer;
+  layer.id = 1;
+  layer.name = "Wiggly";
+  layer.kind = LayerKind::av;
+  AepProp pos = leaf("ADBE Position", {100, 100, 0});
+  pos.expression = "wiggle(2, 30)";
+  pos.expressionEnabled = true;
+  AepProp opacity = leaf("ADBE Opacity", {100});
+  opacity.expression = "loopOut()";
+  opacity.expressionEnabled = false;
+  layer.properties = group_of("ADBE Layer", {group_of("ADBE Transform Group", {pos, opacity})});
+  const AepImportPlan plan = plan_aep_import(one_layer_project(std::move(layer)));
+  const auto& ex = plan.comps.at(0).layers.at(0).layerExpressions;
+  REQUIRE(ex.size() == 2);
+  CHECK(ex[0].path == "transform/position");
+  CHECK(ex[0].source == "wiggle(2, 30)");
+  CHECK(ex[0].enabled);
+  CHECK(ex[1].path == "transform/opacity");
+  CHECK_FALSE(ex[1].enabled);  // switched off in AE stays off
+}
+
+TEST_CASE("aep: Deep Glow 2, Add Grain and Quick Chromatic Aberration have equivalents", "[aep][effects]") {
+  const auto param = [](std::uint32_t index, std::string label, std::uint32_t controlType, std::vector<double> value) {
+    b::EffectParamSpec p;
+    p.index = index;
+    p.label = std::move(label);
+    p.controlType = controlType;
+    p.color = controlType == 5;
+    p.value = std::move(value);
+    return p;
+  };
+  std::vector<b::Buf> parade;
+  // "Tint" is Deep Glow 2's twirl heading (a group start): it must not reach the Tint colour.
+  b::append(parade, b::effect("PEDG2", "Deep Glow 2", {param(1, "Exposure", 10, {0.5}), param(2, "Threshold", 10, {51}), param(3, "Tint", 13, {0})}));
+  b::append(parade, b::effect("VISINF Grain Implant", "Add Grain", {param(1, "Intensity", 10, {2}), param(2, "Size", 10, {0.5})}));
+  b::append(parade, b::effect("PEQCAGL", "Quick Chromatic Aberration 3", {}));
+  b::LayerOptions solid;
+  solid.id = 1;
+  solid.displayName = "Fx";
+  b::append(solid.properties, b::group("ADBE Effect Parade", parade));
+  b::CompItemOptions c = comp_main();
+  c.layers = {b::layer(solid)};
+  const AepImportPlan plan = plan_aep_import(read_file(b::aep_file({b::comp_item(c)})));
+  CHECK(plan.summary.unmappedEffects.empty());
+  const PlannedLayer& l = plan.comps.at(0).layers.at(0);
+  const PlannedEffect* glow = planned_effect(l, "deep-glow");
+  CHECK(planned_param(glow, "exposure")->num() == Catch::Approx(0.5));
+  CHECK(planned_param(glow, "threshold")->num() == Catch::Approx(51));
+  CHECK_FALSE(planned_param(glow, "tint").has_value());
+  const PlannedEffect* grain = planned_effect(l, "add-grain");
+  CHECK(planned_param(grain, "intensity")->num() == Catch::Approx(60));  // AE x1 = our 30 %
+  CHECK(planned_param(grain, "size")->num() == Catch::Approx(0.5));
+  CHECK(planned_param(grain, "saturation")->num() == Catch::Approx(100));  // AE's default colour grain
+  CHECK(planned_effect(l, "chromatic-aberration") != nullptr);
+}
+
+TEST_CASE("aep: footage AE recorded on another disk is looked for beside the project", "[aep]") {
+  const std::vector<std::string> c = footage_candidates(R"(E:\Work\Reel\Final\(Footage)\tunnel.mov)", "C:/Users/me/ae/Final/Reel.aep");
+  REQUIRE(c.size() >= 3);
+  CHECK(c[0] == R"(E:\Work\Reel\Final\(Footage)\tunnel.mov)");  // the recorded path first
+  CHECK(c[1] == "C:/Users/me/ae/Final/tunnel.mov");
+  CHECK(c[2] == "C:/Users/me/ae/Final/(Footage)/tunnel.mov");  // Collect Files' layout
+  CHECK(footage_candidates("/a.mov", "").size() == 1);
 }

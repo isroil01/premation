@@ -247,8 +247,8 @@ Base read_base(const doc::Node& node) {
 }
 
 /// `anim.sampleData(id, 'path.points', t)` → BezierPoint[] (handles defaulted), or undefined.
-Json live_path_points(const Document& d, std::string_view id, double t) {
-  const doc::DataTrack* tr = doc::anim_data_track(d, id, "path.points");
+Json live_path_points(const Document& d, std::string_view id, double t, std::string_view track = doc::kShapePathTrack) {
+  const doc::DataTrack* tr = doc::anim_data_track(d, id, track);
   if (tr == nullptr) return {};
   const auto v = doc::sample_data_track(*tr, t);
   if (!v || !v->is_array() || v->arr().size() <= 1) return {};
@@ -1683,8 +1683,26 @@ void Walk::build_node(const doc::Node& n) {  const std::string kind = n.kind();
   const bool isSolid = fx.at("solid").is_bool() && fx.at("solid").b();
   const doc::Component* geom = n.comp("Geometry");
   const Json staticPath = geom != nullptr ? geom->props.at("points") : Json();
-  const Json liveOutline = live_path_points(d_, sid(n.id), layerTimeNow);
+  Json liveOutline = live_path_points(d_, sid(n.id), layerTimeNow);
   Json staticSubpaths = liveOutline.is_undefined() && geom != nullptr ? geom->props.at("subpaths") : Json();
+  // A compound outline whose subpaths animate on their own (an imported AE shape layer: subpath 0
+  // on the Path track, subpath i on shape_subpath_track(i)): every subpath at this time.
+  if (geom != nullptr && geom->props.at("subpaths").is_array() && geom->props.at("subpaths").arr().size() > 1) {
+    const Json& runs = geom->props.at("subpaths");
+    Json live = runs;
+    bool any = !liveOutline.is_undefined();
+    if (any) live.arr_mut()[0].set("points", liveOutline);
+    for (std::size_t i = 1; i < runs.arr().size(); ++i) {
+      Json pts = live_path_points(d_, sid(n.id), layerTimeNow, doc::shape_subpath_track(i));
+      if (pts.is_undefined()) continue;
+      live.arr_mut()[i].set("points", std::move(pts));
+      any = true;
+    }
+    if (any) {
+      liveOutline = live.arr()[0].at("points");
+      staticSubpaths = std::move(live);
+    }
+  }
   Json pathPoints = !liveOutline.is_undefined() ? liveOutline
                     : !staticPath.is_undefined() && !staticPath.is_null() ? staticPath
                     : staticSubpaths.is_array() && !staticSubpaths.arr().empty() ? staticSubpaths.arr()[0].at("points")
@@ -2376,6 +2394,8 @@ void Walk::build_node(const doc::Node& n) {  const std::string kind = n.kind();
         Json sp = Json::object();
         sp.set("points", std::move(pts));
         sp.set("open", Json::boolean(r.at("open").is_bool() && r.at("open").b()));
+        // A run's own fill (vector_paint.cpp subpathBatches: an imported AE shape whose groups paint differently).
+        if (r.at("paint").is_object()) sp.set("paint", r.at("paint"));
         subs.arr_mut().push_back(std::move(sp));
       }
       l.subpaths = std::move(subs);

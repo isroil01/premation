@@ -29,24 +29,28 @@ project After Effects still needs to open.
 | **Layers** | Name, stacking order, in/out points, start time, parenting, enabled/solo/shy/locked/guide/adjustment/3-D switches, label colour, blending mode, track matte. |
 | **Transforms** | Anchor point, position (including separated dimensions), scale, rotation, orientation, opacity — static and keyframed. |
 | **Keyframes** | Times, values, hold/linear/bezier interpolation, temporal eases, spatial tangents, roving. See *Easing* below. |
-| **Masks** | Outline, mode, inversion, feather, opacity, expansion. |
-| **Effects** | ~200 effects map onto this editor's own (see `aepEffects.ts`). Parameters are matched by label. |
+| **Masks** | Outline (animated outlines keep every key), mode, inversion, feather, opacity, expansion. |
+| **Shape layers** | One path layer per shape layer: every path, rectangle and ellipse a subpath (each animated path keeps its own keys, so an "O" keeps its hole while it morphs), group transforms baked in, one Fill (per-group fills when they differ) and one Stroke with its width, opacity, cap, join and miter. Merge Paths is how the subpaths combine already. |
+| **Effects** | ~200 effects map onto this editor's own (`native/engine/src/core/aep/aep_effects.cpp`). Parameters are matched by label; AE's twirl headings are skipped. Deep Glow 1/2, Quick Chromatic Aberration 2/3 and Add Grain (its AE 2023+ `VISINF Grain Implant` match name) map onto the built-in Deep Glow, Chromatic Aberration and Add Grain. |
 | **Text** | The string, font, size, fill colour, justification, tracking, faux bold/italic. Point text is anchored at its origin (alignment edge, first baseline) as in AE. |
-| **Footage** | Files are relinked from the paths AE recorded; solids become solid layers with their colour; placeholders come across as placeholders. |
+| **Footage** | Files are relinked from the paths AE recorded, then — as AE does — relative to the `.aep`: a project made with Collect Files (`(Footage)` beside it) or moved whole to another disk finds its files. Solids become solid layers with their colour; placeholders come across as placeholders. |
 | **Nested comps** | A comp used as a layer becomes a comp layer pointing at the imported composition. |
-| **Expressions** | Carried as text on the property that had them — **not evaluated**. Re-enable one to run it here. |
+| **Expressions** | Set on the property they were on — transform properties and effect parameters — and **evaluated**, switched on or off as AE had them (the expression language: `docs/EXPRESSION_LANGUAGE.md`). An expression on an AE point split into X / Y here runs on each half. One on a property this editor does not have is counted in the import dialog. |
 
 ### Known limits
 
 These are reported in the import dialog rather than being silent:
 
-- **Shape layers** arrive as empty groups with their transform, effects and
-  children intact. The vector contents are not converted yet.
-- **Animated masks** import their first shape; the rest of the outline
-  animation is dropped.
+- **Shape operators** — Trim Paths, Repeater, Offset, Pucker & Bloat, Round
+  Corners, Zig Zag, Wiggle Paths, Twist — gradient fills / strokes, stars,
+  dashes and the Even-Odd fill rule are not converted yet; each is named in the
+  dialog. A shape layer with nothing drawable left is an empty group.
+  Animated group transforms, rectangle / ellipse sizes and fill / stroke
+  values keep their first value.
 - **Mixed character styling** in a text layer flattens to the first style.
 - **Third-party effects** with no equivalent here are skipped and named.
-- **Expressions are not evaluated** on import.
+- **Expressions** on properties this editor does not have (CC Light Sweep's
+  Center, for one) are left out and counted.
 - **Camera and light layers** come across as layers, but their AE-specific
   options are not mapped parameter for parameter.
 - **Gradient Ramp** keeps its colours and direction, but spans the whole layer

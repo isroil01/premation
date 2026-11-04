@@ -12,7 +12,9 @@
 #include "fxstate.hpp"
 #include "handlers_comps.hpp"
 #include "handlers_layers.hpp"
+#include "handlers_properties.hpp"
 #include "jsmath.hpp"
+#include "props.hpp"
 #include "scene.hpp"
 #include "time_conv.hpp"
 #include "timeline.hpp"
@@ -52,13 +54,51 @@ std::optional<api::LayerKind> factory_kind(const std::string& kind) {
   if (kind == "adjustment") return api::LayerKind::adjustment;
   if (kind == "group") return api::LayerKind::group;
   if (kind == "shape") return api::LayerKind::shape;
+  if (kind == "path") return api::LayerKind::path;
   return std::nullopt;
 }
+
+/// Points as the Geometry / data tracks store them: `{x, y, inX, inY, outX, outY}`, handles absolute.
+Json points_json(const std::vector<PlannedMaskPoint>& pts) {
+  Json out = Json::array();
+  out.arr_mut().reserve(pts.size());
+  for (const PlannedMaskPoint& p : pts) {
+    Json pt = Json::object();
+    pt.set("x", Json::number(p.x));
+    pt.set("y", Json::number(p.y));
+    pt.set("inX", Json::number(p.inX));
+    pt.set("inY", Json::number(p.inY));
+    pt.set("outX", Json::number(p.outX));
+    pt.set("outY", Json::number(p.outY));
+    out.arr_mut().push_back(std::move(pt));
+  }
+  return out;
+}
+
+/// An animated outline as a `points` data track.
+DataTrack path_track(const std::vector<PlannedPathKey>& keys) {
+  DataTrack t;
+  t.kind = "points";
+  for (const PlannedPathKey& k : keys) {
+    DataKey dk;
+    dk.t = k.t;
+    dk.value = points_json(k.points);
+    dk.easing = k.easing;
+    dk.bezier = k.bezier;
+    t.keys.push_back(std::move(dk));
+  }
+  return t;
+}
+
+/// The data track that animates subpath `i` of a shape (0 = the shape's Path, kShapePathTrack).
+std::string subpath_track(std::size_t i) { return i == 0 ? std::string(kShapePathTrack) : shape_subpath_track(i); }
 
 struct Ctx {
   HCtx& x;
   const AepImportPlan& plan;
   AepApplyResult& result;
+  /// The `.aep` being imported (where a collected project's footage is looked for). May be empty.
+  std::string projectPath;
   std::string rootFolder;
   std::map<std::string, std::string> folderByPath;  ///< "a\x1fb" → folder id
   std::map<std::uint32_t, std::string> compIds;     ///< AE comp id → comp id
@@ -177,13 +217,16 @@ void import_footage(Ctx& c) {
     std::optional<Json> record;
     std::optional<std::string> why;
     if (f.kind == "file" && f.path && c.x.ports.has_import()) {
-      api::ImportFile req;
-      req.path = *f.path;
-      // Never rethrown from inside the catch (a throw inside a catch crashes clang-cl ASan).
-      try {
-        record = c.x.ports.import_file(req, id);
-      } catch (const EngineFail& e) {
-        why = e.error.message;
+      for (const std::string& candidate : footage_candidates(*f.path, c.projectPath)) {
+        api::ImportFile req;
+        req.path = candidate;
+        // Never rethrown from inside the catch (a throw inside a catch crashes clang-cl ASan).
+        try {
+          record = c.x.ports.import_file(req, id);
+        } catch (const EngineFail& e) {
+          if (!why) why = e.error.message;  // the recorded path's failure is the one worth keeping
+        }
+        if (record && record->is_object()) break;
       }
     }
     Json asset;
@@ -304,6 +347,47 @@ std::optional<Node> create_node(Ctx& c, const PlannedLayer& layer, const Planned
     if (w != 0) t->props.set("width", Json::number(w));
     if (h != 0) t->props.set("height", Json::number(h));
   }
+
+  // A shape layer's contents: one outline, every contour a subpath; its box is the outline's.
+  if (layer.shape && *kind == api::LayerKind::path) {
+    const PlannedShape& s = *layer.shape;
+    t->props.set("width", Json::number(s.width));
+    t->props.set("height", Json::number(s.height));
+    if (Component* g = comp_of(node, "Geometry")) {
+      if (s.runs.size() == 1) {
+        g->props.set("points", points_json(s.runs[0].points));
+        if (!s.runs[0].closed) g->props.set("open", Json::boolean(true));
+      } else {
+        Json runs = Json::array();
+        for (std::size_t i = 0; i < s.runs.size(); ++i) {
+          Json run = Json::object();
+          run.set("points", points_json(s.runs[i].points));
+          run.set("open", Json::boolean(!s.runs[i].closed));
+          if (i < s.runFills.size() && s.runFills[i] != "transparent") {
+            Json paint = Json::object();
+            paint.set("type", Json::string("solid"));
+            paint.set("color", Json::string(s.runFills[i]));
+            run.set("paint", std::move(paint));
+          }
+          runs.arr_mut().push_back(std::move(run));
+        }
+        g->props.erase("points");
+        g->props.set("subpaths", std::move(runs));
+      }
+    }
+    if (Component* style = comp_of(node, "Style")) {
+      // AE fill opacity is the paint's own; this editor's Style fill takes an rgba() for it.
+      std::string fill = "rgba(0,0,0,0)";
+      if (s.fill) {
+        fill = *s.fill;
+        if (s.fillOpacity < 1) {
+          const auto ch = [&](std::size_t at) { return std::to_string(std::stoi(s.fill->substr(at, 2), nullptr, 16)); };
+          fill = "rgba(" + ch(1) + "," + ch(3) + "," + ch(5) + "," + std::to_string(s.fillOpacity) + ")";
+        }
+      }
+      style->props.set("fill", Json::string(fill));
+    }
+  }
   if (footageKind && asset != nullptr) {
     const bool missing = c.missingAssets.contains(layer.source->aepId);
     const Json& md = asset->at("metadata");
@@ -385,10 +469,44 @@ void decorate(Ctx& c, const std::string& nodeId, const PlannedLayer& layer) {
       next.set("paths", std::move(paths));
       return next;
     });
+    // An animated mask: its outline keys on the mask's Path (docexpr's `mask.<id>.path`).
+    if (mask.keys.size() > 1) d.anim_mut(nodeId).data.set("mask." + maskId + ".path", path_track(mask.keys));
   }
 
+  // A shape layer: each animated contour on its own track; the stroke; the paint order.
+  if (layer.shape && d.node(nodeId)->comp("Geometry") != nullptr) {
+    const PlannedShape& s = *layer.shape;
+    for (std::size_t i = 0; i < s.runs.size(); ++i) {
+      if (s.runs[i].keys.size() > 1) d.anim_mut(nodeId).data.set(subpath_track(i), path_track(s.runs[i].keys));
+    }
+    if (s.stroke) {
+      Json st = Json::object();
+      st.set("enabled", Json::boolean(true));
+      st.set("color", Json::string(s.stroke->color));
+      st.set("width", Json::number(s.stroke->width));
+      st.set("opacity", Json::number(s.stroke->opacity));
+      st.set("align", Json::string("center"));
+      st.set("dash", Json::array());
+      st.set("cap", Json::string(s.stroke->cap));
+      st.set("join", Json::string(s.stroke->join));
+      st.set("miterLimit", Json::number(s.stroke->miterLimit));
+      sg_set_fx(d, nodeId, "stroke", std::move(st));
+      if (s.fillAboveStroke && s.fill) {
+        const Component* style = d.node(nodeId)->comp("Style");
+        Json fp = Json::object();
+        fp.set("type", Json::string("solid"));
+        fp.set("color", style != nullptr ? style->props.at("fill") : Json::string(*s.fill));
+        fp.set("composite", Json::string("above"));
+        sg_set_fx(d, nodeId, "fill", std::move(fp));
+      }
+    }
+  }
+
+  // Effect ids by planned index ('' = not added), for the expressions on their parameters.
+  std::vector<std::string> effectIds;
   for (const PlannedEffect& effect : layer.effects) {
     const EffectDef* def = registry().effect(effect.type);
+    effectIds.emplace_back();
     if (def == nullptr) {
       c.result.warnings.push_back("\"" + layer.name + "\": the " + effect.type + " effect could not be added");
       continue;
@@ -406,6 +524,7 @@ void decorate(Ctx& c, const std::string& nodeId, const PlannedLayer& layer) {
     for (const PlannedTrack& track : effect.tracks) {
       if (!track.keyframes.empty()) d.anim_mut(nodeId).tracks.set("effect." + effectId + "." + track.prop, track.keyframes);
     }
+    effectIds.back() = effectId;
   }
 
   const auto& modes = registry().blendModes;
@@ -413,6 +532,35 @@ void decorate(Ctx& c, const std::string& nodeId, const PlannedLayer& layer) {
   else if (!layer.blendMode.empty()) c.result.warnings.push_back("\"" + layer.name + "\" uses the " + layer.blendMode + " blending mode, which this editor does not have; it is Normal here");
   if (layer.flags.guide) sg_set_fx(d, nodeId, "guide", Json::boolean(true));
   if (layer.flags.motionBlur) sg_set_fx(d, nodeId, "motionBlur", Json::boolean(true));
+
+  // Expressions, through setExpression (it knows which members a path means), stored on and
+  // switched as AE had them. One that does not compile here is stored all the same, as AE does.
+  std::vector<PlannedExpression> exprs = layer.layerExpressions;
+  for (std::size_t i = 0; i < layer.effects.size() && i < effectIds.size(); ++i) {
+    if (effectIds[i].empty()) continue;
+    for (const auto& [key, e] : layer.effects[i].expressions) {
+      PlannedExpression placed = e;
+      placed.path = "effects/" + effectIds[i] + "/" + key;
+      exprs.push_back(std::move(placed));
+    }
+  }
+  const std::optional<std::string> label = c.x.label;
+  for (const PlannedExpression& e : exprs) {
+    api::SetExpression set;
+    set.prop = api::PropRef{nodeId, e.path};
+    set.source = e.source;
+    set.enabled = e.enabled;
+    set.member = e.member;
+    bool placed = false;
+    try {
+      (void)handle(set, c.x);
+      placed = true;
+    } catch (const EngineFail&) {
+      placed = false;
+    }
+    if (placed && e.counted) c.result.expressionsPlaced += 1;
+  }
+  c.x.label = label;
 }
 
 // ── 7. timeline bars ─────────────────────────────────────────────────────
@@ -448,6 +596,37 @@ bool is_aep_path(std::string_view path) {
   return ends(".aep") || ends(".aepx");
 }
 
+std::vector<std::string> footage_candidates(const std::string& recorded, const std::string& projectPath) {
+  std::vector<std::string> out{recorded};
+  const std::size_t slash = projectPath.find_last_of("/\\");
+  if (slash == std::string::npos) return out;
+  const char sep = projectPath[slash];
+  const std::string projectDir = projectPath.substr(0, slash);
+  // The recorded path's segments, last first ("E:\a\b\(Footage)\x.mov" → x.mov, (Footage), b, a).
+  std::vector<std::string> segments;
+  std::size_t end = recorded.size();
+  while (end > 0) {
+    const std::size_t s = recorded.find_last_of("/\\", end - 1);
+    const std::size_t begin = s == std::string::npos ? 0 : s + 1;
+    if (end > begin) segments.push_back(recorded.substr(begin, end - begin));
+    if (s == std::string::npos) break;
+    end = s;
+  }
+  if (segments.empty()) return out;
+  // The drive (or root) is never a candidate segment: at most every folder below it, and at most 6.
+  const std::size_t most = std::min<std::size_t>(segments.size() - (segments.size() > 1 ? 1 : 0), 6);
+  std::string tail;
+  for (std::size_t k = 0; k < most; ++k) {
+    tail = segments[k] + (k == 0 ? "" : std::string(1, sep) + tail);
+    std::string candidate = projectDir + sep + tail;
+    if (std::find(out.begin(), out.end(), candidate) == out.end()) out.push_back(std::move(candidate));
+  }
+  // A file collected beside the project without its folders.
+  std::string collected = projectDir + sep + "(Footage)" + sep + segments[0];
+  if (std::find(out.begin(), out.end(), collected) == out.end()) out.push_back(std::move(collected));
+  return out;
+}
+
 ChunkTree parse_aep_bytes(Bytes bytes) {
   // Skip a UTF-8 BOM and leading whitespace, then `<` means XML — whatever the name says.
   std::size_t i = bytes.size() >= 3 && bytes[0] == 0xef && bytes[1] == 0xbb && bytes[2] == 0xbf ? 3 : 0;
@@ -460,10 +639,10 @@ ChunkTree parse_aep_bytes(Bytes bytes) {
 }
 
 AepApplyResult apply_aep_plan(HCtx& x, const AepImportPlan& plan, const std::string& folderName,
-                              const std::optional<std::string>& parentFolder) {
+                              const std::optional<std::string>& parentFolder, const std::string& projectPath) {
   AepApplyResult result;
   result.warnings = plan.warnings;
-  Ctx c{x, plan, result, {}, {}, {}, {}, {}, {}, {}};
+  Ctx c{x, plan, result, projectPath, {}, {}, {}, {}, {}, {}, {}};
   Document& d = x.d;
   {
     Folder f;
@@ -560,6 +739,12 @@ AepApplyResult apply_aep_plan(HCtx& x, const AepImportPlan& plan, const std::str
   if (const auto main = main_comp(plan)) {
     const auto it = c.compIds.find(plan.comps[*main].aepId);
     if (it != c.compIds.end()) result.openComp = it->second;
+  }
+
+  if (plan.summary.expressions > result.expressionsPlaced) {
+    const std::uint32_t n = plan.summary.expressions - result.expressionsPlaced;
+    result.warnings.push_back(std::to_string(n) + (n == 1 ? " expression is" : " expressions are") +
+                              " on properties this editor does not have yet; " + (n == 1 ? "it was" : "they were") + " left out");
   }
 
   const std::size_t missing = result.missingFootage.size();

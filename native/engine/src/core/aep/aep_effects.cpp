@@ -116,10 +116,17 @@ const std::map<std::string, std::string, std::less<>>& effect_table() {
     {"ADBE Noise", "noise"},
     {"ADBE Noise Alpha2", "noise-alpha"},
     {"ADBE Grain Add", "add-grain"},
+    // Add Grain's match name since AE 2023 (the Visual Infinity grain suite inside AE).
+    {"VISINF Grain Implant", "add-grain"},
     {"ADBE Median", "median"},
     {"ADBE Dust & Scratches", "dust-scratches"},
     {"CC Light Rays", "light-rays"},
     {"CC Light Sweep", "light-sweep"},
+    // Third-party effects with a built-in equivalent here (their own controls match by label).
+    {"PEDG2", "deep-glow"},              // Deep Glow 2 (Plugin Everything)
+    {"PEDG", "deep-glow"},               // Deep Glow 1
+    {"PEQCAGL", "chromatic-aberration"},  // Quick Chromatic Aberration 3 (Plugin Everything)
+    {"PEQCA", "chromatic-aberration"},    // Quick Chromatic Aberration 2
     {"CC Light Burst 2.5", "light-burst"},
     {"CC Star Burst", "star-burst"},
     {"CC Snowfall", "snowfall"},
@@ -308,6 +315,9 @@ std::vector<MappedEffect> map_effect(std::string_view matchName, const std::vect
   for (const AeParam& param : params) {
     const std::string label = normalize_label(param.label.value_or(""));
     if (label.empty()) continue;
+    // PF_ParamType NO_DATA (9), GROUP_START (13), GROUP_END (14), BUTTON (15): a heading or a
+    // button, never a value — "Tint" the twirl must not set Tint the colour.
+    if (param.controlType && (*param.controlType == 9 || (*param.controlType >= 13 && *param.controlType <= 15))) continue;
     if (param.controlType == kControlType2dPoint) {
       const std::string base(point_target(label).value_or(label));
       const auto keyX = lookup(byKey, base + "x");

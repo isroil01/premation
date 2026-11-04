@@ -24,7 +24,12 @@ bool value_list_type(std::string_view t) {
 
 /// How to rescale each dimension (keyframe SPEEDS move with it), or empty for "as stored".
 std::vector<double> unit_scale(std::string_view matchName, const PropertyContext& ctx) {
-  if (matchName == "ADBE Opacity" || matchName == "ADBE Scale" || matchName == "ADBE Mask Opacity") return {100, 100, 100, 100};
+  // Shape contents keep their percentages as fractions too, like the layer's own Opacity and Scale.
+  if (matchName == "ADBE Opacity" || matchName == "ADBE Scale" || matchName == "ADBE Mask Opacity" ||
+      matchName == "ADBE Vector Scale" || matchName == "ADBE Vector Group Opacity" || matchName == "ADBE Vector Fill Opacity" ||
+      matchName == "ADBE Vector Stroke Opacity") {
+    return {100, 100, 100, 100};
+  }
   if (matchName == "ADBE Anchor Point" && ctx.hasSource) return {ctx.layerWidth, ctx.layerHeight, ctx.layerWidth};
   return {};
 }
@@ -306,9 +311,13 @@ AepProp read_outline(const std::string& matchName, const Chunk& oms, const Prope
   if (!shapes.empty()) {
     if (auto s = read_shape(shapes[0], ctx)) base.shape = std::move(*s);
   }
-  if (shapes.size() > 1 && ctx.warnings != nullptr) {
-    // An animated outline: the first shape comes across, the animation does not (yet).
-    ctx.warnings->push_back("\"" + matchName + "\" has an animated outline; the first shape was imported and the rest dropped");
+  if (shapes.size() > 1) {
+    // An animated outline: one `shap` per keyframe, in key order.
+    if (shapes.size() == base.keyframes.size()) {
+      for (std::size_t i = 0; i < shapes.size(); ++i) base.keyframes[i].shape = read_shape(shapes[i], ctx);
+    } else if (ctx.warnings != nullptr) {
+      ctx.warnings->push_back("\"" + matchName + "\" has an animated outline whose keys could not be read; the first shape was imported");
+    }
   }
   return base;
 }
