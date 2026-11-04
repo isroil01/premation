@@ -298,13 +298,29 @@ export function propertyValueCommands(
   seconds: number,
   autoKeyframe: boolean,
 ): Command[] | null {
+  return propertyValuesCommands(nodeId, { [prop]: value }, seconds, autoKeyframe);
+}
+
+/**
+ * The same for several member tracks of one layer at once. Scale X and Scale Y
+ * are one vector, so they have to travel in one write: sent apart, each would
+ * carry the other's old number and the second would undo the first.
+ */
+export function propertyValuesCommands(
+  nodeId: string,
+  values: Readonly<Record<string, number>>,
+  seconds: number,
+  autoKeyframe: boolean,
+): Command[] | null {
   const node = documentMirror().layer(nodeId);
   // A composition is not a layer: its tracks are not addressable (null → legacy).
   if (!node) return isCompItem(nodeId) ? null : [];
   if (node.switches.locked) return [];
-  const r = trackRef(nodeId, prop);
-  if (!r || r.members.length === 0) return null;
-  return valueCommands([{ nodeId, values: { [prop]: value } }], { seconds, autoKeyframe });
+  for (const prop of Object.keys(values)) {
+    const r = trackRef(nodeId, prop);
+    if (!r || r.members.length === 0) return null;
+  }
+  return valueCommands([{ nodeId, values }], { seconds, autoKeyframe });
 }
 
 /**

@@ -66,14 +66,15 @@ describe('placeholder rows', () => {
     expect(scale.stopwatchProps).toEqual(['scaleX', 'scaleY']);
   });
 
-  it('give way to the real per-property rows once the property is keyed', async () => {
-    // One key on Scale is one key holding both numbers (ENGINE_API.md §3.3),
-    // so both member rows appear and each draws that key.
+  it('stay one row for Scale once keyed, as in After Effects', async () => {
+    // One key on Scale is one key holding both numbers (ENGINE_API.md §3.3).
     await key('transform/scale', [0], { kind: 'vec2', value: { x: 100, y: 100 } });
     const rows = (await byLabel(A));
-    expect(rows.has('Scale')).toBe(false);
-    expect(rows.get('Scale X')!.keyframes).toHaveLength(1);
-    expect(rows.get('Scale Y')!.keyframes).toHaveLength(1);
+    const scale = rows.get('Scale')!;
+    expect(scale.keyframes).toHaveLength(1);
+    expect(scale.valueProps).toEqual(['scaleX', 'scaleY']);
+    expect(scale.stopwatchProps).toEqual(['scaleX', 'scaleY']);
+    expect(rows.has('Scale X')).toBe(false);
     // Nothing that was NOT keyed splits: its placeholder stays one unlit line.
     expect(rows.get('Anchor Point')!.animated).toBe(false);
     expect(rows.has('Anchor Point X')).toBe(false);

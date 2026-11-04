@@ -50,7 +50,7 @@ import {
   moveLayerAdjacentEdit,
   propertyKeyToggleEdit,
   propertyStopwatchEdit,
-  propertyValueCommands,
+  propertyValuesCommands,
   setKeyInterpolationEdit,
   setKeyRovingEdit,
   setKeyInterpolatorEdit,
@@ -109,6 +109,9 @@ import { smoothPositionPath, straightenPositionPath } from '@core/mirror/positio
 import { editPositionKeys } from '@layout/Workspace/viewportEdits';
 import { motionPathKeyframeMenuItems } from '@layout/Workspace/viewportPrecisionMenus';
 import { POSITION_PSEUDO_PROP } from '@motion/animation';
+import { isScaleMember, linkedScaleValues } from '@core/animation/linkedScale';
+import { isScaleLinked } from '@stores/scaleLinkStore';
+import { trackRef } from '@layout/Inspector/inspectorEdits';
 
 /**
  * The value a property HAS at comp `seconds`: the evaluated value when the
@@ -404,9 +407,12 @@ export function useTimelineHandlers(tracksRef: MutableRefObject<ReadonlyArray<Ti
     for (const e of sel.entries) starts.set(propertyKey(e), propertyValueAt(e.nodeId, e.prop, now));
     scrubRef.current = { trackId, prop, entries: sel.entries, starts };
   };
+  /** Each layer's Scale when the scrub reached it: the ratio a linked drag keeps. */
+  const linkBasisRef = useRef(new Map<string, Record<string, number>>());
   const handlePropertyScrubEnd = (): void => {
     scrubRef.current = null;
     scrubbingNow.current = false;
+    linkBasisRef.current.clear();
     if (valueGesture.isActive()) void valueGesture.end();
   };
 
@@ -421,10 +427,27 @@ export function useTimelineHandlers(tracksRef: MutableRefObject<ReadonlyArray<Ti
   const writePropertyValues = (writes: ReadonlyArray<{ nodeId: string; prop: string; value: number }>, scrubbing: boolean): void => {
     const seconds = playheadNow();
     const autoKeyframe = usePreferenceStore.getState().timelineAutoKeyframe;
-    const cmds: Command[] = [];
+    // One write per layer: a vector's members cannot be sent apart.
+    const byNode = new Map<string, Record<string, number>>();
     for (const w of writes) {
+      let values: Record<string, number> = { [w.prop]: w.value };
+      if (isScaleMember(w.prop) && isScaleLinked(w.nodeId)) {
+        let basis = scrubbing ? linkBasisRef.current.get(w.nodeId) : undefined;
+        if (!basis) {
+          basis = {};
+          for (const member of trackRef(w.nodeId, w.prop)?.members ?? [w.prop]) {
+            basis[member] = propertyValueAt(w.nodeId, member, seconds);
+          }
+          if (scrubbing) linkBasisRef.current.set(w.nodeId, basis);
+        }
+        values = linkedScaleValues(w.prop, w.value, basis);
+      }
+      byNode.set(w.nodeId, { ...byNode.get(w.nodeId), ...values });
+    }
+    const cmds: Command[] = [];
+    for (const [nodeId, values] of byNode) {
       // Null: not a property of that layer any more (a stale row) — nothing to write.
-      const c = propertyValueCommands(w.nodeId, w.prop, w.value, seconds, autoKeyframe);
+      const c = propertyValuesCommands(nodeId, values, seconds, autoKeyframe);
       if (c === null) return;
       cmds.push(...c);
     }

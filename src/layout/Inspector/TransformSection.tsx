@@ -39,6 +39,7 @@ import { PropertyRowLayoutContext } from '@components/PropertyRow';
 import { TRANSFORM_PRESET_PROPS } from '@core/inspector/sectionPresets';
 import type { PresetValues } from '@stores/sectionPresetStore';
 import { documentMirror } from '@stores/documentMirror';
+import { useScaleLinked, useScaleLinkStore } from '@stores/scaleLinkStore';
 import { useMirrorLayer, useMirrorTrackWatch } from '@hooks/useMirror';
 import { isTrackAnimated, readTrack } from '@core/mirror/selection';
 import { storedNumber, trackRefIn } from '@core/mirror/trackIndex';
@@ -197,7 +198,7 @@ function TransformSectionInner({ nodeId }: { nodeId: string }): JSX.Element | nu
   const layer = useMirrorLayer(nodeId);
   useMirrorTrackWatch([nodeId], SECTION_TRACKS);
   const nodeIds = useInspectorSelection(nodeId);
-  const [linkedScale, setLinkedScale] = useState(true);
+  const linkedScale = useScaleLinked(nodeId);
   const [anchorMenuOpen, setAnchorMenuOpen] = useState(false);
   // Position / Anchor units (px | %), remembered across mounts.
   const [units, setUnits] = useState<TransformUnits>(loadTransformUnits);
@@ -405,7 +406,7 @@ function TransformSectionInner({ nodeId }: { nodeId: string }): JSX.Element | nu
               nodeId={nodeId}
               label={t('inspector.transform.scale', 'Scale')}
               props={[field('scaleX', 'W', SCALE_PERCENT), field('scaleY', 'H', SCALE_PERCENT)]}
-              linked={{ value: linkedScale, onToggle: () => setLinkedScale((v) => !v), label: t('inspector.transform.scaleDimensions', 'Scale dimensions') }}
+              linked={{ value: linkedScale, onToggle: () => useScaleLinkStore.getState().toggle(nodeId), label: t('inspector.transform.scaleDimensions', 'Scale dimensions') }}
             />
           )}
 

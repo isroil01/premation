@@ -9635,6 +9635,8 @@
   "timeline.property.expression": "Expression — click to edit",
   "timeline.property.expressionDisabled": "Expression (disabled) — click to edit",
   "timeline.property.expressionError": "Expression error: {error} — click to edit",
+  "timeline.property.scaleLink": "Constrain Proportions",
+  "timeline.property.scaleUnlink": "Unlink Scale dimensions",
   "timeline.property.separateDimensions": "Separate Dimensions",
   "timeline.property.separateDimensionsOn": "Separate Dimensions ✓",
   "timeline.rename.capturedOne": "{n} expression naming “{name}” now read this layer instead of the previous layer.",

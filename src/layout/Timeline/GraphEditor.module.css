@@ -260,36 +260,46 @@
 
 /* ── SVG chrome (theme-aware; presentation attributes can't use var()) ── */
 .gridLine {
-  stroke: color-mix(in srgb, var(--color-text-primary) 5%, transparent);
-}
-
-.gridLineMinor {
-  stroke: color-mix(in srgb, var(--color-text-primary) 4%, transparent);
+  stroke: color-mix(in srgb, var(--color-text-primary) 9%, transparent);
+  shape-rendering: crispEdges;
 }
 
 .axisLabel {
-  fill: color-mix(in srgb, var(--color-text-primary) 18%, transparent);
+  fill: color-mix(in srgb, var(--color-text-primary) 62%, transparent);
+  font-variant-numeric: tabular-nums;
+  /* Stays readable where a curve passes behind it. */
+  paint-order: stroke fill;
+  stroke: var(--color-surface-0);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  user-select: none;
 }
 
 .handleLine {
-  stroke: color-mix(in srgb, var(--color-text-primary) 25%, transparent);
+  stroke: color-mix(in srgb, var(--color-timeline-graph-key) 70%, transparent);
 }
 
 .handleDot {
-  fill: var(--color-slate-0);
-  stroke: var(--color-primary);
+  fill: var(--color-timeline-graph-key);
+  stroke: var(--color-surface-0);
   cursor: default;
 }
 
-.keyframe {
-  stroke: var(--color-timeline-keyframe-stroke);
+/* Keys are squares, hollow until selected, in one colour over every curve:
+   which curve a key is on is already said by the line running through it. */
+.keyframe,
+.keyframeSelected {
+  stroke: var(--color-timeline-graph-key);
+  shape-rendering: crispEdges;
   cursor: move;
 }
 
+.keyframe {
+  fill: var(--color-surface-0);
+}
+
 .keyframeSelected {
-  fill: var(--color-slate-0);
-  stroke: var(--color-primary);
-  cursor: move;
+  fill: var(--color-timeline-graph-key);
 }
 
 .playheadLine {
@@ -414,6 +424,15 @@
 
 .curve {
   pointer-events: none;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  shape-rendering: geometricPrecision;
+}
+
+/* The value a property holds before its first key and after its last. */
+.curveExtension {
+  pointer-events: none;
+  stroke-dasharray: 2 4;
 }
 
 /* The reference ("before") ghost. Dashed and unclickable so it reads as a

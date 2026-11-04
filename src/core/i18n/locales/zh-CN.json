@@ -8038,6 +8038,8 @@
   "timeline.property.expression": "表达式 — 点击编辑",
   "timeline.property.expressionDisabled": "表达式（已禁用）— 点击编辑",
   "timeline.property.expressionError": "表达式错误：{error} — 点击编辑",
+  "timeline.property.scaleLink": "约束比例",
+  "timeline.property.scaleUnlink": "取消链接缩放尺寸",
   "timeline.property.separateDimensions": "单独尺寸",
   "timeline.property.separateDimensionsOn": "单独尺寸 ✓",
   "timeline.rename.capturedOne": "{n} 个引用“{name}”的表达式现在读取此图层，而不再是之前的图层。",

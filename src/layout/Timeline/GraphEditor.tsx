@@ -124,6 +124,7 @@ import {
   yToValue,
   type ReferenceCurve,
 } from './graphReferenceCurve';
+import { smoothFrameSteps, timeStep, timeTicks, valueTicks } from './graphAxis';
 import { usePropertySelectionStore } from '@stores/propertySelectionStore';
 import { useResizeObserver } from '@hooks/useResizeObserver';
 import { t } from '@core/i18n';
@@ -402,12 +403,12 @@ const BOX_PAD = 6;
 /** Width of the curve list (`showCurveList`), px — `.curveList` in the sheet matches. */
 const CURVE_LIST_WIDTH = 240;
 
-const COLORS = ['#2988ff', '#ff6b6b', '#4cdf8e', '#ffd770', '#bf8cff', '#ff8cde'];
+const COLORS = ['#e5564b', '#55c271', '#4d9be6', '#e0a94f', '#b58cf0', '#e58cc8'];
 const GRAPH_HEIGHT_DEFAULT = 200;
-const HANDLE_RADIUS = 4.5;
+const HANDLE_RADIUS = 3.5;
 /** Invisible grab radius around handles / diamonds — AE-sized hit targets. */
 const HIT_RADIUS = 10;
-const KF_SIZE = 8;
+const KF_SIZE = 7;
 /** Show value labels next to every in-view diamond once zoomed in this far. */
 const LABEL_PPS = 120;
 const GRAPH_PPS_MIN = 4;
@@ -489,6 +490,18 @@ function graphTrackLabel(prop: string, layer: LayerInfo | undefined, tree: Mirro
 
 function findKfIndex(kfs: ReadonlyArray<{ t: number }>, t: number): number {
   return kfs.findIndex((k) => Math.abs(k.t - t) < 1e-9);
+}
+
+/** How a track's stored numbers are shown: its factor (Scale is stored as 1, shown as 100) and unit. */
+function displayOf(nodeId: string, prop: string, mode: 'value' | 'speed'): { factor: number; unit: string } {
+  const m = documentMirror();
+  const meta = mirrorPropertyMeta(prop, m.layer(nodeId), m.tree(nodeId));
+  const unit = meta.unit ?? '';
+  const spaced = unit && unit !== '°' ? ` ${unit}` : unit;
+  return {
+    factor: typeof meta.displayScale === 'number' && meta.displayScale > 0 ? meta.displayScale : 1,
+    unit: mode === 'speed' ? `${spaced}/s` : spaced,
+  };
 }
 
 /** Format an axis label compactly (1234.5 → "1234.5", 0.00012 → "0"). */
@@ -821,6 +834,8 @@ export function GraphEditor({
     const paths: {
       color: string;
       d: string;
+      /** What the property holds outside its keys, drawn dashed. */
+      dExt: string;
       /** The polyline in data space ([comp seconds, plotted value]) — what the
        *  reference overlay snapshots, so a ghost is independent of zoom. */
       samples: ReadonlyArray<readonly [number, number]>;
@@ -856,7 +871,7 @@ export function GraphEditor({
     }
     const sampleStep = Math.max(1e-4, 2 / pps);  // seconds per dense sample (about one per 2 px)
     /** Every plotted track's samples and keys, before the ranges are known (one axis needs them all). */
-    const pre: Array<{ nodeId: string; prop: string; color: string; kfs: MemberKey[]; samples: [number, number][]; toAbs: (kf: MemberKey) => number }> = [];
+    const pre: Array<{ nodeId: string; prop: string; color: string; kfs: MemberKey[]; samples: [number, number][]; body: [number, number][]; extensions: [number, number][][]; toAbs: (kf: MemberKey) => number }> = [];
     for (const { nodeId, prop, color } of tracks) {
       const storedT = storedTimeOf(nodeId);
       const hit = memberKeysOf(mirror, nodeId, prop, storedT);
@@ -905,13 +920,14 @@ export function GraphEditor({
         return out;
       };
       /** The window's samples of this member, [comp seconds, stored value]. */
-      const dense: Array<[number, number]> = [];
+      const rawDense: Array<[number, number]> = [];
       if (answer && answer.dimensions > ref.member) {
         for (let i = 0; i < answer.times.length; i++) {
           const v = answer.values[i * answer.dimensions + ref.member];
-          if (typeof v === 'number' && Number.isFinite(v)) dense.push([flicksToSeconds(answer.times[i]!), v / ref.factor]);
+          if (typeof v === 'number' && Number.isFinite(v)) rawDense.push([flicksToSeconds(answer.times[i]!), v / ref.factor]);
         }
       }
+      const dense = smoothFrameSteps(rawDense, frameRate > 0 ? 1 / frameRate : 0);
       /** The dense samples strictly inside (a, b), comp seconds — the engine's, or the keys' own while a drag outruns them. */
       const denseIn = (a: number, b: number, ka?: MemberKey, kb?: MemberKey): Array<[number, number]> =>
         ka && kb && driftingSeg(ka, kb) ? localIn(ka, kb, a, b) : dense.filter(([t]) => t > a + 1e-9 && t < b - 1e-9);
@@ -945,11 +961,15 @@ export function GraphEditor({
       const firstAbs = toAbs(kfs[0]!);
       const lastAbs = toAbs(kfs[kfs.length - 1]!);
 
+      const extensions: [number, number][][] = [];
+
       // Before the first keyframe: flat (value) / zero (speed).
       if (firstAbs > 0) {
         const v = mode === 'speed' ? 0 : kfs[0]!.value;
         samples.push([0, v], [firstAbs, v]);
+        extensions.push([[0, v], [firstAbs, v]]);
       }
+      const bodyStart = samples.length;
 
       for (let s = 0; s < kfs.length - 1; s++) {
         const a = kfs[s]!;
@@ -968,16 +988,18 @@ export function GraphEditor({
         samples.push([aAbs, a.value], ...denseIn(aAbs, bAbs, a, b), [bAbs, b.value]);
       }
 
+      const body = samples.slice(bodyStart);
       if (lastAbs < duration) {
         const v = mode === 'speed' ? 0 : kfs[kfs.length - 1]!.value;
         samples.push([lastAbs, v], [duration, v]);
+        extensions.push([[lastAbs, v], [duration, v]]);
       }
       if (kfs.length === 1) {
         const v = mode === 'speed' ? 0 : kfs[0]!.value;
         samples.push([0, v], [duration, v]);
       }
 
-      pre.push({ nodeId, prop, color, kfs, samples, toAbs });
+      pre.push({ nodeId, prop, color, kfs, samples, body, extensions, toAbs });
     }
 
     // ── Range: frozen during a drag, auto-fit otherwise ──
@@ -1035,7 +1057,7 @@ export function GraphEditor({
       shared = padded(lo, hi);
     }
 
-    for (const { nodeId, prop, color, kfs, samples, toAbs } of pre) {
+    for (const { nodeId, prop, color, kfs, samples, body, extensions, toAbs } of pre) {
       // The manual view first (a zoom or pan outlives any drag), then the
       // range frozen by a drag in progress, then the fit.
       let range = manualRangesRef.current.get(viewKeyOf(nodeId, prop)) ?? frozenRangesRef.current?.get(trackKey(nodeId, prop));
@@ -1049,7 +1071,8 @@ export function GraphEditor({
       }
       const { minV, maxV } = range;
 
-      const d = polylinePath(samples, pps, minV, maxV, INNER_H);
+      const d = polylinePath(body, pps, minV, maxV, INNER_H);
+      const dExt = extensions.map((e) => polylinePath(e, pps, minV, maxV, INNER_H)).join(' ');
 
       const keyframes: KfPoint[] = kfs.map((kf, i) => {
         const prev = i > 0 ? kfs[i - 1] : null;
@@ -1098,12 +1121,12 @@ export function GraphEditor({
         };
       });
 
-      paths.push({ color, d, samples, keyframes, prop, nodeId, minV, maxV });
+      paths.push({ color, d, dExt, samples, keyframes, prop, nodeId, minV, maxV });
     }
     sampler.retain(plotted);
     return paths;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `rev` (mirror watch) and `samplesTick` (a curve answer landed) drive the re-sample
-  }, [tracks, duration, pps, INNER_H, rev, samplesTick, mode, scrollLeft, viewportW, refitTick, sharedAxis, viewKeyOf, viewTick]);
+  }, [tracks, duration, pps, INNER_H, rev, samplesTick, mode, scrollLeft, viewportW, refitTick, sharedAxis, viewKeyOf, viewTick, frameRate]);
   // Read by the wheel / pan handlers, which must not re-bind on every sample that lands.
   const sampledPathsRef = useRef(sampledPaths);
   sampledPathsRef.current = sampledPaths;
@@ -2095,7 +2118,10 @@ export function GraphEditor({
                   x: p.hx,
                   y: reading.y,
                   color: reading.color,
-                  label: `${reading.prop} ${fmtAxis(reading.value)}${mode === 'speed' ? '/s' : ''} @ ${(p.hx / pps).toFixed(2)}s`,
+                  label: (() => {
+                    const shown = displayOf(reading.nodeId, reading.prop, mode);
+                    return `${reading.prop} ${fmtAxis(reading.value * shown.factor)}${shown.unit} @ ${(p.hx / pps).toFixed(2)}s`;
+                  })(),
                 }
                 : null,
             );
@@ -2328,6 +2354,10 @@ export function GraphEditor({
   const axisTrack = selectedKfData
     ? sampledPaths.find((p) => p.nodeId === selectedKfData.nodeId && p.prop === selectedKfData.prop)
     : sampledPaths[0];
+  const axisShown = axisTrack ? displayOf(axisTrack.nodeId, axisTrack.prop, mode) : null;
+  const axisValues = axisTrack && axisShown
+    ? valueTicks(axisTrack.minV * axisShown.factor, axisTrack.maxV * axisShown.factor, INNER_H)
+    : [];
 
   // ── Handle geometry for the selected keyframe ─────────────────
   const handleGeom = useMemo(() => {
@@ -2410,6 +2440,7 @@ export function GraphEditor({
   const showDenseLabels = pps >= LABEL_PPS;
   const visT0 = Math.max(0, (scrollLeft - 40) / pps);
   const visT1 = Math.min(duration, (scrollLeft + viewportW + 40) / pps);
+  const gridTimes = timeTicks(visT0, visT1, timeStep(pps));
 
   const toggleSolo = useCallback((key: string, additive: boolean) => {
     setSoloKeys((prev) => {
@@ -2745,34 +2776,16 @@ export function GraphEditor({
           onLostPointerCapture={onSvgPointerUp}
         >
           {/* Grid — horizontal */}
-          {[0, 0.25, 0.5, 0.75, 1].map((frac) => {
-            const y = frac * INNER_H;
-            return <line key={frac} className={styles.gridLine} x1={0} y1={y} x2={graphWidth} y2={y} strokeWidth={1} />;
+          {axisTrack && axisShown && axisValues.map((v) => {
+            // On a half pixel, so a 1px line stays one pixel wide.
+            const y = Math.round(valueToY(v / axisShown.factor, axisTrack.minV, axisTrack.maxV, INNER_H)) + 0.5;
+            return <line key={v} className={styles.gridLine} x1={0} y1={y} x2={graphWidth} y2={y} strokeWidth={1} />;
           })}
 
-          {/* Grid — vertical (seconds) */}
-          {Array.from({ length: Math.ceil(duration) + 1 }, (_, i) => i).map((sec) => (
-            <g key={sec}>
-              <line className={styles.gridLineMinor} x1={sec * pps} y1={0} x2={sec * pps} y2={INNER_H} strokeWidth={1} />
-              <text className={styles.axisLabel} x={sec * pps + 3} y={INNER_H - 3} fontSize={9}>{sec}s</text>
-            </g>
-          ))}
-
-          {/* Value axis labels — pinned to the visible left edge, follow the selected track */}
-          {axisTrack && [0, 0.25, 0.5, 0.75, 1].map((frac) => {
-            const y = frac * INNER_H;
-            const v = yToValue(y, axisTrack.minV, axisTrack.maxV, INNER_H);
-            return (
-              <text
-                key={`ax-${frac}`}
-                className={styles.axisLabel}
-                x={scrollLeft + 4}
-                y={frac === 0 ? y + 10 : y - 3}
-                fontSize={9}
-              >
-                {fmtAxis(v)}{mode === 'speed' ? '/s' : ''}
-              </text>
-            );
+          {/* Grid — vertical, at a step that suits the zoom */}
+          {gridTimes.map((sec) => {
+            const x = Math.round(sec * pps) + 0.5;
+            return <line key={sec} className={styles.gridLine} x1={x} y1={0} x2={x} y2={INNER_H} strokeWidth={1} />;
           })}
 
           {/* Reference ghosts — behind everything live, and never hit-testable:
@@ -2797,13 +2810,13 @@ export function GraphEditor({
           })}
 
           {/* Curves */}
-          {sampledPaths.map(({ color, d, nodeId, prop }) => {
+          {sampledPaths.map(({ color, d, dExt, nodeId, prop }) => {
             const dimmed = !!soloKeys && !soloKeys.has(trackKey(nodeId, prop));
             return (
               <g key={`curve-${nodeId}:${prop}`}>
                 {/* Fat invisible stroke — AE-sized grab for curve-body click. */}
                 <path
-                  d={d}
+                  d={`${d} ${dExt}`}
                   stroke="transparent"
                   strokeWidth={12}
                   fill="none"
@@ -2818,9 +2831,10 @@ export function GraphEditor({
                   stroke={color}
                   strokeWidth={1.5}
                   fill="none"
-                  opacity={dimmed ? 0.12 : 0.9}
+                  opacity={dimmed ? 0.12 : 1}
                   style={{ pointerEvents: 'none' }}
                 />
+                <path className={styles.curveExtension} d={dExt} stroke={color} strokeWidth={1} fill="none" opacity={dimmed ? 0.08 : 0.6} />
               </g>
             );
           })}
@@ -2828,6 +2842,7 @@ export function GraphEditor({
           {/* Keyframe diamonds (all tracks) */}
           {sampledPaths.map(({ color, keyframes, nodeId, prop }) => {
             const dimmed = !!soloKeys && !soloKeys.has(trackKey(nodeId, prop));
+            const shown = displayOf(nodeId, prop, mode);
             return (
             <g key={`kfs-${nodeId}:${prop}`} opacity={dimmed ? 0.2 : 1}>
               {keyframes.map((kf) => {
@@ -2850,24 +2865,21 @@ export function GraphEditor({
                     )}
                     <rect
                       className={isSelected ? styles.keyframeSelected : styles.keyframe}
-                      x={kx - KF_SIZE / 2}
-                      y={ky - KF_SIZE / 2}
+                      x={Math.round(kx - KF_SIZE / 2) + 0.5}
+                      y={Math.round(ky - KF_SIZE / 2) + 0.5}
                       width={KF_SIZE}
                       height={KF_SIZE}
-                      transform={`rotate(45, ${kx}, ${ky})`}
-                      fill={color}
-                      strokeWidth={isSelected ? 2 : 1.5}
+                      strokeWidth={1}
                     />
                     {showLabel && (
                       <text
                         className={styles.kfLabel}
                         x={kx + KF_SIZE}
-                        y={ky - 4}
-                        fontSize={9}
+                        y={ky - 6}
+                        fontSize={10}
                         fill={color}
                       >
-                        {fmtAxis(mode === 'speed' ? kf.plotted : kf.value)}
-                        {mode === 'speed' ? '/s' : ''}
+                        {fmtAxis((mode === 'speed' ? kf.plotted : kf.value) * shown.factor)}{shown.unit}
                       </text>
                     )}
                     <circle
@@ -2877,7 +2889,7 @@ export function GraphEditor({
                       r={HIT_RADIUS}
                       onPointerDown={(e) => onKfPointerDown(e, kf)}
                     >
-                      <title>{`${kf.prop} @ ${kf.tAbs.toFixed(2)}s = ${fmtAxis(kf.value)}`}</title>
+                      <title>{`${kf.prop} @ ${kf.tAbs.toFixed(2)}s = ${fmtAxis(kf.value * (mode === 'speed' ? displayOf(nodeId, prop, 'value').factor : shown.factor))}`}</title>
                     </circle>
                   </g>
                 );
@@ -2999,9 +3011,26 @@ export function GraphEditor({
             </g>
           )}
 
+          {/* Axis labels, over the curves and pinned to the visible edges */}
+          <g pointerEvents="none">
+            {gridTimes.map((sec) => (
+              <text key={sec} className={styles.axisLabel} x={Math.round(sec * pps) + 5} y={INNER_H - 5} fontSize={10}>
+                {sec < 60 ? `${sec}s` : `${Math.floor(sec / 60)}:${String(Math.round(sec % 60)).padStart(2, '0')}`}
+              </text>
+            ))}
+            {axisTrack && axisShown && axisValues.map((v) => {
+              const y = valueToY(v / axisShown.factor, axisTrack.minV, axisTrack.maxV, INNER_H);
+              return (
+                <text key={v} className={styles.axisLabel} x={scrollLeft + 6} y={y < 14 ? y + 13 : y - 4} fontSize={10}>
+                  {fmtAxis(v)}{axisShown.unit}
+                </text>
+              );
+            })}
+          </g>
+
           {/* Playhead (never intercepts the pointer) */}
           <g className={styles.playhead}>
-            <line className={styles.playheadLine} x1={playheadX} y1={0} x2={playheadX} y2={INNER_H} strokeWidth={1.5} />
+            <line className={styles.playheadLine} x1={playheadX} y1={0} x2={playheadX} y2={INNER_H} strokeWidth={1} />
             <polygon className={styles.playheadCap} points={`${playheadX - 5},0 ${playheadX + 5},0 ${playheadX},8`} />
           </g>
         </svg>

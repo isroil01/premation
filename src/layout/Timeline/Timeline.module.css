@@ -1886,6 +1886,40 @@
   background: var(--color-timeline-well);
 }
 
+/* Constrain Proportions: an icon before the values, not a value field. */
+.propValues > .propLink {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  min-width: 0;
+  width: 18px;
+  height: 18px;
+  margin-right: 2px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  opacity: 0.45;
+  cursor: pointer;
+}
+
+.propValues > .propLink[data-on] {
+  color: var(--color-text-primary);
+  opacity: 1;
+}
+
+.propValues > .propLink:hover {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+  opacity: 1;
+}
+
+.propValues > .propLink:focus-visible {
+  outline: 1px solid var(--color-focus-ring);
+  outline-offset: 1px;
+}
+
 .propValues > *:focus-within {
   border-color: var(--color-primary);
   background: var(--color-timeline-well);

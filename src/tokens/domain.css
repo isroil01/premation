@@ -95,6 +95,8 @@
      so the diamond pops against the lane. Overridden for the light theme. */
   --color-timeline-keyframe-stroke:        #161616;
   --color-timeline-keyframe-stroke-active: var(--color-primary);
+  /* The graph editor's keys and handles: one colour over every curve. */
+  --color-timeline-graph-key: #e8bf3a;
   --color-timeline-selected: var(--color-selection);
   --color-timeline-ai-marker: var(--color-ai-primary);
   /* ── Timeline keyframe interpolation (TIMELINE-KF-TOKENS) ─────────
@@ -323,6 +325,7 @@
   --color-timeline-grid:     rgba(0, 0, 0, 0.06);
   --color-timeline-zebra:    rgba(0, 0, 0, 0.02);
   --color-timeline-keyframe: #444e60;
+  --color-timeline-graph-key: #a87c00;
   /* Light lanes: a crisp dark active edge instead of a washed-out white halo. */
   --color-timeline-keyframe-stroke:        rgba(0, 0, 0, 0.25);
   --color-timeline-keyframe-stroke-active: var(--color-slate-950);

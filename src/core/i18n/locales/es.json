@@ -8038,6 +8038,8 @@
   "timeline.property.expression": "Expresión: haz clic para editar",
   "timeline.property.expressionDisabled": "Expresión (desactivada): haz clic para editar",
   "timeline.property.expressionError": "Error de expresión: {error} — haz clic para editar",
+  "timeline.property.scaleLink": "Restringir proporciones",
+  "timeline.property.scaleUnlink": "Desvincular dimensiones de escala",
   "timeline.property.separateDimensions": "Separar dimensiones",
   "timeline.property.separateDimensionsOn": "Separar dimensiones ✓",
   "timeline.rename.capturedOne": "{n} expresión que nombra “{name}” ahora lee esta capa en lugar de la anterior.",

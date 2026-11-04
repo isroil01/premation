@@ -20,6 +20,7 @@ import { mirrorCanBeParentOf, mirrorEligibleParents } from '@core/mirror/parenti
 import { uiKindOf } from '@core/mirror/layerKinds';
 import { frameBlendOn as layerFrameBlendOn } from '@core/mirror/layerSwitchFacts';
 import { documentMirror } from '@stores/documentMirror';
+import { useScaleLinked, useScaleLinkStore } from '@stores/scaleLinkStore';
 import { useMirrorKeys, useMirrorLayer } from '@hooks/useMirror';
 import { useMirrorJson } from '@hooks/useMirrorFields';
 import { boneLabel, characterBones, isCharacter, type CharacterSkeleton } from '@core/mirror/character';
@@ -866,6 +867,7 @@ export function PropertyHeader({
   animated = true,
   valueProps,
   valueUnit,
+  scaleLinkNodeId,
   propertyValue,
   onValueChange,
   onScrubStart,
@@ -891,6 +893,8 @@ export function PropertyHeader({
   /** Engine props this row edits — one value field each (Position → x, y). */
   valueProps?: ReadonlyArray<string>;
   valueUnit?: string;
+  /** Set on a Scale row: the layer whose Constrain Proportions link it shows. */
+  scaleLinkNodeId?: string;
   propertyValue?: (prop: string) => number;
   onValueChange?: (prop: string, value: number) => void;
   onScrubStart?: (prop: string) => void;
@@ -938,6 +942,7 @@ export function PropertyHeader({
   const fields =
     valueProps && valueProps.length > 0 && propertyValue && onValueChange ? (
       <div className={styles.propValues}>
+        {scaleLinkNodeId && <ScaleLinkToggle nodeId={scaleLinkNodeId} />}
         {valueProps.map((p) => (
           <ValueField
             key={p}
@@ -1228,4 +1233,31 @@ function labelMenuItems(
     { id: 'label-sep', separator: true },
     { id: 'select-label-group', label: t('timeline.header.selectLabelGroup', 'Select Label Group'), onSelect: () => { selectLabelGroup(trackId); } },
   ];
+}
+
+/**
+ * AE's Constrain Proportions beside the Scale values. Its own subscriber, so
+ * flipping it redraws this button and not the row list (see rowMemo.ts).
+ */
+function ScaleLinkToggle({ nodeId }: { nodeId: string }): JSX.Element {
+  const linked = useScaleLinked(nodeId);
+  const name = linked
+    ? t('timeline.property.scaleUnlink', 'Unlink Scale dimensions')
+    : t('timeline.property.scaleLink', 'Constrain Proportions');
+  return (
+    <button
+      type="button"
+      className={styles.propLink}
+      data-on={linked || undefined}
+      aria-pressed={linked}
+      aria-label={name}
+      title={name}
+      onClick={(e) => {
+        e.stopPropagation();
+        useScaleLinkStore.getState().toggle(nodeId);
+      }}
+    >
+      <Icon name="link" size="sm" />
+    </button>
+  );
 }

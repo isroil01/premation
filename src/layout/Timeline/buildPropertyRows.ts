@@ -133,6 +133,25 @@ function animatedRow(nodeId: string, prop: string, a: AnimatedTrack, src: Proper
   };
 }
 
+/**
+ * Scale as AE's single row, its values side by side for the link between them.
+ * The diamonds carry member 0: a member diamond IS the property's whole key
+ * (ENGINE_API.md §3.3), and it is the id the graph gives the Scale X curve's
+ * key, so a selection reads the same in both panels.
+ */
+function scaleRow(nodeId: string, spec: StaticPropertyRow, a: AnimatedTrack, src: PropertyRowSources): TimelinePropertyTrack {
+  const members = [...a.tracks];
+  const meta = mirrorPropertyMeta(members[0]!, src.layer, src.tree);
+  return {
+    prop: members[0]!,
+    label: spec.label,
+    keyframes: keyRefs(nodeId, a, 0),
+    valueProps: members,
+    valueUnit: meta.unit || undefined,
+    stopwatchProps: members,
+  };
+}
+
 /** X and Y (and Z) as AE's single Position row: the Position property's keys. */
 function positionRow(nodeId: string, a: AnimatedTrack, src: PropertyRowSources): TimelinePropertyTrack {
   const members = [...a.tracks];
@@ -266,6 +285,11 @@ export function buildPropertyRows(nodeId: string, src: PropertyRowSources = mirr
     if (spec.merged === POSITION_PSEUDO_PROP) {
       for (const p of lead.tracks) animated.delete(p);
       out.push({ ...positionRow(nodeId, lead, src), group: spec.group });
+      continue;
+    }
+    if (spec.members.includes('scaleX')) {
+      for (const p of lead.tracks) animated.delete(p);
+      out.push({ ...scaleRow(nodeId, spec, lead, src), group: spec.group });
       continue;
     }
     // Every member of the keyed property draws the property's keys.

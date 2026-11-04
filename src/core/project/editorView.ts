@@ -27,6 +27,7 @@ import { useProjectStore, type SerializedWorkspaceTabs } from '@stores/projectSt
 import { commitAllTimes, getClock } from '@stores/playbackClockStore';
 import { patchTimelineView, useTimelineViewStore } from '@stores/timelineViewStore';
 import { rememberProjectView, recallProjectView } from '@stores/projectViewStore';
+import { useScaleLinkStore } from '@stores/scaleLinkStore';
 
 /** What is saved per project file on this machine. */
 export interface EditorViewState {
@@ -34,6 +35,8 @@ export interface EditorViewState {
   openTabs?: SerializedWorkspaceTabs;
   /** Per composition: the timeline's zoom/scroll and the playhead frame. */
   timelines?: Record<string, { view?: SerializedTimeline['view']; currentFrame?: number }>;
+  /** Layers with Scale's Constrain Proportions switched off. */
+  scaleUnlinked?: string[];
 }
 
 /** The open tabs, as `captureDocument` used to write them. */
@@ -78,7 +81,7 @@ export function captureEditorView(): EditorViewState {
       ...(tab ? { currentFrame: getClock(tab).frame } : {}),
     };
   }
-  return { version: 1, openTabs, timelines };
+  return { version: 1, openTabs, timelines, scaleUnlinked: [...useScaleLinkStore.getState().unlinked] };
 }
 
 /** Put a remembered view back (after the document it belongs to was restored). */
@@ -113,6 +116,9 @@ export function rememberEditorView(path: string | null | undefined): void {
 
 /** Re-apply what this machine remembers for a project file (Open). */
 export function recallEditorView(path: string | null | undefined): void {
+  const view = path ? (recallProjectView(path) as EditorViewState | null) : null;
+  // Before the early return below: a new project must not inherit the last one's links.
+  useScaleLinkStore.getState().replace(Array.isArray(view?.scaleUnlinked) ? view.scaleUnlinked : []);
   if (!path) return;
-  applyEditorView(recallProjectView(path) as EditorViewState | null);
+  applyEditorView(view);
 }

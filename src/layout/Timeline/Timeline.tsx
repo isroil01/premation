@@ -2712,6 +2712,7 @@ function Timeline({
                   }
                   valueProps={row.prop.valueProps}
                   valueUnit={row.prop.valueUnit}
+                  scaleLinkNodeId={row.prop.valueProps?.includes('scaleX') && row.prop.valueProps.includes('scaleY') ? row.track.id : undefined}
                   propertyValue={
                     onPropertyValue ? (p) => onPropertyValue(row.track.id, p) : undefined
                   }

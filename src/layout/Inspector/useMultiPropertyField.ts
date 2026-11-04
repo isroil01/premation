@@ -58,6 +58,7 @@ import { useInspectorSelection } from './inspectorSelection';
 import { useGesture } from '@hooks/useGesture';
 import { edit } from '@core/engine/uiEdits';
 import { reportUnaddressed } from './useComponentProp';
+import { linkedValue } from '@core/animation/linkedScale';
 import { engineRowMenuItems } from './propertyRowMenu';
 import { t } from '@core/i18n';
 import {
@@ -233,6 +234,7 @@ export function useMultiPropertyField(
   const showLane = usePreferenceStore((s) => s.inspectorShowLane);
   const [exprOpen, setExprOpen] = useState(false);
   const starts = useRef<Map<string, number>>(new Map());
+  const linkedStarts = useRef<Map<string, number> | null>(null);
 
   // Add Expression from the timeline's row menu, this row's own menu, or
   // Alt+Shift+= asks THIS field to open its editor — including when it mounts
@@ -301,14 +303,28 @@ export function useMultiPropertyField(
     else void edit(label, cmds);
   }, [prop, linkedProp, time, autoKeyframe, gesture, engineRoute, access, nodeIds]);
 
+  /** The linked property's writes for `writes`, keeping each layer's ratio from `from` / `other`. */
+  const linkedWritesOf = useCallback((
+    writes: ReadonlyArray<{ nodeId: string; value: number }>,
+    from: ReadonlyMap<string, number>,
+    other: ReadonlyMap<string, number>,
+  ) => writes.map(({ nodeId, value }) => ({
+    nodeId,
+    value: linkedValue(from.get(nodeId) ?? value, value, other.get(nodeId) ?? value),
+  })), []);
+
   const writeAll = useCallback((display: number) => {
     const stored = display / scale;
     const writes = nodeIds.map((nodeId) => ({ nodeId, value: stored }));
-    sendValues(writes, linkedProp ? writes : null, `Set ${meta.label}`);
-  }, [nodeIds, linkedProp, meta.label, scale, sendValues]);
+    const linked = linkedProp
+      ? linkedWritesOf(writes, startsOf(nodeIds, prop, time, access), startsOf(nodeIds, linkedProp, time, access))
+      : null;
+    sendValues(writes, linked, `Set ${meta.label}`);
+  }, [nodeIds, prop, linkedProp, time, access, meta.label, scale, sendValues, linkedWritesOf]);
 
   const onScrubStart = useCallback(() => {
     starts.current = startsOf(nodeIds, prop, time, access);
+    linkedStarts.current = null;
     // One undo entry for the whole scrub (ENGINE_API.md §5.2).
     scrubRoute.current = engineRoute();
     if (scrubRoute.current) gesture.begin(`Set ${meta.label}`);
@@ -323,12 +339,16 @@ export function useMultiPropertyField(
     const from = cumulative ? starts.current : startsOf(nodeIds, prop, time, access);
     const lo = meta.min ?? -Infinity;
     const hi = meta.max ?? Infinity;
-    const offset = (m: ReadonlyMap<string, number>): Array<{ nodeId: string; value: number }> =>
-      [...m].map(([nodeId, start]) => ({ nodeId, value: Math.min(hi, Math.max(lo, start + delta / scale)) }));
-    // Linked: offset the second property from ITS values (the scrub's start map when cumulative, as before).
-    const linkedFrom = linkedProp ? (cumulative ? starts.current : startsOf(nodeIds, linkedProp, time, access)) : null;
-    sendValues(offset(from), linkedFrom ? offset(linkedFrom) : null, `Offset ${meta.label}`);
-  }, [nodeIds, prop, linkedProp, time, access, meta, scale, sendValues]);
+    const writes = [...from].map(([nodeId, start]) => ({ nodeId, value: Math.min(hi, Math.max(lo, start + delta / scale)) }));
+    if (!linkedProp) {
+      sendValues(writes, null, `Offset ${meta.label}`);
+      return;
+    }
+    // A scrub keeps the ratio the second property had when it began, so crossing zero cannot lose it.
+    if (cumulative && !linkedStarts.current) linkedStarts.current = startsOf(nodeIds, linkedProp, time, access);
+    const other = cumulative && linkedStarts.current ? linkedStarts.current : startsOf(nodeIds, linkedProp, time, access);
+    sendValues(writes, linkedWritesOf(writes, from, other), `Offset ${meta.label}`);
+  }, [nodeIds, prop, linkedProp, time, access, meta, scale, sendValues, linkedWritesOf]);
 
   const onCommitText = useCallback((raw: string): boolean => {
     const writes: Array<{ nodeId: string; value: number }> = [];
@@ -341,9 +361,12 @@ export function useMultiPropertyField(
       writes.push({ nodeId: id, value: clamped / scale });
     }
     if (writes.length === 0) return false;
-    sendValues(writes, linkedProp ? writes : null, `Set ${meta.label}`);
+    const linked = linkedProp
+      ? linkedWritesOf(writes, startsOf(nodeIds, prop, time, access), startsOf(nodeIds, linkedProp, time, access))
+      : null;
+    sendValues(writes, linked, `Set ${meta.label}`);
     return true;
-  }, [nodeIds, prop, linkedProp, time, access, meta, scale, sendValues]);
+  }, [nodeIds, prop, linkedProp, time, access, meta, scale, sendValues, linkedWritesOf]);
 
   // ── Plain per-render derivations (no hooks below this line) ────────────
   const exists = layer !== undefined;
