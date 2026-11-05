@@ -29,7 +29,6 @@ import { flicksToSeconds, type ChannelView, type EngineFrameMeta, type EventBatc
 import {
   createAppProcessEngine,
   lastProcessEngineNotice,
-  processEngineBusy,
   processEngine,
   processEngineBridge,
   processEngineEnabled,
@@ -50,10 +49,6 @@ import { publishFrameGeometry, publishFrameView, setEngineDrivenViewport } from 
 import { captureLiveFrame, needsLiveFrame, useCompareStore } from '@stores/compareStore';
 import { publishFrame } from '@core/engine/frameTap';
 import { notePresented } from '@core/engine/presentedFrames';
-import { FrameFreshness } from '@core/perf/frameFreshness';
-import { getClock, usePlaybackClockStore } from '@stores/playbackClockStore';
-import { useProjectStore } from '@stores/projectStore';
-import { documentMirror } from '@stores/documentMirror';
 import { captureViewportPicture, setViewportPictureRefresh, viewportPictureWanted } from '@core/engine/viewportPicture';
 import { useActiveMirrorComp } from '@hooks/useMirror';
 import { settingsFps } from '@core/mirror/compFacts';
@@ -179,10 +174,12 @@ type Pending = {
 const CHANNEL: Record<string, ChannelView> = { rgb: 'rgb', red: 'red', green: 'green', blue: 'blue', alpha: 'alpha' };
 const RESOLUTION: Record<PreviewResolution, EnginePreviewResolution> = { 1: 'full', 2: 'half', 3: 'third', 4: 'quarter' };
 
+/** A drag on a frame costing more than this drops to the Adaptive Resolution floor. */
+const INTERACT_BUDGET_MS = 1000 / 30;
+
 export function EngineSurface({ mode = 'viewport' }: { mode?: EngineSurfaceMode }): JSX.Element | null {
   const client = useSyncExternalStore(subscribeProcessEngine, processEngine, () => null);
   const notice = useSyncExternalStore(subscribeProcessEngine, lastProcessEngineNotice, () => null);
-  const busy = useSyncExternalStore(subscribeProcessEngine, processEngineBusy, () => null);
   useEffect(() => {
     // The client is normally created at boot (engineInstance); creating it here
     // where there is an engine bridge is idempotent and keeps the surface self-sufficient.
@@ -198,34 +195,12 @@ export function EngineSurface({ mode = 'viewport' }: { mode?: EngineSurfaceMode 
     };
   }, []);
   if (!client) return null;
-  // The busy line wins while it lasts: it is what is happening now; a restart notice is history.
-  const text = busy ? busyText(busy) : notice ? noticeText(notice) : null;
+  // Only a failure the user has to act on is drawn over the picture: a long
+  // frame or a recovered engine restart is the console's business, not theirs.
+  const text = notice?.kind === 'unavailable'
+    ? t('ui.engineSurface.unavailable', 'Engine unavailable ({reason})', { reason: notice.reason })
+    : null;
   return <EngineSurfaceInner key={mode} client={client} mode={mode} notice={text} />;
-}
-
-function noticeText(n: NonNullable<ReturnType<typeof lastProcessEngineNotice>>): string {
-  if (n.kind === 'unavailable') return t('ui.engineSurface.unavailable', 'Engine unavailable ({reason})', { reason: n.reason });
-  return t('ui.engineSurface.restarted', 'Engine restarted ({cause}) · {n} requests replayed in {ms} ms', { cause: n.cause, n: n.replayed, ms: n.ms });
-}
-
-/**
- * The engine's core thread deep in one item, in the user's words: the engine
- * names it as its watchdog sees it (`command createLayer`, `batch Build the
- * scene`, `tick (playing)`, `query 1000`, `message`).
- */
-function busyText(b: NonNullable<ReturnType<typeof processEngineBusy>>): string {
-  const w = b.what;
-  const time = b.ms >= 1000 ? `${Math.round(b.ms / 1000)} s` : `${b.ms} ms`;
-  if (w.startsWith('tick')) return t('ui.engineSurface.busy.frame', 'Engine busy · building the frame · {time}', { time });
-  if (w.startsWith('batch ')) {
-    const name = w.slice(6).trim() || t('ui.engineSurface.busy.batchDefault', 'a batch of edits');
-    return t('ui.engineSurface.busy.batch', 'Engine busy · applying “{name}” · {time}', { name, time });
-  }
-  if (w.startsWith('command ')) return t('ui.engineSurface.busy.command', 'Engine busy · running {command} · {time}', { command: w.slice(8).trim(), time });
-  if (w.startsWith('query')) return t('ui.engineSurface.busy.query', 'Engine busy · answering a query · {time}', { time });
-  // An item the engine named some other way: its own words, as the watchdog reports them.
-  if (w) return t('ui.engineSurface.busy.other', 'Engine busy · {what} · {time}', { what: w, time });
-  return t('ui.engineSurface.busy.working', 'Engine busy · working · {time}', { time });
 }
 
 function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineClient; mode: EngineSurfaceMode; notice: string | null }): JSX.Element {
@@ -242,8 +217,6 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
   }, [client]);
   const frameBoxRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  // The stale / dropped-frames cue: written by the effect below, never a React render per frame.
-  const cueRef = useRef<HTMLDivElement>(null);
   const displayMode = useViewportDisplayStore((s) => s.displayMode);
   // Viewport mode: a status line until the first frame lands (never a blank
   // stage with no explanation). One React render when it changes.
@@ -294,50 +267,6 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
     let sawFirst = false;
     const slowTimer = setTimeout(() => { if (!sawFirst && !disposed) setWaitingLong(true); }, 3000);
 
-    // ── the freshness cue (core/perf/frameFreshness.ts): paused, the picture
-    // trails the playhead or the last edit ("Rendering…"); playing, the engine
-    // skipped frames ("Dropped N"). The DOM is written only when the cue
-    // changes; one timer, rescheduled only when an earlier deadline is needed.
-    const cue = cueRef.current;
-    const freshness = new FrameFreshness();
-    let cueKey = '';
-    let cueTimer: ReturnType<typeof setTimeout> | undefined;
-    let cueDue = 0;
-    const showCue = (): void => {
-      if (disposed) return;
-      const now = performance.now();
-      const n = freshness.dropped(now);
-      const state = n > 0 ? 'dropped' : freshness.stale(now) ? 'stale' : '';
-      const key = n > 0 ? n : state === 'stale' ? -1 : 0;
-      if (cue && String(key) !== cueKey) {
-        cueKey = String(key);
-        cue.dataset.state = state;
-        cue.textContent = n > 0
-          ? t('ui.engineSurface.cue.dropped', 'Dropped {n}', { n })
-          : state === 'stale' ? t('ui.engineSurface.cue.stale', 'Rendering…') : '';
-      }
-      const next = freshness.nextChangeIn(now);
-      if (next !== null && (cueTimer === undefined || now + next < cueDue)) {
-        clearTimeout(cueTimer);
-        cueDue = now + next;
-        cueTimer = setTimeout(() => {
-          cueTimer = undefined;
-          showCue();
-        }, next + 1);
-      }
-    };
-    /** What the viewer should show: the active tab's playhead frame at the mirror's revision. */
-    const wantNow = (): void => {
-      const tab = useProjectStore.getState().activeTabId;
-      freshness.want(tab ? getClock(tab).frame : -1, documentMirror().revision, performance.now());
-      showCue();
-    };
-    const unClockCue = usePlaybackClockStore.subscribe(wantNow);
-    const unMirrorCue = documentMirror().subscribe(['doc'], wantNow);
-    const unTabCue = useProjectStore.subscribe((s, prev) => {
-      if (s.activeTabId !== prev.activeTabId) wantNow();
-    });
-    wantNow();
     // The WebGPU blit (frameBlit.ts): up asynchronously; the newest frame waits for it.
     const blitter = createFrameBlitter(
       canvas,
@@ -478,8 +407,6 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
           console.error('[EngineSurface] overlay repaint failed', e);
         }
         stats.lastFrame = p.meta.frame;
-        freshness.shown(p.meta.frame, p.meta.revision, p.meta.dropped, now);
-        showCue();
         stats.lastLatencyMs = Date.now() - p.meta.renderDoneUs / 1000;
         stats.lastRenderMs = (p.meta.renderDoneUs - p.meta.renderStartUs) / 1000;
         stats.lastDrawnAt = now;
@@ -496,6 +423,16 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
         // The viewport HUD's frame time is the engine's cost of this frame:
         // its build (document → FrameScene) + its render (to GPU completion).
         viewportHudStats.report(stats.lastRenderMs + stats.engineBuildMs, false, now);
+        // Adaptive Resolution: what this frame would cost at the chosen resolution decides,
+        // so a comp too heavy for it stays degraded for the drag instead of pumping back up
+        // each time the cheaper, degraded frames come in under budget.
+        {
+          const quality = useRenderQualityStore.getState();
+          if (quality.interacting && !playing && Number.isFinite(stats.lastRenderMs)) {
+            const scale = quality.effectiveResolution() / quality.resolution;
+            quality.reportInteractFrame(stats.lastRenderMs * scale * scale, INTERACT_BUDGET_MS);
+          }
+        }
         if (!sawFirst) {
           sawFirst = true;
           setFirstFrame(true);
@@ -778,11 +715,6 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
     // restores it too; resending is cheap and makes the surface self-healing).
     const unsub = client.subscribe((batch: EventBatch) => {
       for (const e of batch.events) {
-        if (e.type === 'documentReset') {
-          // Revisions start over (a new / opened project, a restart): the cue compares afresh.
-          freshness.reset(performance.now());
-          wantNow();
-        }
         if (e.type === 'documentReset' && e.reason === 'engineRestarted') {
           stats.lastViewport = null;
           lastQuality = '';
@@ -802,8 +734,6 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
             lastPlayedFrame = -1;
           }
           playing = now;
-          freshness.setPlaying(now, performance.now());
-          showCue();
         }
       }
     });
@@ -816,10 +746,6 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
       disposed = true;
       setViewportPictureRefresh(null);
       clearTimeout(slowTimer);
-      clearTimeout(cueTimer);
-      unClockCue();
-      unMirrorCue();
-      unTabCue();
       unsub();
       unRender();
       unGuides();
@@ -849,7 +775,6 @@ function EngineSurfaceInner({ client, mode, notice }: { client: ProcessEngineCli
     <div ref={frameBoxRef} className={styles.viewport} data-engine-surface="viewport" aria-hidden="true">
       {/* Display mode Wireframe / Bounding Box: the outlines alone (the page draws them), not over the shaded picture. */}
       <canvas ref={canvasRef} className={styles.viewportCanvas} style={displayMode !== 'shaded' ? { visibility: 'hidden' } : undefined} />
-      <div ref={cueRef} className={styles.frameCue} data-engine-surface="frame-cue" />
       {!firstFrame && (
         <div className={styles.waiting} role="status">
           {notice

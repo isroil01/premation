@@ -1,0 +1,31 @@
+/* The timeline's sideways scrollbars, in the status bar. */
+.track {
+  position: relative;
+  flex: 0 1 auto;
+  width: clamp(80px, 12cqw, 220px);
+  min-width: 60px;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--color-scrollbar-track);
+  overflow: hidden;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.track[hidden] {
+  display: none;
+}
+
+.thumb {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  border-radius: 4px;
+  background: var(--color-scrollbar-thumb);
+  will-change: transform;
+}
+
+.track:hover .thumb {
+  background: var(--color-scrollbar-thumb-hover);
+}

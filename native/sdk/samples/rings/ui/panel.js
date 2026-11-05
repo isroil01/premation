@@ -2,7 +2,7 @@
 // no network. It talks to the editor only through postMessage (docs/PLUGIN_SDK.md
 // "Plugin panels"): it reads `state`, and sends setParam / invokeButton /
 // requestPreview. Every edit goes through the engine, so undo and redo work.
-/* global window, document, atob */
+/* global window, document */
 'use strict';
 
 const SET_PALETTE = 'p9'; // the hidden "Set Palette" button (rings.cpp kSetPalette)

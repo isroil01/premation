@@ -1725,6 +1725,7 @@ std::map<std::string, std::string, std::less<>> read_revoked_file(const fs::path
 // ── discovery + loading ──────────────────────────────────────────────────
 
 std::vector<PluginRecord> PluginHost::scan() {
+  generation_.fetch_add(1, std::memory_order_relaxed);
   Impl& m = *impl_;
   std::vector<fs::path> bundles;
   for (const fs::path& root : m.options.searchPaths) {
@@ -2295,6 +2296,7 @@ bool PluginHost::call_expression(std::string_view pluginId, std::string_view nam
 }
 
 bool PluginHost::reload(std::string_view pluginId, std::string& why) {
+  generation_.fetch_add(1, std::memory_order_relaxed);
   Impl& m = *impl_;
   Plugin* p = nullptr;
   {
@@ -2564,6 +2566,7 @@ std::vector<PluginRecord> PluginHost::plugins() const {
 }
 
 bool PluginHost::set_enabled(std::string_view pluginId, bool enabled) {
+  generation_.fetch_add(1, std::memory_order_relaxed);
   Impl& m = *impl_;
   // SDK 1.4 (E1): whatever path this takes, expressions see the new set of functions after it.
   struct Republish {

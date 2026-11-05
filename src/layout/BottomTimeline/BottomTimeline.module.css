@@ -1341,15 +1341,31 @@ button.play:hover {
 }
 
 .footerToggle {
-  margin-left: auto;
   padding: 0 var(--space-2);
-  height: 20px;
+  height: 18px;
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-primary);
   font: inherit;
   cursor: pointer;
+}
+
+.footerLeft .footerToggle {
+  margin-left: auto;
+}
+
+/* In the status bar these go first as the window narrows (its query container). */
+@container statusbar (max-width: 1500px) {
+  .footerCache { display: none; }
+}
+
+@container statusbar (max-width: 1280px) {
+  .footerRenderTime { display: none; }
+}
+
+@container statusbar (max-width: 900px) {
+  .footerToggle { display: none; }
 }
 
 .footerToggle:hover {
@@ -1365,6 +1381,7 @@ button.play:hover {
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  gap: var(--space-6);
   flex: 1;
   min-width: 0;
   padding: 0 var(--space-4);

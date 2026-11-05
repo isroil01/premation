@@ -88,6 +88,13 @@
   min-height: 0;
 }
 
+/* Nothing after the last group: the status bar's top line already closes the
+   column, and this 2px on top of it read as one fat black border. */
+.seamLast {
+  height: 0;
+  min-height: 0;
+}
+
 /* Between two open groups: a divider. The hit area reaches past the 2px gap. */
 .seamResize {
   position: relative;
@@ -145,6 +152,11 @@
   background: var(--color-surface-0);
   box-shadow: inset 0 -1px 0 var(--color-border-structural);
   user-select: none;
+}
+
+/* A shut group at the column's foot: same reason as `.seamLast`. */
+.column > .groupCollapsed:nth-last-child(2) > .strip {
+  box-shadow: none;
 }
 
 .root {

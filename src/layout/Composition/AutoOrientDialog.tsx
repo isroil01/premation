@@ -36,8 +36,8 @@ function modes(): ReadonlyArray<{ id: AutoOrientMode; title: string; hint: strin
     {
       id: 'path',
       title: t('composition.autoOrient.path', 'Orient Along Path'),
-      hint: t('composition.autoOrient.pathHint', 'The layer rotates to face its direction of travel. Needs position keyframes. A camera becomes one-node and looks along its path.'),
-      unavailable: t('composition.autoOrient.pathUnavailable', 'Applies to 2D layers and cameras only.'),
+      hint: t('composition.autoOrient.pathHint', 'The layer rotates to face its direction of travel. Needs position keyframes.'),
+      unavailable: t('composition.autoOrient.pathUnavailable', 'Applies to 2D layers only.'),
     },
     {
       id: 'camera',
@@ -98,7 +98,7 @@ export function openAutoOrientDialog(ids: ReadonlyArray<string> = useSelectionSt
   if (targets.length === 0) {
     useUIStore.getState().notify({
       level: 'info',
-      message: t('composition.autoOrient.noTargets', 'Auto-Orient applies to visible layers and cameras — not lights, nulls, groups or audio.'),
+      message: t('composition.autoOrient.noTargets', 'Auto-Orient applies to visible layers — not lights, nulls, groups or audio.'),
       durationMs: 4000,
     });
     return;

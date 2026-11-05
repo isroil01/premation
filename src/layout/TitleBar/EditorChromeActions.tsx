@@ -6,6 +6,7 @@ import { openCustomizeDialog } from '@layout/Settings/openCustomizeDialog';
 import { buildWorkspaceItems } from '@layout/Workspace/workspaceMenuItems';
 import { useLayoutStore } from '@stores/layoutStore';
 import { usePresentationStore } from '@stores/presentationStore';
+import { openPalette } from '@stores/commandPaletteStore';
 import { useActiveMirrorComp } from '@hooks/useMirror';
 import { settingsDurationSeconds, settingsFps } from '@core/mirror/compFacts';
 import { openExportDialog } from '@layout/Export/ExportDialog';
@@ -35,6 +36,16 @@ export function EditorChromeActions({ showCustomize = true }: { showCustomize?: 
   return (
     <div className={styles.editorControls}>
       <ClaudeIndicator />
+      <IconButton
+        aria-label={t('statusBar.search.label', 'Search')}
+        size="sm"
+        className={styles.layoutToggle}
+        title={t('statusBar.search.title', 'Search commands, layers, effects, presets… (? for docs)')}
+        data-tour="command-palette"
+        onClick={() => openPalette()}
+      >
+        <Icon name="search" size="md" />
+      </IconButton>
       <IconButton
         aria-label={t('titleBar.actions.toggleLeft', 'Toggle Left Sidebar')}
         size="sm"

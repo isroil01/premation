@@ -16,6 +16,7 @@
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import { BottomTimeline, TIMELINE_TOOLBAR_DEMOTE_ORDER, isToolbarShed } from './BottomTimeline';
 import { navigatorColumnFor, toolsColumnWidth } from './toolbarGeometry';
+import { useTimelineStatusSlotStore } from '@stores/timelineStatusSlotStore';
 import type { TimelineModel } from '@layout/Timeline/TimelineModel';
 import { headerWidthFor, TIMELINE_LEFT_OFFSET } from '@layout/Timeline/timelineShared';
 import { setTimelineViewportWidth } from '@layout/Timeline/timelineViewport';
@@ -260,5 +261,34 @@ describe('the shed ladder', () => {
       fireEvent.click(screen.getByRole('menuitemcheckbox', { name: /^Proportional Scrubbing/ }));
       expect(usePropertySelectionStore.getState().proportional).toBe(!propBefore);
     });
+  });
+});
+
+describe('the footer controls', () => {
+  afterEach(() => useTimelineStatusSlotStore.setState({ left: null, right: null }));
+
+  it('stay at the foot of the panel where no status bar is mounted', () => {
+    render(<BottomTimeline model={MODEL} />);
+    const footer = screen.getByLabelText('Timeline footer');
+    expect(within(footer).getByRole('button', { name: 'Toggle Switches / Modes' })).toBeInTheDocument();
+    expect(within(footer).getByRole('slider', { name: 'Timeline zoom' })).toBeInTheDocument();
+  });
+
+  it('draw in the status bar slots when it publishes them, and the navigator stays in the toolbar', () => {
+    const left = document.createElement('div');
+    const right = document.createElement('div');
+    document.body.append(left, right);
+    useTimelineStatusSlotStore.setState({ left, right });
+    try {
+      const t = toolbar();
+      expect(screen.queryByLabelText('Timeline footer')).toBeNull();
+      expect(within(left).getByRole('button', { name: 'Toggle Switches / Modes' })).toBeInTheDocument();
+      expect(within(right).getByRole('slider', { name: 'Timeline zoom' })).toBeInTheDocument();
+      expect(within(navCol(t)).getByRole('scrollbar', { name: 'Time navigator' })).toBeInTheDocument();
+      expect(within(right).queryByRole('scrollbar', { name: 'Time navigator' })).toBeNull();
+    } finally {
+      left.remove();
+      right.remove();
+    }
   });
 });

@@ -10,6 +10,7 @@
 import { useState } from 'react';
 import { Icon } from '@components/Icon';
 import { Button } from '@components/Button';
+import { useDialogPrimaryAction } from '@components/Modal';
 import { Input } from '@components/Input';
 import { Switch } from '@components/Switch';
 import { Checkbox } from '@components/Checkbox';
@@ -81,6 +82,7 @@ export function CameraDialog({ close }: { close: () => void }): JSX.Element {
     // lands as ONE pasteLayers entry (engine-client/insertEdits.ts), the 3D switches with it.
     await insertCameraEdit({ name, focalLength: focalPx, twoNode: aim === 'target' }, 'New Camera', { comp: compId, make3D: flat });
   };
+  useDialogPrimaryAction(() => { void create(); });
 
   return (
     <div className={styles.root}>
@@ -200,6 +202,7 @@ function LightDialog({ close }: { close: () => void }): JSX.Element {
     }, 'New Light', { comp: targetComp() });
     close();
   };
+  useDialogPrimaryAction(create);
 
   return (
     <div className={styles.root}>
@@ -355,6 +358,7 @@ function PrimitiveDialog({ close }: { close: () => void }): JSX.Element {
     void insert3DPrimitiveEdit(type, mesh ? spec : undefined, 'New 3D Primitive', { comp: activeCompIdNow() ?? 'comp_root' });
     close();
   };
+  useDialogPrimaryAction(create);
 
   return (
     <div className={styles.root}>

@@ -2,9 +2,9 @@
  * JobTray — the running background jobs (render, cache pass, transcription,
  * model download), one compact chip each, in the status bar's right cluster.
  *
- * Reads `uiStore.jobs` directly: each job also drives one progress toast, but
- * a toast is dismissable and a render is not over just because its card is
- * gone. The tray is the compact view (Premiere's Progress Dashboard): only
+ * Reads `uiStore.jobs` directly: in the editor this is where a job's progress
+ * is shown (NotificationHost draws no progress card while this bar is up). The
+ * tray is the compact view (Premiere's Progress Dashboard): only
  * RUNNING jobs, at most `MAX_CHIPS` of them plus a `+N`. A click anywhere on
  * it opens (or brings forward) the Tasks panel, which has every job, the
  * history, the time left and the stop buttons.

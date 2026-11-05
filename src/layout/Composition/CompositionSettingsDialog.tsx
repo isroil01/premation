@@ -27,8 +27,7 @@ import { DialogFooter, useDialogPrimaryAction } from '@components/Modal';
 import { sanitize as sanitizeComp } from '@stores/compositionStore';
 import { documentMirror } from '@stores/documentMirror';
 import { activeCompIdNow, useMirrorProjectSettings } from '@hooks/useMirror';
-import { edit as engineEdit } from '@core/engine/uiEdits';
-import type { ColorWorkingSpace } from '@motion/engine-api';
+import type { ColorWorkingSpace, ProjectSettingsPatch } from '@motion/engine-api';
 import { compRecordFromSettings, settingsFps } from '@core/mirror/compFacts';
 import {
   resolveSsao,
@@ -45,7 +44,7 @@ import {
 } from '@stores/projectStore';
 import { saveCompositionSettingsEdit } from './compositionEdits';
 import { useGuidesStore, type GridStyle } from '@stores/guidesStore';
-import { useColorManagementStore, type IntermediateBitDepth } from '@stores/colorManagementStore';
+import { useColorManagementStore, type ColorManagementSettings, type IntermediateBitDepth } from '@stores/colorManagementStore';
 import { useViewerLutStore } from '@stores/viewerLutStore';
 import {
   SIZE_PRESETS,
@@ -99,6 +98,19 @@ function recordOf(c: CompRecord): CompRecord {
   return { ...c };
 }
 
+/**
+ * The CSS for a gradient background, drawn as the engine draws it: a paint's
+ * angle has 0 = → and 90 = ↓ where CSS has 0 = ↑ and 90 = →, and its radius is a
+ * fraction of the box's half-diagonal. Null for a solid.
+ */
+export function gradientCss(p: FillPaint, boxW: number, boxH: number): string | null {
+  if (p.type === 'solid') return null;
+  const stops = sortedStops(p.stops).map((st) => `${st.color} ${Math.round(st.offset * 100)}%`).join(', ');
+  if (p.type === 'linear') return `linear-gradient(${p.angle + 90}deg, ${stops})`;
+  const radius = Math.max(1, p.radius * Math.hypot(boxW, boxH) / 2);
+  return `radial-gradient(circle ${radius}px at ${p.cx * 100}% ${p.cy * 100}%, ${stops})`;
+}
+
 /** A gradient's representative flat colour — what `background` mirrors (compositionStore's rule). */
 function paintColor(p: FillPaint, fallback: string): string {
   return p.type === 'solid' ? p.color : sortedStops(p.stops)[0]?.color ?? fallback;
@@ -139,6 +151,48 @@ function initialRecord(): CompRecord {
 /** FPS chips match a typed rate within display precision (23.976 is not exactly representable). */
 const sameRate = (a: number, b: number): boolean => Math.abs(a - b) < 1e-3;
 
+/** The Grid & Guides tab's values, drafted like the rest of the dialog. */
+interface GridDraft {
+  grid: boolean;
+  snapToGrid: boolean;
+  gridSpacing: number;
+  gridSubdivisions: number;
+  gridStyle: GridStyle;
+  gridColor: string;
+  proportionalGrid: boolean;
+  proportionalColumns: number;
+  proportionalRows: number;
+}
+
+function gridDraftNow(): GridDraft {
+  const g = useGuidesStore.getState();
+  return {
+    grid: g.grid,
+    snapToGrid: g.snapToGrid,
+    gridSpacing: g.gridSpacing,
+    gridSubdivisions: g.gridSubdivisions,
+    gridStyle: g.gridStyle,
+    gridColor: g.gridColor,
+    proportionalGrid: g.proportionalGrid,
+    proportionalColumns: g.proportionalColumns,
+    proportionalRows: g.proportionalRows,
+  };
+}
+
+/** Save Changes: the drafted grid into the view's store, through its own clamping setters. */
+function applyGridDraft(d: GridDraft): void {
+  const g = useGuidesStore.getState();
+  if (d.grid !== g.grid) g.toggleGrid();
+  if (d.snapToGrid !== g.snapToGrid) g.toggleSnapToGrid();
+  if (d.proportionalGrid !== g.proportionalGrid) g.toggleProportionalGrid();
+  if (d.gridSpacing !== g.gridSpacing) g.setGridSpacing(d.gridSpacing);
+  if (d.gridSubdivisions !== g.gridSubdivisions) g.setGridSubdivisions(d.gridSubdivisions);
+  if (d.gridStyle !== g.gridStyle) g.setGridStyle(d.gridStyle);
+  if (d.gridColor !== g.gridColor) g.setGridColor(d.gridColor);
+  if (d.proportionalColumns !== g.proportionalColumns) g.setProportionalColumns(d.proportionalColumns);
+  if (d.proportionalRows !== g.proportionalRows) g.setProportionalRows(d.proportionalRows);
+}
+
 export function CompositionSettings({ close }: { close?: () => void }): JSX.Element {
   // B4: the draft starts from the active composition's settings in the document mirror.
   const initialComp = useRef(initialRecord()).current;
@@ -148,41 +202,37 @@ export function CompositionSettings({ close }: { close?: () => void }): JSX.Elem
   const [aspectLocked, setAspectLocked] = useState(false);
   const lockRatio = useRef((s.width || 1920) / Math.max(1, s.height || 1080));
 
-  // Grid overlay is view/session state (guidesStore)
-  const gridOn = useGuidesStore((g) => g.grid);
-  const snapToGrid = useGuidesStore((g) => g.snapToGrid);
-  const gridSpacing = useGuidesStore((g) => g.gridSpacing);
-  const gridSubdivisions = useGuidesStore((g) => g.gridSubdivisions);
-  const gridStyle = useGuidesStore((g) => g.gridStyle);
-  const gridColor = useGuidesStore((g) => g.gridColor);
-  const proportionalGrid = useGuidesStore((g) => g.proportionalGrid);
-  const proportionalColumns = useGuidesStore((g) => g.proportionalColumns);
-  const proportionalRows = useGuidesStore((g) => g.proportionalRows);
-  const toggleGrid = useGuidesStore((g) => g.toggleGrid);
-  const toggleSnapToGrid = useGuidesStore((g) => g.toggleSnapToGrid);
-  const setGridSpacing = useGuidesStore((g) => g.setGridSpacing);
-  const setGridSubdivisions = useGuidesStore((g) => g.setGridSubdivisions);
-  const setGridStyle = useGuidesStore((g) => g.setGridStyle);
-  const setGridColor = useGuidesStore((g) => g.setGridColor);
-  const toggleProportionalGrid = useGuidesStore((g) => g.toggleProportionalGrid);
-  const setProportionalColumns = useGuidesStore((g) => g.setProportionalColumns);
-  const setProportionalRows = useGuidesStore((g) => g.setProportionalRows);
+  // Grid & Guides and Color are drafts too: Save Changes applies them, Cancel
+  // (and Escape, and the close button) leaves the view and the project alone.
+  const [gridDraft, setGridDraft] = useState<GridDraft>(gridDraftNow);
+  const patchGrid = (patch: Partial<GridDraft>): void => setGridDraft((d) => ({ ...d, ...patch }));
+  const {
+    grid: gridOn, snapToGrid, gridSpacing, gridSubdivisions, gridStyle, gridColor,
+    proportionalGrid, proportionalColumns, proportionalRows,
+  } = gridDraft;
+  const toggleGrid = (): void => patchGrid({ grid: !gridOn });
+  const toggleSnapToGrid = (): void => patchGrid({ snapToGrid: !snapToGrid });
+  const setGridSpacing = (v: number): void => patchGrid({ gridSpacing: v });
+  const setGridSubdivisions = (v: number): void => patchGrid({ gridSubdivisions: v });
+  const setGridStyle = (v: GridStyle): void => patchGrid({ gridStyle: v });
+  const setGridColor = (v: string): void => patchGrid({ gridColor: v });
+  const toggleProportionalGrid = (): void => patchGrid({ proportionalGrid: !proportionalGrid });
+  const setProportionalColumns = (v: number): void => patchGrid({ proportionalColumns: v });
+  const setProportionalRows = (v: number): void => patchGrid({ proportionalRows: v });
 
-  const cm = useColorManagementStore();
-  const setWorkingSpace = useColorManagementStore((c) => c.setWorkingSpace);
-  // File > Project Settings > Color > Working Space (AE): the project's colour-managed working space (OCIO).
+  const [cm, setCm] = useState<ColorManagementSettings>(() => useColorManagementStore.getState().settings());
+  const setWorkingSpace = (workingSpace: ColorManagementSettings['workingSpace']): void => setCm((c) => ({ ...c, workingSpace }));
+  const setDisplayTransform = (displayTransform: ColorManagementSettings['displayTransform']): void => setCm((c) => ({ ...c, displayTransform }));
+  const setBitDepth = (bitDepth: IntermediateBitDepth): void => setCm((c) => ({ ...c, bitDepth }));
+  // File > Project Settings > Color: only the fields changed here go into the save.
   const projectSettings = useMirrorProjectSettings();
-  const projectWorkingSpace = projectSettings?.workingSpace ?? 'none';
-  const setProjectWorkingSpace = (ws: ColorWorkingSpace): void => {
-    void engineEdit('Project Settings', { type: 'setProjectSettings', patch: { workingSpace: ws } });
-  };
-  // File > Project Settings > Color > Blend Colors Using 1.0 Gamma (AE): off = layers mix in display values.
-  const linearBlending = projectSettings?.linearBlending ?? false;
-  const setLinearBlending = (on: boolean): void => {
-    void engineEdit('Project Settings', { type: 'setProjectSettings', patch: { linearBlending: on } });
-  };
-  const setDisplayTransform = useColorManagementStore((c) => c.setDisplayTransform);
-  const setBitDepth = useColorManagementStore((c) => c.setBitDepth);
+  const [projectPatch, setProjectPatch] = useState<ProjectSettingsPatch>({});
+  // Working Space (AE): the project's colour-managed working space (OCIO).
+  const projectWorkingSpace = projectPatch.workingSpace ?? projectSettings?.workingSpace ?? 'none';
+  const setProjectWorkingSpace = (workingSpace: ColorWorkingSpace): void => setProjectPatch((p) => ({ ...p, workingSpace }));
+  // Blend Colors Using 1.0 Gamma (AE): off = layers mix in display values.
+  const linearBlending = projectPatch.linearBlending ?? projectSettings?.linearBlending ?? false;
+  const setLinearBlending = (on: boolean): void => setProjectPatch((p) => ({ ...p, linearBlending: on }));
   const viewerLutName = useViewerLutStore((v) => v.name);
   const loadViewerLut = useViewerLutStore((v) => v.loadFromText);
   const clearViewerLut = useViewerLutStore((v) => v.clear);
@@ -307,27 +357,10 @@ export function CompositionSettings({ close }: { close?: () => void }): JSX.Elem
       boxW = boxH * canvasAspect;
     }
 
-    let backgroundStyle: React.CSSProperties = {
-      backgroundColor: s.transparent ? 'transparent' : s.background,
-    };
-
-    if (!s.transparent && s.backgroundPaint) {
-      if (s.backgroundPaint.type === 'linear') {
-        const stopsStr = sortedStops(s.backgroundPaint.stops)
-          .map((st) => `${st.color} ${Math.round(st.offset * 100)}%`)
-          .join(', ');
-        backgroundStyle = {
-          background: `linear-gradient(${s.backgroundPaint.angle}deg, ${stopsStr})`,
-        };
-      } else if (s.backgroundPaint.type === 'radial') {
-        const stopsStr = sortedStops(s.backgroundPaint.stops)
-          .map((st) => `${st.color} ${Math.round(st.offset * 100)}%`)
-          .join(', ');
-        backgroundStyle = {
-          background: `radial-gradient(circle at center, ${stopsStr})`,
-        };
-      }
-    }
+    const gradient = !s.transparent && s.backgroundPaint ? gradientCss(s.backgroundPaint, boxW, boxH) : null;
+    const backgroundStyle: React.CSSProperties = gradient
+      ? { background: gradient }
+      : { backgroundColor: s.transparent ? 'transparent' : s.background };
 
     return {
       width: `${Math.max(28, Math.round(boxW))}px`,
@@ -349,18 +382,23 @@ export function CompositionSettings({ close }: { close?: () => void }): JSX.Elem
   }, [bgPaint]);
 
   // Cancel & Save handlers. Nothing was written while the dialog was open, so
-  // Cancel has nothing to revert.
+  // Cancel has nothing to revert — except what acts at once by its nature: the
+  // Time tab's protected regions (their own undoable edits) and a session-only
+  // viewer LUT.
   const handleCancel = (): void => {
     close?.();
   };
 
   const handleSave = (): void => {
     close?.();
+    applyGridDraft(gridDraft);
+    const colorStore = useColorManagementStore.getState();
+    if (cm.workingSpace !== colorStore.workingSpace || cm.displayTransform !== colorStore.displayTransform || cm.bitDepth !== colorStore.bitDepth) colorStore.restore(cm);
     const compId = initialComp.id;
     // B4: the composition (or a group opened in its own tab) must still be in the document.
     const m = documentMirror();
     if (!m.comp(compId) && !m.layer(compId)) return;
-    void saveCompositionSettingsEdit(compId, initialComp, s);
+    void saveCompositionSettingsEdit(compId, initialComp, s, projectPatch);
   };
 
   useDialogPrimaryAction(handleSave);

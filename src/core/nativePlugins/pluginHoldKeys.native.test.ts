@@ -99,9 +99,9 @@ maybe('plugin popups and checkboxes take hold keys', () => {
   it('keeps a built-in effect popup static', async () => {
     const { layer, fx } = await layerWith('fast-box-blur');
     const def = unwrap(await client.query({ type: 'listEffects', category: '' })).effects.find((e) => e.matchName === 'fast-box-blur');
-    const popup = def?.params.find((p) => p.type === 'enum');
+    const popup = def?.params.find((p) => p.choices.length > 0);
     if (!popup) return;  // the built-in has no popup on this build
-    const r = await key(layer, `${fx}/${popup.matchName}`, 0, { kind: 'choice', value: popup.options[0]!.label });
+    const r = await key(layer, `${fx}/${popup.matchName}`, 0, { kind: 'choice', value: popup.choices[0]! });
     expect(r.ok).toBe(false);
   });
 });

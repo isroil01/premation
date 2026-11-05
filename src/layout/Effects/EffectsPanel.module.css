@@ -322,6 +322,14 @@
 .eyeBtn[aria-pressed="false"] { color: var(--color-text-muted); }
 
 /* Searchable effects browser. */
+/* Edge to edge in the sidebar: `.root`'s padding and scrolling are for the panel's
+   empty state, and here they squeezed every row in from both sides. The list owns
+   the scrolling, and only the search row keeps side padding. */
+.root:has(> .browser) {
+  padding: var(--space-3) 0 0;
+  overflow: hidden;
+}
+
 .browser {
   display: flex;
   flex-direction: column;
@@ -337,6 +345,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  padding: 0 var(--space-5);
 }
 
 .searchRow > :first-child {
@@ -973,9 +982,15 @@
      scrolling the whole panel in a short one. The list virtualises and owns
      the only scrollbar. */
   flex: 1 1 auto;
-  min-height: 120px;
+  min-height: 0;
   border-top: 1px solid var(--color-border);
-  border-bottom: 1px solid var(--color-border);
+}
+
+/* No scrollbar, or every row would stop short of the sidebar's right edge; the
+   wheel and the arrow keys scroll it. `div` so it outranks VirtualList's `.root`
+   whichever stylesheet loads first. */
+.browserList > div {
+  scrollbar-width: none;
 }
 
 .browserList:focus-visible {

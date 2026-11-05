@@ -569,7 +569,11 @@ export function DockPanel({ region, renderers, headerExtras, className, railSide
     carries the header extras; the home column's last group carries the "+".
   */
   const columns = groupsByColumn(groups);
-  const shares = clampColumnWeights(columnWeights);
+  // Mean 1, so the columns' flex-grow sums to at least 1 and they fill the side:
+  // a layout saved with a lone column at 0.6 drew it at 60% width beside a void.
+  const clamped = clampColumnWeights(columnWeights);
+  const meanShare = clamped.reduce((a, b) => a + b, 0) / clamped.length;
+  const shares = clamped.map((w) => w / meanShare);
   const firstGroup = groups[0]!.id;
   const homeCol = isLeft ? columns[0] : columns[columns.length - 1];
   const plusGroup = homeCol?.[homeCol.length - 1]?.id;
@@ -620,7 +624,7 @@ export function DockPanel({ region, renderers, headerExtras, className, railSide
                   </Fragment>
                 );
               })}
-              <Seam side={side} column={column} index={col.length} dragging={dragging} />
+              <Seam side={side} column={column} index={col.length} last dragging={dragging} />
             </div>
             {next ? (
               <ColumnSeam
@@ -710,6 +714,8 @@ function ColumnSeam({ side, column, dragging, resize }: {
 // ── The gap between two groups ────────────────────────────────────────
 
 interface SeamProps {
+  /** The one after a column's last group. */
+  last?: boolean;
   side: DockSide;
   column: number;
   /** Where a dropped tab's new group goes: before the column's group at this index. */
@@ -724,7 +730,7 @@ interface SeamProps {
  * that makes the tab a group of its own; between two open groups it is the
  * divider that shares their height; otherwise just the frame showing through.
  */
-function Seam({ side, column, index, dragging, resize }: SeamProps): JSX.Element {
+function Seam({ side, column, index, last, dragging, resize }: SeamProps): JSX.Element {
   const [over, setOver] = useState(false);
   if (dragging) {
     return (
@@ -757,7 +763,7 @@ function Seam({ side, column, index, dragging, resize }: SeamProps): JSX.Element
       />
     );
   }
-  return <div className={cn(styles.seam, index === 0 && styles.seamFirst)} aria-hidden />;
+  return <div className={cn(styles.seam, index === 0 && styles.seamFirst, last && styles.seamLast)} aria-hidden />;
 }
 
 // ── One group ─────────────────────────────────────────────────────────

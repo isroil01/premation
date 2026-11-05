@@ -70,6 +70,8 @@ import {
 } from '@core/timeline/transitions';
 import { addTransitionEdit, setTransitionEdit, removeTransitionsEdit, TransitionLengthDrag } from './transitionEdits';
 import { registerTimelineScroll, setTimelineLaneGeometry, setTimelineViewportWidth } from './timelineViewport';
+import { useTimelineStatusSlotStore } from '@stores/timelineStatusSlotStore';
+import { propertyRowPin } from './headerPin';
 import { zoomAroundTime, zoomStep } from './zoomAnchor';
 import { resolveTrackSelection, selectIntentFor, type SelectModifiers } from './trackRangeSelect';
 import { usePreferenceStore } from '@stores/preferenceStore';
@@ -518,6 +520,35 @@ function Timeline({
     };
   }, [publishLanes]);
 
+  // The footer's sideways scrollbars drive these two (TimelineFooter).
+  useEffect(() => {
+    const store = useTimelineStatusSlotStore.getState();
+    const header = headerRef.current;
+    const lanes = lanesRef.current;
+    store.setScrollers(header, lanes);
+    return () => {
+      const cur = useTimelineStatusSlotStore.getState();
+      if (cur.headerScroller === header) cur.setScrollers(null, null);
+    };
+  }, []);
+
+  /**
+   * Property rows stay readable while the columns are scrolled sideways: their
+   * name and value keep to the visible edge (`propertyRowPin`). A CSS variable
+   * on the scroller, not state: this runs on every scroll event.
+   */
+  const syncHeaderPin = useCallback((): void => {
+    const el = headerRef.current;
+    if (el) el.style.setProperty('--tl-prop-pin', `${propertyRowPin(el.scrollLeft, el.clientWidth)}px`);
+  }, []);
+  useEffect(() => {
+    const el = headerRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(syncHeaderPin);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [syncHeaderPin]);
+
   // ── Header column: resize + scroll ─────────────────────────────
   const resizeRef = useRef<{ startX: number; startW: number } | null>(null);
   const onHeaderResizeDown = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
@@ -599,6 +630,7 @@ function Timeline({
    */
   const onHeaderWheel = useCallback((e: ReactWheelEvent<HTMLDivElement>) => {
     if (e.ctrlKey || e.metaKey) return; // zoom gesture — leave it to the root
+    if (e.shiftKey) return; // scrolls the columns sideways, natively; they have no bar
     const lanes = lanesRef.current;
     if (!lanes) return;
     lanes.scrollTop += e.deltaY;
@@ -2566,6 +2598,7 @@ function Timeline({
           onScroll={(e) => {
             const x = (e.currentTarget as HTMLDivElement).scrollLeft;
             if (colHeadsRef.current) colHeadsRef.current.style.transform = `translateX(${-x}px)`;
+            syncHeaderPin();
           }}
         >
           {/*
@@ -2580,7 +2613,9 @@ function Timeline({
             role="listbox"
             aria-label={t('timeline.panel.layers', 'Timeline layers')}
             aria-multiselectable="true"
-            style={{ height: effectiveLanesHeight, position: 'relative' }}
+            // As wide as the columns: a property row is positioned to this box, and
+            // at the scroller's width its ground stopped short of a scrolled layer row.
+            style={{ height: effectiveLanesHeight, minWidth: minHeaderWidth, position: 'relative' }}
             onKeyDown={onRowListKey}
           >
             {visibleRows.map((row, i) => {
@@ -2636,7 +2671,7 @@ function Timeline({
                   ...rowStyle,
                   // An effect's twirl sits one step inside Effects; its Selections one more;
                   // a rig's Puppet ▸ Pins ▸ <pin> one step per level (`nestedIndent`).
-                  paddingLeft: 88 + (row.track.depth ?? 0) * 14 + nestedIndent(row.categoryKey),
+                  paddingLeft: `calc(${88 + (row.track.depth ?? 0) * 14 + nestedIndent(row.categoryKey)}px + var(--tl-prop-pin, 0px))`,
                 };
                 return (
                   <TrackCategoryHeader
@@ -2668,14 +2703,14 @@ function Timeline({
                     maskId={row.maskId}
                     label={row.label}
                     mode={row.mode}
-                    style={{ ...rowStyle, paddingLeft: 124 + (row.track.depth ?? 0) * 14 + 28 }}
+                    style={{ ...rowStyle, paddingLeft: `calc(${124 + (row.track.depth ?? 0) * 14 + 28}px + var(--tl-prop-pin, 0px))` }}
                   />
                 );
               }
               const propStyle: CSSProperties = {
                 ...rowStyle,
                 // An effect's params sit under its twirl, one step deeper; a pin's / bone's under theirs.
-                paddingLeft: 124 + (row.track.depth ?? 0) * 14 + nestedIndent(row.categoryKey),
+                paddingLeft: `calc(${124 + (row.track.depth ?? 0) * 14 + nestedIndent(row.categoryKey)}px + var(--tl-prop-pin, 0px))`,
               };
               return (
                 <PropertyHeader

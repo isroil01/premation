@@ -122,11 +122,8 @@ function EffectFavoriteStar({ id, label }: { id: string; label: string }): JSX.E
 }
 
 /**
- * One glyph per folder, naming what the folder DOES.
- *
- * Eight rows carrying the same mark is a label repeated eight times, not a set
- * of distinctions — and the row you are scanning for is found by shape long
- * before it is found by reading.
+ * What a category's effect wears on its hover preview card. The browser's own
+ * rows are plain: every folder the folder icon, every effect the `fx` mark.
  */
 const EFFECT_CATEGORY_ICON: Record<string, IconName> = {
   'Blur & Sharpen': 'blur',
@@ -143,15 +140,6 @@ const EFFECT_CATEGORY_ICON: Record<string, IconName> = {
   Simulation: 'zap',
   Utility: 'tune',
   '3D Channel': 'axis-3d',
-};
-
-/**
- * An effect row wears its FOLDER's glyph (every Time effect the clock), so a
- * search result says where it lives; the `fx` mark only where a folder has none.
- */
-const categoryMark = (folder: string): { icon: IconName } | { fx: true } => {
-  const icon = folder === PLUGIN_EFFECTS_CATEGORY ? 'plugin' : EFFECT_CATEGORY_ICON[folder];
-  return icon ? { icon } : { fx: true };
 };
 
 /** Folder order: A–Z, as After Effects lists its effect categories. */
@@ -290,7 +278,6 @@ export function EffectBrowser({ nodeId }: { nodeId: string | null }): JSX.Elemen
     folders.push({
       id: cat,
       label: cat,
-      icon: cat === PLUGIN_EFFECTS_CATEGORY ? 'plugin' : EFFECT_CATEGORY_ICON[cat],
       defaultOpen: false,
       items: items.flatMap((d) => [
         {
@@ -317,14 +304,13 @@ export function EffectBrowser({ nodeId }: { nodeId: string | null }): JSX.Elemen
       const row = { kind: 'pluginPreset' as const, id: `${d.type}#${p.name}`, preset: p, effectLabel: d.label };
       const at = folders.findIndex((f) => f.id === cat);
       if (at >= 0) folders[at] = { ...folders[at]!, items: [...folders[at]!.items, row] };
-      else folders.push({ id: cat, label: cat, icon: cat === PLUGIN_EFFECTS_CATEGORY ? 'plugin' : EFFECT_CATEGORY_ICON[cat], defaultOpen: false, items: [row] });
+      else folders.push({ id: cat, label: cat, defaultOpen: false, items: [row] });
     }
   }
   if (!starredOnly && shapeOps.length > 0 && node) {
     folders.push({
       id: 'Shape',
       label: 'Shape',
-      icon: EFFECT_CATEGORY_ICON.Shape,
       defaultOpen: false,
       items: shapeOps.map((op) => ({
         kind: 'shapeOp' as const,
@@ -351,7 +337,7 @@ export function EffectBrowser({ nodeId }: { nodeId: string | null }): JSX.Elemen
     if (at >= 0) {
       folders[at] = { ...folders[at]!, items: [...simRows, ...folders[at]!.items] };
     } else {
-      folders.push({ id: 'Simulation', label: 'Simulation', icon: 'zap', defaultOpen: false, items: simRows });
+      folders.push({ id: 'Simulation', label: 'Simulation', defaultOpen: false, items: simRows });
     }
   }
   folders.sort(byLabel);
@@ -363,7 +349,6 @@ export function EffectBrowser({ nodeId }: { nodeId: string | null }): JSX.Elemen
     groups.push({
       id: 'presets',
       label: EFFECT_PRESETS_FOLDER,
-      icon: 'sparkles',
       defaultOpen: false,
       items: browserPresets.map((p) => ({
         kind: 'preset' as const,
@@ -545,7 +530,7 @@ export function EffectBrowser({ nodeId }: { nodeId: string | null }): JSX.Elemen
                     onClick={() => { setFocusIndex(i); toggleFolder(row.id, row.open); }}
                   >
                     <Icon name={row.open ? 'chevron-down' : 'chevron-right'} size="sm" className={styles.fxFolderTwisty} />
-                    {row.icon ? <Icon name={row.icon} size="md" className={styles.fxFolderIcon} /> : null}
+                    <Icon name={row.open ? 'folder-open' : 'folder'} size="md" className={styles.fxFolderIcon} />
                     <span className={styles.fxFolderName}>{row.label}</span>
                     <span className={styles.fxFolderCount}>{row.count}</span>
                   </button>
@@ -640,7 +625,7 @@ export function EffectBrowser({ nodeId }: { nodeId: string | null }): JSX.Elemen
                   <BrowserRow
                     className={styles.fxLeafRow}
                     label={d.label}
-                    {...categoryMark(row.folder)}
+                    fx
                     selected={active}
                     /*
                       A plugin effect on the WebGL2 tier is WGSL with no

@@ -79,6 +79,17 @@ describe('docking into a new column', () => {
     expect(state().regions.rightInspector.size).toBeLessThan(400);
   });
 
+  it('the column that stays fills the side (no empty strip beside it)', () => {
+    registerRight('properties', 'plugins');
+    state().dockDrop({ panel: 'plugins' }, { kind: 'column', side: 'rightInspector', column: 1 });
+    // The divider dragged so the new column is the wide one: shares 0.5 : 1.5.
+    state().setColumnWeights('rightInspector', [1, 3]);
+    // Closing the new column: the remaining one's share must be a full 1, not
+    // the fraction it had beside it (flex-grow < 1 leaves part of the side blank).
+    state().dockDrop({ panel: 'plugins' }, { kind: 'tabs', groupId: groupOf('properties').id });
+    expect(state().dockColumns.rightInspector).toEqual([1]);
+  });
+
   it('a panel can make a column on the other side', () => {
     state().registerPanel({ id: 'assets', region: 'leftSidebar', title: 'assets' });
     registerRight('properties', 'plugins');

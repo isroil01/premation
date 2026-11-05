@@ -124,7 +124,10 @@ export function compactColumns(groups: DockGroupState[], weights: ReadonlyArray<
   const next = present.map((c) => w(c));
   const kept = next.reduce((a, b) => a + b, 0);
   // Weights only for columns that still exist: the share of the ones that went.
-  return { weights: next, removedShare: Math.max(0, 1 - kept / sumAll) };
+  // Rescaled to a mean of 1 (as setColumnWeights stores them): a lone column
+  // left at 0.6 is a flex-grow of 0.6, which leaves 40% of the side empty.
+  const mean = kept / next.length;
+  return { weights: next.map((v) => v / mean), removedShare: Math.max(0, 1 - kept / sumAll) };
 }
 
 /** The legacy second pane of a side — the old split's bottom region. */

@@ -69,7 +69,7 @@
   /* One hairline between column groups, drawn as a left border with equal air
      on both sides. AE rules every group boundary, not just the one before
      Mode — without them the switches read as part of the layer name. */
-  --tl-col-rule: 1px solid var(--color-border);
+  --tl-col-rule: 1px solid transparent;
   /* 7 switches × 22px + 6 gaps × 4px — shy, fx, motion blur, adjustment,
      guide, preserve-underlying-transparency, 3D. It was 126px back when there
      were six, so the switches OVERFLOWED their own column by 26px and, being
@@ -111,23 +111,12 @@
 .trackHeaderScroller {
   overflow-x: auto;
   overflow-y: hidden;
-  scrollbar-width: thin;
-  scrollbar-color: var(--color-scrollbar-thumb) var(--color-scrollbar-track);
-  /* Room for the horizontal scrollbar so the last row is not clipped by it.
-     Was `var(--timeline-hscroll, 10px)`, but nothing has ever set that
-     property — the fallback was the only value it could ever have. */
+  /* Its scrollbar is in the status bar, shown when the columns overflow
+     (owner 2026-11-05); Shift+wheel and the trackpad scroll them too. */
+  scrollbar-width: none;
+  /* Scroll room past the last row, so this column can always reach the same
+     scrollTop as the lanes it follows. */
   padding-bottom: 10px;
-}
-
-.trackHeaderScroller::-webkit-scrollbar {
-  height: 4px;
-}
-.trackHeaderScroller::-webkit-scrollbar-track {
-  background: var(--color-scrollbar-track);
-}
-.trackHeaderScroller::-webkit-scrollbar-thumb {
-  background: var(--color-scrollbar-thumb);
-  border-radius: 2px;
 }
 
 .lanes {
@@ -135,32 +124,10 @@
   min-height: 0;
   overflow: auto;
   background: var(--color-timeline-bg);
-  scrollbar-gutter: stable;
-  /* No `scrollbar-width` / `scrollbar-color` here: in Chromium either one
-     switches the `::-webkit-scrollbar` rules below off, and those are the
-     only way to drop the horizontal bar while keeping the vertical one. */
-}
-
-/* Flat AE-style scrollbars in the timeline lanes. Vertical only: the time
-   navigator over the lanes is the horizontal scroll (drag to pan, its ends
-   to zoom), so a second bar under the lanes was a duplicate (owner
-   2026-10-21). Shift+wheel and the trackpad still scroll sideways. */
-.lanes::-webkit-scrollbar {
-  width: 5px;
-  height: 0;
-}
-.lanes::-webkit-scrollbar-track {
-  background: var(--color-scrollbar-track);
-}
-.lanes::-webkit-scrollbar-thumb {
-  background: var(--color-scrollbar-thumb);
-  border-radius: 0;
-}
-.lanes::-webkit-scrollbar-thumb:hover {
-  background: var(--color-scrollbar-thumb-hover);
-}
-.lanes::-webkit-scrollbar-corner {
-  background: var(--color-scrollbar-track);
+  /* No bars here (owner 2026-11-05): the wheel scrolls the rows, and the sideways
+     scrollbar is in the status bar, shown when the lanes overflow. The time
+     navigator above and Shift+wheel scroll them too. */
+  scrollbar-width: none;
 }
 
 .lanesInner {
@@ -323,10 +290,13 @@
 
 .clip {
   position: absolute;
-  /* AE's bar fills its row, one pixel clear of each line. */
-  top: 1px;
-  border-radius: 0;
+  /* A solid bar with even air above and below it (ClipBar sets the height), so
+     neighbouring rows read as separate blocks and not one striped wall. */
+  top: 2px;
+  border-radius: 3px;
   border: none;
+  /* One crisp edge, so a bar holds its shape on any lane colour. */
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.22);
   overflow: hidden;
   cursor: pointer;
   display: flex;
@@ -338,7 +308,7 @@
 }
 
 .clip:hover {
-  filter: brightness(1.1);
+  filter: brightness(1.08);
 }
 
 /*
@@ -401,7 +371,7 @@
   font-size: var(--font-size-xs);
   font-weight: 600;
   color: #ffffff;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.35);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -442,7 +412,8 @@
   color: var(--color-danger);
 }
 
-/* Clip trim handles — left & right grab handle borders only */
+/* Clip trim handles: nothing at rest, so a bar is one clean block. They show on
+   the bar you are pointing at, and quietly on a selected one. */
 .clipHandle {
   position: absolute;
   top: 0;
@@ -453,24 +424,28 @@
   cursor: ew-resize;
   z-index: 3;
   transition: background-color 100ms ease, opacity 100ms ease;
-  opacity: 0.75;
+  opacity: 0;
+}
+
+.clipSelected .clipHandle {
+  opacity: 0.6;
 }
 
 .clipHandle[data-edge='start'] {
   left: 0;
-  border-left: 2.5px solid rgba(255, 255, 255, 0.7);
+  border-left: 2px solid rgba(255, 255, 255, 0.75);
   border-radius: 0;
 }
 
 .clipHandle[data-edge='end'] {
   right: 0;
-  border-right: 2.5px solid rgba(255, 255, 255, 0.7);
+  border-right: 2px solid rgba(255, 255, 255, 0.75);
   border-radius: 0;
 }
 
 .clip:hover .clipHandle {
   opacity: 1;
-  background-color: rgba(255, 255, 255, 0.18);
+  background-color: rgba(255, 255, 255, 0.08);
 }
 
 /* A bar narrower than three handle widths (`data-narrow`, set by ClipBar):
@@ -480,7 +455,7 @@
 
 .clipHandle:hover {
   opacity: 1;
-  background-color: rgba(255, 255, 255, 0.38) !important;
+  background-color: rgba(255, 255, 255, 0.24) !important;
 }
 
 /* Animation duration bar — AE uses a flat tinted bar, no border. */
@@ -1764,7 +1739,7 @@
 /* In the value column, where AE puts it. */
 .categoryReset {
   position: absolute;
-  left: var(--tl-values-x);
+  left: calc(var(--tl-values-x) + var(--tl-prop-pin, 0px));
   font-family: var(--font-family-sans);
   font-size: var(--font-size-sm);
   color: var(--color-primary-text);
@@ -1848,7 +1823,7 @@
    column's left edge (`--tl-values-x`) — whatever the name's length. */
 .propValues {
   position: absolute;
-  left: var(--tl-values-x);
+  left: calc(var(--tl-values-x) + var(--tl-prop-pin, 0px));
   top: 0;
   bottom: 0;
   display: flex;
@@ -2025,7 +2000,7 @@
 /* AE's ◀ ◆ ▶ sits at the row's left, under the A/V switch columns. */
 .propNav {
   position: absolute;
-  left: var(--space-2);
+  left: calc(var(--space-2) + var(--tl-prop-pin, 0px));
   top: 0;
   bottom: 0;
   width: var(--tl-col-preinfo);

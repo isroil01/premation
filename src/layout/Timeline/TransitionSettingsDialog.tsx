@@ -7,9 +7,10 @@
  * handles cannot pay for a longer overlap — is shown in the dialog.
  */
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { TransitionEase } from '@motion/engine-api';
 import { Button } from '@components/Button';
+import { useDialogPrimaryAction } from '@components/Modal';
 import { ValueField } from '@components/ValueField';
 import { openModal } from '@stores/modalStore';
 import { documentMirror } from '@stores/documentMirror';
@@ -55,6 +56,9 @@ function TransitionSettingsBody({ id, leftNodeId, close }: BodyProps): JSX.Eleme
   const [color, setColor] = useState(() => tx?.color ?? DEFAULT_DIP_COLOR);
   const [ease, setEase] = useState<TransitionEase>(() => tx?.ease ?? 'linear');
   const [error, setError] = useState<string | null>(null);
+  // Enter runs what Apply runs; while the transition is gone, it closes.
+  const applyRef = useRef<() => void>(close);
+  useDialogPrimaryAction(() => applyRef.current());
 
   if (!tx) {
     return (
@@ -88,6 +92,7 @@ function TransitionSettingsBody({ id, leftNodeId, close }: BodyProps): JSX.Eleme
       else setError(res.reason);
     });
   };
+  applyRef.current = apply;
 
   return (
     <div className={styles.body}>

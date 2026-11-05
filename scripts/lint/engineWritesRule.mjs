@@ -155,7 +155,7 @@ const NOT_WRITES = new Set([
   'distributeLayersInZ', // spreads the comp's layers in depth, sizes compensated: setLayerSwitches + one batch of setProperty in one gesture
   'addCameraRigEdit', // crane / dolly / orbit rig: buildCameraRig's command batches in one gesture
   // Subjects (core/workspace/subjects): each BUILDS engine commands from mirror reads (pure); SubjectSection sends them through edit().
-  'updateSubjectCommands', 'moveSubjectCommands', 'removeSubjectCommands',
+  'updateSubjectCommands', 'moveSubjectCommands', 'moveSubjectToCommands', 'removeSubjectCommands',
   'keyframeLabelColor', // core/scene/labelColor: a label index → its palette colour (pure lookup)
   // Dashboard → editor handoffs (core/project/pending*): a one-shot module variable the editor takes after the project opens, not the document.
   'setPendingTemplate', 'setPendingRender',

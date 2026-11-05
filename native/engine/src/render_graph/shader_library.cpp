@@ -127,9 +127,11 @@ std::optional<std::string> gamma_out_wgsl(std::string_view wgsl) {
   out += R"WGSL(
 
 // ── Gamma blending (shader_library.cpp gamma_out_wgsl) ──
+// 3e-7 (a few ulps at 1): in f32 the curve gives 1 as 0.99999994, and a float16 target's
+// next step down is 0.99951, so white lost a step on every round trip. It keeps 1 exact.
 fn pmGammaEnc(c : f32) -> f32 {
   if (c <= 0.0031308) { return c * 12.92; }
-  return 1.055 * pow(c, 1.0 / 2.4) - 0.055;
+  return 1.055 * pow(c, 1.0 / 2.4) - 0.055 + 3e-7;
 }
 fn pmGammaOut(c : vec4<f32>) -> vec4<f32> {
   if (c.a <= 1e-6) { return vec4<f32>(pmGammaEnc(c.r), pmGammaEnc(c.g), pmGammaEnc(c.b), c.a); }

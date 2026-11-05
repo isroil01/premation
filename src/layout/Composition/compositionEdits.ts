@@ -16,7 +16,7 @@
  * Display reads stay direct until B4's mirror.
  */
 
-import type { Color, Command, CompSettingsPatch, Rational } from '@motion/engine-api';
+import type { Color, Command, CompSettingsPatch, ProjectSettingsPatch, Rational } from '@motion/engine-api';
 import { edit } from '@core/engine/uiEdits';
 import { compTime } from '@core/engine/propRefs';
 import { framesToFlicks } from '@core/engine/time';
@@ -142,15 +142,22 @@ export function compSettingsPatch(from: CompositionSettings, to: CompositionSett
   return Object.keys(p).length > 0 ? p : null;
 }
 
-/** Composition Settings ▸ Save Changes: one entry, none when nothing changed. */
+/**
+ * Composition Settings ▸ Save Changes: one entry, none when nothing changed.
+ * `project` is the Color tab's Project Settings fields, in the same entry.
+ */
 export async function saveCompositionSettingsEdit(
   compId: string,
   from: CompositionSettings,
   to: CompositionSettings,
+  project?: ProjectSettingsPatch,
 ): Promise<boolean> {
   const patch = compSettingsPatch(from, to);
-  if (!patch) return true;
-  const res = await edit('Composition Settings', { type: 'setCompositionSettings', comp: compId, patch });
+  const cmds: Command[] = [];
+  if (patch) cmds.push({ type: 'setCompositionSettings', comp: compId, patch });
+  if (project && Object.keys(project).length > 0) cmds.push({ type: 'setProjectSettings', patch: project });
+  if (cmds.length === 0) return true;
+  const res = await edit('Composition Settings', cmds);
   return res.ok;
 }
 

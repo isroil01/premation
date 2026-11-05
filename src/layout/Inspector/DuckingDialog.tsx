@@ -17,6 +17,7 @@
 import { t } from '@core/i18n';
 import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@components/Button';
+import { useDialogPrimaryAction } from '@components/Modal';
 import { Slider } from '@components/Slider';
 import { openModal } from '@stores/modalStore';
 import { useUIStore } from '@stores/uiStore';
@@ -117,6 +118,7 @@ export function DuckingDialog({ nodeId, onDone }: Props): JSX.Element {
       setBusy(false);
     }
   };
+  useDialogPrimaryAction(busy || !voiceNodeId ? null : () => void run(() => duckEdit(nodeId, voiceNodeId, params), 'ducked'));
 
   const drop = async (): Promise<void> => {
     setBusy(true);

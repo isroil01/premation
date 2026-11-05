@@ -26,30 +26,58 @@
 }
 
 /*
- * What goes first as the bar narrows — lowest priority first. The save state's
- * dot, the counts, the comp name, the timecode and the search button itself
- * never drop. Widths are the BAR's (a `statusbar` query container), so a
- * popped-out or split window behaves like a narrow one.
+ * What goes first as the bar narrows — lowest priority first. Widths are the
+ * BAR's (a `statusbar` query container), so a popped-out or split window behaves
+ * like a narrow one. The timeline's own controls say theirs in
+ * BottomTimeline.module.css.
  *
- *   drop1  the search button's shortcut hint          ≤ 1400px
- *   drop2  the fps meter, the "Search" word           ≤ 1250px
- *   drop3  the info readout, the comp chip's size/fps ≤ 1100px
- *   drop4  the VU meter, the save state's words       ≤  900px
+ *   drop2  the fps meter     ≤ 1250px
+ *   drop4  the VU meter      ≤  900px
  */
-@container statusbar (max-width: 1400px) {
-  .drop1 { display: none; }
-}
-
 @container statusbar (max-width: 1250px) {
   .drop2 { display: none; }
 }
 
-@container statusbar (max-width: 1100px) {
-  .drop3 { display: none; }
-}
-
 @container statusbar (max-width: 900px) {
   .drop4 { display: none; }
+}
+
+/* The timeline's controls, portalled in from TimelineFooter. */
+.timelineSlot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  height: 100%;
+  min-width: 0;
+}
+
+.notice {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  max-width: 48ch;
+}
+
+.noticeText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.noticeAction {
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-accent);
+  font: inherit;
+  cursor: pointer;
+}
+
+.noticeAction:hover {
+  text-decoration: underline;
 }
 
 .mono {
@@ -60,15 +88,6 @@
 .bad {
   color: var(--color-danger);
   font-weight: var(--font-weight-semibold);
-}
-
-/* Save state: amber while unsaved, green when clean. */
-.stateDot {
-  color: var(--color-success);
-}
-
-.stateDotDirty {
-  color: var(--color-modified);
 }
 
 /* Centre: the composition chip. */
@@ -111,41 +130,11 @@
   text-overflow: ellipsis;
 }
 
-.compMeta {
-  font-family: var(--font-family-mono);
-  font-size: var(--font-size-micro);
-  color: var(--color-text-secondary);
-}
-
 .dirtyDot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: var(--color-modified);
-}
-
-/* The palette button. */
-.search {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 2px var(--space-3);
-  border-radius: var(--radius-full);
-  background: var(--color-surface-2);
-  border: 1px solid var(--color-border);
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  font: inherit;
-  font-size: var(--font-size-xs);
-  transition: background-color var(--motion-duration-fast) var(--motion-ease-standard),
-              color var(--motion-duration-fast) var(--motion-ease-standard),
-              border-color var(--motion-duration-fast) var(--motion-ease-standard);
-}
-
-.search:hover {
-  background: var(--color-surface-3);
-  color: var(--color-text-primary);
-  border-color: var(--color-border-strong);
 }
 
 /* Job tray: one compact chip per running job. The whole tray is one button

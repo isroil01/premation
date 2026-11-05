@@ -297,20 +297,36 @@ std::uint64_t layer_fx_key(const PassContext& ctx, const api::Renderable& r, std
   const api::RenderView& view = ctx.file.view;
   k.u64((std::uint64_t{view.bit_depth} << 8U) | (view.float16_textures ? 1U : 0U) | (view.float32_textures ? 2U : 0U));
   k.u64(static_cast<std::uint64_t>(view.working_space));
+  bool placed = false;
   for (const api::RenderEffect& e : r.effects) {
-    if (e.type == "native-plugin") return 0;
+    // A plugin's result is kept only when scene_finish.cpp vouched for it: every
+    // input is on this entry (time, params, state), so a static plugin layer under
+    // a drag does not read back and re-run the plugin for each pointer move.
+    const bool plugin = e.type == "native-plugin";
+    if (plugin) {
+      if (!Fx(e).flag("keepable")) return 0;
+      placed = true;
+    }
     // Stream D: a chain that reads the scene under the layer is a function of
     // every layer below it too — never kept.
     if (Fx(e).flag("readsBackdrop")) return 0;
     k.str(e.type);
     for (const api::RenderEffectParam& p : e.params) {
-      if (!p.text.empty() || !p.texts.empty()) return 0;
+      if (!plugin && (!p.text.empty() || !p.texts.empty())) return 0;
       k.str(p.name);
+      k.str(p.text);
+      for (const std::string& t : p.texts) k.str(t);
       k.u64(static_cast<std::uint64_t>(p.kind));
       k.f64(p.number);
       k.u64(p.numbers.size());
       for (const double v : p.numbers) k.f64(v);
     }
+  }
+  // A plugin may draw in comp space (PR_OUT_FLAG_COMP_SPACE): its result belongs
+  // to this exact place and view, and never moves as a translation-free one can.
+  if (placed) {
+    for (const double v : r.model_matrix) k.f64(v);
+    for (std::size_t i = 0; i < 9; ++i) k.f64(ctx.viewport.viewProjection[i]);
   }
   return k.value();
 }
@@ -1033,6 +1049,7 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
     const std::uint32_t w = ctx.viewport.pixelWidth;
     const std::uint32_t h = ctx.viewport.pixelHeight;
     LayerFxCache::Slot* s = layerFx_.find(fxKey, w, h);
+    if (s == nullptr) s = layerFx_.find(placed_fx_key(fxKey, snap), w, h);
     if (s == nullptr || !s->at) return std::nullopt;
     if (!s->movable && ((*s->at)[0] != snap.bx || (*s->at)[1] != snap.by)) return std::nullopt;
     // Equal phases (the key) make the move whole; a stray fraction is a re-run, never a resample.
@@ -1052,6 +1069,18 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
     return KeptFx{t.tex(), s->covered, dx, dy};
   }
 
+  /// A result cut by the buffer's edge is reusable only where it was drawn, so its
+  /// slot is keyed by that place too. Under the bare translation-free key, duplicates
+  /// of one layer (same content, same phase) overwrote each other's result and every
+  /// one of them re-ran its chain on every frame.
+  [[nodiscard]] static std::uint64_t placed_fx_key(std::uint64_t fxKey, const PixelSnap& snap) noexcept {
+    KeyMix k;
+    k.u64(fxKey);
+    k.f64(snap.bx);
+    k.f64(snap.by);
+    return k.value();
+  }
+
   /// P8: keep `out` (the chain result of layer `id` under `fxKey`) for later
   /// frames — once the layer's key held for two frames in a row. P8b: a snapped
   /// layer's result is kept with where it was drawn; it may be MOVED only when
@@ -1064,12 +1093,14 @@ class CompositionPass final : public RenderPass, public MapLayerSource {
     const std::uint32_t w = ctx.viewport.pixelWidth;
     const std::uint32_t h = ctx.viewport.pixelHeight;
     const bool snapped = snap != nullptr && snap->on;
-    LayerFxCache::Slot* slot = layerFx_.claim(fxKey, w, h, ctx.dev.frame(), std::uint64_t{w} * h * texel_bytes(src->format));
+    const bool movable = snapped && inside_view(covered, w, h);
+    const std::uint64_t slotKey = snapped && !movable ? placed_fx_key(fxKey, *snap) : fxKey;
+    LayerFxCache::Slot* slot = layerFx_.claim(slotKey, w, h, ctx.dev.frame(), std::uint64_t{w} * h * texel_bytes(src->format));
     if (slot == nullptr) return;  // every slot is in use this frame
     slot->covered = covered;
     if (snapped) {
       slot->at = std::array<double, 2>{snap->bx, snap->by};
-      slot->movable = inside_view(covered, w, h);
+      slot->movable = movable;
     }
     slot->format = src->format;
     RenderTarget& t = ctx.dev.target(slot->name, w, h, slot->format, 1, false);
@@ -1220,8 +1251,10 @@ fn vs(@location(0) pos : vec2<f32>) -> @builtin(position) vec4<f32> {
   let p = u.mvp * vec3<f32>(pos, 1.0);
   return vec4<f32>(p.xy, 0.0, p.z);
 }
-fn enc(c : f32) -> f32 { if (c <= 0.0031308) { return c * 12.92; } return 1.055 * pow(c, 1.0 / 2.4) - 0.055; }
-fn dec(c : f32) -> f32 { if (c <= 0.04045) { return c / 12.92; } return pow((c + 0.055) / 1.055, 2.4); }
+// 3e-7 (a few ulps at 1): in f32 the curve gives 1 as 0.99999994, and a float16 target's
+// next step down is 0.99951, so white lost a step on every round trip. It keeps 1 exact.
+fn enc(c : f32) -> f32 { if (c <= 0.0031308) { return c * 12.92; } return 1.055 * pow(c, 1.0 / 2.4) - 0.055 + 3e-7; }
+fn dec(c : f32) -> f32 { if (c <= 0.04045) { return c / 12.92; } return pow((c + 0.055) / 1.055, 2.4) + 3e-7; }
 @fragment
 fn fs(@builtin(position) fc : vec4<f32>) -> @location(0) vec4<f32> {
   let c = textureLoad(tex, vec2<i32>(fc.xy), 0);

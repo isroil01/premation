@@ -125,7 +125,7 @@
   padding: 0 6px;
   font-size: var(--panel-font-size-help);
   color: var(--color-text-primary);
-  background: var(--color-bg-input, var(--color-bg-secondary));
+  background: var(--color-surface-0);
   border: 1px solid var(--color-border);
   border-radius: 4px;
 }

@@ -346,6 +346,9 @@ struct Snapshot {
 struct SnapshotComp {  // NOLINT(bugprone-exception-escape): MSVC's std::map allocates a sentinel when moved
   double width = 1920, height = 1080;
   std::string background = "#101014";
+  /// The composition's gradient background (a FillPaint; undefined = the flat `background`).
+  /// Drawn by the root composition only: a nested one is content, never a backdrop.
+  Json backgroundPaint;
   bool transparent = false;
   double globalLightAngle = 90, globalLightAltitude = 45;
   std::optional<double> durationSeconds;

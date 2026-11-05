@@ -1,5 +1,5 @@
 import { act, render as rtlRender, screen, fireEvent } from '@testing-library/react';
-import { openCompositionSettings, CompositionSettings } from './CompositionSettingsDialog';
+import { openCompositionSettings, CompositionSettings, gradientCss } from './CompositionSettingsDialog';
 import { useModalStore } from '@stores/modalStore';
 import { useProjectStore } from '@stores/projectStore';
 import { useCompositionStore } from '@stores/compositionStore';
@@ -8,6 +8,9 @@ import { setupAppEngine, historyLabels, settleEdits } from '@core/engine/__testH
 import { docView } from '@core/engine/__testHelpers__/docView';
 import type { Harness } from '@core/engine/__testHelpers__/appEngine';
 import { documentMirror } from '@stores/documentMirror';
+import { useGuidesStore } from '@stores/guidesStore';
+import { useColorManagementStore } from '@stores/colorManagementStore';
+import { compRecordFromSettings } from '@core/mirror/compFacts';
 
 const render = (ui: React.ReactElement) => rtlRender(ui, { wrapper: TooltipProvider });
 
@@ -162,6 +165,104 @@ describe('CompositionSettingsDialog', () => {
       await settleEdits();
     });
     expect(comp().fps).toBe(29.97);
+  });
+
+  describe('Grid & Guides and Color are drafts', () => {
+    const grid0 = useGuidesStore.getState().grid;
+    const spacing0 = useGuidesStore.getState().gridSpacing;
+    const dt0 = useColorManagementStore.getState().displayTransform;
+    afterEach(() => {
+      useGuidesStore.setState({ grid: grid0, gridSpacing: spacing0, gridStyle: 'lines' });
+      useColorManagementStore.setState({ displayTransform: dt0 });
+    });
+
+    const projectSettings = async (): Promise<{ linearBlending?: boolean; workingSpace?: string }> => {
+      await settleEdits();
+      return { ...documentMirror().settings };
+    };
+
+    const editDrafts = (): void => {
+      fireEvent.click(screen.getByRole('tab', { name: /grid & guides/i }));
+      fireEvent.click(screen.getByRole('switch', { name: /show grid/i }));
+      fireEvent.change(screen.getByLabelText(/grid style/i), { target: { value: 'dots' } });
+      fireEvent.click(screen.getByRole('tab', { name: /color/i }));
+      fireEvent.click(screen.getByRole('button', { name: /^ACES \(sRGB ODT\)/i }));
+      fireEvent.click(screen.getByRole('button', { name: /^Linear \(1\.0 gamma\)/i }));
+      fireEvent.change(screen.getByLabelText(/project colour management/i), { target: { value: 'rec2020' } });
+    };
+
+    it('Cancel leaves the view, the colour settings and the project alone', async () => {
+      const before = await projectSettings();
+      render(<CompositionSettings close={jest.fn()} />);
+      editDrafts();
+      // The chosen value shows in the dialog while nothing has been applied.
+      expect(screen.getByLabelText(/project colour management/i)).toHaveValue('rec2020');
+      expect(useGuidesStore.getState().gridStyle).toBe('lines');
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
+        await settleEdits();
+      });
+      expect(useGuidesStore.getState().grid).toBe(grid0);
+      expect(useGuidesStore.getState().gridStyle).toBe('lines');
+      expect(useColorManagementStore.getState().displayTransform).toBe(dt0);
+      expect(await projectSettings()).toEqual(before);
+    });
+
+    it('Save Changes applies them all, the document part as one undo entry', async () => {
+      render(<CompositionSettings close={jest.fn()} />);
+      editDrafts();
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+        await settleEdits();
+      });
+      expect(useGuidesStore.getState().grid).toBe(!grid0);
+      expect(useGuidesStore.getState().gridStyle).toBe('dots');
+      expect(useColorManagementStore.getState().displayTransform).toBe('aces');
+      expect((await projectSettings()).linearBlending).toBe(true);
+      expect((await projectSettings()).workingSpace).toBe('rec2020');
+      expect((await historyLabels()).filter((l) => l === 'Composition Settings')).toHaveLength(1);
+    });
+  });
+
+  it('the preview draws a gradient as the engine does', () => {
+    const stops = [{ id: 'a', offset: 0, color: '#000000' }, { id: 'b', offset: 1, color: '#ffffff' }];
+    // A paint's 90° is ↓, which is CSS 180°.
+    expect(gradientCss({ type: 'linear', angle: 90, stops }, 200, 100)).toContain('linear-gradient(180deg');
+    // A radius is a fraction of the half-diagonal; the centre is honoured.
+    expect(gradientCss({ type: 'radial', cx: 0.25, cy: 0.5, radius: 1, stops }, 300, 400)).toContain('circle 250px at 25% 50%');
+    expect(gradientCss({ type: 'solid', color: '#000000' }, 200, 100)).toBeNull();
+  });
+
+  it('Background tab: a gradient saves to the document', async () => {
+    render(<CompositionSettings close={jest.fn()} />);
+    fireEvent.click(screen.getByRole('tab', { name: /background/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Linear$/ }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+      await settleEdits();
+    });
+    expect(JSON.parse(documentMirror().comp(compId)?.settings.backgroundPaint ?? '{}')).toMatchObject({ type: 'linear', angle: 90 });
+  });
+
+  it('Time: start frame, duration and pixel aspect save and read back', async () => {
+    render(<CompositionSettings close={jest.fn()} />);
+    const type = (name: string | RegExp, value: string): void => {
+      fireEvent.keyDown(screen.getByRole('spinbutton', { name }), { key: 'Enter' });
+      const input = screen.getByRole('textbox', { name });
+      fireEvent.change(input, { target: { value } });
+      fireEvent.blur(input);
+    };
+    type(/start timecode/i, '48');
+    type('Duration', '5');
+    fireEvent.change(screen.getByLabelText(/pixel aspect ratio preset/i), { target: { value: screen.getAllByRole('option', { name: /D1\/DV NTSC/i })[0]!.getAttribute('value') } });
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+      await settleEdits();
+    });
+    const rec = compRecordFromSettings(compId, documentMirror().comp(compId)!.settings);
+    expect(rec.startFrame).toBe(48);
+    expect(rec.durationSeconds).toBe(5);
+    expect(rec.pixelAspect).toBeCloseTo(0.9091, 3);
   });
 
   it('Renderer tab: shadow-map size, light cap, DOF quality and MSAA save under the composition World JSON, one entry, undoable (U3)', async () => {

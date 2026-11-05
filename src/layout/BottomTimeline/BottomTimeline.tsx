@@ -950,7 +950,7 @@ export function BottomTimeline(props: BottomTimelineProps): JSX.Element {
         )}
       </div>
 
-      {!isCollapsed && !showQueue && <TimelineFooter headerWidth={headerWidth} />}
+      {!isCollapsed && !showQueue && <TimelineFooter headerWidth={headerWidth} lanesBar={!graphEditorOpen} />}
     </section>
   );
 }

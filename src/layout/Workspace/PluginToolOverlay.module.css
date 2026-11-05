@@ -47,7 +47,7 @@
   padding: 2px 8px;
   font-size: var(--panel-font-size-help, 11px);
   color: var(--color-text-primary);
-  background: var(--color-bg-elevated, rgba(0, 0, 0, 0.6));
+  background: var(--color-surface-raised);
   border-radius: 4px;
   pointer-events: none;
 }

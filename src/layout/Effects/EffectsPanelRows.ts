@@ -34,14 +34,13 @@ export interface FxGroup {
   /** Stable id — the category name, or `presets` / `Shape` / `Simulation`. */
   id: string;
   label: string;
-  icon?: IconName;
   /** Open state when the user has not touched this folder. */
   defaultOpen: boolean;
   items: ReadonlyArray<FxLeaf>;
 }
 
 export type FxRow =
-  | { kind: 'folder'; key: string; id: string; label: string; icon?: IconName; count: number; open: boolean }
+  | { kind: 'folder'; key: string; id: string; label: string; count: number; open: boolean }
   | ({ key: string; folder: string } & FxLeaf);
 
 /**
@@ -57,7 +56,7 @@ export function flattenFxGroups(
   for (const g of groups) {
     if (g.items.length === 0) continue;
     const open = isOpen(g);
-    rows.push({ kind: 'folder', key: `folder:${g.id}`, id: g.id, label: g.label, icon: g.icon, count: g.items.length, open });
+    rows.push({ kind: 'folder', key: `folder:${g.id}`, id: g.id, label: g.label, count: g.items.length, open });
     if (!open) continue;
     for (const item of g.items) rows.push({ ...item, key: `${g.id}:${item.id}`, folder: g.id });
   }

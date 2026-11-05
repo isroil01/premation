@@ -792,8 +792,8 @@ function buildMergePathCommands(): ReadonlyArray<Command> {
     execute: () => {
       // The engine's createLiveMerge: the result made and the operands flagged in ONE entry.
       void liveMergePathsEdit(op).then((id) => {
+        // A refusal already told the user why, in the engine's words (`edit` reports it).
         if (id) notify(t('providers.mergePaths.liveDone', 'Live boolean ({op}) — operands stay editable', { op }), 'success');
-        else notify(t('providers.mergePaths.selectClosed', 'Select at least two shape layers with closed paths'), 'warning');
       });
     },
   }));
@@ -806,7 +806,7 @@ function buildMergePathCommands(): ReadonlyArray<Command> {
       // The boolean runs off-document; `deleteLayers` + `pasteLayers`, one entry (layerMenuEdits).
       void bakeMergePathsEdit(op).then((ids) => {
         if (ids.length > 0) notify(t('providers.mergePaths.bakeDone', 'Merged paths ({op})', { op }), 'success');
-        else notify(t('providers.mergePaths.selectTwo', 'Select at least two shape layers to merge'), 'warning');
+        else notify(t('providers.mergePaths.selectTwo', 'Nothing to merge: this needs two shape layers with closed paths, and the operation must leave a shape behind'), 'warning');
       });
     },
   }));

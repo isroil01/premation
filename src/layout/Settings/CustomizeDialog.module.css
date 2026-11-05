@@ -645,6 +645,27 @@
   max-width: 60ch;
 }
 
+/* A folder path under a row's description: left-aligned, one line, the
+   start of the path kept (the tail ellipsized; the full path is the title). */
+.settingPath {
+  display: block;
+  align-self: stretch;
+  margin-top: 4px;
+  padding: 3px 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 3px;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-regular);
+  line-height: 1.4;
+  color: var(--color-text-secondary);
+}
+
 .settingRight {
   display: flex;
   align-items: center;

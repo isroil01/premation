@@ -3,6 +3,35 @@
 Newest first. Each entry is what a person opening the app after an update
 would want to know; the engine-level detail is in `ROADMAP.md`.
 
+## 1.1.1 — 2026-11-05
+
+- **Composition Settings now show up in the picture.** Linear and radial
+  backgrounds render in the viewer and in exports, and a transparent
+  composition shows a checkerboard instead of black. Cancel also discards
+  changes made on the Grid & Guides and Color tabs.
+- **Pure white stays pure white.** In projects using gamma blending, about a
+  sixth of a white frame came out one level darker. White and black are now
+  exact in both blending modes.
+- **No more black boxes from nested compositions.** An empty nested comp, or
+  one whose first layer has not started yet, no longer paints black over what
+  is beneath it. Gradient Ramp and Fractal Noise only paint where a nested comp
+  has content, so put them on a solid to use them as a background.
+- **Enter confirms more dialogs.** Keyframe Velocity, Transition Settings,
+  Assemble from Footage, Interpret Footage, Duck Under Voice, Remove Silence
+  and New Camera, Light and Primitive.
+- **More languages.** The editor is now available in Japanese, Korean, German
+  and French, and switching language takes effect at once.
+- **After Effects import.** Shape layers, animated outlines, relinked footage
+  and expressions come across, and an imported project opens on its main comp.
+- **Plugin SDK 1.4.** Plugin layer types, simulations, meshes and lights in the
+  3D scene, machine-learning models, OpenFX and CLAP hosting, audio effects and
+  hot reload for plugin developers.
+- **Character rigging.** Part layers follow the bones of their character.
+- **A calmer editor.** Status messages moved into a cleaner status bar, and the
+  Subject panel is regrouped with a style gallery.
+- **Timeline.** One Scale row with Constrain Proportions, and a cleaner graph
+  editor.
+
 ## 1.1.0 — 2026-11-03
 
 - **Smoother playback on heavy comps.** The frames a play shows are now built

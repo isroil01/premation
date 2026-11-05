@@ -503,6 +503,9 @@ class PluginHost {
   /// flat sequence data. The old module stays mapped (pinned): code of it may still be on a stack.
   /// A failed reload keeps the old module loaded and says why in `why`. False = not reloaded.
   bool reload(std::string_view pluginId, std::string& why);
+  /// Changes whenever the loaded code may have (a scan, a reload, an enable / disable): a kept
+  /// render result of an older generation came from code that may no longer be what runs.
+  [[nodiscard]] std::uint64_t generation() const noexcept { return generation_.load(std::memory_order_relaxed); }
   /// SDK 1.4 (E1/E2): offer the loaded, enabled plugins' expression functions to expressions
   /// (motion::expr::set_plugin_functions). Done after every scan, reload and enable / disable by
   /// the engine's host (attachToDocument); a test host calls it itself.
@@ -618,6 +621,7 @@ class PluginHost {
   std::unique_ptr<Impl> impl_;
   std::unique_ptr<Contrib> contrib_;
   std::atomic<std::uint64_t> frame_{0};
+  std::atomic<std::uint64_t> generation_{1};
 };
 
 }  // namespace premation::plugins

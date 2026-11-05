@@ -2831,6 +2831,8 @@ Snapshot Walk::run() {
     grid.id = comp_.rootId + "::transparency-grid";
     grid.kind = LayerKind::shape;
     grid.primitive = "rect";
+    grid.x = comp_.width / 2;  // a layer's x / y is its centre
+    grid.y = comp_.height / 2;
     grid.width = comp_.width;
     grid.height = comp_.height;
     grid.fill = "#3d3d3d";
@@ -2850,6 +2852,25 @@ Snapshot Walk::run() {
     fx.set("params", std::move(params));
     grid.effects.push_back(std::move(fx));
     layers_.insert(layers_.begin(), std::move(grid));
+  } else if (!comp_.transparent && comp_.width > 0 && comp_.height > 0 && comp_.backgroundPaint.is_object() &&
+             comp_.backgroundPaint.at("type").is_string() && comp_.backgroundPaint.at("type").str() != "solid" &&
+             comp_.backgroundPaint.at("stops").is_array() && !comp_.backgroundPaint.at("stops").arr().empty()) {
+    // Composition Settings ▸ Background: a gradient is a comp-sized rectangle
+    // under everything, painted by the shape rasterizer (multi-stop, exact
+    // geometry). `background` stays the flat colour beneath it. A transparent
+    // comp, a nested comp, a Layer view and a ghost all build `transparent`,
+    // so none of them draws it.
+    RLayer paint;
+    paint.id = comp_.rootId + "::background-paint";
+    paint.kind = LayerKind::shape;
+    paint.primitive = "rect";
+    paint.x = comp_.width / 2;  // a layer's x / y is its centre
+    paint.y = comp_.height / 2;
+    paint.width = comp_.width;
+    paint.height = comp_.height;
+    paint.fill = comp_.background;
+    paint.fillPaint = comp_.backgroundPaint;
+    layers_.insert(layers_.begin(), std::move(paint));
   }
 
   Snapshot s;
@@ -2994,6 +3015,7 @@ SnapshotComp snapshot_comp_of(const Document& d, std::string_view comp) {
   s.width = jnum(rec->at("width")).value_or(1920);
   s.height = jnum(rec->at("height")).value_or(1080);
   if (rec->at("background").is_string()) s.background = rec->at("background").str();
+  if (rec->at("backgroundPaint").is_object()) s.backgroundPaint = rec->at("backgroundPaint");
   s.transparent = rec->at("transparent").is_bool() && rec->at("transparent").b();
   s.frameBlending = !(rec->at("frameBlending").is_bool() && !rec->at("frameBlending").b());
   s.globalLightAngle = jnum(rec->at("globalLightAngle")).value_or(90);
@@ -3004,7 +3026,12 @@ SnapshotComp snapshot_comp_of(const Document& d, std::string_view comp) {
 
 SnapshotComp with_viewport_view(SnapshotComp sc, const ViewportConfig& viewport) {
   sc.draft3d = viewport.draft3d;
-  sc.transparencyGrid = viewport.transparencyGrid && viewport.layer.empty();
+  // A transparent composition shows the grid whether or not the viewer's toggle
+  // is on: the viewer clears to opaque black, so its transparency would read as
+  // a black background. Not under a ghost (it must stay see-through) nor in the
+  // alpha view (the grid would read as solid alpha).
+  const bool transparentComp = sc.transparent && !viewport.ghost && viewport.channel != api::ChannelView::alpha;
+  sc.transparencyGrid = (viewport.transparencyGrid || transparentComp) && viewport.layer.empty();
   if (sc.transparencyGrid && viewport.zoom > 0) {
     // 16 screen px at this zoom, on a power of two (zooms inside one tier share their frames).
     sc.transparencyGridCell = 16.0 / std::exp2(std::round(std::log2(viewport.zoom)));

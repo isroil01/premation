@@ -127,9 +127,12 @@ fn storageToWorking(rgb : vec3<f32>) -> vec3<f32> { return rgb; }
 // step (interleaved gradient noise — a pure function of the pixel, so frames
 // stay deterministic). A smooth dark gradient quantised to 8 bits bands; the
 // offset spreads each step's edge into a fine grain. A value that already sits
-// on an 8-bit level rounds to that same level, so flat colours do not change.
+// on an 8-bit level rounds to that same level (the scale keeps the offset off
+// exactly -0.5, a tie that can round a level down), so white and black stay exact.
+// A mid-tone sits a few hundredths of a level off in float16: some of its pixels
+// cross to the next level, which is the grain working, not an error.
 fn ditherOffset(p : vec2<f32>) -> f32 {
-  return fract(52.9829189 * fract(dot(p, vec2<f32>(0.06711056, 0.00583715)))) - 0.5;
+  return (fract(52.9829189 * fract(dot(p, vec2<f32>(0.06711056, 0.00583715)))) - 0.5) * 0.99;
 }
 
 @fragment

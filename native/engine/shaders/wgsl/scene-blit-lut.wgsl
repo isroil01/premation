@@ -173,5 +173,5 @@ fn fs(@builtin(position) frag : vec4<f32>, @location(0) uv : vec2<f32>) -> @loca
 }
 
 fn ditherOffset(p : vec2<f32>) -> f32 {
-  return fract(52.9829189 * fract(dot(p, vec2<f32>(0.06711056, 0.00583715)))) - 0.5;
+  return (fract(52.9829189 * fract(dot(p, vec2<f32>(0.06711056, 0.00583715)))) - 0.5) * 0.99;
 }

@@ -15,6 +15,7 @@
 
 import { useState } from 'react';
 import { Button } from '@components/Button';
+import { useDialogPrimaryAction } from '@components/Modal';
 import { ValueField } from '@components/ValueField';
 import { openModal } from '@stores/modalStore';
 import { t } from '@core/i18n';
@@ -51,6 +52,7 @@ function VelocityBody({ nodeId, prop, time, reading, close }: VelocityBodyProps)
     });
     close();
   };
+  useDialogPrimaryAction(apply);
 
   return (
     <div className={styles.body}>

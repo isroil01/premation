@@ -9,6 +9,7 @@
 import { useState } from 'react';
 import { openModal } from '@stores/modalStore';
 import { Button } from '@components/Button';
+import { useDialogPrimaryAction } from '@components/Modal';
 import type { ImportedAsset } from '@stores/assetStore';
 import { documentMirror } from '@stores/documentMirror';
 import { itemAsset } from '@core/mirror/itemAssets';
@@ -191,6 +192,7 @@ function InterpretFootageBody({
     void interpretFootageEdit(live, patch);
     close();
   };
+  useDialogPrimaryAction(handleSave);
 
   return (
     <div className={styles.modalBody}>

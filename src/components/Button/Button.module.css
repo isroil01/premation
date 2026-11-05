@@ -205,8 +205,13 @@
   border: 0;
 }
 
+/* Flex, not inline-block: callers that pass `<Icon/><span>…</span>` as
+   children (instead of the `icon` prop) got the glyph on the text baseline
+   with no gap — off-centre and touching the label. */
 .label {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: inherit;
 }
 
 .icon {

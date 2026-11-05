@@ -11,7 +11,6 @@
  *   processEngine()              that client, or null when none was created
  *   subscribeProcessEngine(l)    told when the client appears or a notice arrives
  *   lastProcessEngineNotice()    the last restart / unavailable notice (the surface shows it)
- *   processEngineBusy()          what the engine's core thread is busy on right now, or null
  *
  * The client itself (@motion/engine-api `ProcessEngineClient`) needs nothing
  * from src/: this module only binds it to the window's bridge.
@@ -128,8 +127,9 @@ export function createAppProcessEngine(options: AppProcessEngineOptions = {}): P
       if (next) console.warn(`[engine] premation-engine busy: ${next.what} (${next.ms} ms so far)`);
       else console.info('[engine] premation-engine is back from its busy item');
     }
+    // The console only: a long item is never announced to the user, and telling
+    // React about it would add work in the very moment the engine is behind.
     st.busy = next;
-    notify();
   }) ?? null;
   if (isDevBuild()) {
     // The real-app harness drives the process backend through this (dev only).
@@ -137,11 +137,6 @@ export function createAppProcessEngine(options: AppProcessEngineOptions = {}): P
   }
   notify();
   return s.instance;
-}
-
-/** What the engine's core thread is busy on right now (nothing answers until it is done), or null. */
-export function processEngineBusy(): EngineBusyNotice | null {
-  return state().busy;
 }
 
 export function processEngine(): ProcessEngineClient | null {

@@ -21,6 +21,7 @@
 
 import { useState } from 'react';
 import { Button } from '@components/Button';
+import { useDialogPrimaryAction } from '@components/Modal';
 import { ValueField } from '@components/ValueField';
 import { openModal } from '@stores/modalStore';
 import type { AssembleOptions } from '@core/composition/assembleFromFootage';
@@ -54,6 +55,7 @@ function AssembleBody({ clipName, fps, close, onDone }: BodyProps): JSX.Element 
     });
     close();
   };
+  useDialogPrimaryAction(confirm);
 
   const secs = (frames: number): string => (frames / fps).toFixed(2);
 

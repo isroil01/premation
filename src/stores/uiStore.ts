@@ -126,6 +126,8 @@ interface UIState {
   isDragging: boolean;
   /** Generic "toast"-style notifications. */
   notifications: ReadonlyArray<Notification>;
+  /** The status bar is mounted, so routine notices have a place to appear other than a card. */
+  noticeLineMounted: boolean;
   /** Snap-to-grid / snap-to-object enabled. */
   snap: boolean;
   /** Whether the graph editor is currently open. */
@@ -210,6 +212,24 @@ export interface JobPatch {
   cancel?: () => void;
 }
 
+/**
+ * Routine feedback ("Deleted selected layers", "Imported 2 files", a job's
+ * progress): the status bar says it and the work goes on, as After Effects' Info
+ * panel does. Only warnings and errors are cards over the work (NotificationHost).
+ */
+export function isQuietNotification(n: Pick<Notification, 'level'>): boolean {
+  return n.level === 'info' || n.level === 'success';
+}
+
+/** The newest routine notice for the status bar; a job's progress is the job tray's. */
+export function latestQuietNotification(s: { notifications: ReadonlyArray<Notification> }): Notification | null {
+  for (let i = s.notifications.length - 1; i >= 0; i--) {
+    const n = s.notifications[i]!;
+    if (isQuietNotification(n) && n.progress === undefined) return n;
+  }
+  return null;
+}
+
 export interface Notification {
   id: string;
   level: 'info' | 'success' | 'warning' | 'error';
@@ -277,6 +297,7 @@ interface UIActions {
   /** Patch a live toast in place — progress, message, action. No-op if gone. */
   updateNotification(id: string, patch: Partial<Omit<Notification, 'id' | 'createdAt'>>): void;
   dismissNotification(id: string): void;
+  setNoticeLineMounted(mounted: boolean): void;
   /**
    * Begin a background job: adds it to the tray and opens its progress toast.
    * Re-using an id restarts that job (the previous toast is replaced).
@@ -393,6 +414,7 @@ export const useUIStore = create<UIStore>()(
       boneBrushRadius: 40,
       isDragging: false,
       notifications: [],
+      noticeLineMounted: false,
       snap: true,
       graphEditorOpen: false,
       globalShy: false,
@@ -469,6 +491,11 @@ export const useUIStore = create<UIStore>()(
       dismissNotification: (id) =>
         set((s) => {
           s.notifications = s.notifications.filter((n) => n.id !== id);
+        }),
+
+      setNoticeLineMounted: (mounted) =>
+        set((s) => {
+          s.noticeLineMounted = mounted;
         }),
 
       startJob: ({ id, label, progress = 'indeterminate', kind, statusLine, cancel }) => {

@@ -70,7 +70,7 @@ rediscovered in git history and believed a second time.
 | Canvas tools | 23 | `packages/workspace/src/tools/builtin.ts` |
 | AI tools | 74 | `packages/ai-tools/src/tools/{read,write,craft,compose}.ts` |
 | Export formats | 20 | `renderSpec.ts` → `VideoFormat` + `exportManager.ts` → `ExportFormat` / `DataExportFormat` |
-| Stores | 107 | `src/stores/*.ts` |
+| Stores | 109 | `src/stores/*.ts` |
 | Packages | 15 | `packages/*` |
 
 <!-- /FEATURE-COUNTS -->
@@ -91,7 +91,7 @@ style would have left this table wrong with every test still green.
 ```
 Electron main ── IPC ──▶ renderer (React 19 + Vite)
                           │
-                          ├── src/stores/*        107 Zustand stores
+                          ├── src/stores/*        109 Zustand stores
                           ├── src/core/*          41 subsystems (effects, scene, rig, text…)
                           └── packages/*          15 workspace packages
                                 ├── scene       scene graph + components
@@ -290,6 +290,11 @@ and a **300ms burst is one undo entry** (`keyframeNudge.ts`) — holding an arro
 for a second must cost one Ctrl+Z, not thirty. `Alt+click` a disclosure twirls a
 layer and everything under it; **Ctrl+`** / **Ctrl+Shift+`** collapse and expand
 every layer (`expandCollapse.ts`).
+
+**The timeline's footer controls are in the status bar** (`TimelineFooter`, at the
+panel's foot in a popped-out timeline): frame render time, cache, Switches / Modes and
+the zoom, plus the sideways scrollbars of the layer columns and of the lanes, each shown
+only while it overflows. The timeline itself draws no scrollbars.
 
 **The time navigator is a window, not a fill** (`timeNavigator.ts`): the box over
 the comp shows what the lanes show — drag its body to pan, its ends to zoom,

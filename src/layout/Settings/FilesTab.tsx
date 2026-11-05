@@ -157,7 +157,7 @@ export function FilesTab(): JSX.Element {
                 ? t('settings.files.locationPick', 'Optionally keep a copy of each snapshot in a folder.')
                 : t('settings.files.locationNoPicker', 'A folder copy needs the desktop app.')}
           </span>
-          {location ? <code className={styles.kbd} title={location}>{location}</code> : null}
+          {location ? <code className={styles.settingPath} title={location}>{location}</code> : null}
         </div>
         <div className={styles.settingRight}>
           {pickerAvailable() ? (

@@ -207,6 +207,87 @@ TEST_CASE("E4/P8b: a moved layer's stroke follows it — its distance field is r
   CHECK(px(113, 72, 2) > 200);
 }
 
+TEST_CASE("P8: duplicates cut by the frame's edge each keep their own result") {
+  // Same content, same sub-pixel phase: one translation-free key. A result the edge
+  // cut cannot be moved, so under that one key the copies took each other's slot and
+  // every one re-ran its chain every frame (a 188 ms frame under a one-layer drag).
+  std::string err;
+  auto renderer = SceneRenderer::create({}, err);
+  if (!renderer) return;
+  auto file = solid_scene(0, 0, 1);
+  const api::Renderable base = file.scene.renderables[0];
+  file.scene.renderables.clear();
+  for (int i = 0; i < 3; ++i) {
+    api::Renderable r = base;
+    r.id = "dup" + std::to_string(i);
+    // Wider than the frame, so no placement keeps the chain's reach inside the buffer.
+    r.model_matrix = {1000, 0, 0, 0, 8, 0, -300 + (i * 16.0), 4 + (i * 14.0), 1};
+    r.bounds = {-300 + (i * 16.0), 4 + (i * 14.0), 1000, 8};
+    api::RenderEffect blur;
+    blur.type = "gaussian-blur";
+    blur.params.push_back(num_param("radiusPx", 6));
+    r.effects.push_back(blur);
+    file.scene.renderables.push_back(std::move(r));
+  }
+  Frame first;
+  FrameStats s1;
+  REQUIRE(renderer->render(file, &first, s1, err));
+  CHECK(s1.gpuError.empty());
+  Frame again;
+  FrameStats s2;
+  REQUIRE(renderer->render(file, &again, s2, err));
+  CHECK(again.rgba == first.rgba);
+  FrameStats s3;
+  REQUIRE(renderer->render(file, &again, s3, err));
+  CHECK(s3.effects.layerChainsReused == 3);
+  CHECK(again.rgba == first.rgba);
+}
+
+TEST_CASE("P8: a plugin's result is kept only when vouched for, and only for the same inputs") {
+  std::string err;
+  auto renderer = SceneRenderer::create({}, err);
+  if (!renderer) return;
+  auto file = solid_scene(0, 0, 1);
+  api::RenderEffect plugin;
+  plugin.type = "native-plugin";
+  api::RenderEffectParam name;
+  name.name = "matchName";
+  name.kind = api::RenderParamKind::text;
+  name.text = "no.such.plugin";
+  plugin.params.push_back(name);
+  plugin.params.push_back(num_param("layerTime", 0));
+  plugin.params.push_back(num_param("p.amount", 1));
+  file.scene.renderables[0].effects.push_back(plugin);
+  const auto renderThrice = [&]() {
+    Frame f;
+    FrameStats a;
+    FrameStats b;
+    FrameStats c;
+    REQUIRE(renderer->render(file, &f, a, err));
+    REQUIRE(renderer->render(file, &f, b, err));
+    REQUIRE(renderer->render(file, &f, c, err));
+    return c.effects.layerChainsReused;
+  };
+  std::vector<api::RenderEffectParam>& params = file.scene.renderables[0].effects[0].params;
+  CHECK(renderThrice() == 0);  // no `keepable`: never kept
+  params.push_back(num_param("keepable", 1));
+  CHECK(renderThrice() == 1);
+  // Its time and its parameters are its inputs: either one changing runs it again.
+  params[1].number = 1000;
+  Frame f;
+  FrameStats t;
+  REQUIRE(renderer->render(file, &f, t, err));
+  CHECK(t.effects.layerChainsReused == 0);
+  params[2].number = 2;
+  FrameStats v;
+  REQUIRE(renderer->render(file, &f, v, err));
+  CHECK(v.effects.layerChainsReused == 0);
+  params[0].text = "another.plugin";
+  FrameStats x;
+  REQUIRE(renderer->render(file, &f, x, err));
+  CHECK(x.effects.layerChainsReused == 0);
+}
+
 TEST_CASE("P8: a static layer's effect chain runs once; moving it or changing a parameter runs it again") {
   std::string err;
   auto renderer = SceneRenderer::create({}, err);

@@ -78,9 +78,8 @@ export function EditorShell(): JSX.Element {
  * frame just to keep that captured value fresh. The clock store is the live
  * authority during playback; the project store's copy lags by the 4Hz mirror.
  *
- * The ONE render-time consumer of the playhead in the shell is the status
- * bar's self-subscribing <StatusBarTimecode/> (`useCurrentTime`), isolated so
- * only that span re-renders per comp frame, not EditorShellInner. */
+ * Nothing in the shell reads the playhead at render time: the timecode readouts
+ * subscribe for themselves, so EditorShellInner never re-renders per comp frame. */
 function EditorShellInner(): JSX.Element {
   const registerPanel = useLayoutStore((s) => s.registerPanel);
   // P7d: native plugins' panels in the dock (re-renders the shell when the plugin list changes).
@@ -112,8 +111,7 @@ function EditorShellInner(): JSX.Element {
   // during playback, and a subscription re-rendered this ~1355-line shell (and
   // reconciled its entire unmemoized return tree — TopNav, dock, timeline) on
   // every single frame, starving the main thread the renderer and the <video>
-  // pipeline needed. The only render-time reader was the status-bar timecode
-  // (now the self-subscribing <StatusBarTimecode/>); everything else that
+  // pipeline needed. Nothing here reads it at render time now; whatever
   // needs the playhead is an EVENT HANDLER, which reads `playheadNow()` at
   // event time — non-reactive and always current.
 

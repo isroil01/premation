@@ -1186,7 +1186,12 @@ void Flattener::flatten(const std::vector<RLayer>& layers, const Mat3& parent, d
         out.push_back(particles_to_renderable(l, parent, parentOpacity));
         continue;
       }
-      if (l.precompLayers && !l.precompLayers->empty()) {
+      if (l.precompLayers && l.precompLayers->empty()) {
+        // Nothing live in the nested comp at this time (or none at all): it has no
+        // pixels of its own, and falling through drew its box as an opaque black quad
+        // over whatever is beneath. Only its effects can make any (a Fill, a generator).
+        if (!l.effects.empty()) out.push_back(precomp_to_renderable(l, parent, parentOpacity, placement));
+      } else if (l.precompLayers) {
         if (needs_isolation(l)) {
           out.push_back(precomp_to_renderable(l, parent, parentOpacity, placement));
           continue;

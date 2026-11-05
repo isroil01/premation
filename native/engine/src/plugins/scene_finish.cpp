@@ -855,6 +855,25 @@ void finish_native_frame(const scene::BuildContext& c, std::string_view comp, do
         }
         continue;
       }
+      // The renderer may keep this instance's result across frames (layer_fx_key) only when the
+      // entry holds everything the result depends on. Pixels of other layers or of other times,
+      // the scene's depth and other instances' published channels are not on it. Time is, so a
+      // NON_PARAM_VARY effect still gets a fresh result on every new frame.
+      {
+        bool readsLayer = false;
+        if (const doc::NativeEffect* ne = doc::NativeEffects::find(matchName)) {
+          for (const doc::EffectParamDef& pd : ne->def.params) {
+            if (pd.type == "layer" && !text_of(e, "p." + pd.key).empty()) readsLayer = true;
+          }
+        }
+        const bool readsChannels = !spec->reads.empty() && !pubs.empty();
+        const bool outside = spec->has(PR_OUT_FLAG_WIDE_TIME_INPUT) || spec->has(PR_OUT_FLAG_USES_SCENE_DEPTH) ||
+                             spec->has(PR_OUT_FLAG_USES_LAYER_TRANSFORMS) || !spec->publishes.empty();
+        if (!readsLayer && !readsChannels && !outside) {
+          set_flag(e, "keepable", true);
+          set_num(e, "hostGeneration", static_cast<double>(host->generation()));
+        }
+      }
       // SDK 1.1: the camera / lights / layer matrices the effect declared it reads, at this frame
       // (SDK 1.2: a frame with no 3D layer still gives the comp's camera and lights).
       {

@@ -13,6 +13,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@components/Button';
+import { useDialogPrimaryAction } from '@components/Modal';
 import { Slider } from '@components/Slider';
 import { openModal } from '@stores/modalStore';
 import { useUIStore } from '@stores/uiStore';
@@ -126,6 +127,7 @@ export function SilenceRemovalDialog({ nodeId, onDone }: Props): JSX.Element {
       setBusy(false);
     }
   };
+  useDialogPrimaryAction(busy || ranges.length === 0 ? null : () => void apply());
 
   return (
     <div className={styles.body}>

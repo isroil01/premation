@@ -91,7 +91,7 @@ export function DiskCacheSettings(): JSX.Element {
           <span className={styles.settingDesc}>
             {t('settings.diskCache.folderDesc', 'A fast local drive works best.')}
           </span>
-          {shownFolder ? <code className={styles.kbd} title={shownFolder}>{shownFolder}</code> : null}
+          {shownFolder ? <code className={styles.settingPath} title={shownFolder}>{shownFolder}</code> : null}
         </div>
         <div className={styles.settingRight}>
           {pickerAvailable() ? (
