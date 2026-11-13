@@ -297,7 +297,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 330
     strategy:
-      fail-fast: true
+      # Each engine runs to its own end: one platform's failure used to cancel
+      # the others hours into their dependency builds, before they could save
+      # their cache or show whether they build at all. Packaging still needs
+      # every engine (`build` needs this whole job).
+      fail-fast: false
       matrix:
         include:
           - name: Windows x64
