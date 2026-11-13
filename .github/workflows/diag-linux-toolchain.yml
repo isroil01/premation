@@ -43,3 +43,33 @@ jobs:
             tail -12 out.txt
             grep -n -B2 -A30 "pthread" b/CMakeFiles/CMakeConfigureLog.yaml | tail -70 || true
           done
+      - name: CMake FindThreads with the engine's settings and the vcpkg toolchain
+        if: always()
+        run: |
+          git clone -q https://github.com/microsoft/vcpkg "$RUNNER_TEMP/vcpkg"
+          git -C "$RUNNER_TEMP/vcpkg" checkout -q c76c06644034521fb761a39f8f52d8e87d1103d5
+          mkdir q && cd q
+          cat > CMakeLists.txt <<'CM'
+          cmake_minimum_required(VERSION 3.25)
+          project(T LANGUAGES CXX)
+          set(CMAKE_CXX_STANDARD 20)
+          set(CMAKE_CXX_STANDARD_REQUIRED ON)
+          set(CMAKE_CXX_EXTENSIONS OFF)
+          set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+          if(QUIET_FIRST)
+            find_package(Threads QUIET)
+          endif()
+          find_package(Threads REQUIRED)
+          CM
+          sed -i 's/^          //' CMakeLists.txt
+          try() {
+            echo "================ $*"
+            rm -rf b
+            if cmake -S . -B b -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ "$@" > out.txt 2>&1; then echo "CONFIGURE OK"; else echo "CONFIGURE FAILED"; fi
+            tail -8 out.txt
+            if grep -q "CONFIGURE FAILED\|Could NOT" out.txt; then tail -120 b/CMakeFiles/CMakeConfigureLog.yaml; fi
+          }
+          try
+          try -DQUIET_FIRST=ON
+          try -DCMAKE_TOOLCHAIN_FILE="$RUNNER_TEMP/vcpkg/scripts/buildsystems/vcpkg.cmake"
+          try -DCMAKE_TOOLCHAIN_FILE="$RUNNER_TEMP/vcpkg/scripts/buildsystems/vcpkg.cmake" -DQUIET_FIRST=ON
