@@ -3,20 +3,35 @@
 # release that users download from — and that installed apps read to discover
 # updates.
 #
-#   npm run release:patch        # bumps package.json, commits, tags v0.1.1
-#   git push --follow-tags       # <- this is what starts the workflow
+# ── WHERE THIS RUNS, AND WHAT IT BUILDS ──────────────────────────────────────
+# The source is in the PRIVATE repository (SOURCE_REPO below). This workflow
+# runs in the PUBLIC repository, where the releases and the update manifests
+# live (electron-builder.yml `publish`) and where Actions minutes are free.
+# Every job checks the private source out with a read-only deploy key (secret
+# PRIVATE_SOURCE_KEY here; its public half is a deploy key on SOURCE_REPO).
+# No private commit and no private tag is pushed to this repository. The same
+# file is kept in both repositories; it is only ever started here.
 #
-# Then in GitHub ▸ Releases a DRAFT is waiting. Write the notes, press Publish.
-# No installed app sees the update until you do (electron-builder.yml:
-# `releaseType: draft`).
+#   (private repo)  npm run release:patch          # bumps package.json, commits, tags v0.1.1
+#   (private repo)  git push --follow-tags         # to the private origin; starts nothing
+#   gh workflow run release.yml --repo <public repo> -f ref=v0.1.1
+#
+# Then in GitHub ▸ Releases (public repo) a DRAFT is waiting. Write the notes,
+# press Publish. No installed app sees the update until you do
+# (electron-builder.yml: `releaseType: draft`). Publishing creates the tag in
+# the public repository on its default branch; nothing is triggered by it.
+#
+# A REHEARSAL is the same command with a branch: `-f ref=main`. It builds and
+# checks everything and publishes nothing. Add `-f only=Windows` for one
+# platform.
 #
 # ── RELEASE POLICY, enforced below rather than documented ────────────────────
-#  1. Releases come from `native-core` ONLY (the branch the product is built
-#     on since 2026-09-22; `main` and `dev` are the pre-native-engine history
-#     and are left as they are). A tag that is not an ancestor of `native-core`
-#     fails the pipeline. No release from a feature branch.
-#  2. Flow: feature branch → native-core → tag → release.
-#  3. Artifacts are built from the TAGGED COMMIT, never a working tree.
+#  1. Releases come from the private repository's `main` ONLY (RELEASE_BRANCH
+#     below). A tag that is not an ancestor of it fails the pipeline. No
+#     release from a feature branch.
+#  2. Flow: feature branch → main → tag → release.
+#  3. Artifacts are built from the TAGGED COMMIT, never a working tree: verify
+#     resolves the ref to one commit and every later job builds that commit.
 #  4. Signing is CONDITIONAL, and the path taken is always stated in the output:
 #       secrets present -> sign, notarize, staple, verify. A build that FAILS
 #                          verification does not publish. No fallback.
@@ -31,22 +46,24 @@
 # certificate lands, populate the secrets and this path stops being taken on its
 # own — no code change needed. See RELEASING.md "Unsigned macOS distribution".
 name: release
+run-name: release ${{ inputs.ref }}${{ inputs.only && format(' ({0} only)', inputs.only) || '' }}
 
 on:
-  push:
-    tags:
-      - 'v*'
-  # Manual runs rehearse the build. They produce no release, so a dry run can
-  # never publish something half-finished.
+  # Started by hand only. There is no tag trigger: the tag is in the private
+  # repository, and the tag GitHub creates here when a draft is published must
+  # not start a second build.
   #
   # Re-package ONE platform onto a tag's draft without rebuilding the engines
   # (hours on a cache miss) — after a packaging-only fix:
-  #   gh workflow run release.yml --ref v1.2.3 -f engines_from_run=<run id> -f only=macOS
-  # Run from the TAG (--ref) so it publishes to that draft. The engines come
-  # from <run id>'s artifacts (kept 3 days), and verify refuses unless native/
-  # is identical between that run's commit and this one.
+  #   gh workflow run release.yml -f ref=v1.2.3 -f engines_from_run=<run id> -f only=macOS
+  # The engines come from <run id>'s artifacts (kept 3 days), and verify refuses
+  # unless native/ is identical between that run's commit and this one.
   workflow_dispatch:
     inputs:
+      ref:
+        description: 'What to build, in the private repository: a release tag (v1.2.3) publishes a draft; a branch (main) is a rehearsal and publishes nothing'
+        required: true
+        default: 'main'
       engines_from_run:
         description: 'Reuse the engines built by this release run id (skips the engine builds)'
         required: false
@@ -60,6 +77,16 @@ permissions:
   contents: write
   actions: read     # download-artifact from an earlier run (engines_from_run)
 
+env:
+  # Where the source is. Read with the deploy key PRIVATE_SOURCE_KEY.
+  SOURCE_REPO: isroil01/premation-pro
+  # The branch of SOURCE_REPO a release tag must be on.
+  RELEASE_BRANCH: main
+  # The ref asked for: a release tag (v1.2.3) or, for a rehearsal, a branch.
+  # A ref that starts with "v" is a release, and everything that publishes is
+  # conditional on that.
+  TAG: ${{ inputs.ref }}
+
 jobs:
   verify:
     name: Verify tag, branch, types and tests
@@ -70,32 +97,60 @@ jobs:
       signMac: ${{ steps.signing.outputs.mac }}
       signWin: ${{ steps.signing.outputs.win }}
       platforms: ${{ steps.platforms.outputs.list }}
+      # The one commit this run builds. `inputs.ref` is resolved here, once:
+      # a branch can move while the engines build, and two jobs building two
+      # commits would ship an engine that does not match its UI.
+      sha: ${{ steps.source.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
-          # Full history: the ancestry check needs `native-core`, and a shallow clone
-          # would make every tag look unreachable from it.
+          repository: ${{ env.SOURCE_REPO }}
+          ref: ${{ inputs.ref }}
+          ssh-key: ${{ secrets.PRIVATE_SOURCE_KEY }}
+          # Full history: the ancestry check needs the release branch, and a
+          # shallow clone would make every tag look unreachable from it.
           fetch-depth: 0
 
-      # ── POLICY GATE 1: the tag must be on `native-core` ──
+      - name: The commit this run builds
+        id: source
+        run: |
+          set -euo pipefail
+          sha=$(git rev-parse HEAD)
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "SOURCE_SHA=$sha" >> "$GITHUB_ENV"
+          echo "$sha" > source-sha.txt
+          echo "building $TAG = $sha"
+      # Read back by a later repackage run (engines_from_run), which has to
+      # know which commit these engines were built from. This run's own
+      # head_sha is the public repository's, not the source's.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: source-sha
+          path: source-sha.txt
+          if-no-files-found: error
+          retention-days: 14
+
+      # ── POLICY GATE 1: the tag must be on the release branch ──
       #
       # A tag pushed from a feature branch builds and publishes exactly as
       # convincingly as a real release — the installer is real, the update
       # manifest is real, and users get it. Nothing downstream can tell the
       # difference, so this is the only place that can refuse.
-      - name: Tag must be an ancestor of native-core
-        if: startsWith(github.ref, 'refs/tags/v')
-        env:
-          RELEASE_BRANCH: native-core
+      - name: Tag must be an ancestor of the release branch
+        if: startsWith(inputs.ref, 'v')
         run: |
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || ! git tag --points-at HEAD | grep -qx "$TAG"; then
+            echo "::error::'$TAG' is not a release tag (vX.Y.Z) of $SOURCE_REPO. For a rehearsal pass a branch that does not start with v, such as main."
+            exit 1
+          fi
           git fetch --no-tags origin "+refs/heads/$RELEASE_BRANCH:refs/remotes/origin/$RELEASE_BRANCH"
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" "origin/$RELEASE_BRANCH"; then
-            echo "::error::Tag $GITHUB_REF_NAME ($GITHUB_SHA) is not an ancestor of $RELEASE_BRANCH."
+          if ! git merge-base --is-ancestor "$SOURCE_SHA" "origin/$RELEASE_BRANCH"; then
+            echo "::error::Tag $TAG ($SOURCE_SHA) is not an ancestor of $RELEASE_BRANCH."
             echo "::error::Releases are cut from $RELEASE_BRANCH only. Flow: feature -> $RELEASE_BRANCH -> tag."
             echo "::error::Merge to $RELEASE_BRANCH first, then tag the merge commit."
             exit 1
           fi
-          echo "OK: $GITHUB_REF_NAME is on $RELEASE_BRANCH."
+          echo "OK: $TAG is on $RELEASE_BRANCH."
 
       # The `build` matrix (workflow_dispatch `only` keeps one; a tag push builds all).
       #   signing  which secrets gate the signed path; `none` = always unsigned
@@ -131,12 +186,13 @@ jobs:
           RUN_ID: ${{ inputs.engines_from_run }}
         run: |
           set -euo pipefail
-          sha=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq .head_sha)
-          echo "engines from run $RUN_ID (commit $sha); packaging $GITHUB_SHA"
+          gh run download "$RUN_ID" --repo "$GITHUB_REPOSITORY" --name source-sha --dir "$RUNNER_TEMP/engines-run"
+          sha=$(tr -d '[:space:]' < "$RUNNER_TEMP/engines-run/source-sha.txt")
+          echo "engines from run $RUN_ID (commit $sha); packaging $SOURCE_SHA"
           git fetch --no-tags origin "$sha"
-          if ! git diff --quiet "$sha" "$GITHUB_SHA" -- native/; then
+          if ! git diff --quiet "$sha" "$SOURCE_SHA" -- native/; then
             echo "::error::native/ changed since run $RUN_ID's commit $sha: its engines are not this commit's. Run the full release."
-            git diff --stat "$sha" "$GITHUB_SHA" -- native/
+            git diff --stat "$sha" "$SOURCE_SHA" -- native/
             exit 1
           fi
           echo "OK: native/ is identical."
@@ -155,13 +211,13 @@ jobs:
       # update metadata says 1.2.2, and every client either misses the update or
       # installs it forever.
       - name: Tag matches package.json version
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(inputs.ref, 'v')
         run: |
-          TAG="${GITHUB_REF_NAME#v}"
+          WANT="${TAG#v}"
           PKG="$(node -p "require('./package.json').version")"
-          echo "tag=$TAG package.json=$PKG"
-          if [ "$TAG" != "$PKG" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $PKG."
+          echo "tag=$WANT package.json=$PKG"
+          if [ "$WANT" != "$PKG" ]; then
+            echo "::error::Tag $TAG does not match package.json version $PKG."
             echo "::error::Bump with 'npm run release:patch' rather than tagging by hand."
             exit 1
           fi
@@ -256,12 +312,19 @@ jobs:
             os: macos-latest
             preset: macos-clang-engine-x64
             triplet: x64-osx
+          # The oldest runner image, not ubuntu-latest: the engine needs the
+          # glibc of the image it is linked on, so this image is the oldest
+          # Linux the release runs on (glibc 2.35; gated in build-engine).
           - name: Linux x64
-            os: ubuntu-latest
+            os: ubuntu-22.04
             preset: linux-clang-engine
             triplet: x64-linux
     steps:
       - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          ref: ${{ needs.verify.outputs.sha }}
+          ssh-key: ${{ secrets.PRIVATE_SOURCE_KEY }}
       - name: Build premation-engine
         id: engine
         uses: ./.github/actions/build-engine
@@ -285,6 +348,19 @@ jobs:
             ${{ steps.engine.outputs.engine-dir }}/*.so.*
           if-no-files-found: error
           retention-days: 3
+      # What turns a crash location back into a function and a line
+      # (docs/CRASH_SYMBOLS.md). The PDB ships to nobody: not in the engine
+      # artifact above, not in an installer.
+      - name: Upload the engine's symbols
+        if: matrix.preset == 'windows-clang-cl-engine'
+        uses: actions/upload-artifact@v4
+        with:
+          name: premation-engine-symbols-windows-x64
+          path: |
+            ${{ steps.engine.outputs.engine-dir }}/premation-engine.exe
+            ${{ steps.engine.outputs.engine-dir }}/premation-engine.pdb
+          if-no-files-found: error
+          retention-days: 90
       # The plugin SDK for this platform (AE parity 2.2, docs/PLUGIN_STORE.md):
       # headers, the CMake package, premation-plugins, the pack/sign tools.
       - name: Install the plugin SDK
@@ -312,7 +388,7 @@ jobs:
     name: Attach the plugin SDKs
     needs: [engine, draft]
     # A repackage leaves the SDK zips the full run attached.
-    if: ${{ startsWith(github.ref, 'refs/tags/v') && inputs.engines_from_run == '' }}
+    if: ${{ startsWith(inputs.ref, 'v') && inputs.engines_from_run == '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -325,7 +401,7 @@ jobs:
         run: |
           cd sdks
           for d in premation-sdk-*; do (cd "$d" && zip -qr "../$d.zip" .); done
-          gh release upload "$GITHUB_REF_NAME" premation-sdk-*.zip --repo "$GITHUB_REPOSITORY" --clobber
+          gh release upload "$TAG" premation-sdk-*.zip --repo "$GITHUB_REPOSITORY" --clobber
 
   # One draft, created once, BEFORE the platform builds run. electron-builder
   # looks for an existing draft by tag and attaches to it; when two platform
@@ -335,18 +411,20 @@ jobs:
   draft:
     name: Create the draft release
     needs: verify
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(inputs.ref, 'v')
     runs-on: ubuntu-latest
     steps:
       - name: Create or reuse the draft for this tag
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # A draft needs no tag: publishing it creates the tag in this repository,
+        # on its default branch. Nothing of the source's history goes with it.
         run: |
-          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Draft for $GITHUB_REF_NAME already exists; the builds attach to it."
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Draft for $TAG already exists in $GITHUB_REPOSITORY; the builds attach to it."
           else
-            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft               --title "${GITHUB_REF_NAME#v}" --notes "Release notes: see CHANGELOG.md."
-            echo "Created draft $GITHUB_REF_NAME."
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft               --title "${TAG#v}" --notes "Release notes: see CHANGELOG.md."
+            echo "Created draft $TAG in $GITHUB_REPOSITORY."
           fi
 
   build:
@@ -366,6 +444,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          ref: ${{ needs.verify.outputs.sha }}
+          ssh-key: ${{ secrets.PRIVATE_SOURCE_KEY }}
 
       - uses: actions/setup-node@v4
         with:
@@ -435,6 +517,8 @@ jobs:
           lipo -archs native/build/macos-clang-engine-x64/engine/premation-host-bridge.node | grep -qx x86_64
           lipo -archs native/build/macos-clang-engine/engine/libpdfium.dylib | grep -qx arm64
           lipo -archs native/build/macos-clang-engine-x64/engine/libpdfium.dylib | grep -qx x86_64
+          lipo -archs native/build/macos-clang-engine/engine/libonnxruntime.dylib | grep -qx arm64
+          lipo -archs native/build/macos-clang-engine-x64/engine/libonnxruntime.dylib | grep -qx x86_64
           echo "engines: arm64 + x86_64 OK"
 
       # better-sqlite3 is an OPTIONAL dependency so a contributor without a
@@ -580,7 +664,7 @@ jobs:
             found=0
             while IFS= read -r app; do
               found=1
-              for f in premation-engine premation-host-bridge.node libpdfium.dylib; do
+              for f in premation-engine premation-host-bridge.node libpdfium.dylib libonnxruntime.dylib; do
                 test -f "$app/Contents/Resources/engine/$f" || { echo "::error::$f missing from $app"; exit 1; }
               done
               codesign --verify --strict --verbose=2 "$app/Contents/Resources/engine/premation-engine" || [ "${{ needs.verify.outputs.signMac }}" != "true" ]
@@ -702,7 +786,7 @@ jobs:
 
       # Publish only AFTER verification passed (when it ran), and only on a tag.
       - name: Publish to the draft release (SIGNED)
-        if: ${{ startsWith(github.ref, 'refs/tags/v') && ((matrix.signing == 'mac' && needs.verify.outputs.signMac == 'true') || (matrix.signing == 'win' && needs.verify.outputs.signWin == 'true')) }}
+        if: ${{ startsWith(inputs.ref, 'v') && ((matrix.signing == 'mac' && needs.verify.outputs.signMac == 'true') || (matrix.signing == 'win' && needs.verify.outputs.signWin == 'true')) }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_LINK: ${{ matrix.os == 'macos-latest' && secrets.MAC_CSC_LINK || secrets.WIN_CSC_LINK }}
@@ -710,7 +794,7 @@ jobs:
         run: npx electron-builder ${{ matrix.args }} --publish always
 
       - name: Publish to the draft release (UNSIGNED)
-        if: ${{ startsWith(github.ref, 'refs/tags/v') && ((matrix.signing == 'mac' && needs.verify.outputs.signMac != 'true') || (matrix.signing == 'win' && needs.verify.outputs.signWin != 'true') || matrix.signing == 'none') }}
+        if: ${{ startsWith(inputs.ref, 'v') && ((matrix.signing == 'mac' && needs.verify.outputs.signMac != 'true') || (matrix.signing == 'win' && needs.verify.outputs.signWin != 'true') || matrix.signing == 'none') }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: false
