@@ -73,3 +73,16 @@ jobs:
           try -DQUIET_FIRST=ON
           try -DCMAKE_TOOLCHAIN_FILE="$RUNNER_TEMP/vcpkg/scripts/buildsystems/vcpkg.cmake"
           try -DCMAKE_TOOLCHAIN_FILE="$RUNNER_TEMP/vcpkg/scripts/buildsystems/vcpkg.cmake" -DQUIET_FIRST=ON
+      - name: The same with clang-tools-18 installed
+        if: always()
+        run: |
+          sudo apt-get install -y clang-tools-18 > /dev/null
+          ls -l /usr/bin/clang-scan-deps* || true
+          cd q
+          for extra in "" "-DQUIET_FIRST=ON"; do
+            echo "================ toolchain $extra"
+            rm -rf b
+            if cmake -S . -B b -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_TOOLCHAIN_FILE="$RUNNER_TEMP/vcpkg/scripts/buildsystems/vcpkg.cmake" $extra > out.txt 2>&1; then echo "CONFIGURE OK"; else echo "CONFIGURE FAILED"; fi
+            grep -E "pthread|Threads|SCAN_DEPS|Could NOT" out.txt || true
+            grep -h "CMAKE_CXX_COMPILER_CLANG_SCAN_DEPS" b/CMakeCache.txt || true
+          done
